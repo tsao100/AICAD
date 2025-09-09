@@ -1,3 +1,10 @@
+# AICAD.pro - cross-platform Qt CAD project
+
+# Build both Debug and Release
+
+CONFIG   += moc   # ensures Meta-Object Compiler runs automatically
+CONFIG   += debug_and_release  # optional, for both build types
+
 # ---------- Unix / Linux (Qt5 with GCC) ----------
 unix {
     QT += widgets opengl   # in Qt5 we use 'opengl'
@@ -14,7 +21,6 @@ win32 {
     DEFINES += _USE_MATH_DEFINES  # for <cmath> constants with MSVC
 }
 
-CONFIG   += debug_and_release  # optional, for both build types
 
 SOURCES += AICAD.cpp
 

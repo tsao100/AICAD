@@ -18,6 +18,7 @@
 
 #include <QtWidgets>
 #include <QtOpenGL>
+#include <QOpenGLWidget>
 #include <QOpenGLFunctions>
 #include <cmath>
 
