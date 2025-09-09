@@ -138,13 +138,19 @@ protected:
         }
     }
     void wheelEvent(QWheelEvent *ev) override {
-        // zoom around cursor
-        QPointF p = ev->position();
-        const double zoomFactor = std::pow(1.0015, ev->angleDelta().y());
-        m_transform.translate(p.x(), p.y());
+        // zoom around cursor (world point under mouse stays fixed)
+        QPointF cursorPos = ev->position();
+        QPointF worldBefore = toWorld(cursorPos);
+
+        double zoomFactor = std::pow(1.0015, ev->angleDelta().y());
+        m_transform.translate(cursorPos.x(), cursorPos.y());
         m_transform.scale(zoomFactor, zoomFactor);
-        m_transform.translate(-p.x(), -p.y());
-        m_scale *= zoomFactor;
+        m_transform.translate(-cursorPos.x(), -cursorPos.y());
+
+        QPointF worldAfter = toWorld(cursorPos);
+        QPointF deltaWorld = worldAfter - worldBefore;
+        m_transform.translate(deltaWorld.x() * m_scale, deltaWorld.y() * m_scale);
+
         update();
     }
 
