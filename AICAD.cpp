@@ -132,7 +132,7 @@ protected:
             QRect r(m_rubberStart, m_rubberEnd);
             // convert rect to world and ideally select objects
             QRectF worldRect = QRectF(toWorld(r.topLeft()), toWorld(r.bottomRight())).normalized();
-            qDebug() << "Rubber selection in world:", worldRect;
+            qDebug() << "Rubber selection in world:"<< worldRect;
             update();
         }
     }
@@ -362,7 +362,7 @@ private:
     TrackballCamera m_camera;
     bool m_orbit=false, m_pan=false;
     bool m_ortho=false; // toggle
-    QPoint m_lastPos;
+    QPointF m_lastPos;
     QMatrix4x4 m_proj;
 };
 
@@ -425,5 +425,5 @@ int main(int argc, char **argv) {
     return app.exec();
 }
 
-#include "qt5_cad_view.moc"
+#include "AICAD.moc"
 
