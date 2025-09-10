@@ -1,1 +1,9 @@
 build/*
+release/AICAD.exe
+release/AICAD.moc
+release/AICAD.obj
+release/moc_predefs.h
+Makefile.Debug
+Makefile.Release
+Makefile
+.qmake.stash
