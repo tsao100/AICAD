@@ -8,7 +8,7 @@ CONFIG   += debug_and_release  # optional, for both build types
 # ---------- Unix / Linux (Qt5 with GCC) ----------
 unix {
     QT += widgets opengl   # in Qt5 we use 'opengl'
-    CONFIG += c++11
+    CONFIG += c++17
     # GCC specific options
     QMAKE_CXXFLAGS += -Wall -Wextra
 }
