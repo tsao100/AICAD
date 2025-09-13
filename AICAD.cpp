@@ -314,8 +314,50 @@ protected:
         Q_UNUSED(ev);
         m_orbit = m_pan = false;
     }
+    QMatrix4x4 projectionMatrix() const {
+        QMatrix4x4 proj;
+        proj.perspective(45.0f, float(width()) / float(height()), 0.01f, 1000.0f);
+        return proj;
+    }
+
     void wheelEvent(QWheelEvent *ev) override {
+        QPointF pos = ev->position();   // Qt 5.15+: use position(), else use posF()
+
+        // get projection + view
+        QMatrix4x4 proj = projectionMatrix(); // your projection function
+        QMatrix4x4 view = m_camera.viewMatrix();
+        QMatrix4x4 inv = (proj * view).inverted();
+
+        // normalized device coords (-1..1)
+        float x =  2.0f * pos.x() / width()  - 1.0f;
+        float y = -2.0f * pos.y() / height() + 1.0f;
+
+        QVector4D nearPoint = inv * QVector4D(x, y, -1.0, 1.0);
+        QVector4D farPoint  = inv * QVector4D(x, y,  1.0, 1.0);
+        nearPoint /= nearPoint.w();
+        farPoint  /= farPoint.w();
+
+        QVector3D rayOrigin = nearPoint.toVector3D();
+        QVector3D rayDir    = (farPoint - nearPoint).toVector3D().normalized();
+
+        // pick intersection with plane through camera center, facing camera
+        QVector3D planeNormal = m_camera.direction();
+        QVector3D planePoint  = m_camera.center;
+        float denom = QVector3D::dotProduct(planeNormal, rayDir);
+        QVector3D hitPoint = m_camera.center;
+        if (std::fabs(denom) > 1e-6f) {
+            float t = QVector3D::dotProduct(planePoint - rayOrigin, planeNormal) / denom;
+            if (t > 0) hitPoint = rayOrigin + t * rayDir;
+        }
+
+        // Zoom: adjust camera.distance, and move center toward hitPoint
+        float oldDist = m_camera.distance;
         m_camera.zoomBy(ev->angleDelta().y());
+        float factor = m_camera.distance / oldDist;
+
+        // keep cursor hit point stable by shifting center
+        m_camera.center = hitPoint + (m_camera.center - hitPoint) * factor;
+
         update();
     }
 
