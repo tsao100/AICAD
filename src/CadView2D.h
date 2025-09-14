@@ -21,6 +21,11 @@ protected:
     void mouseMoveEvent(QMouseEvent *ev) override;
     void mouseReleaseEvent(QMouseEvent *ev) override;
     void wheelEvent(QWheelEvent *ev) override;
+    void keyPressEvent(QKeyEvent *ev) override;
+
+public slots:
+    void printView();
+    void exportPdf(const QString &file);
 
 private:
     QPointF toScreen(const QPointF &world) const;
@@ -35,17 +40,23 @@ private:
     QPoint m_panStart;
     bool m_rubberActive=false;
     QPoint m_rubberStart, m_rubberEnd;
-    QPointF m_mouseWorld;
 
     std::vector<std::unique_ptr<Entity>> m_entities;
 
-    // working state for drawing modes
     Mode m_mode=Normal;
-    bool m_lineActive=false;
-    QPointF m_lineStart;
 
-    int m_arcStage=0;
-    QPointF m_arcCenter, m_arcStart;
+    // working state for drawing modes
+    // for line drawing
+    bool m_lineActive=false;
+    bool m_polylineMode = false;   // continue line sequence
+    QPointF m_lineStart;
+    QPointF m_mouseWorld;
+
+    // for arc drawing
+    QPointF m_arcStart;      // first click
+    QPointF m_arcMid;        // second click (mid-point)
+    QPointF m_arcEnd;        // third click (end-point)
+    int m_arcStage = 0;      // 0 = not started, 1 = first click, 2 = second click
 
     // draw line state
     QVector<LineEntity> m_lines;

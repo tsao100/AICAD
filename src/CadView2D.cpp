@@ -6,6 +6,9 @@
 #include <QTextStream>
 #include <QDebug>
 #include <cmath>
+#include <QPrinter>
+#include <QPrintDialog>
+#include <QPdfWriter>
 
 // --- ctor ---
 CadView2D::CadView2D(QWidget *parent) : QWidget(parent), m_scale(1.0) {
@@ -26,6 +29,7 @@ void CadView2D::setMode(Mode m) {
     m_mode = m;
     m_lineActive = false;
     m_arcStage = 0;
+    update();
 }
 
 // --- paint ---
@@ -49,25 +53,43 @@ void CadView2D::paintEvent(QPaintEvent *ev) {
     for (const auto &ent : m_entities)
         ent->paint(p);
 
+    // --- rubber band line ---
+    if (m_mode == DrawLine && m_lineActive) {
+        p.setPen(QPen(Qt::red, 0, Qt::DashLine));
+        p.drawLine(m_lineStart, m_mouseWorld);
+    }
+
     // preview line
     if (m_mode==DrawLine && m_lineActive) {
         p.setPen(QPen(Qt::red, 0, Qt::DashLine));
         p.drawLine(m_lineStart, m_mouseWorld);
     }
 
-    // preview arc
-    if (m_mode==DrawArc && m_arcStage>0) {
-        p.setPen(QPen(Qt::red, 0, Qt::DashLine));
-        if (m_arcStage==1) {
-            p.drawLine(m_arcCenter, m_mouseWorld);
-        } else if (m_arcStage==2) {
-            QPainterPath path;
-            path.moveTo(m_arcStart);
-            double r = QLineF(m_arcCenter, m_arcStart).length();
-            path.arcTo(QRectF(m_arcCenter.x()-r, m_arcCenter.y()-r, 2*r, 2*r),
-                       QLineF(m_arcCenter,m_arcStart).angle(),
-                       QLineF(m_arcCenter,m_arcStart).angleTo(QLineF(m_arcCenter,m_mouseWorld)));
-            p.drawPath(path);
+    // --- Arc preview ---
+    if (m_mode == DrawArc && m_arcStage > 0) {
+        p.setPen(QPen(Qt::blue, 0, Qt::DashLine));
+
+        if (m_arcStage == 1) {
+            // First click done, draw rubber line from start → mouse
+            p.drawLine(m_arcStart, m_mouseWorld);
+        } else if (m_arcStage == 2) {
+            // Start + mid chosen, preview arc through 3 points
+            ArcDef def;
+            if (circleFrom3Points(m_arcStart, m_arcMid, m_mouseWorld, def)) {
+                QRectF rect(def.center.x() - def.radius,
+                            def.center.y() - def.radius,
+                            2 * def.radius,
+                            2 * def.radius);
+
+                // QPainter angles: degrees*16, y-axis down → need negative sign
+                int start16 = int(-def.startAngle * 180.0 / M_PI * 16);
+                int sweep16 = int(-def.sweepAngle * 180.0 / M_PI * 16);
+
+                p.drawArc(rect, start16, sweep16);
+            } else {
+                // fallback if points are nearly collinear
+                p.drawLine(m_arcStart, m_mouseWorld);
+            }
         }
     }
 
@@ -175,6 +197,59 @@ void CadView2D::mousePressEvent(QMouseEvent *ev)  {
         m_rubberStart = ev->pos();
         m_rubberEnd = ev->pos();
     }
+    if (m_mode == DrawLine && ev->button() == Qt::LeftButton) {
+        QPointF clickPoint = toWorld(ev->pos());
+
+        if (!m_lineActive) {
+            // first segment
+            m_lineStart = clickPoint;
+            m_lineActive = true;
+            m_polylineMode = true;
+        } else {
+            // add new segment
+            auto line = std::make_unique<LineEntity>(m_lineStart, clickPoint);
+            m_entities.push_back(std::move(line));
+
+            // continue polyline
+            m_lineStart = clickPoint;
+            m_lineActive = true;
+            m_polylineMode = true;
+        }
+        update();
+        return;
+    }
+
+    if (m_mode == DrawLine && ev->button() == Qt::RightButton) {
+        // finish polyline on RMB
+        m_lineActive = false;
+        m_polylineMode = false;
+        m_mode = Normal; // or stay in DrawLine if you prefer
+        update();
+        return;
+    }
+
+    if (m_mode == DrawArc && ev->button() == Qt::LeftButton) {
+        QPointF clickPoint = toWorld(ev->pos());
+
+        if (m_arcStage == 0) {
+            m_arcStart = clickPoint;
+            m_arcStage = 1;
+        } else if (m_arcStage == 1) {
+            m_arcMid = clickPoint;
+            m_arcStage = 2;
+        } else if (m_arcStage == 2) {
+            m_arcEnd = clickPoint;
+            auto arc = std::make_unique<ArcEntity>(m_arcStart, m_arcMid, m_arcEnd);
+            m_entities.push_back(std::move(arc));
+
+            // reset arc state
+            m_arcStage = 0;
+            m_mode = Normal;  // finish arc command
+        }
+
+        update();
+        return;
+    }
 }
 void CadView2D::mouseMoveEvent(QMouseEvent *ev)  {
     QPoint pos = ev->pos();
@@ -190,6 +265,12 @@ void CadView2D::mouseMoveEvent(QMouseEvent *ev)  {
     } else {
         update();
     }
+
+    if (m_mode == DrawArc && m_arcStage > 0) {
+        m_mouseWorld = toWorld(ev->pos());
+        update(); // redraw preview
+    }
+
 }
 void CadView2D::mouseReleaseEvent(QMouseEvent *ev)  {
     if (ev->button() == Qt::MiddleButton) {
@@ -200,7 +281,7 @@ void CadView2D::mouseReleaseEvent(QMouseEvent *ev)  {
         QRect r(m_rubberStart, m_rubberEnd);
         // convert rect to world and ideally select objects
         QRectF worldRect = QRectF(toWorld(r.topLeft()), toWorld(r.bottomRight())).normalized();
-        qDebug() << "Rubber selection in world:"<< worldRect;
+        qDebug() << "Rubber selection in world:" << worldRect;
         update();
     }
 }
@@ -221,8 +302,61 @@ void CadView2D::wheelEvent(QWheelEvent *ev)  {
     update();
 }
 
+void CadView2D::keyPressEvent(QKeyEvent *ev) {
+    if (m_mode == DrawLine) {
+        if (ev->key() == Qt::Key_Escape) {
+            // cancel current sequence
+            m_lineActive = false;
+            m_polylineMode = false;
+            update();
+            return;
+        }
+        if (ev->key() == Qt::Key_Return || ev->key() == Qt::Key_Enter) {
+            // finish polyline on Enter
+            m_lineActive = false;
+            m_polylineMode = false;
+            m_mode = Normal;
+            update();
+            return;
+        }
+    }
 
+    if (m_mode == DrawArc && ev->key() == Qt::Key_Escape) {
+        // cancel in-progress arc
+        m_arcStage = 0;
+        update();
+        return;
+    }
 
+    // fallback: let base class handle unprocessed keys
+    QWidget::keyPressEvent(ev); // fallback
+}
 
+void CadView2D::printView() {
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setPageOrientation(QPageLayout::Landscape);
+    QPrintDialog dlg(&printer, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        QPainter painter(&printer);
+        render(&painter); // render widget to printer
+    }
+}
 
+void CadView2D::exportPdf(const QString &file) {
+    QPdfWriter pdf(file);
+    pdf.setPageOrientation(QPageLayout::Landscape);
+    pdf.setPageSize(QPageSize(QPageSize::A4));
 
+    QPainter painter(&pdf);
+    QRect pageRect = pdf.pageLayout().paintRectPixels(pdf.resolution());
+    QRectF srcRect = rect();
+
+    qreal sx = (qreal)pageRect.width()  / srcRect.width();
+    qreal sy = (qreal)pageRect.height() / srcRect.height();
+    qreal s = qMin(sx, sy);
+
+    painter.translate(pageRect.center());
+    painter.scale(s, s);
+    painter.translate(-srcRect.center());
+    render(&painter); // render widget to PDF
+}

@@ -21,6 +21,7 @@ private:
     QAction *m_act2D, *m_act3D;
     QAction *m_actDrawLine, *m_actDrawArc;
     QAction *m_actSave, *m_actLoad;
+    QAction *m_actPrint, *m_actExportPdf;
 
     QStackedWidget *m_stack;
     CadView2D *m_view2d;
