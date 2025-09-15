@@ -83,5 +83,5 @@ private:
     bool m_orbit=false, m_pan=false;
     QPointF m_lastPos;
     bool m_ortho=false;
-    ViewMode m_viewMode;
+    ViewMode m_viewMode = Mode3D;
 };

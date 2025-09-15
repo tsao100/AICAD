@@ -1,5 +1,4 @@
 #include "CadView.h"
-#include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFile>
@@ -14,9 +13,35 @@ CadView::CadView(QWidget *parent) : QOpenGLWidget(parent), m_scale(1.0) {
     setMouseTracking(true);
 }
 
-void CadView::setViewMode(ViewMode mode)
-{
-    m_viewMode = mode;
+void CadView::setViewMode(ViewMode m) {
+    m_viewMode = m;
+
+    if (m_viewMode == Mode2D) {
+        // 相機正視 XY 平面
+        QMatrix4x4 view;
+        view.lookAt(
+            QVector3D(0, 0, 10),   // 相機位置：Z 軸正向
+            QVector3D(0, 0, 0),    // 注視點：原點
+            QVector3D(0, 1, 0)     // Up：Y 軸
+            );
+
+        m_proj.setToIdentity();
+        // 投影大小依視窗大小決定，確保單位比例正確
+        float w = width() / 100.0f;   // 可調整 scale
+        float h = height() / 100.0f;
+        m_proj.ortho(-w, w, -h, h, 0.1f, 100.0f);
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadMatrixf(m_proj.constData());
+        glMatrixMode(GL_MODELVIEW);
+        glLoadMatrixf(view.constData());
+    }
+    else if (m_viewMode == Mode3D) {
+        // 使用 TrackballCamera 控制
+        m_proj.setToIdentity();
+        m_proj.perspective(45.0f, float(width())/height(), 0.1f, 100.0f);
+    }
+
     update();
 }
 
@@ -95,15 +120,41 @@ void CadView::updateTransform() {
 }
 
 void CadView::paint2D() {
+    // --- Projection, Y 軸向上 ---
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0, width(), height(), 0, -1, 1);
+    glOrtho(0, width(), 0, height(), -1, 1);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
     glPushMatrix();
-    // Apply transform: translation + scale
-    glMultMatrixd(reinterpret_cast<const GLdouble*>(&m_transform));
+    // --- Apply QTransform as 4x4 ---
+    QTransform t = m_transform;
+    GLdouble mat[16] = {
+        t.m11(), t.m12(), 0, 0,
+        t.m21(), t.m22(), 0, 0,
+        0,       0,       1, 0,
+        t.m31(), t.m32(), 0, 1
+    };
+    glMultMatrixd(mat);
+
+    // ---- Rectangle (填充) ----
+    glColor4f(0.0f, 0.0f, 1.0f, 0.16f); // 藍色，透明度約 40/255 ≈ 0.16
+    glBegin(GL_QUADS);
+    glVertex2f(50.0f, 50.0f);
+    glVertex2f(250.0f, 50.0f);
+    glVertex2f(250.0f, 170.0f);
+    glVertex2f(50.0f, 170.0f);
+    glEnd();
+
+    // ---- Rectangle (邊框) ----
+    glColor3f(0.0f, 0.0f, 1.0f); // 藍色線
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(50.0f, 50.0f);
+    glVertex2f(250.0f, 50.0f);
+    glVertex2f(250.0f, 170.0f);
+    glVertex2f(50.0f, 170.0f);
+    glEnd();
 
     glColor3f(0.0f, 0.8f, 0.0f); // draw entities in green
     glBegin(GL_LINES);
