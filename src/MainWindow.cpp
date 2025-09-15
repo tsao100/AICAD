@@ -28,61 +28,48 @@ void MainWindow::createActions() {
     // drawing
     m_actDrawLine = new QAction(tr("Draw Line"), this);
     connect(m_actDrawLine, &QAction::triggered, [this]() {
-        m_stack->setCurrentWidget(m_view2d);         // ensure 2D active
-        m_act2D->setChecked(true); m_act3D->setChecked(false);
-        m_view2d->setMode(CadView2D::DrawLine);
+        toggle2D();  // ensure 2D mode
+        m_view->setMode(CadView::DrawLine);
     });
+
     m_actDrawArc  = new QAction(tr("Draw Arc"), this);
     connect(m_actDrawArc, &QAction::triggered, [this]() {
-        m_stack->setCurrentWidget(m_view2d);
-        m_act2D->setChecked(true); m_act3D->setChecked(false);
-        m_view2d->setMode(CadView2D::DrawArc);
+        toggle2D();  // ensure 2D mode
+        m_view->setMode(CadView::DrawArc);
     });
 
+    // printing/export
     m_actPrint = new QAction(tr("Print"), this);
+    connect(m_actPrint, &QAction::triggered, [this]() {
+        m_view->printView();
+    });
+
     m_actExportPdf = new QAction(tr("Export PDF"), this);
-
-    connect(m_actPrint, &QAction::triggered, this, [this]() {
-        m_view2d->printView();
-    });
-    connect(m_actExportPdf, &QAction::triggered, this, [this]() {
-        QString file = QFileDialog::getSaveFileName(this, tr("Export PDF"), QString(), tr("PDF Files (*.pdf)"));
+    connect(m_actExportPdf, &QAction::triggered, [this]() {
+        QString file = QFileDialog::getSaveFileName(
+            this, tr("Export PDF"), QString(), tr("PDF Files (*.pdf)"));
         if (!file.isEmpty())
-            m_view2d->exportPdf(file);
+            m_view->exportPdf(file);
     });
-
 
     // file ops
     m_actSave = new QAction(tr("Save"), this);
-    m_actLoad = new QAction(tr("Load"), this);
-
-    // TODO: connect m_actDrawLine, m_actDrawArc, m_actSave, m_actLoad
-    // to CadView2D slots or appropriate handlers if implemented
-    // --- Save ---
     connect(m_actSave, &QAction::triggered, [this]() {
         QString fileName = QFileDialog::getSaveFileName(
-            this,
-            tr("Save CAD File"),
-            QString(),
-            tr("CAD Files (*.txt *.json);;All Files (*)")
-            );
+            this, tr("Save CAD File"), QString(),
+            tr("CAD Files (*.txt *.json);;All Files (*)"));
         if (!fileName.isEmpty()) {
-            m_view2d->saveEntities(fileName);
-            //QMessageBox::information(this, tr("Save"), tr("File saved successfully."));
+            m_view->saveEntities(fileName);
         }
     });
 
-    // --- Load ---
+    m_actLoad = new QAction(tr("Load"), this);
     connect(m_actLoad, &QAction::triggered, [this]() {
         QString fileName = QFileDialog::getOpenFileName(
-            this,
-            tr("Open CAD File"),
-            QString(),
-            tr("CAD Files (*.txt *.json);;All Files (*)")
-            );
+            this, tr("Open CAD File"), QString(),
+            tr("CAD Files (*.txt *.json);;All Files (*)"));
         if (!fileName.isEmpty()) {
-            m_view2d->loadEntities(fileName);
-            //QMessageBox::information(this, tr("Load"), tr("File loaded successfully."));
+            m_view->loadEntities(fileName);
         }
     });
 }
@@ -106,25 +93,19 @@ void MainWindow::createToolbar() {
 }
 
 void MainWindow::createCentral() {
-    m_stack = new QStackedWidget(this);
-    m_view2d = new CadView2D(this);
-    m_view3d = new CadView3D(this);
-    m_stack->addWidget(m_view2d);
-    m_stack->addWidget(m_view3d);
-    setCentralWidget(m_stack);
-
-    m_stack->setCurrentWidget(m_view2d);
+    m_view = new CadView(this);
+    setCentralWidget(m_view);
 }
 
 // --- slots ---
 void MainWindow::toggle2D() {
-    m_stack->setCurrentWidget(m_view2d);
+    m_view->setViewMode(CadView::Mode2D);
     m_act2D->setChecked(true);
     m_act3D->setChecked(false);
 }
 
 void MainWindow::toggle3D() {
-    m_stack->setCurrentWidget(m_view3d);
+    m_view->setViewMode(CadView::Mode3D);
     m_act2D->setChecked(false);
     m_act3D->setChecked(true);
 }

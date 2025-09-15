@@ -141,7 +141,7 @@ public:
     }
 
 
-private:
+public:
     QPointF m_center;
     double m_radius;
     double m_startAngle; // radians
