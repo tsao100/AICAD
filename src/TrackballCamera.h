@@ -21,10 +21,15 @@ public:
 
     QVector3D center() const { return center_; }
     void setCenter(const QVector3D &c) { center_ = c; }
+    void setViewMatrix(const QMatrix4x4 &view) {
+        m_view = view;
+    }
+
 
 private:
     float distance_;
     float pitch, yaw;
     QVector3D center_;
     QVector3D up;
+    QMatrix4x4 m_view;
 };

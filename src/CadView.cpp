@@ -17,20 +17,24 @@ void CadView::setViewMode(ViewMode m) {
     m_viewMode = m;
 
     if (m_viewMode == Mode2D) {
-        // 相機正視 XY 平面
+        // 設定相機正視 XY 平面
         QMatrix4x4 view;
         view.lookAt(
-            QVector3D(0, 0, 10),   // 相機位置：Z 軸正向
-            QVector3D(0, 0, 0),    // 注視點：原點
-            QVector3D(0, 1, 0)     // Up：Y 軸
+            QVector3D(0.0f, 0.0f, 10.0f),  // 相機位置：Z 軸正向
+            QVector3D(0.0f, 0.0f, 0.0f),   // 注視點：原點
+            QVector3D(0.0f, 1.0f, 0.0f)    // Up 向量：Y 軸
             );
+        m_camera.setViewMatrix(view);      // 如果 m_camera 支援 setViewMatrix
 
+        // 投影
         m_proj.setToIdentity();
-        // 投影大小依視窗大小決定，確保單位比例正確
-        float w = width() / 100.0f;   // 可調整 scale
-        float h = height() / 100.0f;
-        m_proj.ortho(-w, w, -h, h, 0.1f, 100.0f);
+        float scale = 0.1f; // 調整單位比例，或依需求計算
+        float aspect = float(width()) / qMax(height(), 1);
+        m_proj.ortho(-width()*scale*0.5f, width()*scale*0.5f,
+                     -height()*scale*0.5f, height()*scale*0.5f,
+                     0.1f, 100.0f);
 
+        // 載入 OpenGL 矩陣
         glMatrixMode(GL_PROJECTION);
         glLoadMatrixf(m_proj.constData());
         glMatrixMode(GL_MODELVIEW);
@@ -120,90 +124,95 @@ void CadView::updateTransform() {
 }
 
 void CadView::paint2D() {
-    // --- Projection, Y 軸向上 ---
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0, width(), 0, height(), -1, 1);
+    /* 使用 m_camera 和正交投影
+    QMatrix4x4 view = m_camera.viewMatrix();
+    QMatrix4x4 proj;
+    float aspect = float(width()) / qMax(height(), 1);
+    float s = 10.0f; // 世界單位範圍，可根據需求調整
+    proj.ortho(-s*aspect, s*aspect, -s, s, -1.0f, 1.0f);
+
+    QMatrix4x4 mvp = proj * view;
     glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
+    glLoadMatrixf(mvp.constData());*/
 
-    glPushMatrix();
-    // --- Apply QTransform as 4x4 ---
-    QTransform t = m_transform;
-    GLdouble mat[16] = {
-        t.m11(), t.m12(), 0, 0,
-        t.m21(), t.m22(), 0, 0,
-        0,       0,       1, 0,
-        t.m31(), t.m32(), 0, 1
-    };
-    glMultMatrixd(mat);
+    // ---- Grid ----
+    drawGrid();
 
-    // ---- Rectangle (填充) ----
-    glColor4f(0.0f, 0.0f, 1.0f, 0.16f); // 藍色，透明度約 40/255 ≈ 0.16
+    // ---- Rectangle ----
+    glColor4f(0.0f, 0.0f, 1.0f, 0.16f); // 藍色填充
     glBegin(GL_QUADS);
-    glVertex2f(50.0f, 50.0f);
-    glVertex2f(250.0f, 50.0f);
-    glVertex2f(250.0f, 170.0f);
-    glVertex2f(50.0f, 170.0f);
+    glVertex3f(50.0f, 50.0f, 0.0f);
+    glVertex3f(250.0f, 50.0f, 0.0f);
+    glVertex3f(250.0f, 170.0f, 0.0f);
+    glVertex3f(50.0f, 170.0f, 0.0f);
     glEnd();
 
-    // ---- Rectangle (邊框) ----
-    glColor3f(0.0f, 0.0f, 1.0f); // 藍色線
+    glColor3f(0.0f, 0.0f, 1.0f); // 邊框
     glBegin(GL_LINE_LOOP);
-    glVertex2f(50.0f, 50.0f);
-    glVertex2f(250.0f, 50.0f);
-    glVertex2f(250.0f, 170.0f);
-    glVertex2f(50.0f, 170.0f);
+    glVertex3f(50.0f, 50.0f, 0.0f);
+    glVertex3f(250.0f, 50.0f, 0.0f);
+    glVertex3f(250.0f, 170.0f, 0.0f);
+    glVertex3f(50.0f, 170.0f, 0.0f);
     glEnd();
 
-    glColor3f(0.0f, 0.8f, 0.0f); // draw entities in green
+    // ---- Entities ----
+    glColor3f(0.0f, 0.8f, 0.0f);
     glBegin(GL_LINES);
     for (auto &ent : m_entities) {
         if (auto line = dynamic_cast<LineEntity*>(ent.get())) {
-            glVertex2d(line->p1.x(), line->p1.y());
-            glVertex2d(line->p2.x(), line->p2.y());
+            glVertex3d(line->p1.x(), line->p1.y(), 0.0);
+            glVertex3d(line->p2.x(), line->p2.y(), 0.0);
         } else if (auto arc = dynamic_cast<ArcEntity*>(ent.get())) {
-            // approximate arc with segments
             int segments = 32;
             double start = arc->m_startAngle, sweep = arc->m_sweepAngle;
-            for (int i=0;i<segments;i++) {
-                double t0 = start + sweep*i/segments;
-                double t1 = start + sweep*(i+1)/segments;
-                glVertex2d(arc->m_center.x() + arc->m_radius*cos(t0),
-                           arc->m_center.y() + arc->m_radius*sin(t0));
-                glVertex2d(arc->m_center.x() + arc->m_radius*cos(t1),
-                           arc->m_center.y() + arc->m_radius*sin(t1));
+            for (int i = 0; i < segments; ++i) {
+                double t0 = start + sweep * i / segments;
+                double t1 = start + sweep * (i + 1) / segments;
+                glVertex3d(arc->m_center.x() + arc->m_radius*cos(t0),
+                           arc->m_center.y() + arc->m_radius*sin(t0),
+                           0.0);
+                glVertex3d(arc->m_center.x() + arc->m_radius*cos(t1),
+                           arc->m_center.y() + arc->m_radius*sin(t1),
+                           0.0);
             }
         }
     }
     glEnd();
-    glPopMatrix();
 }
 
 void CadView::drawGrid() {
-    double spacing = 10.0 / m_scale; // grid spacing (world units)
+    double spacing = 10.0 / m_scale; // grid spacing in world units
 
-    // convert screen rect corners into world coords
-    QPointF topLeft     = toWorld(QPointF(0, 0));
-    QPointF bottomRight = toWorld(QPointF(width(), height()));
+    // convert screen corners into world coordinates
+    QPointF p1 = toWorld(QPointF(0, 0));
+    QPointF p2 = toWorld(QPointF(width(), height()));
 
-    QRectF worldRect(topLeft, bottomRight);
+    double left   = std::min(p1.x(), p2.x());
+    double right  = std::max(p1.x(), p2.x());
+    double bottom = std::min(p1.y(), p2.y());
+    double top    = std::max(p1.y(), p2.y());
 
-    double startX = std::floor(worldRect.left() / spacing) * spacing;
-    double endX   = std::ceil(worldRect.right() / spacing) * spacing;
-    double startY = std::floor(worldRect.top() / spacing) * spacing;
-    double endY   = std::ceil(worldRect.bottom() / spacing) * spacing;
+    // convert to integer index range
+    int startXi = static_cast<int>(std::floor(left   / spacing));
+    int endXi   = static_cast<int>(std::ceil (right  / spacing));
+    int startYi = static_cast<int>(std::floor(bottom / spacing));
+    int endYi   = static_cast<int>(std::ceil (top    / spacing));
 
     glColor3f(0.9f, 0.9f, 0.9f);
     glBegin(GL_LINES);
 
-    for (double x = startX; x <= endX; x += spacing) {
-        glVertex2d(x, worldRect.top());
-        glVertex2d(x, worldRect.bottom());
+    // vertical lines
+    for (int i = startXi; i <= endXi; ++i) {
+        double x = i * spacing;
+        glVertex3d(x, bottom, 0.0);
+        glVertex3d(x, top,    0.0);
     }
-    for (double y = startY; y <= endY; y += spacing) {
-        glVertex2d(worldRect.left(), y);
-        glVertex2d(worldRect.right(), y);
+
+    // horizontal lines
+    for (int j = startYi; j <= endYi; ++j) {
+        double y = j * spacing;
+        glVertex3d(left,  y, 0.0);
+        glVertex3d(right, y, 0.0);
     }
 
     glEnd();

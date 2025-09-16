@@ -1,6 +1,5 @@
 #pragma once
 #include <QMainWindow>
-#include <QStackedWidget>
 #include "CadView.h"
 
 class MainWindow : public QMainWindow {
@@ -22,6 +21,5 @@ private:
     QAction *m_actSave, *m_actLoad;
     QAction *m_actPrint, *m_actExportPdf;
 
-    QStackedWidget *m_stack;
     CadView *m_view;
 };
