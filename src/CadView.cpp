@@ -222,7 +222,7 @@ void CadView::drawGrid() {
 void CadView::paint3D() {
     QMatrix4x4 view=m_camera.viewMatrix();
     drawAxis(view);
-    drawCube(view);
+//    drawCube(view);
 }
 
 void CadView::drawAxis(const QMatrix4x4 &view) {
@@ -383,3 +383,19 @@ void CadView::exportPdf(const QString &file) {
     painter.translate(-srcRect.center());
     render(&painter); // render widget to PDF
 }
+
+void CadView::setViewXY() {
+    m_camera.setViewXY();
+    update();
+}
+
+void CadView::setViewXZ() {
+    m_camera.setViewXZ();
+    update();
+}
+
+void CadView::setViewYZ() {
+    m_camera.setViewYZ();
+    update();
+}
+

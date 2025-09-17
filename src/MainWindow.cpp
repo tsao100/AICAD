@@ -72,6 +72,33 @@ void MainWindow::createActions() {
             m_view->loadEntities(fileName);
         }
     });
+
+    // --- View plane actions ---
+    m_actTop   = new QAction(tr("Top (XY)"), this);
+    m_actFront = new QAction(tr("Front (XZ)"), this);
+    m_actRight = new QAction(tr("Right (YZ)"), this);
+
+    connect(m_actTop, &QAction::triggered, [this]() {
+        m_view->setViewXY();
+        m_view->update();
+        m_act2D->setChecked(false);
+        m_act3D->setChecked(true);
+    });
+
+    connect(m_actFront, &QAction::triggered, [this]() {
+        m_view->setViewXZ();
+        m_view->update();
+        m_act2D->setChecked(false);
+        m_act3D->setChecked(true);
+    });
+
+    connect(m_actRight, &QAction::triggered, [this]() {
+        m_view->setViewYZ();
+        m_view->update();
+        m_act2D->setChecked(false);
+        m_act3D->setChecked(true);
+    });
+
 }
 
 void MainWindow::createToolbar() {
@@ -87,6 +114,10 @@ void MainWindow::createToolbar() {
     tb->addSeparator();
     tb->addAction(m_actPrint);
     tb->addAction(m_actExportPdf);
+    tb->addSeparator();
+    tb->addAction(m_actTop);
+    tb->addAction(m_actFront);
+    tb->addAction(m_actRight);
 
     // default: 2D checked
     m_act2D->setChecked(true);

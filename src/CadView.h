@@ -29,6 +29,11 @@ public:
     enum ViewMode { Mode2D, Mode3D };
     void setViewMode(ViewMode m);
 
+    // 直接切換正視平面的方法
+    void setViewXY();
+    void setViewXZ();
+    void setViewYZ();
+
 protected:
     // Qt overrides
     void initializeGL() override;

@@ -20,6 +20,7 @@ private:
     QAction *m_actDrawLine, *m_actDrawArc;
     QAction *m_actSave, *m_actLoad;
     QAction *m_actPrint, *m_actExportPdf;
+    QAction *m_actTop, *m_actFront, *m_actRight;
 
     CadView *m_view;
 };
