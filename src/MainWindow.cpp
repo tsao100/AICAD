@@ -81,22 +81,22 @@ void MainWindow::createActions() {
     connect(m_actTop, &QAction::triggered, [this]() {
         m_view->setViewXY();
         m_view->update();
-        m_act2D->setChecked(false);
-        m_act3D->setChecked(true);
+        m_act2D->setChecked(true);
+        m_act3D->setChecked(false);
     });
 
     connect(m_actFront, &QAction::triggered, [this]() {
         m_view->setViewXZ();
         m_view->update();
-        m_act2D->setChecked(false);
-        m_act3D->setChecked(true);
+        m_act2D->setChecked(true);
+        m_act3D->setChecked(false);
     });
 
     connect(m_actRight, &QAction::triggered, [this]() {
         m_view->setViewYZ();
         m_view->update();
-        m_act2D->setChecked(false);
-        m_act3D->setChecked(true);
+        m_act2D->setChecked(true);
+        m_act3D->setChecked(false);
     });
 
 }
