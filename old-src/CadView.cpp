@@ -124,16 +124,18 @@ void CadView::updateTransform() {
 }
 
 void CadView::paint2D() {
-    /* 使用 m_camera 和正交投影
-    QMatrix4x4 view = m_camera.viewMatrix();
-    QMatrix4x4 proj;
-    float aspect = float(width()) / qMax(height(), 1);
-    float s = 10.0f; // 世界單位範圍，可根據需求調整
-    proj.ortho(-s*aspect, s*aspect, -s, s, -1.0f, 1.0f);
+    // 使用 m_camera 和正交投影
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    QMatrix4x4 mvp = proj * view;
+    // Apply camera matrices
+    QMatrix4x4 projection = m_camera.getProjectionMatrix();
+    QMatrix4x4 view = m_camera.viewMatrix();
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadMatrixf(projection.constData());
+
     glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixf(mvp.constData());*/
+    glLoadMatrixf(view.constData());
 
     // ---- Grid ----
     drawGrid();

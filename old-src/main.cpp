@@ -1,12 +1,9 @@
 #include <QApplication>
-#include "AICAD.h"
+#include "MainWindow.h"
 
-int main(int argc, char *argv[]) {
+int main(int argc, char **argv) {
     QApplication app(argc, argv);
-
-    AICAD w;
-    w.resize(800, 600);
+    MainWindow w;
     w.show();
-
     return app.exec();
 }

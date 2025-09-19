@@ -10,8 +10,12 @@ public:
     void rotateBy(float dx, float dy);
     void panBy(float dx, float dy);
     void zoomBy(float dz);
+    void setOrthographic(float left, float right, float bottom, float top, float nearPlane, float farPlane);
+    void lookAt(const QVector3D& pos, const QVector3D& tgt, const QVector3D& upVec);
+    void orbit(float deltaX, float deltaY);
 
     QMatrix4x4 viewMatrix() const;
+    QMatrix4x4 getProjectionMatrix() const;
     QVector3D eye() const;
     QVector3D direction() const;
 
@@ -32,9 +36,11 @@ public:
 
 
 private:
+    QMatrix4x4 projection;
     float distance_;
     float pitch, yaw;
     QVector3D center_;
+    QVector3D position;
     QVector3D up;
     QMatrix4x4 m_view;
     bool is2D = false;
