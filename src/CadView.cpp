@@ -1,4 +1,4 @@
-#include "AICAD.h"
+#include "CadView.h"
 #include <QKeyEvent>
 #include <QtMath>
 #include <QDebug>
@@ -46,19 +46,29 @@ void Camera::lookAt(const QVector3D& pos, const QVector3D& tgt, const QVector3D&
 }
 
 void Camera::orbit(float deltaX, float deltaY) {
-    yaw += deltaX;
-    pitch += deltaY;
-    pitch = qBound(-89.0f, pitch, 89.0f);
+    // Compute current direction from target to camera
+    QVector3D dir = position - target;
+    float distance = dir.length();
+    dir.normalize();
 
-    float radPitch = qDegreesToRadians(pitch);
-    float radYaw = qDegreesToRadians(yaw);
+    // Compute current yaw and pitch from direction
+    float radPitch = qAsin(dir.y());
+    float radYaw = qAtan2(dir.x(), dir.z());
 
-    QVector3D dir;
-    dir.setX(distance * qCos(radPitch) * qSin(radYaw));
-    dir.setY(distance * qSin(radPitch));
-    dir.setZ(distance * qCos(radPitch) * qCos(radYaw));
+    // Apply deltas
+    radYaw += qDegreesToRadians(deltaX);
+    radPitch += qDegreesToRadians(deltaY);
 
-    position = target + dir;
+    // Clamp pitch to avoid gimbal lock
+    radPitch = qBound(qDegreesToRadians(-89.0f), radPitch, qDegreesToRadians(89.0f));
+
+    // Compute new direction
+    dir.setX(qCos(radPitch) * qSin(radYaw));
+    dir.setY(qSin(radPitch));
+    dir.setZ(qCos(radPitch) * qCos(radYaw));
+
+    // Update position
+    position = target + dir * distance;
 }
 
 void Camera::zoom(float amount) {
@@ -91,6 +101,7 @@ void Camera::pan(const QVector3D& delta) {
 AICAD::AICAD(QWidget* parent)
     : QOpenGLWidget(parent), drawingRect(false), currentView(SketchView::None)
 {
+    setWindowTitle("AICAD");
     setMouseTracking(true);
 }
 
@@ -218,51 +229,88 @@ void AICAD::paintGL() {
 
     drawAxes();
 
-    for (const auto& rect : extrudedRects){
-        drawExtrudedCube(rect,1.0f);
-        glColor3f(0.8f,0.2f,0.2f);
-        drawRectangle(rect);}
+    // --- Draw all sketches and features ---
+    document.drawAll();
 
-    if (drawingRect){
-        glColor3f(0.0f, 1.0f, 0.0f); // bright green
-        drawRectangle(currentRect);}
+    // --- Rectangle rubber band preview ---
+    if (drawingRect && !awaitingHeight) {
+        drawRectangle(currentRect, Qt::DashLine); // use dashed outline
+    }
+
+    // --- Extrude ghost preview ---
+    if (awaitingHeight && pendingSketch) {
+        drawExtrudedCube({currentRect.p1, currentRect.p2}, previewHeight, true);
+        // last param 'true' = ghost mode (transparent / wireframe)
+    }
 }
-
 void AICAD::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         QVector3D worldPos = screenToWorld(event->pos());
 
-        if (!drawingRect) {
-            // First corner picked
+        if (awaitingHeight) {
+            // --- Third point picked -> extrusion height ---
+            float height = (worldPos - baseP2).length();
+
+            auto extrude = std::make_shared<ExtrudeEntity>();
+            extrude->sketch = pendingSketch;
+            extrude->plane = SketchPlane::XY; // TODO: map from view
+            extrude->height = height;
+            extrude->direction = QVector3D(0,0,1); // TODO: plane normal
+            document.addFeature(extrude);
+
+            awaitingHeight = false;
+            pendingSketch.reset();
+        }
+        else if (!drawingRect) {
+            // --- First corner picked ---
             currentRect.p1 = worldPos;
             currentRect.p2 = worldPos;
             drawingRect = true;
-        } else {
-            // Second corner picked → finalize rectangle
-            currentRect.p2 = worldPos;
-            extrudedRects.push_back(currentRect);
-            drawingRect = false;
+            awaitingHeight = false; // reset
         }
+        else if (drawingRect && !awaitingHeight) {
+            // --- Second corner picked -> finalize 2D sketch ---
+            currentRect.p2 = worldPos;
+
+            // Create new sketch
+            auto sketch = document.createSketch(SketchPlane::XY); // TODO: use currentView→plane mapping
+            auto poly = std::make_shared<PolylineEntity>();
+            poly->points = {
+                currentRect.p1,
+                QVector3D(currentRect.p2.x(), currentRect.p1.y(), currentRect.p1.z()),
+                currentRect.p2,
+                QVector3D(currentRect.p1.x(), currentRect.p2.y(), currentRect.p2.z()),
+                currentRect.p1
+            };
+            sketch->addEntity(poly);
+
+            // Save sketch reference for extrusion
+            pendingSketch = sketch;
+            baseP2 = currentRect.p2;
+            awaitingHeight = true;  // now expect third point for extrusion height
+
+            drawingRect = false;    // rectangle done
+        }
+
         update();
     }
 
     if (event->button() == Qt::RightButton) {
-        lastMousePos = event->pos(); // prepare for orbit
+        lastMousePos = event->pos(); // orbit
     }
 
     if (event->button() == Qt::MiddleButton) {
-        lastMousePos = event->pos();   // prepare for pan
-        setCursor(Qt::ClosedHandCursor); // ✅ hand cursor while panning
+        lastMousePos = event->pos();   // pan
+        setCursor(Qt::ClosedHandCursor);
     }
-
 }
 
 void AICAD::mouseMoveEvent(QMouseEvent* event) {
     // --- Orbit with right mouse button ---
     if ((event->buttons() & Qt::RightButton) && currentView == SketchView::None) {
-        int dx = event->x() - lastMousePos.x();
-        int dy = event->y() - lastMousePos.y();
-        camera.orbit(dx * 0.5f, dy * 0.5f);
+        int dx = event->pos().x() - lastMousePos.x();
+        int dy = event->pos().y() - lastMousePos.y();
+        camera.orbit(-dy * 0.5f, -dx * 0.5f);
         lastMousePos = event->pos();
         update();
         return;
@@ -313,10 +361,17 @@ void AICAD::mouseMoveEvent(QMouseEvent* event) {
     }
 
     // --- Rubber band preview while drawing rectangle ---
-    if (drawingRect) {
+    if (drawingRect && !awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
-        currentRect.p2 = worldPos;   // update opposite corner
-        update(); // triggers paintGL -> draws rubber band rectangle
+        currentRect.p2 = worldPos;   // update opposite corner dynamically
+        update(); // triggers paintGL -> draws preview rectangle
+    }
+
+    // --- Rubber band preview while picking extrusion height ---
+    if (awaitingHeight) {
+        QVector3D worldPos = screenToWorld(event->pos());
+        previewHeight = (worldPos - baseP2).length();
+        update(); // paintGL will show ghost extrude
     }
 }
 
@@ -356,12 +411,12 @@ void AICAD::mouseReleaseEvent(QMouseEvent* event) {
 void AICAD::keyPressEvent(QKeyEvent* event) {
     switch(event->key())
     {
-    case Qt::Key_S: setSketchView(SketchView::Top); break;
-    case Qt::Key_X: setSketchView(SketchView::Bottom); break;
-    case Qt::Key_T: setSketchView(SketchView::Left); break;
-    case Qt::Key_Y: setSketchView(SketchView::Right); break;
-    case Qt::Key_Q: setSketchView(SketchView::Front); break;
-    case Qt::Key_H: setSketchView(SketchView::Back); break;
+    case Qt::Key_U: setSketchView(SketchView::Top); break;
+    case Qt::Key_D: setSketchView(SketchView::Bottom); break;
+    case Qt::Key_L: setSketchView(SketchView::Left); break;
+    case Qt::Key_R: setSketchView(SketchView::Right); break;
+    case Qt::Key_F: setSketchView(SketchView::Front); break;
+    case Qt::Key_B: setSketchView(SketchView::Back); break;
     case Qt::Key_I: setSketchView(SketchView::None); break;
     default: QWidget::keyPressEvent(event); break;
     }
@@ -407,35 +462,105 @@ void AICAD::drawAxes() {
     glEnd();
 }
 
-void AICAD::drawRectangle(const Rectangle2D& rect) {
-    glBegin(GL_LINE_LOOP);
-    glVertex3f(rect.p1.x(), rect.p1.y(), rect.p1.z());
-    glVertex3f(rect.p2.x(), rect.p1.y(), rect.p1.z());
-    glVertex3f(rect.p2.x(), rect.p2.y(), rect.p2.z());
-    glVertex3f(rect.p1.x(), rect.p2.y(), rect.p1.z());
-    glEnd();
-}
-
-void AICAD::drawExtrudedCube(const Rectangle2D& rect, float height) {
+void AICAD::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
     QVector3D p1 = rect.p1;
     QVector3D p2 = rect.p2;
-    QVector3D v[8] = {
-        {p1.x(),p1.y(),0}, {p2.x(),p1.y(),0}, {p2.x(),p2.y(),0}, {p1.x(),p2.y(),0},
-        {p1.x(),p1.y(),height}, {p2.x(),p1.y(),height}, {p2.x(),p2.y(),height}, {p1.x(),p2.y(),height}
-    };
-    glColor3f(0.2f,0.2f,0.8f);
-    glBegin(GL_QUADS);
-    glVertex3fv((float*)&v[0]); glVertex3fv((float*)&v[1]);
-    glVertex3fv((float*)&v[2]); glVertex3fv((float*)&v[3]);
-    glVertex3fv((float*)&v[4]); glVertex3fv((float*)&v[5]);
-    glVertex3fv((float*)&v[6]); glVertex3fv((float*)&v[7]);
-    glVertex3fv((float*)&v[0]); glVertex3fv((float*)&v[1]);
-    glVertex3fv((float*)&v[5]); glVertex3fv((float*)&v[4]);
-    glVertex3fv((float*)&v[1]); glVertex3fv((float*)&v[2]);
-    glVertex3fv((float*)&v[6]); glVertex3fv((float*)&v[5]);
-    glVertex3fv((float*)&v[2]); glVertex3fv((float*)&v[3]);
-    glVertex3fv((float*)&v[7]); glVertex3fv((float*)&v[6]);
-    glVertex3fv((float*)&v[3]); glVertex3fv((float*)&v[0]);
-    glVertex3fv((float*)&v[4]); glVertex3fv((float*)&v[7]);
+
+    // Four corners of the rectangle on the sketch plane (assume XY for now)
+    QVector3D v0(p1.x(), p1.y(), p1.z());
+    QVector3D v1(p2.x(), p1.y(), p1.z());
+    QVector3D v2(p2.x(), p2.y(), p1.z());
+    QVector3D v3(p1.x(), p2.y(), p1.z());
+
+    if (style == Qt::DashLine) {
+        // Rubber-band preview (dashed lines)
+        glEnable(GL_LINE_STIPPLE);
+        glLineStipple(1, 0xF0F0); // dash pattern
+        glColor3f(1.0f, 1.0f, 0.0f); // yellow preview
+    } else {
+        glDisable(GL_LINE_STIPPLE);
+        glColor3f(1.0f, 1.0f, 1.0f); // white solid rectangle
+    }
+
+    glBegin(GL_LINE_LOOP);
+    glVertex3f(v0.x(), v0.y(), v0.z());
+    glVertex3f(v1.x(), v1.y(), v1.z());
+    glVertex3f(v2.x(), v2.y(), v2.z());
+    glVertex3f(v3.x(), v3.y(), v3.z());
     glEnd();
+
+    if (style == Qt::DashLine) {
+        glDisable(GL_LINE_STIPPLE);
+    }
+}
+
+void AICAD::drawExtrudedCube(const Rectangle2D& rect, float height, bool ghost) {
+    QVector3D p1 = rect.p1;
+    QVector3D p2 = rect.p2;
+
+    // Base corners in XY plane
+    QVector3D v0(p1.x(), p1.y(), p1.z()); // bottom-left
+    QVector3D v1(p2.x(), p1.y(), p1.z()); // bottom-right
+    QVector3D v2(p2.x(), p2.y(), p1.z()); // top-right
+    QVector3D v3(p1.x(), p2.y(), p1.z()); // top-left
+
+    // Extruded (top) corners
+    QVector3D v4 = v0 + QVector3D(0, 0, height);
+    QVector3D v5 = v1 + QVector3D(0, 0, height);
+    QVector3D v6 = v2 + QVector3D(0, 0, height);
+    QVector3D v7 = v3 + QVector3D(0, 0, height);
+
+    if (ghost) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glColor4f(0.2f, 0.8f, 1.0f, 0.6f); // cyan ghost
+    } else {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glColor3f(0.2f, 0.8f, 1.0f);
+    }
+
+    glBegin(GL_QUADS);
+    // Bottom face
+    glVertex3f(v0.x(), v0.y(), v0.z());
+    glVertex3f(v1.x(), v1.y(), v1.z());
+    glVertex3f(v2.x(), v2.y(), v2.z());
+    glVertex3f(v3.x(), v3.y(), v3.z());
+
+    // Top face
+    glVertex3f(v4.x(), v4.y(), v4.z());
+    glVertex3f(v5.x(), v5.y(), v5.z());
+    glVertex3f(v6.x(), v6.y(), v6.z());
+    glVertex3f(v7.x(), v7.y(), v7.z());
+
+    // Side faces
+    // v0-v1-v5-v4
+    glVertex3f(v0.x(), v0.y(), v0.z());
+    glVertex3f(v1.x(), v1.y(), v1.z());
+    glVertex3f(v5.x(), v5.y(), v5.z());
+    glVertex3f(v4.x(), v4.y(), v4.z());
+
+    // v1-v2-v6-v5
+    glVertex3f(v1.x(), v1.y(), v1.z());
+    glVertex3f(v2.x(), v2.y(), v2.z());
+    glVertex3f(v6.x(), v6.y(), v6.z());
+    glVertex3f(v5.x(), v5.y(), v5.z());
+
+    // v2-v3-v7-v6
+    glVertex3f(v2.x(), v2.y(), v2.z());
+    glVertex3f(v3.x(), v3.y(), v3.z());
+    glVertex3f(v7.x(), v7.y(), v7.z());
+    glVertex3f(v6.x(), v6.y(), v6.z());
+
+    // v3-v0-v4-v7
+    glVertex3f(v3.x(), v3.y(), v3.z());
+    glVertex3f(v0.x(), v0.y(), v0.z());
+    glVertex3f(v4.x(), v4.y(), v4.z());
+    glVertex3f(v7.x(), v7.y(), v7.z());
+    glEnd();
+
+    if (ghost) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glDisable(GL_BLEND);
+    }
 }

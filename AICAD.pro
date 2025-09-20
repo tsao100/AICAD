@@ -23,15 +23,13 @@ win32 {
 
 
 SOURCES += \
-#    src/CadView.cpp \
-     src/AICAD.cpp \
+     src/CadView.cpp \
      src/main.cpp
 #    src/MainWindow.cpp \
 #    src/TrackballCamera.cpp
 
 HEADERS += \
-    src/AICAD.h
-#    src/CadView.h \
+    src/CadView.h
 #    src/MainWindow.h \
 #    src/Entities.h \
 #    src/TrackballCamera.h

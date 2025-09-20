@@ -1,5 +1,5 @@
 #include <QApplication>
-#include "AICAD.h"
+#include "CadView.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);

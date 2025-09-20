@@ -1,5 +1,5 @@
-#ifndef AICAD_H
-#define AICAD_H
+#ifndef CADVIEW_H
+#define CADVIEW_H
 
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
@@ -12,6 +12,354 @@
 struct Rectangle2D {
     QVector3D p1;
     QVector3D p2;
+};
+
+enum class EntityType {
+    Line,
+    Arc,
+    Polyline,
+    Spline,
+    Extrude
+};
+
+enum class SketchPlane {
+    XY,   // Top
+    XZ,   // Front
+    YZ,   // Right
+    Custom
+};
+
+struct Entity {
+    EntityType type;
+    SketchPlane plane;
+    int id;                // unique ID for entity
+    QString layer;         // optional: layer or group
+
+    virtual ~Entity() {}
+    virtual void draw() const = 0;
+    virtual void save(QTextStream& out) const = 0;
+    virtual void load(QTextStream& in) = 0;
+};
+
+struct LineEntity : public Entity {
+    QVector3D p1, p2;
+
+    LineEntity() { type = EntityType::Line; }
+
+    void draw() const override;
+    void save(QTextStream& out) const override {
+        out << "Line " << static_cast<int>(plane) << " " << p1.x() << " " << p1.y() << " " << p1.z()
+            << " " << p2.x() << " " << p2.y() << " " << p2.z() << "\n";
+    }
+    void load(QTextStream& in) override {
+        int planeInt;
+        in >> planeInt;
+        plane = static_cast<SketchPlane>(planeInt);
+
+        float x, y, z;
+        in >> x >> y >> z;
+        p1 = QVector3D(x, y, z);
+
+        in >> x >> y >> z;
+        p2 = QVector3D(x, y, z);
+    }
+};
+
+struct ArcEntity : public Entity {
+    QVector3D center;
+    float radius;
+    float startAngle, endAngle; // degrees
+
+    ArcEntity() { type = EntityType::Arc; }
+
+    void draw() const override;
+    void save(QTextStream& out) const override {
+        out << "Arc " << static_cast<int>(plane) << " "
+            << center.x() << " " << center.y() << " " << center.z()
+            << " " << radius << " " << startAngle << " " << endAngle << "\n";
+    }
+    void load(QTextStream& in) override {
+        int planeInt;
+        in >> planeInt;
+        plane = static_cast<SketchPlane>(planeInt);
+
+        float x, y, z;
+        in >> x >> y >> z;
+        center = QVector3D(x, y, z);
+
+        in >> radius >> startAngle >> endAngle;
+    }
+};
+
+struct PolylineEntity : public Entity {
+    QVector<QVector3D> points;
+
+    PolylineEntity() { type = EntityType::Polyline; }
+
+    void draw() const override {
+        if (points.isEmpty()) return;
+
+        glColor3f(1, 1, 1);
+        glBegin(GL_LINE_STRIP);
+        for (const auto& p : points) {
+            glVertex3f(p.x(), p.y(), p.z());
+        }
+        glEnd();
+    }
+
+    void save(QTextStream& out) const override {
+        out << "Polyline " << static_cast<int>(plane) << " " << points.size();
+        for (const auto& p : points)
+            out << " " << p.x() << " " << p.y() << " " << p.z();
+        out << "\n";
+    }
+
+    void load(QTextStream& in) override {
+        int planeInt, n;
+        in >> planeInt >> n;
+        plane = static_cast<SketchPlane>(planeInt);
+
+        points.resize(n);
+        for (int i = 0; i < n; ++i){
+            float x, y, z;
+            in >> x >> y >> z;
+            points[i] = QVector3D(x, y, z);
+            }
+    }
+};
+
+struct SplineEntity : public Entity {
+    QVector<QVector3D> controlPoints;
+
+    SplineEntity() { type = EntityType::Spline; }
+
+    void draw() const override;
+
+    void save(QTextStream& out) const override {
+        out << "Spline " << static_cast<int>(plane) << " " << controlPoints.size();
+        for (const auto& p : controlPoints)
+            out << " " << p.x() << " " << p.y() << " " << p.z();
+        out << "\n";
+    }
+
+    void load(QTextStream& in) override {
+        int planeInt, n;
+        in >> planeInt >> n;
+        plane = static_cast<SketchPlane>(planeInt);
+
+        controlPoints.resize(n);
+        for (int i = 0; i < n; ++i){
+            float x, y, z;
+            in >> x >> y >> z;
+            controlPoints[i] = QVector3D(x, y, z);}
+    }
+};
+
+struct Sketch {
+    int id;                       // unique sketch ID
+    SketchPlane plane;            // sketch plane (XY, XZ, YZ, Custom)
+    QVector<std::shared_ptr<Entity>> entities; // only 2D entities
+
+    void addEntity(const std::shared_ptr<Entity>& e) {
+        entities.push_back(e);
+    }
+
+    void draw() const {
+        for (auto& e : entities)
+            e->draw();
+    }
+
+    void save(QTextStream& out) const {
+        out << "Sketch " << id << " " << int(plane) << " " << entities.size() << "\n";
+        for (auto& e : entities)
+            e->save(out);
+    }
+
+    void load(QTextStream& in) {
+        int n;
+        in >> id >> (int&)plane >> n;
+        for (int i = 0; i < n; i++) {
+            QString type; in >> type;
+            std::shared_ptr<Entity> e;
+            if (type == "Line") e = std::make_shared<LineEntity>();
+            else if (type == "Arc") e = std::make_shared<ArcEntity>();
+            else if (type == "Polyline") e = std::make_shared<PolylineEntity>();
+            else if (type == "Spline") e = std::make_shared<SplineEntity>();
+            if (e) { e->load(in); entities.push_back(e); }
+        }
+    }
+};
+
+struct ExtrudeEntity : public Entity {
+    std::weak_ptr<Sketch> sketch; // weak reference to avoid cycles
+    float height;
+    QVector3D direction;
+
+    ExtrudeEntity() { type = EntityType::Extrude; }
+
+    void draw() const override {
+        if (auto s = sketch.lock()) {
+            s->draw();
+
+            // Collect closed polylines from the sketch
+            for (const auto& e : s->entities) {
+                if (e->type == EntityType::Polyline) {
+                    auto poly = std::dynamic_pointer_cast<PolylineEntity>(e);
+                    if (!poly || poly->points.size() < 3) continue;
+
+                    // Extrude each polyline
+                    drawExtrusion(poly->points, height, direction);
+                }
+            }
+        }
+        }
+
+
+    static void drawExtrusion(const QVector<QVector3D>& base,
+                              float height,
+                              const QVector3D& dir)
+    {
+        QVector3D offset = dir.normalized() * height;
+
+        // --- Draw side walls ---
+        glColor3f(0.2f, 0.7f, 1.0f);
+        glBegin(GL_QUADS);
+        for (int i = 0; i < base.size(); i++) {
+            int j = (i + 1) % base.size(); // next vertex, wrap around
+            QVector3D v0 = base[i];
+            QVector3D v1 = base[j];
+            QVector3D v2 = v1 + offset;
+            QVector3D v3 = base[i] + offset;
+
+            glVertex3f(v0.x(), v0.y(), v0.z());
+            glVertex3f(v1.x(), v1.y(), v1.z());
+            glVertex3f(v2.x(), v2.y(), v2.z());
+            glVertex3f(v3.x(), v3.y(), v3.z());
+        }
+        glEnd();
+
+        // --- Draw bottom face ---
+        glColor3f(0.1f, 0.5f, 0.8f);
+        glBegin(GL_POLYGON);
+        for (const auto& v : base)
+            glVertex3f(v.x(), v.y(), v.z());
+        glEnd();
+
+        // --- Draw top face ---
+        glColor3f(0.1f, 0.5f, 0.8f);
+        glBegin(GL_POLYGON);
+        for (const auto& v : base) {
+            QVector3D vt = v + offset;
+            glVertex3f(vt.x(), vt.y(), vt.z());
+        }
+        glEnd();
+    }
+
+
+    void save(QTextStream& out) const override {
+        int sketchId = sketch.expired() ? -1 : sketch.lock()->id;
+        out << "Extrude " << static_cast<int>(plane) << " " << sketchId << " "
+            << height << " "
+            << direction.x() << " " << direction.y() << " " << direction.z() << "\n";
+    }
+
+    void load(QTextStream& in) override {
+        int planeInt, sketchId;
+        in >> planeInt >> sketchId >> height;
+        float x, y, z;
+        in >> x >> y >> z;
+        direction = QVector3D(x, y, z);
+        plane = static_cast<SketchPlane>(planeInt);
+
+        pendingSketchId = sketchId;
+    }
+
+    void resolveSketchLink(const QVector<std::shared_ptr<Sketch>>& sketches) {
+        if (pendingSketchId < 0) return;
+        for (auto& s : sketches)
+            if (s->id == pendingSketchId)
+                sketch = s;
+        pendingSketchId = -1;
+    }
+
+private:
+    int pendingSketchId = -1;
+};
+
+struct Document {
+    QVector<std::shared_ptr<Sketch>> sketches;
+    QVector<std::shared_ptr<Entity>> features;
+    int nextSketchId = 1;
+
+    std::shared_ptr<Sketch> createSketch(SketchPlane plane) {
+        auto s = std::make_shared<Sketch>();
+        s->id = nextSketchId++;
+        s->plane = plane;
+        sketches.push_back(s);
+        return s;
+    }
+
+    void addFeature(const std::shared_ptr<Entity>& f) {
+        features.push_back(f);
+    }
+
+    void drawAll() const {
+        for (auto& s : sketches) s->draw();
+        for (auto& f : features) f->draw();
+    }
+
+    void saveToFile(const QString& filename) {
+        QFile f(filename);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+        QTextStream out(&f);
+
+        out << "Sketches " << sketches.size() << "\n";
+        for (auto& s : sketches) s->save(out);
+
+        out << "Features " << features.size() << "\n";
+        for (auto& ftr : features) ftr->save(out);
+    }
+
+    void loadFromFile(const QString& filename) {
+        QFile f(filename);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+        QTextStream in(&f);
+
+        QString header;
+        int count;
+
+        // --- Load sketches ---
+        in >> header >> count;
+        if (header == "Sketches") {
+            for (int i = 0; i < count; i++) {
+                auto s = std::make_shared<Sketch>();
+                s->load(in);
+                sketches.push_back(s);
+            }
+        }
+
+        // --- Load features ---
+        in >> header >> count;
+        QVector<std::shared_ptr<ExtrudeEntity>> extrudesToResolve;
+
+        if (header == "Features") {
+            for (int i = 0; i < count; i++) {
+                QString type; in >> type;
+                std::shared_ptr<Entity> e;
+                if (type == "Extrude") {
+                    auto ex = std::make_shared<ExtrudeEntity>();
+                    ex->load(in);
+                    extrudesToResolve.push_back(ex);
+                    e = ex;
+                }
+                if (e) features.push_back(e);
+            }
+        }
+
+        // --- Link features to sketches ---
+        for (auto& ex : extrudesToResolve)
+            ex->resolveSketchLink(sketches);
+    }
 };
 
 enum class SketchView {
@@ -85,17 +433,23 @@ protected:
 
 private:
     void drawAxes();
-    void drawRectangle(const Rectangle2D& rect);
-    void drawExtrudedCube(const Rectangle2D& rect, float height);
+    void drawRectangle(const Rectangle2D& rect, Qt::PenStyle style);
+    void drawExtrudedCube(const Rectangle2D& base, float height, bool ghost);
     QVector3D mapToPlane(int x, int y);
 
     QPoint lastMousePos;
     Rectangle2D currentRect;
     bool drawingRect;
+    bool awaitingHeight = false;
+    QVector3D baseP2;
+    std::shared_ptr<Sketch> pendingSketch;
+    float previewHeight = 0.0f;
+
+    Document document;
     std::vector<Rectangle2D> extrudedRects;
     SketchView currentView;
 
     Camera camera;
 };
 
-#endif // AICAD_H
+#endif // CADVIEW_H
