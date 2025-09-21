@@ -2,6 +2,7 @@
 #include <QKeyEvent>
 #include <QtMath>
 #include <QDebug>
+#include <QPrintDialog>
 
 // ---------------- Camera Implementation ----------------
 Camera::Camera() {
@@ -97,17 +98,17 @@ void Camera::pan(const QVector3D& delta) {
 }
 
 
-// ---------------- AICAD Implementation ----------------
-AICAD::AICAD(QWidget* parent)
+// ---------------- CadView Implementation ----------------
+CadView::CadView(QWidget* parent)
     : QOpenGLWidget(parent), drawingRect(false), currentView(SketchView::None)
 {
-    setWindowTitle("AICAD");
+    setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
 }
 
-AICAD::~AICAD() {}
+CadView::~CadView() {}
 
-void AICAD::setSketchView(SketchView view) {
+void CadView::setSketchView(SketchView view) {
     currentView = view;
     float aspect = float(width())/float(height());
 
@@ -158,7 +159,7 @@ void AICAD::setSketchView(SketchView view) {
     update();
 }
 
-QVector3D AICAD::screenToWorld(const QPoint& screenPos) {
+QVector3D CadView::screenToWorld(const QPoint& screenPos) {
     // Convert screen → NDC
     float x = (2.0f * screenPos.x()) / width() - 1.0f;
     float y = 1.0f - (2.0f * screenPos.y()) / height();
@@ -203,18 +204,68 @@ QVector3D AICAD::screenToWorld(const QPoint& screenPos) {
     return rayOrigin + t * rayDir;
 }
 
-void AICAD::initializeGL() {
+void CadView::highlightFeature(int id) {
+    highlightedFeatureId = id;
+    update();
+}
+
+// -------------------- Printing --------------------
+void CadView::printView() {
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setPageOrientation(QPageLayout::Landscape);
+    QPrintDialog dlg(&printer,this);
+    if (dlg.exec()==QDialog::Accepted) {
+        QPainter painter(&printer);
+        render(&painter);
+    }
+}
+
+void CadView::exportPdf(const QString &file) {
+    QPdfWriter pdf(file);
+    pdf.setPageOrientation(QPageLayout::Landscape);
+    pdf.setPageSize(QPageSize(QPageSize::A4));
+
+    QPainter painter(&pdf);
+    QRect pageRect = pdf.pageLayout().paintRectPixels(pdf.resolution());
+    QRectF srcRect = rect();
+
+    qreal sx = (qreal)pageRect.width()  / srcRect.width();
+    qreal sy = (qreal)pageRect.height() / srcRect.height();
+    qreal s = qMin(sx, sy);
+
+    painter.translate(pageRect.center());
+    painter.scale(s, s);
+    painter.translate(-srcRect.center());
+    render(&painter); // render widget to PDF
+}
+
+void CadView::startSketchMode(std::shared_ptr<SketchNode> sketch) {
+    pendingSketch = sketch;
+    drawingRect = false;
+    awaitingHeight = false;
+    update();
+    qDebug() << "Sketch mode started";
+}
+
+void CadView::startExtrudeMode(std::shared_ptr<SketchNode> sketch) {
+    editMode = EditMode::Extruding;
+    pendingSketch = sketch;
+    awaitingHeight = true;
+    qDebug() << "Extrude mode started on sketch" << sketch->id;
+}
+
+void CadView::initializeGL() {
     initializeOpenGLFunctions();
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.8f,0.8f,0.8f,1.0f);
 }
 
-void AICAD::resizeGL(int w, int h) {
+void CadView::resizeGL(int w, int h) {
     glViewport(0,0,w,h);
     setSketchView(currentView);
 }
 
-void AICAD::paintGL() {
+void CadView::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Apply camera matrices
@@ -230,7 +281,16 @@ void AICAD::paintGL() {
     drawAxes();
 
     // --- Draw all sketches and features ---
-    document.drawAll();
+    doc.drawAll();
+
+    for (auto& f : doc.features) {
+        if (f->id == highlightedFeatureId) {
+            glColor3f(1.0f, 0.0f, 0.0f); // highlight red
+        } else {
+            glColor3f(0.7f, 0.7f, 0.7f); // normal gray
+        }
+        f->draw();
+    }
 
     // --- Rectangle rubber band preview ---
     if (drawingRect && !awaitingHeight) {
@@ -243,7 +303,20 @@ void AICAD::paintGL() {
         // last param 'true' = ghost mode (transparent / wireframe)
     }
 }
-void AICAD::mousePressEvent(QMouseEvent* event) {
+
+static SketchPlane viewToPlane(SketchView view) {
+    switch (view) {
+    case SketchView::Top:    return SketchPlane::XY;  // looking down Z
+    case SketchView::Front:  return SketchPlane::XZ;  // looking along -Y
+    case SketchView::Right:  return SketchPlane::YZ;  // looking along +X
+    case SketchView::Bottom: return SketchPlane::XY;  // reversed normal
+    case SketchView::Back:   return SketchPlane::XZ;  // reversed normal
+    case SketchView::Left:   return SketchPlane::YZ;  // reversed normal
+    default:                 return SketchPlane::XY;  // fallback
+    }
+}
+
+void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         QVector3D worldPos = screenToWorld(event->pos());
 
@@ -251,12 +324,11 @@ void AICAD::mousePressEvent(QMouseEvent* event) {
             // --- Third point picked -> extrusion height ---
             float height = (worldPos - baseP2).length();
 
-            auto extrude = std::make_shared<ExtrudeEntity>();
-            extrude->sketch = pendingSketch;
-            extrude->plane = SketchPlane::XY; // TODO: map from view
+            auto extrude = std::make_shared<ExtrudeNode>();
+            extrude->sketch = pendingSketch;  // ✅ works: weak_ptr<SketchNode> = shared_ptr<SketchNode>
             extrude->height = height;
-            extrude->direction = QVector3D(0,0,1); // TODO: plane normal
-            document.addFeature(extrude);
+            extrude->direction = QVector3D(0,0,1);
+            doc.addFeature(extrude);
 
             awaitingHeight = false;
             pendingSketch.reset();
@@ -272,9 +344,13 @@ void AICAD::mousePressEvent(QMouseEvent* event) {
             // --- Second corner picked -> finalize 2D sketch ---
             currentRect.p2 = worldPos;
 
+            // Map current camera view to a sketch plane
+            SketchPlane plane = viewToPlane(currentView);
+
             // Create new sketch
-            auto sketch = document.createSketch(SketchPlane::XY); // TODO: use currentView→plane mapping
+            auto sketch = doc.createSketch(plane);
             auto poly = std::make_shared<PolylineEntity>();
+
             poly->points = {
                 currentRect.p1,
                 QVector3D(currentRect.p2.x(), currentRect.p1.y(), currentRect.p1.z()),
@@ -282,10 +358,10 @@ void AICAD::mousePressEvent(QMouseEvent* event) {
                 QVector3D(currentRect.p1.x(), currentRect.p2.y(), currentRect.p2.z()),
                 currentRect.p1
             };
-            sketch->addEntity(poly);
+            //sketch->addEntity(poly);
 
             // Save sketch reference for extrusion
-            pendingSketch = sketch;
+            //pendingSketch = sketch;
             baseP2 = currentRect.p2;
             awaitingHeight = true;  // now expect third point for extrusion height
 
@@ -305,7 +381,7 @@ void AICAD::mousePressEvent(QMouseEvent* event) {
     }
 }
 
-void AICAD::mouseMoveEvent(QMouseEvent* event) {
+void CadView::mouseMoveEvent(QMouseEvent* event) {
     // --- Orbit with right mouse button ---
     if ((event->buttons() & Qt::RightButton) && currentView == SketchView::None) {
         int dx = event->pos().x() - lastMousePos.x();
@@ -375,7 +451,7 @@ void AICAD::mouseMoveEvent(QMouseEvent* event) {
     }
 }
 
-void AICAD::wheelEvent(QWheelEvent* event) {
+void CadView::wheelEvent(QWheelEvent* event) {
     float numSteps = event->angleDelta().y() * 0.001f;  // scale factor
     QPoint cursorPos = event->position().toPoint();
 
@@ -401,14 +477,14 @@ void AICAD::wheelEvent(QWheelEvent* event) {
     update();
 }
 
-void AICAD::mouseReleaseEvent(QMouseEvent* event) {
+void CadView::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) {
         setCursor(Qt::ArrowCursor); // ✅ restore cursor
     }
 }
 
 
-void AICAD::keyPressEvent(QKeyEvent* event) {
+void CadView::keyPressEvent(QKeyEvent* event) {
     switch(event->key())
     {
     case Qt::Key_U: setSketchView(SketchView::Top); break;
@@ -422,7 +498,7 @@ void AICAD::keyPressEvent(QKeyEvent* event) {
     }
 }
 
-QVector3D AICAD::mapToPlane(int x, int y) {
+QVector3D CadView::mapToPlane(int x, int y) {
     float nx = (2.0f * x / width()) - 1.0f;
     float ny = 1.0f - (2.0f * y / height());
     QMatrix4x4 inv = (camera.getProjectionMatrix() * camera.getViewMatrix()).inverted();
@@ -453,7 +529,7 @@ QVector3D AICAD::mapToPlane(int x, int y) {
     return intersection;
 }
 
-void AICAD::drawAxes() {
+void CadView::drawAxes() {
     glLineWidth(2.0f);
     glBegin(GL_LINES);
     glColor3f(1,0,0); glVertex3f(0,0,0); glVertex3f(5,0,0);
@@ -462,7 +538,7 @@ void AICAD::drawAxes() {
     glEnd();
 }
 
-void AICAD::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
+void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
     QVector3D p1 = rect.p1;
     QVector3D p2 = rect.p2;
 
@@ -494,7 +570,7 @@ void AICAD::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
     }
 }
 
-void AICAD::drawExtrudedCube(const Rectangle2D& rect, float height, bool ghost) {
+void CadView::drawExtrudedCube(const Rectangle2D& rect, float height, bool ghost) {
     QVector3D p1 = rect.p1;
     QVector3D p2 = rect.p2;
 

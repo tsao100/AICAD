@@ -5,9 +5,33 @@
 #include <QOpenGLFunctions>
 #include <QMatrix4x4>
 #include <QVector3D>
+#include <QPrinter>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QFile>
 #include <vector>
+
+enum class FeatureType {
+    Sketch,
+    Extrude,
+    // Later: Revolve, Fillet, Boolean, etc.
+};
+
+struct FeatureNode {
+    int id;
+    FeatureType type;
+    QString name;   // user-facing name
+    QVector<int> parents; // IDs of parent nodes (dependencies)
+    QVector<int> children;
+
+    virtual ~FeatureNode() {}
+    virtual void evaluate() = 0;  // recompute geometry
+    virtual void draw() const = 0;
+    virtual void save(QTextStream& out) const = 0;
+    virtual void load(QTextStream& in) = 0;
+};
 
 struct Rectangle2D {
     QVector3D p1;
@@ -40,7 +64,7 @@ struct Entity {
     virtual void save(QTextStream& out) const = 0;
     virtual void load(QTextStream& in) = 0;
 };
-
+/*
 struct LineEntity : public Entity {
     QVector3D p1, p2;
 
@@ -90,7 +114,7 @@ struct ArcEntity : public Entity {
         in >> radius >> startAngle >> endAngle;
     }
 };
-
+*/
 struct PolylineEntity : public Entity {
     QVector<QVector3D> points;
 
@@ -127,7 +151,7 @@ struct PolylineEntity : public Entity {
             }
     }
 };
-
+/*
 struct SplineEntity : public Entity {
     QVector<QVector3D> controlPoints;
 
@@ -154,7 +178,7 @@ struct SplineEntity : public Entity {
             controlPoints[i] = QVector3D(x, y, z);}
     }
 };
-
+*/
 struct Sketch {
     int id;                       // unique sketch ID
     SketchPlane plane;            // sketch plane (XY, XZ, YZ, Custom)
@@ -181,10 +205,10 @@ struct Sketch {
         for (int i = 0; i < n; i++) {
             QString type; in >> type;
             std::shared_ptr<Entity> e;
-            if (type == "Line") e = std::make_shared<LineEntity>();
-            else if (type == "Arc") e = std::make_shared<ArcEntity>();
-            else if (type == "Polyline") e = std::make_shared<PolylineEntity>();
-            else if (type == "Spline") e = std::make_shared<SplineEntity>();
+            if (type == "Polyline") e = std::make_shared<PolylineEntity>();
+        /*    else if (type == "Arc") e = std::make_shared<ArcEntity>();
+            else if (type == "Line") e = std::make_shared<LineEntity>();
+            else if (type == "Spline") e = std::make_shared<SplineEntity>();*/
             if (e) { e->load(in); entities.push_back(e); }
         }
     }
@@ -286,79 +310,152 @@ private:
     int pendingSketchId = -1;
 };
 
-struct Document {
-    QVector<std::shared_ptr<Sketch>> sketches;
-    QVector<std::shared_ptr<Entity>> features;
-    int nextSketchId = 1;
+struct SketchNode : public FeatureNode {
+    SketchPlane plane;
+    QVector<std::shared_ptr<Entity>> entities;
 
-    std::shared_ptr<Sketch> createSketch(SketchPlane plane) {
-        auto s = std::make_shared<Sketch>();
-        s->id = nextSketchId++;
-        s->plane = plane;
-        sketches.push_back(s);
-        return s;
+    SketchNode() { type = FeatureType::Sketch; }
+
+    void evaluate() override {
+        // Sketch is already geometric, nothing special
     }
 
-    void addFeature(const std::shared_ptr<Entity>& f) {
-        features.push_back(f);
+    void draw() const override {
+        for (auto& e : entities) e->draw();
+    }
+
+    void save(QTextStream& out) const override {
+        out << "Sketch " << id << " " << int(plane) << " " << entities.size() << "\n";
+        for (auto& e : entities) e->save(out);
+    }
+
+    void load(QTextStream& in) override {
+        int n; in >> id >> (int&)plane >> n;
+        for (int i = 0; i < n; i++) {
+            QString type; in >> type;
+            std::shared_ptr<Entity> e;
+            if (type == "Polyline") e = std::make_shared<PolylineEntity>();
+        /*    else if (type == "Arc") e = std::make_shared<ArcEntity>();
+            else if (type == "Line") e = std::make_shared<LineEntity>();
+            else if (type == "Spline") e = std::make_shared<SplineEntity>();*/
+            if (e) { e->load(in); entities.push_back(e); }
+        }
+    }
+};
+
+struct ExtrudeNode : public FeatureNode {
+    std::weak_ptr<SketchNode> sketch;  // reference to SketchNode
+    float height;
+    QVector3D direction;
+
+    ExtrudeNode() { type = FeatureType::Extrude; }
+
+    void draw() const override {
+        if (auto s = sketch.lock()) {
+            s->draw();
+            // TODO: extrude geometry drawing
+        }
+    }
+
+    void save(QTextStream& out) const override {
+        int sketchId = sketch.expired() ? -1 : sketch.lock()->id;
+        out << "Extrude " << id << " " << sketchId << " "
+            << height << " "
+            << direction.x() << " " << direction.y() << " " << direction.z() << "\n";
+    }
+
+    void load(QTextStream& in) override {
+        int sketchId;
+        in >> id >> sketchId >> height;
+        float x, y, z;
+        in >> x >> y >> z;
+        direction = QVector3D(x, y, z);
+        pendingSketchId = sketchId;
+    }
+
+    void resolveSketchLink(const QVector<std::shared_ptr<FeatureNode>>& features) {
+        for (auto& f : features) {
+            if (f->type == FeatureType::Sketch && f->id == pendingSketchId) {
+                sketch = std::static_pointer_cast<SketchNode>(f);
+                break;
+            }
+        }
+        pendingSketchId = -1;
+    }
+
+    void evaluate() override {
+        // For now: no geometry caching.
+        // Later: build triangulated mesh from sketch + height.
+    }
+
+private:
+    int pendingSketchId = -1;
+};
+
+struct Document {
+    QVector<std::shared_ptr<FeatureNode>> features;
+    int nextId = 1;
+
+    template<typename T>
+    std::shared_ptr<T> addFeature(const std::shared_ptr<T>& node) {
+        node->id = nextId++;
+        features.push_back(node);
+        return node;
+    }
+
+    std::shared_ptr<SketchNode> createSketch(SketchPlane plane){
+        auto sketch = std::make_shared<SketchNode>();
+        sketch->id = nextId++;
+        sketch->name = QString("Sketch %1").arg(sketch->id);
+        sketch->plane = plane;
+        features.push_back(sketch);
+        return sketch;
+    }
+
+    void addDependency(int parentId, int childId) {
+        auto parent = findFeature(parentId);
+        auto child = findFeature(childId);
+        if (parent && child) {
+            parent->children.push_back(childId);
+            child->parents.push_back(parentId);
+        }
+    }
+
+    std::shared_ptr<FeatureNode> findFeature(int id) const {
+        for (auto& f : features)
+            if (f->id == id) return f;
+        return nullptr;
+    }
+
+    void rebuildAll() {
+        for (auto& f : features) f->evaluate();
     }
 
     void drawAll() const {
-        for (auto& s : sketches) s->draw();
         for (auto& f : features) f->draw();
     }
 
     void saveToFile(const QString& filename) {
-        QFile f(filename);
-        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
-        QTextStream out(&f);
-
-        out << "Sketches " << sketches.size() << "\n";
-        for (auto& s : sketches) s->save(out);
-
+        QFile file(filename);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+        QTextStream out(&file);
         out << "Features " << features.size() << "\n";
-        for (auto& ftr : features) ftr->save(out);
+        for (auto& f : features) f->save(out);
     }
 
     void loadFromFile(const QString& filename) {
-        QFile f(filename);
-        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
-        QTextStream in(&f);
-
-        QString header;
-        int count;
-
-        // --- Load sketches ---
-        in >> header >> count;
-        if (header == "Sketches") {
-            for (int i = 0; i < count; i++) {
-                auto s = std::make_shared<Sketch>();
-                s->load(in);
-                sketches.push_back(s);
-            }
+        QFile file(filename);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+        QTextStream in(&file);
+        QString type; int count;
+        in >> type >> count;
+        for (int i = 0; i < count; i++) {
+            QString ft; in >> ft;
+            std::shared_ptr<FeatureNode> f;
+            if (ft == "Sketch") f = std::make_shared<SketchNode>();
+            else if (ft == "Extrude") f = std::make_shared<ExtrudeNode>();
+            if (f) { f->load(in); features.push_back(f); }
         }
-
-        // --- Load features ---
-        in >> header >> count;
-        QVector<std::shared_ptr<ExtrudeEntity>> extrudesToResolve;
-
-        if (header == "Features") {
-            for (int i = 0; i < count; i++) {
-                QString type; in >> type;
-                std::shared_ptr<Entity> e;
-                if (type == "Extrude") {
-                    auto ex = std::make_shared<ExtrudeEntity>();
-                    ex->load(in);
-                    extrudesToResolve.push_back(ex);
-                    e = ex;
-                }
-                if (e) features.push_back(e);
-            }
-        }
-
-        // --- Link features to sketches ---
-        for (auto& ex : extrudesToResolve)
-            ex->resolveSketchLink(sketches);
     }
 };
 
@@ -409,16 +506,23 @@ private:
     bool perspectiveMode;
 };
 
-class AICAD : public QOpenGLWidget, protected QOpenGLFunctions
+class CadView : public QOpenGLWidget, protected QOpenGLFunctions
 {
     Q_OBJECT
 
 public:
-    AICAD(QWidget* parent = nullptr);
-    ~AICAD();
+    CadView(QWidget* parent = nullptr);
+    ~CadView();
+    enum class EditMode { None, Sketching, Extruding };
 
     void setSketchView(SketchView view);
     QVector3D screenToWorld(const QPoint& screenPos);
+    Document doc;
+    void highlightFeature(int id);
+    void printView();
+    void exportPdf(const QString &file);
+    void startSketchMode(std::shared_ptr<SketchNode> sketch);
+    void startExtrudeMode(std::shared_ptr<SketchNode> sketch);
 
 protected:
     void initializeGL() override;
@@ -442,14 +546,16 @@ private:
     bool drawingRect;
     bool awaitingHeight = false;
     QVector3D baseP2;
-    std::shared_ptr<Sketch> pendingSketch;
     float previewHeight = 0.0f;
 
-    Document document;
     std::vector<Rectangle2D> extrudedRects;
     SketchView currentView;
 
     Camera camera;
+
+    int highlightedFeatureId = -1;
+    EditMode editMode = EditMode::None;
+    std::shared_ptr<SketchNode> pendingSketch;
 };
 
 #endif // CADVIEW_H
