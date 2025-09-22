@@ -36,7 +36,3 @@ HEADERS += \
 
 RESOURCES += \
     resources.qrc
-
-DISTFILES += \
-    icons/extrude.png \
-    icons/sketch.png
