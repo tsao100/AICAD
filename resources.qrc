@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icons/sketch.png</file>
+        <file>icons/extrude.png</file>
+    </qresource>
+</RCC>

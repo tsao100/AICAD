@@ -33,3 +33,10 @@ HEADERS += \
      src/MainWindow.h
 #    src/Entities.h \
 #    src/TrackballCamera.h
+
+RESOURCES += \
+    resources.qrc
+
+DISTFILES += \
+    icons/extrude.png \
+    icons/sketch.png
