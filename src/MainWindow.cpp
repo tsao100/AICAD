@@ -152,19 +152,35 @@ void MainWindow::createFeatureBrowser() {
 
 void MainWindow::updateFeatureTree() {
     featureTree->clear();
+
+    // --- Sketches section ---
+    QTreeWidgetItem* sketchesRoot = new QTreeWidgetItem(featureTree);
+    sketchesRoot->setText(0, "Sketches");
+
+    for (auto& s : m_view->doc.sketches) {
+        QTreeWidgetItem* item = new QTreeWidgetItem(sketchesRoot);
+        item->setText(0, s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name);
+        item->setIcon(0, QIcon(":/icons/sketch.png"));
+        item->setData(0, Qt::UserRole, s->id);
+    }
+
+    // --- Features section ---
+    QTreeWidgetItem* featuresRoot = new QTreeWidgetItem(featureTree);
+    featuresRoot->setText(0, "Features");
+
     for (auto& f : m_view->doc.features) {
-        QTreeWidgetItem* item = new QTreeWidgetItem(featureTree);
+        QTreeWidgetItem* item = new QTreeWidgetItem(featuresRoot);
         item->setText(0, f->name.isEmpty() ? QString("Feature %1").arg(f->id) : f->name);
 
         switch (f->type) {
-        case FeatureType::Sketch:  item->setIcon(0, QIcon(":/icons/sketch.png")); break;
         case FeatureType::Extrude: item->setIcon(0, QIcon(":/icons/extrude.png")); break;
         default: break;
         }
 
-        item->setData(0, Qt::UserRole, f->id); // store feature ID
-        featureTree->addTopLevelItem(item);
+        item->setData(0, Qt::UserRole, f->id);
     }
+
+    featureTree->expandAll(); // expand by default
 }
 
 void MainWindow::onFeatureSelected(QTreeWidgetItem* item, int column) {
@@ -235,6 +251,7 @@ void MainWindow::onCreateExtrude() {
 
     if (f && f->type == FeatureType::Sketch) {
         m_view->startExtrudeMode(std::static_pointer_cast<SketchNode>(f));
+        updateFeatureTree();
     }
 }
 

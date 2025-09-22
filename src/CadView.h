@@ -19,6 +19,13 @@ enum class FeatureType {
     // Later: Revolve, Fillet, Boolean, etc.
 };
 
+enum class CadMode {
+    Idle,
+    Sketching,
+    Extruding
+};
+
+
 struct FeatureNode {
     int id;
     FeatureType type;
@@ -351,9 +358,49 @@ struct ExtrudeNode : public FeatureNode {
     ExtrudeNode() { type = FeatureType::Extrude; }
 
     void draw() const override {
-        if (auto s = sketch.lock()) {
-            s->draw();
-            // TODO: extrude geometry drawing
+        auto s = sketch.lock();
+        if (!s || s->entities.empty()) return;
+
+        // Assume first entity is PolylineEntity with 4 corners (rectangle)
+        auto poly = std::dynamic_pointer_cast<PolylineEntity>(s->entities.front());
+        if (!poly || poly->points.size() < 4) return;
+
+        QVector3D n = direction.normalized();
+        QVector3D offset = n * height;
+
+        // --- Bottom face (from sketch) ---
+        glColor3f(0.1f, 0.5f, 0.8f);
+        glBegin(GL_QUADS);
+        for (int i = 0; i < 4; ++i) {
+            const QVector3D& p = poly->points[i];
+            glVertex3f(p.x(), p.y(), p.z());
+        }
+        glEnd();
+
+        // --- Top face (offset by extrusion height) ---
+        glColor3f(0.1f, 0.5f, 0.8f);
+        glBegin(GL_QUADS);
+        for (int i = 0; i < 4; ++i) {
+            QVector3D p = poly->points[i] + offset;
+            glVertex3f(p.x(), p.y(), p.z());
+        }
+        glEnd();
+
+        // --- Side faces ---
+        glColor3f(0.2f, 0.7f, 1.0f);
+        for (int i = 0; i < 4; ++i) {
+            int j = (i + 1) % 4;
+            QVector3D p1 = poly->points[i];
+            QVector3D p2 = poly->points[j];
+            QVector3D p3 = p2 + offset;
+            QVector3D p4 = p1 + offset;
+
+            glBegin(GL_QUADS);
+            glVertex3f(p1.x(), p1.y(), p1.z());
+            glVertex3f(p2.x(), p2.y(), p2.z());
+            glVertex3f(p3.x(), p3.y(), p3.z());
+            glVertex3f(p4.x(), p4.y(), p4.z());
+            glEnd();
         }
     }
 
@@ -393,14 +440,14 @@ private:
 };
 
 struct Document {
+    QVector<std::shared_ptr<SketchNode>> sketches;
     QVector<std::shared_ptr<FeatureNode>> features;
     int nextId = 1;
 
-    template<typename T>
-    std::shared_ptr<T> addFeature(const std::shared_ptr<T>& node) {
-        node->id = nextId++;
-        features.push_back(node);
-        return node;
+    void addFeature(const std::shared_ptr<FeatureNode>& f) {
+        f->id = nextId++;
+        f->name = QString("Feature %1").arg(f->id);
+        features.push_back(f);
     }
 
     std::shared_ptr<SketchNode> createSketch(SketchPlane plane){
@@ -408,7 +455,7 @@ struct Document {
         sketch->id = nextId++;
         sketch->name = QString("Sketch %1").arg(sketch->id);
         sketch->plane = plane;
-        features.push_back(sketch);
+        sketches.push_back(sketch);
         return sketch;
     }
 
@@ -556,6 +603,7 @@ private:
     int highlightedFeatureId = -1;
     EditMode editMode = EditMode::None;
     std::shared_ptr<SketchNode> pendingSketch;
+    CadMode mode = CadMode::Idle;
 };
 
 #endif // CADVIEW_H

@@ -243,14 +243,16 @@ void CadView::startSketchMode(std::shared_ptr<SketchNode> sketch) {
     pendingSketch = sketch;
     drawingRect = false;
     awaitingHeight = false;
+    mode = CadMode::Sketching;
     update();
-    qDebug() << "Sketch mode started";
+    qDebug() << "Sketch mode started on sketch" << sketch->id;
 }
 
 void CadView::startExtrudeMode(std::shared_ptr<SketchNode> sketch) {
     editMode = EditMode::Extruding;
     pendingSketch = sketch;
     awaitingHeight = true;
+    mode = CadMode::Extruding;
     qDebug() << "Extrude mode started on sketch" << sketch->id;
 }
 
@@ -316,59 +318,76 @@ static SketchPlane viewToPlane(SketchView view) {
     }
 }
 
+QVector3D planeNormal(SketchPlane plane) {
+    switch (plane) {
+    case SketchPlane::XY: return QVector3D(0,0,1);
+    case SketchPlane::XZ: return QVector3D(0,1,0);
+    case SketchPlane::YZ: return QVector3D(1,0,0);
+    case SketchPlane::Custom: return QVector3D(1,1,1);
+    }
+    return QVector3D(0,0,1); // fallback
+}
+
+
 void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         QVector3D worldPos = screenToWorld(event->pos());
 
-        if (awaitingHeight) {
-            // --- Third point picked -> extrusion height ---
-            float height = (worldPos - baseP2).length();
+        // ───────────── Extrude mode ─────────────
+        if (mode == CadMode::Extruding && awaitingHeight && pendingSketch) {
+            float height = QVector3D::dotProduct(worldPos - baseP2,
+                                                 planeNormal(pendingSketch->plane));
 
             auto extrude = std::make_shared<ExtrudeNode>();
-            extrude->sketch = pendingSketch;  // ✅ works: weak_ptr<SketchNode> = shared_ptr<SketchNode>
+            extrude->sketch = pendingSketch;   // link sketch
             extrude->height = height;
-            extrude->direction = QVector3D(0,0,1);
+            extrude->direction = planeNormal(pendingSketch->plane);
+            extrude->evaluate();
             doc.addFeature(extrude);
 
+            // reset state
             awaitingHeight = false;
             pendingSketch.reset();
-        }
-        else if (!drawingRect) {
-            // --- First corner picked ---
-            currentRect.p1 = worldPos;
-            currentRect.p2 = worldPos;
-            drawingRect = true;
-            awaitingHeight = false; // reset
-        }
-        else if (drawingRect && !awaitingHeight) {
-            // --- Second corner picked -> finalize 2D sketch ---
-            currentRect.p2 = worldPos;
-
-            // Map current camera view to a sketch plane
-            SketchPlane plane = viewToPlane(currentView);
-
-            // Create new sketch
-            auto sketch = doc.createSketch(plane);
-            auto poly = std::make_shared<PolylineEntity>();
-
-            poly->points = {
-                currentRect.p1,
-                QVector3D(currentRect.p2.x(), currentRect.p1.y(), currentRect.p1.z()),
-                currentRect.p2,
-                QVector3D(currentRect.p1.x(), currentRect.p2.y(), currentRect.p2.z()),
-                currentRect.p1
-            };
-            //sketch->addEntity(poly);
-
-            // Save sketch reference for extrusion
-            //pendingSketch = sketch;
-            baseP2 = currentRect.p2;
-            awaitingHeight = true;  // now expect third point for extrusion height
-
-            drawingRect = false;    // rectangle done
+            mode = CadMode::Idle;
+            update();
+            return;
         }
 
-        update();
+        // ───────────── Sketch mode ─────────────
+        if (mode == CadMode::Sketching) {
+            if (!drawingRect) {
+                // first corner
+                currentRect.p1 = worldPos;
+                currentRect.p2 = worldPos;
+                drawingRect = true;
+                awaitingHeight = false;
+            } else {
+                // second corner → finalize sketch
+                currentRect.p2 = worldPos;
+
+                SketchPlane plane = viewToPlane(currentView);
+                auto sketch = doc.createSketch(plane);
+
+                auto poly = std::make_shared<PolylineEntity>();
+                poly->points = {
+                    currentRect.p1,
+                    QVector3D(currentRect.p2.x(), currentRect.p1.y(), currentRect.p1.z()),
+                    currentRect.p2,
+                    QVector3D(currentRect.p1.x(), currentRect.p2.y(), currentRect.p2.z()),
+                    currentRect.p1
+                };
+                sketch->entities.push_back(poly);
+
+                // ready for extrusion
+                pendingSketch = sketch;
+                baseP2 = currentRect.p2;
+                awaitingHeight = true;
+
+                drawingRect = false;
+                mode = CadMode::Idle;
+            }
+            update();
+        }
     }
 
     if (event->button() == Qt::RightButton) {
@@ -444,7 +463,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     }
 
     // --- Rubber band preview while picking extrusion height ---
-    if (awaitingHeight) {
+    if (mode == CadMode::Extruding && awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
         previewHeight = (worldPos - baseP2).length();
         update(); // paintGL will show ghost extrude
