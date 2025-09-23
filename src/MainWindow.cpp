@@ -134,6 +134,8 @@ void MainWindow::createToolbar() {
 void MainWindow::createCentral() {
     m_view = new CadView(this);
     setCentralWidget(m_view);
+    // connect signal → slot
+    connect(m_view, &CadView::featureAdded, this, &MainWindow::updateFeatureTree);
 }
 
 void MainWindow::createFeatureBrowser() {
@@ -251,7 +253,6 @@ void MainWindow::onCreateExtrude() {
 
     if (f && f->type == FeatureType::Sketch) {
         m_view->startExtrudeMode(std::static_pointer_cast<SketchNode>(f));
-        updateFeatureTree();
     }
 }
 

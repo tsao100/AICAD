@@ -469,7 +469,7 @@ struct Document {
     }
 
     std::shared_ptr<FeatureNode> findFeature(int id) const {
-        for (auto& f : features)
+        for (auto& f : sketches)
             if (f->id == id) return f;
         return nullptr;
     }
@@ -581,6 +581,9 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+
+signals:
+    void featureAdded();
 
 private:
     void drawAxes();

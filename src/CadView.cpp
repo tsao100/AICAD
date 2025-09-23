@@ -335,8 +335,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
         // ───────────── Extrude mode ─────────────
         if (mode == CadMode::Extruding && awaitingHeight && pendingSketch) {
-            float height = QVector3D::dotProduct(worldPos - baseP2,
-                                                 planeNormal(pendingSketch->plane));
+            float height = (worldPos - baseP2).length();
 
             auto extrude = std::make_shared<ExtrudeNode>();
             extrude->sketch = pendingSketch;   // link sketch
@@ -344,6 +343,9 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             extrude->direction = planeNormal(pendingSketch->plane);
             extrude->evaluate();
             doc.addFeature(extrude);
+
+            // notify main window
+            emit featureAdded();
 
             // reset state
             awaitingHeight = false;
@@ -365,8 +367,8 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 // second corner → finalize sketch
                 currentRect.p2 = worldPos;
 
-                SketchPlane plane = viewToPlane(currentView);
-                auto sketch = doc.createSketch(plane);
+                //SketchPlane plane = viewToPlane(currentView);
+                //auto sketch = doc.createSketch(plane);
 
                 auto poly = std::make_shared<PolylineEntity>();
                 poly->points = {
@@ -376,10 +378,10 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                     QVector3D(currentRect.p1.x(), currentRect.p2.y(), currentRect.p2.z()),
                     currentRect.p1
                 };
-                sketch->entities.push_back(poly);
+                pendingSketch->entities.push_back(poly);
 
                 // ready for extrusion
-                pendingSketch = sketch;
+                //pendingSketch = sketch;
                 baseP2 = currentRect.p2;
                 awaitingHeight = true;
 
