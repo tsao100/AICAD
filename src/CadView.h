@@ -439,6 +439,16 @@ private:
     int pendingSketchId = -1;
 };
 
+inline QString sketchPlaneToString(SketchPlane plane) {
+    switch (plane) {
+    case SketchPlane::XY: return "XY";
+    case SketchPlane::XZ: return "XZ";
+    case SketchPlane::YZ: return "YZ";
+    case SketchPlane::Custom: return "Custom";
+    }
+    return "Unknown"; // fallback
+}
+
 struct Document {
     QVector<std::shared_ptr<SketchNode>> sketches;
     QVector<std::shared_ptr<FeatureNode>> features;
@@ -453,7 +463,7 @@ struct Document {
     std::shared_ptr<SketchNode> createSketch(SketchPlane plane){
         auto sketch = std::make_shared<SketchNode>();
         sketch->id = nextId++;
-        sketch->name = QString("Sketch %1").arg(sketch->id);
+        sketch->name = QString("Sketch %1 (%2)").arg(sketch->id).arg(sketchPlaneToString(plane));
         sketch->plane = plane;
         sketches.push_back(sketch);
         return sketch;
@@ -480,6 +490,7 @@ struct Document {
 
     void drawAll() const {
         for (auto& f : features) f->draw();
+        for (auto& s : sketches) s->draw();
     }
 
     void saveToFile(const QString& filename) {
