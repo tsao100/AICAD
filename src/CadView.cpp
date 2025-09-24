@@ -73,8 +73,20 @@ void Camera::orbit(float deltaX, float deltaY) {
 }
 
 void Camera::zoom(float amount) {
-    distance = qMax(0.1f, distance - amount);
-    orbit(0,0); // recompute position based on pitch, yaw, distance
+    // Direction from camera to target
+    QVector3D viewDir = (target - position).normalized();
+
+    // Move camera along view direction
+    position += viewDir * amount;
+
+    // Prevent flipping through target
+    float minDist = 0.1f;
+    if ((position - target).length() < minDist) {
+        position = target - viewDir * minDist;
+    }
+
+    // Update distance (if you still want to track it separately)
+    distance = (position - target).length();
 }
 
 void Camera::setOrientation(float newPitch, float newYaw, float newDistance) {
@@ -251,6 +263,12 @@ void CadView::startSketchMode(std::shared_ptr<SketchNode> sketch) {
 void CadView::startExtrudeMode(std::shared_ptr<SketchNode> sketch) {
     editMode = EditMode::Extruding;
     pendingSketch = sketch;
+    if (auto polyline = std::dynamic_pointer_cast<PolylineEntity>(sketch->entities.at(0))) {
+        if (polyline->points.size() >= 2) {
+            currentRect.p1 = polyline->points[0];
+            currentRect.p2 = polyline->points[2]; // Assuming rectangular order
+        }
+    }
     awaitingHeight = true;
     mode = CadMode::Extruding;
     qDebug() << "Extrude mode started on sketch" << sketch->id;
@@ -503,6 +521,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     // --- Rubber band preview while picking extrusion height ---
     if (mode == CadMode::Extruding && awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
+        baseP2 = currentRect.p2;
         previewHeight = (worldPos - baseP2).length();
         update(); // paintGL will show ghost extrude
     }
@@ -666,17 +685,42 @@ void CadView::drawExtrudedCube(const Rectangle2D& rect, float height, bool ghost
     QVector3D p1 = rect.p1;
     QVector3D p2 = rect.p2;
 
-    // Base corners in XY plane
-    QVector3D v0(p1.x(), p1.y(), p1.z()); // bottom-left
-    QVector3D v1(p2.x(), p1.y(), p1.z()); // bottom-right
-    QVector3D v2(p2.x(), p2.y(), p1.z()); // top-right
-    QVector3D v3(p1.x(), p2.y(), p1.z()); // top-left
+    // Base corners - adjust based on sketch plane
+    QVector3D v0, v1, v2, v3;
+    QVector3D extrusionDir;
 
-    // Extruded (top) corners
-    QVector3D v4 = v0 + QVector3D(0, 0, height);
-    QVector3D v5 = v1 + QVector3D(0, 0, height);
-    QVector3D v6 = v2 + QVector3D(0, 0, height);
-    QVector3D v7 = v3 + QVector3D(0, 0, height);
+    auto poly = std::make_shared<PolylineEntity>();
+    poly->points = rectanglePointsForPlane(currentRect, pendingSketch->plane);
+    v0 = poly->points[0]; // bottom-left
+    v1 = poly->points[1]; // bottom-right
+    v2 = poly->points[2]; // top-right
+    v3 = poly->points[3]; // top-left
+
+    switch (pendingSketch->plane) {
+    case SketchPlane::XY: // Top plane (original behavior)
+        extrusionDir = QVector3D(0, 0, height);
+        break;
+
+    case SketchPlane::XZ: // Front plane
+        extrusionDir = QVector3D(0, height, 0);
+        break;
+
+    case SketchPlane::YZ: // Right plane
+        extrusionDir = QVector3D(height, 0, 0);
+        break;
+
+    case SketchPlane::Custom:
+        // For custom planes, you might need additional logic
+        // This assumes XY plane as default for now
+        extrusionDir = QVector3D(0, 0, height);
+        break;
+    }
+
+    // Extruded (opposite face) corners
+    QVector3D v4 = v0 + extrusionDir;
+    QVector3D v5 = v1 + extrusionDir;
+    QVector3D v6 = v2 + extrusionDir;
+    QVector3D v7 = v3 + extrusionDir;
 
     if (ghost) {
         glEnable(GL_BLEND);
@@ -689,17 +733,18 @@ void CadView::drawExtrudedCube(const Rectangle2D& rect, float height, bool ghost
     }
 
     glBegin(GL_QUADS);
-    // Bottom face
+
+    // Base face (sketch plane)
     glVertex3f(v0.x(), v0.y(), v0.z());
     glVertex3f(v1.x(), v1.y(), v1.z());
     glVertex3f(v2.x(), v2.y(), v2.z());
     glVertex3f(v3.x(), v3.y(), v3.z());
 
-    // Top face
+    // Top face (extruded face)
     glVertex3f(v4.x(), v4.y(), v4.z());
-    glVertex3f(v5.x(), v5.y(), v5.z());
-    glVertex3f(v6.x(), v6.y(), v6.z());
     glVertex3f(v7.x(), v7.y(), v7.z());
+    glVertex3f(v6.x(), v6.y(), v6.z());
+    glVertex3f(v5.x(), v5.y(), v5.z());
 
     // Side faces
     // v0-v1-v5-v4
@@ -725,6 +770,7 @@ void CadView::drawExtrudedCube(const Rectangle2D& rect, float height, bool ghost
     glVertex3f(v0.x(), v0.y(), v0.z());
     glVertex3f(v4.x(), v4.y(), v4.z());
     glVertex3f(v7.x(), v7.y(), v7.z());
+
     glEnd();
 
     if (ghost) {
