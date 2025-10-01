@@ -339,50 +339,74 @@ void MainWindow::toggleConsole() {
     commandInput->setFocus();
 }
 
-// Escape helper: makes a safe Lisp string literal
-static QString escapeForLisp(const QString &s) {
-    QString out = s;
-    out.replace("\\", "\\\\");   // backslashes
-    out.replace("\"", "\\\"");   // double quotes
-    out.replace("\n", "\\n");    // newlines
-    out.replace("\r", "\\r");
-    return out;
-}
-
 void MainWindow::executeCommand() {
     QString cmd = commandInput->text().trimmed();
     if (cmd.isEmpty()) return;
 
-    consoleOutput->appendPlainText(QString("指令: %1").arg(cmd));
+    // Add to history
+    if (commandHistory.isEmpty() || commandHistory.last() != cmd) {
+        commandHistory.append(cmd);
+    }
+    historyIndex = -1;
+
     commandInput->clear();
 
-    // Wrap user text in a Lisp string literal
-    QString lit = "\"" + escapeForLisp(cmd) + "\"";
-
-    // Safe Lisp form: read the string, eval it, catch errors
-    QString wrapped = QString(
-                          "(handler-case "
-                          "  (with-output-to-string (s) "
-                          "    (let ((obj (read-from-string %1))) "
-                          "      (princ (eval obj) s))) "
-                          "  (arithmetic-error (e) (format nil \"ARITHMETIC ERROR: ~A\" e)) "
-                          "  (error (e) (format nil \"ERROR: ~A\" e)))"
-                          ).arg(lit);
-
-    cl_object form = c_string_to_object(wrapped.toUtf8().constData());
-
-    cl_object res = Cnil;
-    try {
-        // Use ecl_safe_eval if available, else cl_eval
-#ifdef HAVE_ECL_SAFE_EVAL
-        res = ecl_safe_eval(form, Cnil, Cnil);
+    // Check if it's a CAD-style command
+    QString wrapped;
+    if (!cmd.startsWith('(')) {
+        // Qt5/Qt6 compatible string splitting
+        QStringList parts;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+#elif QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+        parts = cmd.split(QRegExp("\\s+"), Qt::SkipEmptyParts);
 #else
-        res = cl_eval(form);
+        parts = cmd.split(QRegExp("\\s+"), QString::SkipEmptyParts);
 #endif
-        QString out = eclObjectToQString(res);
-        consoleOutput->appendPlainText(out + "\n");
-    } catch (...) {
-        consoleOutput->appendPlainText("Error evaluating expression (C++ exception).\n");
+
+        QString funcName = parts[0].toLower();
+        QStringList args = parts.mid(1);
+
+        if (args.isEmpty()) {
+            wrapped = QString("(%1)").arg(funcName);
+        } else {
+            QString argStr = args.join(" ");
+            wrapped = QString("(%1 %2)").arg(funcName, argStr);
+        }
+    } else {
+        wrapped = cmd;
+    }
+
+    // Wrap in error handler
+    QString safewrapped = QString(
+        "(handler-case %1 "
+        "(error (e) (format nil \"ERROR: ~A\" e)))").arg(wrapped);
+
+    QString out;
+
+    // Convert to C string
+    QByteArray codeBytes = safewrapped.toUtf8();
+    const char* codeStr = codeBytes.constData();
+
+    // Evaluate
+    cl_object res = Cnil;
+    bool evalSuccess = evaluateECLForm(codeStr, &res);
+
+    if (!evalSuccess) {
+        out = "ERROR: Exception during evaluation";
+    } else if (res == NULL) {
+        out = "ERROR: Evaluation returned NULL";
+    } else {
+        out = eclObjectToQString(res);
+    }
+
+    // Log to console
+    consoleOutput->appendPlainText(QString("> %1").arg(cmd));
+    consoleOutput->appendPlainText(out + "\n");
+
+    // Show result if console is hidden
+    if (!consoleVisible) {
+        showResultTemporarily(out);
     }
 }
 

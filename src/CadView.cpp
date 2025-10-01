@@ -405,7 +405,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             doc.addFeature(extrude);
 
             // notify main window
-            Q_EMIT featureAdded();
+            emit featureAdded();
 
             // reset state
             awaitingHeight = false;
