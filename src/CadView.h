@@ -593,7 +593,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
-signals:
+Q_SIGNALS:
     void featureAdded();
 
 private:
