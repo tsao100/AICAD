@@ -46,6 +46,8 @@ private Q_SLOTS:
     void toggle3D();
     void executeCommand();
     void fadeOutResult();
+    void onPointAcquired(QVector2D point);
+    void onGetPointCancelled();
 
 private:
     // CAD UI
@@ -88,5 +90,17 @@ private:
     QStringList commandHistory;
     int historyIndex;
     bool consoleVisible;
+
+    // GetPoint state management
+    struct GetPointRequest {
+        bool active = false;
+        QString prompt;
+        bool hasPreviousPoint = false;
+        QVector2D previousPoint;
+        std::function<void(QVector2D)> callback;
+    };
+    GetPointRequest currentGetPointRequest;
+
+    void setupGetPointECLInterface();
 };
 #endif // MAINWINDOW_H

@@ -288,7 +288,6 @@ void CadView::resizeGL(int w, int h) {
 void CadView::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Apply camera matrices
     QMatrix4x4 projection = camera.getProjectionMatrix();
     QMatrix4x4 view = camera.getViewMatrix();
 
@@ -300,39 +299,28 @@ void CadView::paintGL() {
 
     drawAxes();
 
-    // --- Draw all sketches and features ---
     doc.drawAll();
 
     for (auto& f : doc.features) {
         if (f->id == highlightedFeatureId) {
-            glColor3f(1.0f, 0.0f, 0.0f); // highlight red
+            glColor3f(1.0f, 0.0f, 0.0f);
         } else {
-            glColor3f(0.7f, 0.7f, 0.7f); // normal gray
+            glColor3f(0.7f, 0.7f, 0.7f);
         }
         f->draw();
     }
 
-    // --- Rectangle rubber band preview ---
     if (drawingRect && !awaitingHeight) {
-        drawRectangle(currentRect, Qt::DashLine); // use dashed outline
+        drawRectangle(currentRect, Qt::DashLine);
     }
 
-    // --- Extrude ghost preview ---
     if (awaitingHeight && pendingSketch) {
-        drawExtrudedCube({currentRect.p1, currentRect.p2}, previewHeight, true);
-        // last param 'true' = ghost mode (transparent / wireframe)
+        drawExtrudedCube(previewHeight, true);
     }
-}
 
-static SketchPlane viewToPlane(SketchView view) {
-    switch (view) {
-    case SketchView::Top:    return SketchPlane::XY;  // looking down Z
-    case SketchView::Front:  return SketchPlane::XZ;  // looking along -Y
-    case SketchView::Right:  return SketchPlane::YZ;  // looking along +X
-    case SketchView::Bottom: return SketchPlane::XY;  // reversed normal
-    case SketchView::Back:   return SketchPlane::XZ;  // reversed normal
-    case SketchView::Left:   return SketchPlane::YZ;  // reversed normal
-    default:                 return SketchPlane::XY;  // fallback
+    // Draw GetPoint rubber band
+    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
+        drawRubberBandLine(getPointState.previousPoint, getPointState.currentPoint);
     }
 }
 
@@ -391,23 +379,32 @@ static QVector<QVector3D> rectanglePointsForPlane(
 
 void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        // Handle GetPoint mode
+        if (getPointState.active && !getPointState.keyboardMode) {
+            QVector3D worldPos = screenToWorld(event->pos());
+            QVector2D planePt = worldToPlane(worldPos);
+
+            getPointState.active = false;
+            emit pointAcquired(planePt);
+            update();
+            return;
+        }
+
+        // ... existing mouse press handling ...
         QVector3D worldPos = screenToWorld(event->pos());
 
-        // ───────────── Extrude mode ─────────────
         if (mode == CadMode::Extruding && awaitingHeight && pendingSketch) {
             float height = (worldPos - baseP2).length();
 
             auto extrude = std::make_shared<ExtrudeNode>();
-            extrude->sketch = pendingSketch;   // link sketch
+            extrude->sketch = pendingSketch;
             extrude->height = height;
             extrude->direction = planeNormal(pendingSketch->plane);
             extrude->evaluate();
             doc.addFeature(extrude);
 
-            // notify main window
             emit featureAdded();
 
-            // reset state
             awaitingHeight = false;
             pendingSketch.reset();
             mode = CadMode::Idle;
@@ -415,27 +412,19 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        // ───────────── Sketch mode ─────────────
         if (mode == CadMode::Sketching) {
             if (!drawingRect) {
-                // first corner
                 currentRect.p1 = worldPos;
                 currentRect.p2 = worldPos;
                 drawingRect = true;
                 awaitingHeight = false;
             } else {
-                // second corner → finalize sketch
                 currentRect.p2 = worldPos;
-
-                //SketchPlane plane = viewToPlane(currentView);
-                //auto sketch = doc.createSketch(plane);
 
                 auto poly = std::make_shared<PolylineEntity>();
                 poly->points = rectanglePointsForPlane(currentRect, pendingSketch->plane);
                 pendingSketch->entities.push_back(poly);
 
-                // ready for extrusion
-                //pendingSketch = sketch;
                 baseP2 = currentRect.p2;
                 awaitingHeight = true;
 
@@ -447,17 +436,30 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     }
 
     if (event->button() == Qt::RightButton) {
-        lastMousePos = event->pos(); // orbit
+        // Cancel getpoint on right-click
+        if (getPointState.active) {
+            cancelGetPoint();
+            return;
+        }
+        lastMousePos = event->pos();
     }
 
     if (event->button() == Qt::MiddleButton) {
-        lastMousePos = event->pos();   // pan
+        lastMousePos = event->pos();
         setCursor(Qt::ClosedHandCursor);
     }
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
-    // --- Orbit with right mouse button ---
+    // Handle GetPoint rubber band
+    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
+        QVector3D worldPos = screenToWorld(event->pos());
+        getPointState.currentPoint = worldToPlane(worldPos);
+        update();
+        return;
+    }
+
+    // ... existing mouse move handling ...
     if ((event->buttons() & Qt::RightButton) && currentView == SketchView::None) {
         int dx = event->pos().x() - lastMousePos.x();
         int dy = event->pos().y() - lastMousePos.y();
@@ -467,40 +469,32 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    // --- Pan with MMB ---
     if (event->buttons() & Qt::MiddleButton) {
         QPoint delta = event->pos() - lastMousePos;
         lastMousePos = event->pos();
-        float aspect = float(width()) / float(height());
+        float aspect = float(width()) / float(qMax(1, height()));
 
         if (camera.isPerspective()) {
-            // --- Perspective pan ---
             float fovY = camera.fov_ * M_PI / 180.0f;
             float tanHalfFov = tan(fovY / 2.0f);
 
             float viewHeightAtTarget = 2.0f * (camera.position - camera.target).length() * tanHalfFov;
             float viewWidthAtTarget  = viewHeightAtTarget * aspect;
 
-            // Convert pixel delta to world units at target distance
-            float dx = (float(delta.y()) / height()) * viewHeightAtTarget; // remove negative here
-            float dy = (float(delta.x()) / width())  * viewWidthAtTarget;
+            float dx = (float(delta.y()) / qMax(1, height())) * viewHeightAtTarget;
+            float dy = (float(delta.x()) / qMax(1, width()))  * viewWidthAtTarget;
 
-            // Extract camera axes from view matrix
             QMatrix4x4 view = camera.getViewMatrix();
 
-            // OpenGL column-major: columns are right, up, -forward
             QVector3D right(view(0,0), view(1,0), view(2,0));
             QVector3D up   (view(0,1), view(1,1), view(2,1));
 
-            // Apply pan (notice signs: +dx*right, +dy*up)
             camera.pan(dx * right + dy * up);
         }
         else {
-            // Scale movement by viewport size
             float scale = 0.01f;
             QVector3D panDelta(-delta.x() * scale, delta.y() * scale, 0);
 
-            // Pan in camera’s local axes
             QMatrix4x4 view = camera.getViewMatrix();
             QVector3D right(view(0,0), view(1,0), view(2,0));
             QVector3D up(view(0,1), view(1,1), view(2,1));
@@ -511,19 +505,17 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    // --- Rubber band preview while drawing rectangle ---
     if (drawingRect && !awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
-        currentRect.p2 = worldPos;   // update opposite corner dynamically
-        update(); // triggers paintGL -> draws preview rectangle
+        currentRect.p2 = worldPos;
+        update();
     }
 
-    // --- Rubber band preview while picking extrusion height ---
     if (mode == CadMode::Extruding && awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
         baseP2 = currentRect.p2;
         previewHeight = (worldPos - baseP2).length();
-        update(); // paintGL will show ghost extrude
+        update();
     }
 }
 
@@ -561,6 +553,23 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
 
 
 void CadView::keyPressEvent(QKeyEvent* event) {
+    // Handle GetPoint keyboard input mode
+    if (getPointState.active) {
+        if (event->key() == Qt::Key_Escape) {
+            cancelGetPoint();
+            return;
+        }
+
+        // Any key press switches to keyboard mode
+        if (!getPointState.keyboardMode && !event->text().isEmpty()) {
+            getPointState.keyboardMode = true;
+            // Signal MainWindow to activate commandInput with the key
+            emit getPointCancelled(); // Reuse signal, MainWindow will check state
+            return;
+        }
+    }
+
+    // ... existing key handling ...
     switch(event->key())
     {
     case Qt::Key_U: setSketchView(SketchView::Top); break;
@@ -613,6 +622,112 @@ void CadView::drawAxes() {
     glColor3f(0,0,1); glVertex3f(0,0,0); glVertex3f(0,0,5);
     glEnd();
 }
+
+QVector2D CadView::worldToPlane(const QVector3D& worldPt) {
+    if (!pendingSketch) {
+        // Default to current view plane
+        switch (currentView) {
+        case SketchView::Top:
+        case SketchView::Bottom:
+            return QVector2D(worldPt.x(), worldPt.y());
+        case SketchView::Front:
+        case SketchView::Back:
+            return QVector2D(worldPt.x(), worldPt.z());
+        case SketchView::Right:
+        case SketchView::Left:
+            return QVector2D(worldPt.y(), worldPt.z());
+        default:
+            return QVector2D(worldPt.x(), worldPt.y());
+        }
+    }
+
+    // Project onto sketch plane
+    switch (pendingSketch->plane) {
+    case SketchPlane::XY:
+        return QVector2D(worldPt.x(), worldPt.y());
+    case SketchPlane::XZ:
+        return QVector2D(worldPt.x(), worldPt.z());
+    case SketchPlane::YZ:
+        return QVector2D(worldPt.y(), worldPt.z());
+    default:
+        return QVector2D(worldPt.x(), worldPt.y());
+    }
+}
+
+QVector3D CadView::planeToWorld(const QVector2D& planePt) {
+    if (!pendingSketch) {
+        switch (currentView) {
+        case SketchView::Top:
+        case SketchView::Bottom:
+            return QVector3D(planePt.x(), planePt.y(), 0);
+        case SketchView::Front:
+        case SketchView::Back:
+            return QVector3D(planePt.x(), 0, planePt.y());
+        case SketchView::Right:
+        case SketchView::Left:
+            return QVector3D(0, planePt.x(), planePt.y());
+        default:
+            return QVector3D(planePt.x(), planePt.y(), 0);
+        }
+    }
+
+    switch (pendingSketch->plane) {
+    case SketchPlane::XY:
+        return QVector3D(planePt.x(), planePt.y(), 0);
+    case SketchPlane::XZ:
+        return QVector3D(planePt.x(), 0, planePt.y());
+    case SketchPlane::YZ:
+        return QVector3D(0, planePt.x(), planePt.y());
+    default:
+        return QVector3D(planePt.x(), planePt.y(), 0);
+    }
+}
+
+void CadView::startGetPoint(const QString& prompt, const QVector2D* previousPt) {
+    getPointState.active = true;
+    getPointState.prompt = prompt;
+    getPointState.keyboardMode = false;
+
+    if (previousPt) {
+        getPointState.hasPreviousPoint = true;
+        getPointState.previousPoint = *previousPt;
+    } else {
+        getPointState.hasPreviousPoint = false;
+    }
+
+    // Notify MainWindow to show prompt in commandInput
+    emit pointAcquired(QVector2D()); // Special signal for prompt setup
+
+    setFocus(); // Ensure CadView gets keyboard input
+    update();
+}
+
+void CadView::cancelGetPoint() {
+    getPointState.active = false;
+    getPointState.hasPreviousPoint = false;
+    getPointState.keyboardMode = false;
+    emit getPointCancelled();
+    update();
+}
+
+void CadView::drawRubberBandLine(const QVector2D& p1, const QVector2D& p2) {
+    QVector3D w1 = planeToWorld(p1);
+    QVector3D w2 = planeToWorld(p2);
+
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(1, 0xAAAA);
+    glColor3f(1.0f, 1.0f, 0.0f); // Yellow
+    glLineWidth(1.5f);
+
+    glBegin(GL_LINES);
+    glVertex3f(w1.x(), w1.y(), w1.z());
+    glVertex3f(w2.x(), w2.y(), w2.z());
+    glEnd();
+
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(1.0f);
+}
+
 
 // Utility: build orthonormal basis from plane normal
 static void planeBasis(const QVector3D& normal, QVector3D& u, QVector3D& v) {
@@ -681,9 +796,7 @@ void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
         glDisable(GL_LINE_STIPPLE);
 }
 
-void CadView::drawExtrudedCube(const Rectangle2D& rect, float height, bool ghost) {
-    QVector3D p1 = rect.p1;
-    QVector3D p2 = rect.p2;
+void CadView::drawExtrudedCube(float height, bool ghost) {
 
     // Base corners - adjust based on sketch plane
     QVector3D v0, v1, v2, v3;

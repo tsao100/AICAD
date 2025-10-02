@@ -582,6 +582,28 @@ public:
     void startSketchMode(std::shared_ptr<SketchNode> sketch);
     void startExtrudeMode(std::shared_ptr<SketchNode> sketch);
 
+    // GetPoint functionality
+    void startGetPoint(const QString& prompt, const QVector2D* previousPt = nullptr);
+    void cancelGetPoint();
+    QVector2D worldToPlane(const QVector3D& worldPt);
+    QVector3D planeToWorld(const QVector2D& planePt);
+
+    // GetPoint state
+    struct GetPointState {
+        bool active = false;
+        QString prompt;
+        bool hasPreviousPoint = false;
+        QVector2D previousPoint;
+        QVector2D currentPoint;
+        bool keyboardMode = false;
+    };
+    GetPointState getPointState;
+
+Q_SIGNALS:
+    void featureAdded();
+    void pointAcquired(QVector2D point);
+    void getPointCancelled();
+
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
@@ -593,14 +615,13 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
-Q_SIGNALS:
-    void featureAdded();
-
 private:
     void drawAxes();
     void drawRectangle(const Rectangle2D& rect, Qt::PenStyle style);
-    void drawExtrudedCube(const Rectangle2D& base, float height, bool ghost);
+    void drawExtrudedCube(float height, bool ghost);
     QVector3D mapToPlane(int x, int y);
+
+    void drawRubberBandLine(const QVector2D& p1, const QVector2D& p2);
 
     QPoint lastMousePos;
     Rectangle2D currentRect;

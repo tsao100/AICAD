@@ -16,6 +16,7 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <cmath>
 
 // Qt5/Qt6 compatibility for regular expressions
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -252,6 +253,36 @@ void MainWindow::initECL() {
     showResultTemporarily("ECL Lisp initialized. Press F2 to toggle console.");
 }
 
+// Add ECL getpoint interface setup
+void MainWindow::setupGetPointECLInterface() {
+    // Register C++ function callable from Lisp
+    // This requires ECL's defun interface
+
+    const char* bridgeSetup = R"(
+        ;; Global state for tracking active getpoint requests
+        (defvar *active-getpoint* nil)
+        (defvar *getpoint-callbacks* (make-hash-table))
+
+        ;; Simulate getpoint result delivery from C++
+        (defun deliver-point-result (request-id x y)
+          "Called by C++ when point is acquired"
+          (let ((callback (gethash request-id *getpoint-callbacks*)))
+            (when callback
+              (funcall callback (list x y))
+              (remhash request-id *getpoint-callbacks*))))
+
+        ;; Helper to create point list
+        (defun make-point (x y)
+          (list x y))
+
+        (defun point-x (pt) (first pt))
+        (defun point-y (pt) (second pt))
+    )";
+
+    cl_object result;
+    evaluateECLForm(bridgeSetup, &result);
+}
+
 void MainWindow::defineCADCommands() {
     const char* lineCommand = R"(
         (defun line (&optional p1 p2)
@@ -303,6 +334,39 @@ void MainWindow::defineCADCommands() {
     )";
 
     evaluateECLForm(extrudeCommand, &result);
+
+    // Define getpoint function
+    const char* getpointCommand = R"(
+        (defparameter *getpoint-result* nil)
+        (defparameter *getpoint-waiting* nil)
+
+        (defun getpoint (&optional (prompt "Specify point") previous-point)
+          (setf *getpoint-waiting* t)
+          (setf *getpoint-result* nil)
+
+          (if previous-point
+              (format nil "GETPOINT: ~A [from ~A]" prompt previous-point)
+              (format nil "GETPOINT: ~A" prompt)))
+    )";
+
+    evaluateECLForm(getpointCommand, &result);
+
+    // Interactive line command example
+    const char* interactiveLineCmd = R"(
+        (defun draw-line-interactive ()
+          "Interactive line drawing"
+          (let ((p1 (getpoint "First point: "))
+                (p2 nil))
+            (when p1
+              (setf p2 (getpoint "Second point: " p1))
+              (when p2
+                (format nil "Line drawn from ~A to ~A" p1 p2)))))
+    )";
+
+    evaluateECLForm(interactiveLineCmd, &result);
+
+    // Setup C++ <-> Lisp bridge (would need additional work)
+    setupGetPointECLInterface();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event) {
@@ -366,6 +430,107 @@ void MainWindow::executeCommand() {
     QString cmd = commandInput->text().trimmed();
     if (cmd.isEmpty()) return;
 
+    // Handle GetPoint keyboard input
+    if (currentGetPointRequest.active) {
+        // Parse coordinates from command
+        // trimmed() returns a new QString, must capture it
+        QString coordStr = cmd;
+        coordStr = coordStr.remove(currentGetPointRequest.prompt).trimmed();
+
+        // Support multiple formats:
+        // 1. "X,Y" - Absolute
+        // 2. "X Y" - Absolute
+        // 3. "@X,Y" - Relative (if previous point exists)
+        // 4. "distance<angle" - Polar
+
+        bool relative = coordStr.startsWith('@');
+        bool polar = coordStr.contains('<');
+
+        if (relative) coordStr = coordStr.mid(1);
+
+        QVector2D point;
+
+        if (polar && coordStr.contains('<')) {
+            // Polar coordinates: distance<angle
+            QStringList parts = coordStr.split('<');
+            if (parts.size() == 2) {
+                bool okDist, okAngle;
+                float distance = parts[0].toFloat(&okDist);
+                float angle = parts[1].toFloat(&okAngle);
+
+                if (okDist && okAngle) {
+                    float radians = angle * M_PI / 180.0f;
+                    float dx = distance * cos(radians);
+                    float dy = distance * sin(radians);
+
+                    if (relative && currentGetPointRequest.hasPreviousPoint) {
+                        point = currentGetPointRequest.previousPoint + QVector2D(dx, dy);
+                    } else {
+                        point = QVector2D(dx, dy);
+                    }
+                } else {
+                    showResultTemporarily("Invalid polar format. Use: distance<angle");
+                    return;
+                }
+            }
+        } else {
+            // Cartesian coordinates - Qt5/Qt6 compatible split
+            QStringList parts;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            parts = coordStr.split(QRegularExpression("[,\\s]+"), Qt::SkipEmptyParts);
+#elif QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+            parts = coordStr.split(QRegularExpression("[,\\s]+"), Qt::SkipEmptyParts);
+#else \
+    // For Qt5 < 5.14, use simple split on comma or space
+            coordStr = coordStr.replace(',', ' ');
+            parts = coordStr.split(' ', QString::SkipEmptyParts);
+#endif
+
+            if (parts.size() >= 2) {
+                bool okX, okY;
+                float x = parts[0].toFloat(&okX);
+                float y = parts[1].toFloat(&okY);
+
+                if (okX && okY) {
+                    if (relative && currentGetPointRequest.hasPreviousPoint) {
+                        point = currentGetPointRequest.previousPoint + QVector2D(x, y);
+                    } else {
+                        point = QVector2D(x, y);
+                    }
+                } else {
+                    showResultTemporarily("Invalid coordinate format. Use: X,Y or X Y");
+                    return;
+                }
+            } else {
+                showResultTemporarily("Invalid format. Use: X,Y or X Y or @X,Y or distance<angle");
+                return;
+            }
+        }
+
+        // Cancel getpoint mode in view
+        m_view->getPointState.active = false;
+
+        // Execute callback
+        if (currentGetPointRequest.callback) {
+            currentGetPointRequest.callback(point);
+        }
+
+        // Log
+        consoleOutput->appendPlainText(
+            QString("%1 (%2, %3)")
+                .arg(currentGetPointRequest.prompt)
+                .arg(point.x(), 0, 'f', 3)
+                .arg(point.y(), 0, 'f', 3)
+            );
+
+        // Reset
+        currentGetPointRequest.active = false;
+        commandInput->clear();
+        commandInput->setPlaceholderText("Enter Lisp command or CAD command (e.g., 'line')...");
+        return;
+    }
+
+    // Add to history
     if (commandHistory.isEmpty() || commandHistory.last() != cmd) {
         commandHistory.append(cmd);
     }
@@ -373,15 +538,18 @@ void MainWindow::executeCommand() {
 
     commandInput->clear();
 
+    // Check if it's a CAD-style command
     QString wrapped;
     if (!cmd.startsWith('(')) {
+        // Qt5/Qt6 compatible string splitting
         QStringList parts;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
 #elif QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-        parts = cmd.split(QRegExp("\\s+"), Qt::SkipEmptyParts);
-#else
-        parts = cmd.split(QRegExp("\\s+"), QString::SkipEmptyParts);
+        parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+#else \
+    // For Qt5 < 5.14, use simple split
+        parts = cmd.split(' ', QString::SkipEmptyParts);
 #endif
 
         QString funcName = parts[0].toLower();
@@ -397,15 +565,18 @@ void MainWindow::executeCommand() {
         wrapped = cmd;
     }
 
+    // Wrap in error handler
     QString safewrapped = QString(
                               "(handler-case %1 "
                               "(error (e) (format nil \"ERROR: ~A\" e)))").arg(wrapped);
 
     QString out;
 
+    // Convert to C string
     QByteArray codeBytes = safewrapped.toUtf8();
     const char* codeStr = codeBytes.constData();
 
+    // Evaluate
     cl_object res = Cnil;
     bool evalSuccess = evaluateECLForm(codeStr, &res);
 
@@ -417,9 +588,11 @@ void MainWindow::executeCommand() {
         out = eclObjectToQString(res);
     }
 
+    // Log to console
     consoleOutput->appendPlainText(QString("> %1").arg(cmd));
     consoleOutput->appendPlainText(out + "\n");
 
+    // Show result if console is hidden
     if (!consoleVisible) {
         showResultTemporarily(out);
     }
@@ -448,6 +621,64 @@ void MainWindow::showResultTemporarily(const QString &result) {
 void MainWindow::fadeOutResult() {
     fadeAnimation->start();
 }
+
+void MainWindow::onPointAcquired(QVector2D point) {
+    if (!currentGetPointRequest.active) {
+        // First call - setup prompt
+        if (m_view->getPointState.active) {
+            currentGetPointRequest.active = true;
+            currentGetPointRequest.prompt = m_view->getPointState.prompt;
+            currentGetPointRequest.hasPreviousPoint = m_view->getPointState.hasPreviousPoint;
+            if (m_view->getPointState.hasPreviousPoint) {
+                currentGetPointRequest.previousPoint = m_view->getPointState.previousPoint;
+            }
+
+            // Show prompt in commandInput
+            commandInput->setText(currentGetPointRequest.prompt);
+            commandInput->setReadOnly(false);
+            commandInput->setFocus();
+            commandInput->selectAll();
+        }
+        return;
+    }
+
+    // Point acquired - execute callback
+    if (currentGetPointRequest.callback) {
+        currentGetPointRequest.callback(point);
+    }
+
+    // Log to console
+    consoleOutput->appendPlainText(
+        QString("%1 (%2, %3)")
+            .arg(currentGetPointRequest.prompt)
+            .arg(point.x(), 0, 'f', 3)
+            .arg(point.y(), 0, 'f', 3)
+        );
+
+    // Reset state
+    currentGetPointRequest.active = false;
+    commandInput->clear();
+    commandInput->setPlaceholderText("Enter Lisp command or CAD command (e.g., 'line')...");
+}
+
+void MainWindow::onGetPointCancelled() {
+    if (currentGetPointRequest.active) {
+        // Check if switching to keyboard mode
+        if (m_view->getPointState.keyboardMode) {
+            commandInput->setText(currentGetPointRequest.prompt + " ");
+            commandInput->setFocus();
+            commandInput->setCursorPosition(commandInput->text().length());
+            return;
+        }
+
+        // Cancelled
+        consoleOutput->appendPlainText("*Cancelled*");
+        currentGetPointRequest.active = false;
+        commandInput->clear();
+        commandInput->setPlaceholderText("Enter Lisp command or CAD command (e.g., 'line')...");
+    }
+}
+
 
 // --- CAD UI implementation ---
 void MainWindow::createActions() {
@@ -559,6 +790,10 @@ void MainWindow::createCentral() {
     m_view = new CadView(this);
     setCentralWidget(m_view);
     connect(m_view, &CadView::featureAdded, this, &MainWindow::updateFeatureTree);
+
+    // Connect GetPoint signals
+    connect(m_view, &CadView::pointAcquired, this, &MainWindow::onPointAcquired);
+    connect(m_view, &CadView::getPointCancelled, this, &MainWindow::onGetPointCancelled);
 }
 
 void MainWindow::createFeatureBrowser() {
