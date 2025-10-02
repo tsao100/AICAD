@@ -1,6 +1,12 @@
 // CRITICAL: Include MainWindow.h first (which includes ECL before Qt)
 #include "MainWindow.h"
 
+// Unix-specific headers for FPU control
+#ifdef __unix__
+#include <fenv.h>
+#include <signal.h>
+#endif
+
 // Now include remaining Qt headers
 #include <QToolBar>
 #include <QAction>
@@ -13,9 +19,9 @@
 
 // Qt5/Qt6 compatibility for regular expressions
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    #include <QRegularExpression>
+#include <QRegularExpression>
 #else
-    #include <QRegExp>
+#include <QRegExp>
 #endif
 
 // Helper to convert ECL objects to QString
@@ -44,8 +50,7 @@ QString eclObjectToQString(cl_object obj) {
     return "<unconvertible>";
 }
 
-// Helper function to evaluate ECL code - separate to avoid MSVC SEH issues
-// This function has no C++ objects with destructors
+// Helper function to evaluate ECL code
 static bool evaluateECLForm(const char* code, cl_object* result) {
     cl_object form = c_string_to_object(code);
 
@@ -74,8 +79,11 @@ MainWindow::MainWindow()
     createCentral();
     createFeatureBrowser();
 
-    // Initialize ECL Lisp command interface
-    initECL();
+    // CRITICAL: Initialize ECL AFTER all OpenGL widgets are created
+    // This prevents ECL from interfering with OpenGL context creation
+    QTimer::singleShot(0, this, [this]() {
+        initECL();
+    });
 
     setWindowTitle("Qt CAD Viewer with Lisp");
     resize(1024, 768);
@@ -86,9 +94,31 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::initECL() {
+#ifdef __unix__
+    // Save the current FPU state before ECL initialization
+    fenv_t fpu_state;
+    fegetenv(&fpu_state);
+
+    // Save signal handlers
+    struct sigaction old_sigfpe;
+    sigaction(SIGFPE, NULL, &old_sigfpe);
+#endif
+
     char *argv[1] = {(char*)"app"};
     cl_boot(1, argv);
     atexit(cl_shutdown);
+
+#ifdef __unix__
+    // CRITICAL: Restore FPU state after ECL boot
+    // ECL may change floating point exception masks
+    fesetenv(&fpu_state);
+
+    // Restore SIGFPE handler if ECL changed it
+    sigaction(SIGFPE, &old_sigfpe, NULL);
+
+    // Explicitly clear any pending FPU exceptions
+    feclearexcept(FE_ALL_EXCEPT);
+#endif
 
     defineCADCommands();
 
@@ -101,7 +131,7 @@ void MainWindow::initECL() {
         overlay->setSpacing(0);
     }
 
-    // Result label setup (positioned above command input)
+    // Result label setup
     resultLabel = new QLabel(central);
     resultLabel->setStyleSheet(
         "QLabel { "
@@ -113,7 +143,7 @@ void MainWindow::initECL() {
         "border: 1px solid green; "
         "border-radius: 5px; "
         "}"
-    );
+        );
     resultLabel->setWordWrap(true);
     resultLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     resultLabel->setVisible(false);
@@ -131,7 +161,7 @@ void MainWindow::initECL() {
     resultFadeAnimation->setStartValue(1.0);
     resultFadeAnimation->setEndValue(0.0);
 
-    // Console output setup (hidden by default)
+    // Console output setup
     consoleOutput = new QPlainTextEdit(central);
     consoleOutput->setReadOnly(true);
     consoleOutput->setStyleSheet("background:black; color:lightgreen; font-family:monospace;");
@@ -161,7 +191,7 @@ void MainWindow::initECL() {
         "border: 2px solid gray; "
         "border-radius: 3px; "
         "}"
-    );
+        );
     commandInput->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     // Toggle button
@@ -184,7 +214,7 @@ void MainWindow::initECL() {
         "QPushButton:pressed { "
         "background: rgba(100, 100, 100, 200); "
         "}"
-    );
+        );
     toggleButton->setToolTip("Toggle console (F2)");
     toggleButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
@@ -198,7 +228,7 @@ void MainWindow::initECL() {
     QWidget *bottomWidget = new QWidget(central);
     bottomWidget->setLayout(bottomLayout);
 
-    // Add to overlay (at bottom of CAD view)
+    // Add to overlay
     overlay->addStretch();
     overlay->addWidget(consoleOutput);
     overlay->addWidget(resultLabel);
@@ -217,14 +247,12 @@ void MainWindow::initECL() {
         resultOpacityEffect->setOpacity(1.0);
     });
 
-    // Install event filter for command history
     commandInput->installEventFilter(this);
 
     showResultTemporarily("ECL Lisp initialized. Press F2 to toggle console.");
 }
 
 void MainWindow::defineCADCommands() {
-    // Define CAD-style commands in Lisp
     const char* lineCommand = R"(
         (defun line (&optional p1 p2)
           (cond
@@ -252,7 +280,6 @@ void MainWindow::defineCADCommands() {
 
     evaluateECLForm(circleCommand, &result);
 
-    // Add sketch command
     const char* sketchCommand = R"(
         (defun sketch (&optional plane)
           (cond
@@ -264,7 +291,6 @@ void MainWindow::defineCADCommands() {
 
     evaluateECLForm(sketchCommand, &result);
 
-    // Add extrude command
     const char* extrudeCommand = R"(
         (defun extrude (&optional sketch-id height)
           (cond
@@ -292,7 +318,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
     if (obj == commandInput && event->type() == QEvent::KeyPress) {
         QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
 
-        // Handle Up Arrow
         if (keyEvent->key() == Qt::Key_Up) {
             if (!commandHistory.isEmpty() && historyIndex < commandHistory.size() - 1) {
                 historyIndex++;
@@ -301,7 +326,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
             return true;
         }
 
-        // Handle Down Arrow
         if (keyEvent->key() == Qt::Key_Down) {
             if (historyIndex > 0) {
                 historyIndex--;
@@ -313,7 +337,6 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
             return true;
         }
 
-        // Handle Spacebar when empty - repeat last command
         if (keyEvent->key() == Qt::Key_Space && commandInput->text().isEmpty()) {
             if (!commandHistory.isEmpty()) {
                 commandInput->setText(commandHistory.last());
@@ -343,7 +366,6 @@ void MainWindow::executeCommand() {
     QString cmd = commandInput->text().trimmed();
     if (cmd.isEmpty()) return;
 
-    // Add to history
     if (commandHistory.isEmpty() || commandHistory.last() != cmd) {
         commandHistory.append(cmd);
     }
@@ -351,10 +373,8 @@ void MainWindow::executeCommand() {
 
     commandInput->clear();
 
-    // Check if it's a CAD-style command
     QString wrapped;
     if (!cmd.startsWith('(')) {
-        // Qt5/Qt6 compatible string splitting
         QStringList parts;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
@@ -377,18 +397,15 @@ void MainWindow::executeCommand() {
         wrapped = cmd;
     }
 
-    // Wrap in error handler
     QString safewrapped = QString(
-        "(handler-case %1 "
-        "(error (e) (format nil \"ERROR: ~A\" e)))").arg(wrapped);
+                              "(handler-case %1 "
+                              "(error (e) (format nil \"ERROR: ~A\" e)))").arg(wrapped);
 
     QString out;
 
-    // Convert to C string
     QByteArray codeBytes = safewrapped.toUtf8();
     const char* codeStr = codeBytes.constData();
 
-    // Evaluate
     cl_object res = Cnil;
     bool evalSuccess = evaluateECLForm(codeStr, &res);
 
@@ -400,11 +417,9 @@ void MainWindow::executeCommand() {
         out = eclObjectToQString(res);
     }
 
-    // Log to console
     consoleOutput->appendPlainText(QString("> %1").arg(cmd));
     consoleOutput->appendPlainText(out + "\n");
 
-    // Show result if console is hidden
     if (!consoleVisible) {
         showResultTemporarily(out);
     }
@@ -417,10 +432,10 @@ void MainWindow::showResultTemporarily(const QString &result) {
 
     QFontMetrics fm(resultLabel->font());
     int textHeight = fm.boundingRect(
-        resultLabel->contentsRect(),
-        Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
-        result
-    ).height();
+                           resultLabel->contentsRect(),
+                           Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
+                           result
+                           ).height();
 
     int desiredHeight = qBound(100, textHeight + 30, 400);
     resultLabel->setFixedHeight(desiredHeight);
