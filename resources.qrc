@@ -2,5 +2,24 @@
     <qresource prefix="/">
         <file>icons/sketch.png</file>
         <file>icons/extrude.png</file>
+        <file>icons/arc.png</file>
+        <file>icons/circle.png</file>
+        <file>icons/ellipse.png</file>
+        <file>icons/line.png</file>
+        <file>icons/polygon.png</file>
+        <file>icons/polyline.png</file>
+        <file>icons/rect.png</file>
+        <file>icons/spline.png</file>
+        <file>icons/copy.png</file>
+        <file>icons/cut.png</file>
+        <file>icons/export_pdf.png</file>
+        <file>icons/front.png</file>
+        <file>icons/load.png</file>
+        <file>icons/new.png</file>
+        <file>icons/paste.png</file>
+        <file>icons/print.png</file>
+        <file>icons/right.png</file>
+        <file>icons/save.png</file>
+        <file>icons/top.png</file>
     </qresource>
 </RCC>

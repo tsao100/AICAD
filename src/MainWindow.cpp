@@ -852,25 +852,25 @@ void MainWindow::createActions() {
     m_act3D->setCheckable(true);
     connect(m_act3D, &QAction::triggered, this, &MainWindow::toggle3D);
 
-    m_actDrawLine = new QAction(tr("Draw Line"), this);
+    m_actDrawLine = new QAction(QIcon(":/icons/line.png"), tr("Draw Line"), this);
     connect(m_actDrawLine, &QAction::triggered, [this]() {
         toggle2D();
     });
 
-    m_actDrawArc = new QAction(tr("Draw Arc"), this);
+    m_actDrawArc = new QAction(QIcon(":/icons/arc.png"), tr("Draw Arc"), this);
     connect(m_actDrawArc, &QAction::triggered, [this]() {
         toggle2D();
     });
 
-    m_actDrawRect = new QAction(tr("Draw Rect"), this);
+    m_actDrawRect = new QAction(QIcon(":/icons/rect.png"), tr("Draw Rect"), this);
     connect(m_actDrawRect, &QAction::triggered, this, &MainWindow::onDrawRectangle);
 
-    m_actPrint = new QAction(tr("Print"), this);
+    m_actPrint = new QAction(QIcon(":/icons/print.png"), tr("Print"), this);
     connect(m_actPrint, &QAction::triggered, [this]() {
         m_view->printView();
     });
 
-    m_actExportPdf = new QAction(tr("Export PDF"), this);
+    m_actExportPdf = new QAction(QIcon(":/icons/export_pdf.png"), tr("Export PDF"), this);
     connect(m_actExportPdf, &QAction::triggered, [this]() {
         QString file = QFileDialog::getSaveFileName(
             this, tr("Export PDF"), QString(), tr("PDF Files (*.pdf)"));
@@ -878,7 +878,7 @@ void MainWindow::createActions() {
             m_view->exportPdf(file);
     });
 
-    m_actSave = new QAction(tr("Save"), this);
+    m_actSave = new QAction(QIcon(":/icons/save.png"), tr("Save"), this);
     connect(m_actSave, &QAction::triggered, [this]() {
         QString fileName = QFileDialog::getSaveFileName(
             this, tr("Save CAD File"), QString(),
@@ -888,7 +888,7 @@ void MainWindow::createActions() {
         }
     });
 
-    m_actLoad = new QAction(tr("Load"), this);
+    m_actLoad = new QAction(QIcon(":/icons/load.png"), tr("Load"), this);
     connect(m_actLoad, &QAction::triggered, [this]() {
         QString fileName = QFileDialog::getOpenFileName(
             this, tr("Open CAD File"), QString(),
@@ -898,9 +898,9 @@ void MainWindow::createActions() {
         }
     });
 
-    m_actTop = new QAction(tr("Top (XY)"), this);
-    m_actFront = new QAction(tr("Front (XZ)"), this);
-    m_actRight = new QAction(tr("Right (YZ)"), this);
+    m_actTop = new QAction(QIcon(":/icons/top.png"), tr("Top (XY)"), this);
+    m_actFront = new QAction(QIcon(":/icons/front.png"), tr("Front (XZ)"), this);
+    m_actRight = new QAction(QIcon(":/icons/right.png"), tr("Right (YZ)"), this);
 
     connect(m_actTop, &QAction::triggered, [this]() {
         m_view->setSketchView(SketchView::Top);
