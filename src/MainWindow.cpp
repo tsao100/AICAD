@@ -510,21 +510,14 @@ void MainWindow::executeCommand() {
         // Cancel getpoint mode in view
         m_view->getPointState.active = false;
 
-        // Execute callback
-        if (currentGetPointRequest.callback) {
-            currentGetPointRequest.callback(point);
-        }
+        // CRITICAL: Don't execute callback directly!
+        // Use QTimer::singleShot to defer execution, allowing executeCommand() to return first
+        QTimer::singleShot(0, this, [this, point]() {
+            // Now safely call onPointAcquired which handles callback execution properly
+            onPointAcquired(point);
+        });
 
-        // Log
-        consoleOutput->appendPlainText(
-            QString("%1 (%2, %3)")
-                .arg(currentGetPointRequest.prompt)
-                .arg(point.x(), 0, 'f', 3)
-                .arg(point.y(), 0, 'f', 3)
-            );
-
-        // Reset
-        currentGetPointRequest.active = false;
+        // Clear command input immediately
         commandInput->clear();
         commandInput->setPlaceholderText("Enter Lisp command or CAD command (e.g., 'line')...");
         return;
@@ -623,7 +616,7 @@ void MainWindow::fadeOutResult() {
 }
 
 void MainWindow::onPointAcquired(QVector2D point) {
-    // First signal from startGetPoint() → just setup the prompt, don't execute callback
+    // First signal from startGetPoint() - just setup the prompt, don't execute callback
     if (!currentGetPointRequest.active) {
         if (m_view->getPointState.active) {
             currentGetPointRequest.active = true;
@@ -642,16 +635,12 @@ void MainWindow::onPointAcquired(QVector2D point) {
         return;
     }
 
-    // Actual point acquired – execute callback if available
+    // Actual point acquired - execute callback
     if (currentGetPointRequest.callback) {
-        // --- Move callback before executing it ---
+        // Step 1: Move callback to temp variable (prevents self-assignment during execution)
         auto callback = std::move(currentGetPointRequest.callback);
 
-        // --- Clear state BEFORE execution ---
-        currentGetPointRequest.active = false;
-        currentGetPointRequest.callback = nullptr;
-
-        // Log to console
+        // Step 2: Log to console
         consoleOutput->appendPlainText(
             QString("%1 (%2, %3)")
                 .arg(currentGetPointRequest.prompt)
@@ -659,25 +648,29 @@ void MainWindow::onPointAcquired(QVector2D point) {
                 .arg(point.y(), 0, 'f', 3)
             );
 
+        // Step 3: Clear state BEFORE executing callback
+        currentGetPointRequest.active = false;
+        currentGetPointRequest.callback = nullptr;
+
         // Reset prompt
         commandInput->clear();
-        commandInput->setPlaceholderText(
-            "Enter Lisp command or CAD command (e.g., 'line')...");
+        commandInput->setPlaceholderText("Enter Lisp command or CAD command (e.g., 'line')...");
 
-        // --- Execute user callback ---
+        // Step 4: Execute the callback
+        // (Callback may call startGetPoint() and set pendingCallback)
         callback(point);
 
-        // --- After execution, check if new pending callback was queued ---
+        // Step 5: After callback completes, check if pendingCallback was set
+        // Move it to callback for the next point acquisition
         if (currentGetPointRequest.pendingCallback) {
             currentGetPointRequest.callback = std::move(currentGetPointRequest.pendingCallback);
-            currentGetPointRequest.active = true; // re-arm for next point
+            currentGetPointRequest.pendingCallback = nullptr;
         }
     } else {
-        // No callback set – just reset
+        // No callback set - just reset
         currentGetPointRequest.active = false;
         commandInput->clear();
-        commandInput->setPlaceholderText(
-            "Enter Lisp command or CAD command (e.g., 'line')...");
+        commandInput->setPlaceholderText("Enter Lisp command or CAD command (e.g., 'line')...");
     }
 }
 
