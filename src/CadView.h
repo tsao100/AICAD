@@ -576,6 +576,7 @@ public:
     void setSketchView(SketchView view);
     QVector3D screenToWorld(const QPoint& screenPos);
     Document doc;
+    std::shared_ptr<SketchNode> pendingSketch;
     void highlightFeature(int id);
     void printView();
     void exportPdf(const QString &file);
@@ -625,7 +626,6 @@ private:
 
     QPoint lastMousePos;
     Rectangle2D currentRect;
-    bool drawingRect;
     bool awaitingHeight = false;
     QVector3D baseP2;
     float previewHeight = 0.0f;
@@ -637,7 +637,6 @@ private:
 
     int highlightedFeatureId = -1;
     EditMode editMode = EditMode::None;
-    std::shared_ptr<SketchNode> pendingSketch;
     CadMode mode = CadMode::Idle;
 };
 

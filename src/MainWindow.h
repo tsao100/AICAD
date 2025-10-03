@@ -48,6 +48,7 @@ private Q_SLOTS:
     void fadeOutResult();
     void onPointAcquired(QVector2D point);
     void onGetPointCancelled();
+    void onDrawRectangle();
 
 private:
     // CAD UI
@@ -59,9 +60,12 @@ private:
     void onFeatureSelected(QTreeWidgetItem* item, int column);
     void onCreateSketch();
     void onCreateExtrude();
+    void createRectangleEntity(std::shared_ptr<SketchNode> sketch,
+                                const QVector2D& corner1,
+                               const QVector2D& corner2);
 
     QAction *m_act2D, *m_act3D;
-    QAction *m_actDrawLine, *m_actDrawArc;
+    QAction *m_actDrawLine, *m_actDrawArc, *m_actDrawRect;
     QAction *m_actSave, *m_actLoad;
     QAction *m_actPrint, *m_actExportPdf;
     QAction *m_actTop, *m_actFront, *m_actRight;
@@ -98,6 +102,7 @@ private:
         bool hasPreviousPoint = false;
         QVector2D previousPoint;
         std::function<void(QVector2D)> callback;
+        std::function<void(QVector2D)> pendingCallback;
     };
     GetPointRequest currentGetPointRequest;
 

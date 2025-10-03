@@ -623,8 +623,8 @@ void MainWindow::fadeOutResult() {
 }
 
 void MainWindow::onPointAcquired(QVector2D point) {
+    // First signal from startGetPoint() → just setup the prompt, don't execute callback
     if (!currentGetPointRequest.active) {
-        // First call - setup prompt
         if (m_view->getPointState.active) {
             currentGetPointRequest.active = true;
             currentGetPointRequest.prompt = m_view->getPointState.prompt;
@@ -642,23 +642,43 @@ void MainWindow::onPointAcquired(QVector2D point) {
         return;
     }
 
-    // Point acquired - execute callback
+    // Actual point acquired – execute callback if available
     if (currentGetPointRequest.callback) {
-        currentGetPointRequest.callback(point);
+        // --- Move callback before executing it ---
+        auto callback = std::move(currentGetPointRequest.callback);
+
+        // --- Clear state BEFORE execution ---
+        currentGetPointRequest.active = false;
+        currentGetPointRequest.callback = nullptr;
+
+        // Log to console
+        consoleOutput->appendPlainText(
+            QString("%1 (%2, %3)")
+                .arg(currentGetPointRequest.prompt)
+                .arg(point.x(), 0, 'f', 3)
+                .arg(point.y(), 0, 'f', 3)
+            );
+
+        // Reset prompt
+        commandInput->clear();
+        commandInput->setPlaceholderText(
+            "Enter Lisp command or CAD command (e.g., 'line')...");
+
+        // --- Execute user callback ---
+        callback(point);
+
+        // --- After execution, check if new pending callback was queued ---
+        if (currentGetPointRequest.pendingCallback) {
+            currentGetPointRequest.callback = std::move(currentGetPointRequest.pendingCallback);
+            currentGetPointRequest.active = true; // re-arm for next point
+        }
+    } else {
+        // No callback set – just reset
+        currentGetPointRequest.active = false;
+        commandInput->clear();
+        commandInput->setPlaceholderText(
+            "Enter Lisp command or CAD command (e.g., 'line')...");
     }
-
-    // Log to console
-    consoleOutput->appendPlainText(
-        QString("%1 (%2, %3)")
-            .arg(currentGetPointRequest.prompt)
-            .arg(point.x(), 0, 'f', 3)
-            .arg(point.y(), 0, 'f', 3)
-        );
-
-    // Reset state
-    currentGetPointRequest.active = false;
-    commandInput->clear();
-    commandInput->setPlaceholderText("Enter Lisp command or CAD command (e.g., 'line')...");
 }
 
 void MainWindow::onGetPointCancelled() {
@@ -680,6 +700,155 @@ void MainWindow::onGetPointCancelled() {
 }
 
 
+void MainWindow::onDrawRectangle() {
+    if (!m_view) return;
+
+    // Check if we have an active sketch or create one
+    if (m_view->doc.sketches.isEmpty()) {
+        // No sketch exists - need to create one first
+        QMessageBox::information(this,
+                                 tr("No Sketch"),
+                                 tr("Please create a sketch first using 'Create Sketch' button."));
+        return;
+    }
+
+    // Use the most recent sketch or let user select
+    std::shared_ptr<SketchNode> targetSketch;
+
+    if (m_view->doc.sketches.size() == 1) {
+        targetSketch = m_view->doc.sketches.last();
+    } else {
+        // Multiple sketches - ask user to select from tree
+        QTreeWidgetItem* item = featureTree->currentItem();
+        if (item) {
+            int featureId = item->data(0, Qt::UserRole).toInt();
+            auto f = m_view->doc.findFeature(featureId);
+            if (f && f->type == FeatureType::Sketch) {
+                targetSketch = std::static_pointer_cast<SketchNode>(f);
+            }
+        }
+
+        if (!targetSketch) {
+            QMessageBox::information(this,
+                                     tr("Select Sketch"),
+                                     tr("Please select a sketch in the feature tree first."));
+            return;
+        }
+    }
+
+    // Set appropriate view for the sketch plane
+    switch (targetSketch->plane) {
+    case SketchPlane::XY:
+        m_view->setSketchView(SketchView::Top);
+        break;
+    case SketchPlane::XZ:
+        m_view->setSketchView(SketchView::Front);
+        break;
+    case SketchPlane::YZ:
+        m_view->setSketchView(SketchView::Right);
+        break;
+    default:
+        break;
+    }
+
+    // Store the target sketch for use in callbacks
+    m_view->pendingSketch = targetSketch;
+
+    consoleOutput->appendPlainText("=== Draw Rectangle ===");
+
+    // Step 1: Get first corner
+    m_view->startGetPoint("Specify first corner:");
+
+    // Capture by value (shared_ptr is ref-counted, safe to copy)
+    std::shared_ptr<SketchNode> sketch = targetSketch;
+
+    // Setup callback for first corner
+    currentGetPointRequest.callback = [this, sketch](QVector2D corner1) {
+        consoleOutput->appendPlainText(
+            QString("First corner: (%1, %2)")
+                .arg(corner1.x(), 0, 'f', 3)
+                .arg(corner1.y(), 0, 'f', 3)
+            );
+
+        // Step 2: Get opposite corner with rubber band preview
+        m_view->startGetPoint("Specify opposite corner:", &corner1);
+
+        // CRITICAL: Use pendingCallback to avoid self-assignment during callback execution
+        // Setup callback for second corner - capture corner1 and sketch
+        currentGetPointRequest.pendingCallback = [this, sketch, corner1](QVector2D corner2) {
+            consoleOutput->appendPlainText(
+                QString("Opposite corner: (%1, %2)")
+                    .arg(corner2.x(), 0, 'f', 3)
+                    .arg(corner2.y(), 0, 'f', 3)
+                );
+
+            // Create the rectangle
+            createRectangleEntity(sketch, corner1, corner2);
+
+            consoleOutput->appendPlainText("Rectangle created.");
+            updateFeatureTree();
+            m_view->update();
+        };
+    };
+}
+
+// Helper function to create rectangle entity
+void MainWindow::createRectangleEntity(std::shared_ptr<SketchNode> sketch,
+                                       const QVector2D& corner1,
+                                       const QVector2D& corner2) {
+    if (!sketch) return;
+
+    // Convert 2D points to 3D based on sketch plane
+    QVector3D w1 = m_view->planeToWorld(corner1);
+    QVector3D w2 = m_view->planeToWorld(corner2);
+
+    // Build 4 corners in correct order (counterclockwise)
+    QVector<QVector3D> rectPoints;
+
+    switch (sketch->plane) {
+    case SketchPlane::XY:
+        rectPoints << QVector3D(w1.x(), w1.y(), w1.z())
+                   << QVector3D(w2.x(), w1.y(), w1.z())
+                   << QVector3D(w2.x(), w2.y(), w2.z())
+                   << QVector3D(w1.x(), w2.y(), w1.z())
+                   << QVector3D(w1.x(), w1.y(), w1.z()); // Close the loop
+        break;
+
+    case SketchPlane::XZ:
+        rectPoints << QVector3D(w1.x(), w1.y(), w1.z())
+                   << QVector3D(w2.x(), w1.y(), w1.z())
+                   << QVector3D(w2.x(), w2.y(), w2.z())
+                   << QVector3D(w1.x(), w2.y(), w1.z())
+                   << QVector3D(w1.x(), w1.y(), w1.z());
+        break;
+
+    case SketchPlane::YZ:
+        rectPoints << QVector3D(w1.x(), w1.y(), w1.z())
+                   << QVector3D(w1.x(), w2.y(), w1.z())
+                   << QVector3D(w2.x(), w2.y(), w2.z())
+                   << QVector3D(w2.x(), w1.y(), w1.z())
+                   << QVector3D(w1.x(), w1.y(), w1.z());
+        break;
+
+    default:
+        // Custom plane - use XY as default
+        rectPoints << QVector3D(w1.x(), w1.y(), 0)
+                   << QVector3D(w2.x(), w1.y(), 0)
+                   << QVector3D(w2.x(), w2.y(), 0)
+                   << QVector3D(w1.x(), w2.y(), 0)
+                   << QVector3D(w1.x(), w1.y(), 0);
+        break;
+    }
+
+    // Create polyline entity
+    auto poly = std::make_shared<PolylineEntity>();
+    poly->points = rectPoints;
+    poly->plane = sketch->plane;
+
+    // Add to sketch
+    sketch->entities.push_back(poly);
+}
+
 // --- CAD UI implementation ---
 void MainWindow::createActions() {
     m_act2D = new QAction(tr("2D View"), this);
@@ -699,6 +868,9 @@ void MainWindow::createActions() {
     connect(m_actDrawArc, &QAction::triggered, [this]() {
         toggle2D();
     });
+
+    m_actDrawRect = new QAction(tr("Draw Rect"), this);
+    connect(m_actDrawRect, &QAction::triggered, this, &MainWindow::onDrawRectangle);
 
     m_actPrint = new QAction(tr("Print"), this);
     connect(m_actPrint, &QAction::triggered, [this]() {
@@ -772,6 +944,7 @@ void MainWindow::createToolbar() {
     tb->addSeparator();
     tb->addAction(m_actDrawLine);
     tb->addAction(m_actDrawArc);
+    tb->addAction(m_actDrawRect);
     tb->addSeparator();
     tb->addAction(m_actSave);
     tb->addAction(m_actLoad);

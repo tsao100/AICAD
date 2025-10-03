@@ -112,7 +112,7 @@ void Camera::pan(const QVector3D& delta) {
 
 // ---------------- CadView Implementation ----------------
 CadView::CadView(QWidget* parent)
-    : QOpenGLWidget(parent), drawingRect(false), currentView(SketchView::None)
+    : QOpenGLWidget(parent), currentView(SketchView::None)
 {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -253,8 +253,6 @@ void CadView::exportPdf(const QString &file) {
 
 void CadView::startSketchMode(std::shared_ptr<SketchNode> sketch) {
     pendingSketch = sketch;
-    drawingRect = false;
-    awaitingHeight = false;
     mode = CadMode::Sketching;
     update();
     qDebug() << "Sketch mode started on sketch" << sketch->id;
@@ -310,9 +308,9 @@ void CadView::paintGL() {
         f->draw();
     }
 
-    if (drawingRect && !awaitingHeight) {
-        drawRectangle(currentRect, Qt::DashLine);
-    }
+//    if (!awaitingHeight) {
+//        drawRectangle(currentRect, Qt::DashLine);
+//    }
 
     if (awaitingHeight && pendingSketch) {
         drawExtrudedCube(previewHeight, true);
@@ -379,7 +377,7 @@ static QVector<QVector3D> rectanglePointsForPlane(
 
 void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
-        // Handle GetPoint mode
+        // Handle GetPoint mode FIRST (highest priority)
         if (getPointState.active && !getPointState.keyboardMode) {
             QVector3D worldPos = screenToWorld(event->pos());
             QVector2D planePt = worldToPlane(worldPos);
@@ -390,9 +388,9 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        // ... existing mouse press handling ...
         QVector3D worldPos = screenToWorld(event->pos());
 
+        // Handle Extrude mode
         if (mode == CadMode::Extruding && awaitingHeight && pendingSketch) {
             float height = (worldPos - baseP2).length();
 
@@ -412,27 +410,6 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        if (mode == CadMode::Sketching) {
-            if (!drawingRect) {
-                currentRect.p1 = worldPos;
-                currentRect.p2 = worldPos;
-                drawingRect = true;
-                awaitingHeight = false;
-            } else {
-                currentRect.p2 = worldPos;
-
-                auto poly = std::make_shared<PolylineEntity>();
-                poly->points = rectanglePointsForPlane(currentRect, pendingSketch->plane);
-                pendingSketch->entities.push_back(poly);
-
-                baseP2 = currentRect.p2;
-                awaitingHeight = true;
-
-                drawingRect = false;
-                mode = CadMode::Idle;
-            }
-            update();
-        }
     }
 
     if (event->button() == Qt::RightButton) {
@@ -505,7 +482,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    if (drawingRect && !awaitingHeight) {
+    if (!awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
         currentRect.p2 = worldPos;
         update();
