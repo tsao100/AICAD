@@ -308,8 +308,8 @@ void CadView::paintGL() {
         f->draw();
     }
 
-//    if (!awaitingHeight) {
-//        drawRectangle(currentRect, Qt::DashLine);
+//    if (awaitingHeight) {
+//        drawRectangle({getPointState.previousPoint, getPointState.currentPoint}, Qt::DashLine);
 //    }
 
     if (awaitingHeight && pendingSketch) {
@@ -318,7 +318,8 @@ void CadView::paintGL() {
 
     // Draw GetPoint rubber band
     if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
-        drawRubberBandLine(getPointState.previousPoint, getPointState.currentPoint);
+//        drawRubberBandLine(getPointState.previousPoint, getPointState.currentPoint);
+        drawRectangle({getPointState.previousPoint, getPointState.currentPoint}, Qt::DashLine);
     }
 }
 
@@ -429,7 +430,15 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
     // Handle GetPoint rubber band
-    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
+    bool bOk = false;
+    if (getPointState.hasPreviousPoint) {
+        QVector3D worldPos = screenToWorld(event->pos());
+        getPointState.currentPoint = worldToPlane(worldPos);
+        bOk=true;
+//        return;
+    }
+
+    if (getPointState.active && bOk && !getPointState.keyboardMode) {
         QVector3D worldPos = screenToWorld(event->pos());
         getPointState.currentPoint = worldToPlane(worldPos);
         update();

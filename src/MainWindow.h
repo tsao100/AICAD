@@ -80,6 +80,7 @@ private:
     void toggleConsole();
     void showResultTemporarily(const QString &result);
     void defineCADCommands();
+    void setPrompt(const QString &prompt);
 
     QPlainTextEdit *consoleOutput;
     QLineEdit *commandInput;
@@ -94,6 +95,8 @@ private:
     QStringList commandHistory;
     int historyIndex;
     bool consoleVisible;
+    QString promptText;
+    int promptLength;
 
     // GetPoint state management
     struct GetPointRequest {
