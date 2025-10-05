@@ -791,6 +791,7 @@ void MainWindow::onPointAcquired(QVector2D point) {
         commandInput->clear();
         setPrompt("Command: ");
     }
+
 }
 
 void MainWindow::onGetPointCancelled() {
@@ -883,6 +884,11 @@ void MainWindow::onDrawRectangle() {
             );
 
         // Step 2: Get opposite corner with rubber band preview
+        m_view->rubberBandState.mode = RubberBandMode::Rectangle;
+        m_view->rubberBandState.startPoint = corner1;
+        m_view->rubberBandState.currentPoint = corner1;
+        m_view->rubberBandState.active = true;
+
         m_view->startGetPoint("Specify opposite corner:", &corner1);
 
         // CRITICAL: Use pendingCallback to avoid self-assignment during callback execution
@@ -902,6 +908,11 @@ void MainWindow::onDrawRectangle() {
             m_view->update();
         };
     };
+
+    // Clear rubber band state after point acquisition
+    m_view->rubberBandState.active = false;
+    m_view->rubberBandState.mode = RubberBandMode::None;
+    m_view->rubberBandState.intermediatePoints.clear();
 }
 
 // Helper function to create rectangle entity
@@ -910,47 +921,19 @@ void MainWindow::createRectangleEntity(std::shared_ptr<SketchNode> sketch,
                                        const QVector2D& corner2) {
     if (!sketch) return;
 
-    // Convert 2D points to 3D based on sketch plane
-    QVector3D w1 = m_view->planeToWorld(corner1);
-    QVector3D w2 = m_view->planeToWorld(corner2);
+    // Create 4 corners in 2D plane coordinates
+    QVector2D c1 = corner1;
+    QVector2D c2 = QVector2D(corner2.x(), corner1.y());
+    QVector2D c3 = corner2;
+    QVector2D c4 = QVector2D(corner1.x(), corner2.y());
 
-    // Build 4 corners in correct order (counterclockwise)
+    // Convert to 3D world coordinates
     QVector<QVector3D> rectPoints;
-
-    switch (sketch->plane) {
-    case SketchPlane::XY:
-        rectPoints << QVector3D(w1.x(), w1.y(), w1.z())
-                   << QVector3D(w2.x(), w1.y(), w1.z())
-                   << QVector3D(w2.x(), w2.y(), w2.z())
-                   << QVector3D(w1.x(), w2.y(), w1.z())
-                   << QVector3D(w1.x(), w1.y(), w1.z()); // Close the loop
-        break;
-
-    case SketchPlane::XZ:
-        rectPoints << QVector3D(w1.x(), w1.y(), w1.z())
-                   << QVector3D(w2.x(), w1.y(), w1.z())
-                   << QVector3D(w2.x(), w2.y(), w2.z())
-                   << QVector3D(w1.x(), w2.y(), w1.z())
-                   << QVector3D(w1.x(), w1.y(), w1.z());
-        break;
-
-    case SketchPlane::YZ:
-        rectPoints << QVector3D(w1.x(), w1.y(), w1.z())
-                   << QVector3D(w1.x(), w2.y(), w1.z())
-                   << QVector3D(w2.x(), w2.y(), w2.z())
-                   << QVector3D(w2.x(), w1.y(), w1.z())
-                   << QVector3D(w1.x(), w1.y(), w1.z());
-        break;
-
-    default:
-        // Custom plane - use XY as default
-        rectPoints << QVector3D(w1.x(), w1.y(), 0)
-                   << QVector3D(w2.x(), w1.y(), 0)
-                   << QVector3D(w2.x(), w2.y(), 0)
-                   << QVector3D(w1.x(), w2.y(), 0)
-                   << QVector3D(w1.x(), w1.y(), 0);
-        break;
-    }
+    rectPoints << m_view->planeToWorld(c1)
+               << m_view->planeToWorld(c2)
+               << m_view->planeToWorld(c3)
+               << m_view->planeToWorld(c4)
+               << m_view->planeToWorld(c1); // Close the loop
 
     // Create polyline entity
     auto poly = std::make_shared<PolylineEntity>();
@@ -1141,7 +1124,8 @@ void MainWindow::onCreateSketch() {
     if (!m_view) return;
 
     QStringList planes = { "XY (Top)", "XZ (Front)", "YZ (Right)",
-                          "XY (Bottom)", "XZ (Back)", "YZ (Left)" };
+                          "XY (Bottom)", "XZ (Back)", "YZ (Left)" ,
+                          "Custom (1,1,1) at origin" };
 
     bool ok;
     QString choice = QInputDialog::getItem(this,
@@ -1175,7 +1159,18 @@ void MainWindow::onCreateSketch() {
         m_view->setSketchView(SketchView::Left);
     }
 
+    // Create sketch once for all cases
     auto sketch = m_view->doc.createSketch(plane);
+
+    // Configure custom plane if needed
+    if (choice.startsWith("Custom")) {
+        sketch->customPlane.origin = QVector3D(0, 0, 0);
+        sketch->customPlane.normal = QVector3D(1, 1, 1).normalized();
+        CadView::planeBasis(sketch->customPlane.normal,
+                            sketch->customPlane.uAxis,
+                            sketch->customPlane.vAxis);
+        m_view->setSketchView(SketchView::None);
+    }
     m_view->startSketchMode(sketch);
     updateFeatureTree();
 }

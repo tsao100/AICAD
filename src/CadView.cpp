@@ -202,8 +202,13 @@ QVector3D CadView::screenToWorld(const QPoint& screenPos) {
     case SketchView::Left:
         planeNormal = QVector3D(1,0,0); planeD = 0; break; // YZ plane
     default:
-        // Free orbit: use Z=0 plane for picking
-        planeNormal = QVector3D(0,0,1); planeD = 0;
+        // Check for custom plane
+        if (pendingSketch && pendingSketch->plane == SketchPlane::Custom) {
+            planeNormal = pendingSketch->customPlane.normal;
+            planeD = -QVector3D::dotProduct(planeNormal, pendingSketch->customPlane.origin);
+        } else {
+            planeNormal = QVector3D(0,0,1); planeD = 0;
+        }
         break;
     }
 
@@ -317,10 +322,14 @@ void CadView::paintGL() {
     }
 
     // Draw GetPoint rubber band
-    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
+//    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
 //        drawRubberBandLine(getPointState.previousPoint, getPointState.currentPoint);
-        drawRectangle({getPointState.previousPoint, getPointState.currentPoint}, Qt::DashLine);
-    }
+//        drawRectangle({getPointState.previousPoint, getPointState.currentPoint}, Qt::DashLine);
+//    }
+
+    // Draw unified rubber band
+    drawRubberBand();
+
 }
 
 QVector3D planeNormal(SketchPlane plane) {
@@ -429,18 +438,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
-    // Handle GetPoint rubber band
-    bool bOk = false;
-    if (getPointState.hasPreviousPoint) {
+    // Update rubber band for GetPoint
+    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
         QVector3D worldPos = screenToWorld(event->pos());
-        getPointState.currentPoint = worldToPlane(worldPos);
-        bOk=true;
-//        return;
-    }
-
-    if (getPointState.active && bOk && !getPointState.keyboardMode) {
-        QVector3D worldPos = screenToWorld(event->pos());
-        getPointState.currentPoint = worldToPlane(worldPos);
+        rubberBandState.currentPoint = worldToPlane(worldPos);
+        rubberBandState.active = true;
         update();
         return;
     }
@@ -609,9 +611,17 @@ void CadView::drawAxes() {
     glEnd();
 }
 
+// Utility: build orthonormal basis from plane normal
+void CadView::planeBasis(const QVector3D& normal, QVector3D& u, QVector3D& v) {
+    QVector3D n = normal.normalized();
+    // pick an arbitrary vector not parallel to n
+    QVector3D helper = (fabs(n.x()) > 0.9f) ? QVector3D(0,1,0) : QVector3D(1,0,0);
+    u = QVector3D::crossProduct(n, helper).normalized();
+    v = QVector3D::crossProduct(n, u).normalized();
+}
+
 QVector2D CadView::worldToPlane(const QVector3D& worldPt) {
     if (!pendingSketch) {
-        // Default to current view plane
         switch (currentView) {
         case SketchView::Top:
         case SketchView::Bottom:
@@ -635,6 +645,12 @@ QVector2D CadView::worldToPlane(const QVector3D& worldPt) {
         return QVector2D(worldPt.x(), worldPt.z());
     case SketchPlane::YZ:
         return QVector2D(worldPt.y(), worldPt.z());
+    case SketchPlane::Custom: {
+        // For arbitrary planes: project onto basis
+        QVector3D localPt = worldPt - pendingSketch->customPlane.origin;
+        return QVector2D(QVector3D::dotProduct(localPt, pendingSketch->customPlane.uAxis),
+                         QVector3D::dotProduct(localPt, pendingSketch->customPlane.vAxis));
+    }
     default:
         return QVector2D(worldPt.x(), worldPt.y());
     }
@@ -657,6 +673,7 @@ QVector3D CadView::planeToWorld(const QVector2D& planePt) {
         }
     }
 
+    // Use sketch plane with proper axis mapping
     switch (pendingSketch->plane) {
     case SketchPlane::XY:
         return QVector3D(planePt.x(), planePt.y(), 0);
@@ -664,11 +681,15 @@ QVector3D CadView::planeToWorld(const QVector2D& planePt) {
         return QVector3D(planePt.x(), 0, planePt.y());
     case SketchPlane::YZ:
         return QVector3D(0, planePt.x(), planePt.y());
+    case SketchPlane::Custom: {
+        return pendingSketch->customPlane.origin +
+               pendingSketch->customPlane.uAxis * planePt.x() +
+               pendingSketch->customPlane.vAxis * planePt.y();
+    }
     default:
         return QVector3D(planePt.x(), planePt.y(), 0);
     }
 }
-
 void CadView::startGetPoint(const QString& prompt, const QVector2D* previousPt) {
     getPointState.active = true;
     getPointState.prompt = prompt;
@@ -714,14 +735,83 @@ void CadView::drawRubberBandLine(const QVector2D& p1, const QVector2D& p2) {
     glLineWidth(1.0f);
 }
 
+void CadView::drawRubberBand() {
+    if (!rubberBandState.active) return;
 
-// Utility: build orthonormal basis from plane normal
-static void planeBasis(const QVector3D& normal, QVector3D& u, QVector3D& v) {
-    QVector3D n = normal.normalized();
-    // pick an arbitrary vector not parallel to n
-    QVector3D helper = (fabs(n.x()) > 0.9f) ? QVector3D(0,1,0) : QVector3D(1,0,0);
-    u = QVector3D::crossProduct(n, helper).normalized();
-    v = QVector3D::crossProduct(n, u).normalized();
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(1, 0xAAAA);
+    glColor3f(1.0f, 1.0f, 0.0f); // Yellow
+    glLineWidth(1.5f);
+
+    switch (rubberBandState.mode) {
+    case RubberBandMode::Line: {
+        QVector3D w1 = planeToWorld(rubberBandState.startPoint);
+        QVector3D w2 = planeToWorld(rubberBandState.currentPoint);
+        glBegin(GL_LINES);
+        glVertex3f(w1.x(), w1.y(), w1.z());
+        glVertex3f(w2.x(), w2.y(), w2.z());
+        glEnd();
+        break;
+    }
+
+    case RubberBandMode::Rectangle: {
+        // Reuse existing drawRectangle logic
+        Rectangle2D rect;
+        rect.p1 = planeToWorld(rubberBandState.startPoint);
+        rect.p2 = planeToWorld(rubberBandState.currentPoint);
+        drawRectangle(rect, Qt::DashLine);
+        break;
+    }
+
+    case RubberBandMode::Polyline: {
+        glBegin(GL_LINE_STRIP);
+        for (const auto& pt : rubberBandState.intermediatePoints) {
+            QVector3D w = planeToWorld(pt);
+            glVertex3f(w.x(), w.y(), w.z());
+        }
+        QVector3D wCur = planeToWorld(rubberBandState.currentPoint);
+        glVertex3f(wCur.x(), wCur.y(), wCur.z());
+        glEnd();
+        break;
+    }
+
+    case RubberBandMode::Arc: {
+        // Calculate arc preview
+        QVector2D center = rubberBandState.startPoint;
+        float radius = (rubberBandState.currentPoint - center).length();
+
+        glBegin(GL_LINE_STRIP);
+        for (int i = 0; i <= 32; ++i) {
+            float angle = i * M_PI / 16.0f;
+            QVector2D pt = center + QVector2D(cos(angle), sin(angle)) * radius;
+            QVector3D w = planeToWorld(pt);
+            glVertex3f(w.x(), w.y(), w.z());
+        }
+        glEnd();
+        break;
+    }
+
+    case RubberBandMode::Circle: {
+        QVector2D center = rubberBandState.startPoint;
+        float radius = (rubberBandState.currentPoint - center).length();
+
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 64; ++i) {
+            float angle = i * 2.0f * M_PI / 64.0f;
+            QVector2D pt = center + QVector2D(cos(angle), sin(angle)) * radius;
+            QVector3D w = planeToWorld(pt);
+            glVertex3f(w.x(), w.y(), w.z());
+        }
+        glEnd();
+        break;
+    }
+
+    default:
+        break;
+    }
+
+    glDisable(GL_LINE_STIPPLE);
+    glLineWidth(1.0f);
 }
 
 void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
@@ -733,7 +823,7 @@ void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
     QVector3D normal = planeNormal(plane);
 
     QVector3D u, v;
-    planeBasis(normal, u, v);  // local 2D basis on this plane
+    CadView::planeBasis(normal, u, v);  // local 2D basis on this plane
 
     // 2. Convert corner points (rect.p1, rect.p2) from "picked" world points into plane coords
     // project onto plane basis

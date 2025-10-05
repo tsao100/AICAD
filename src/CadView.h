@@ -25,6 +25,22 @@ enum class CadMode {
     Extruding
 };
 
+// Rubber band drawing system
+enum class RubberBandMode {
+    None,
+    Line,
+    Rectangle,
+    Polyline,
+    Arc,
+    Circle
+};
+
+struct CustomPlane {
+    QVector3D origin;
+    QVector3D normal;
+    QVector3D uAxis;
+    QVector3D vAxis;
+};
 
 struct FeatureNode {
     int id;
@@ -71,6 +87,7 @@ struct Entity {
     virtual void save(QTextStream& out) const = 0;
     virtual void load(QTextStream& in) = 0;
 };
+
 /*
 struct LineEntity : public Entity {
     QVector3D p1, p2;
@@ -319,6 +336,7 @@ private:
 
 struct SketchNode : public FeatureNode {
     SketchPlane plane;
+    CustomPlane customPlane; // For arbitrary planes
     QVector<std::shared_ptr<Entity>> entities;
 
     SketchNode() { type = FeatureType::Sketch; }
@@ -586,6 +604,8 @@ public:
     // GetPoint functionality
     void startGetPoint(const QString& prompt, const QVector2D* previousPt = nullptr);
     void cancelGetPoint();
+
+    static void planeBasis(const QVector3D& normal, QVector3D& u, QVector3D& v);
     QVector2D worldToPlane(const QVector3D& worldPt);
     QVector3D planeToWorld(const QVector2D& planePt);
 
@@ -599,6 +619,16 @@ public:
         bool keyboardMode = false;
     };
     GetPointState getPointState;
+
+    struct RubberBandState {
+        RubberBandMode mode = RubberBandMode::None;
+        QVector2D startPoint;
+        QVector2D currentPoint;
+        QVector<QVector2D> intermediatePoints; // For polyline
+        bool active = false;
+    };
+
+    RubberBandState rubberBandState;
 
 Q_SIGNALS:
     void featureAdded();
@@ -623,6 +653,7 @@ private:
     QVector3D mapToPlane(int x, int y);
 
     void drawRubberBandLine(const QVector2D& p1, const QVector2D& p2);
+    void drawRubberBand();
 
     QPoint lastMousePos;
     Rectangle2D currentRect;
