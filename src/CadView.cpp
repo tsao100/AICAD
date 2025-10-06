@@ -548,11 +548,11 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             return;
         }
 
-        // Any key press switches to keyboard mode
-        if (!getPointState.keyboardMode && !event->text().isEmpty()) {
+        // NEW: Forward any printable key to MainWindow's CommandInput
+        if (!event->text().isEmpty() && event->text()[0].isPrint()) {
             getPointState.keyboardMode = true;
-            // Signal MainWindow to activate commandInput with the key
-            emit getPointCancelled(); // Reuse signal, MainWindow will check state
+            // Signal MainWindow to activate commandInput AND insert the key
+            emit getPointKeyPressed(event->text());
             return;
         }
     }

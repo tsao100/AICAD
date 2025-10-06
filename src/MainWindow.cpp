@@ -367,6 +367,44 @@ void MainWindow::defineCADCommands() {
 
     evaluateECLForm(interactiveLineCmd, &result);
 
+    // Add rectangle command definition
+    const char* rectangleCommand = R"(
+        (defun rectangle (&optional pt1 pt2)
+          (cond
+            ((and pt1 pt2)
+             (format nil "RECTANGLE: Drawing from ~A to ~A" pt1 pt2))
+            (pt1
+             (format nil "RECTANGLE: First corner at ~A. Specify opposite corner." pt1))
+            (t
+             "RECTANGLE: Specify first corner")))
+    )";
+
+    evaluateECLForm(rectangleCommand, &result);
+
+    // Add command dispatcher that bridges to C++
+    const char* commandDispatcher = R"(
+        (defparameter *command-pending* nil)
+        (defparameter *command-args* nil)
+
+        (defun command (cmd &rest args)
+          "Dispatch CAD commands to C++ handlers"
+          (cond
+            ((string-equal cmd "rectangle")
+             (setf *command-pending* "rectangle")
+             (setf *command-args* args)
+             (cond
+               ((>= (length args) 2)
+                (format nil "EXEC_RECTANGLE ~A ~A" (first args) (second args)))
+               ((= (length args) 1)
+                (format nil "EXEC_RECTANGLE_P1 ~A" (first args)))
+               (t
+                "EXEC_RECTANGLE")))
+            (t
+             (format nil "Unknown command: ~A" cmd))))
+    )";
+
+    evaluateECLForm(commandDispatcher, &result);
+
     // Setup C++ <-> Lisp bridge (would need additional work)
     setupGetPointECLInterface();
 }
@@ -634,6 +672,17 @@ void MainWindow::executeCommand() {
         return;
     }
 
+    QString lowerCmd = cmd.toLower();
+    if (lowerCmd == "rectangle" || lowerCmd == "rect") {
+        commandHistory.append(cmd);
+        historyIndex = -1;
+        commandInput->clear();
+        setPrompt("Command: ");
+        consoleOutput->appendPlainText(promptText + cmd);
+        onDrawRectangle();
+        return;
+    }
+
     // Add to history
     if (commandHistory.isEmpty() || commandHistory.last() != cmd) {
         commandHistory.append(cmd);
@@ -691,6 +740,37 @@ void MainWindow::executeCommand() {
         out = "ERROR: Evaluation returned NULL";
     } else {
         out = eclObjectToQString(res);
+    }
+
+    if (out.startsWith("EXEC_RECTANGLE")) {
+        if (out == "EXEC_RECTANGLE") {
+            // No args - start interactive rectangle
+            onDrawRectangle();
+            consoleOutput->appendPlainText(promptText + cmd);
+            consoleOutput->appendPlainText("Starting rectangle command...\n");
+            return;
+        } else if (out.startsWith("EXEC_RECTANGLE_P1 ")) {
+            // One point provided - start with first corner
+            QString ptStr = out.mid(QString("EXEC_RECTANGLE_P1 ").length());
+            QVector2D pt1 = parsePoint(ptStr);
+            startRectangleWithFirstPoint(pt1);
+            consoleOutput->appendPlainText(promptText + cmd);
+            consoleOutput->appendPlainText(QString("First corner: (%1, %2)\n")
+                                               .arg(pt1.x(), 0, 'f', 3).arg(pt1.y(), 0, 'f', 3));
+            return;
+        } else if (out.startsWith("EXEC_RECTANGLE ")) {
+            // Both points provided - draw directly
+            QString ptsStr = out.mid(QString("EXEC_RECTANGLE ").length());
+            QStringList pts = ptsStr.split(' ', QString::SkipEmptyParts);
+            if (pts.size() >= 2) {
+                QVector2D pt1 = parsePoint(pts[0]);
+                QVector2D pt2 = parsePoint(pts[1]);
+                drawRectangleDirect(pt1, pt2);
+                consoleOutput->appendPlainText(promptText + cmd);
+                consoleOutput->appendPlainText("Rectangle created.\n");
+                return;
+            }
+        }
     }
 
     // Log to console
@@ -798,9 +878,6 @@ void MainWindow::onGetPointCancelled() {
     if (currentGetPointRequest.active) {
         // Check if switching to keyboard mode
         if (m_view->getPointState.keyboardMode) {
-            setPrompt(currentGetPointRequest.prompt + " ");
-            commandInput->setFocus();
-            commandInput->setCursorPosition(commandInput->text().length());
             return;
         }
 
@@ -809,6 +886,8 @@ void MainWindow::onGetPointCancelled() {
         currentGetPointRequest.active = false;
         commandInput->clear();
         setPrompt("Command: ");
+        m_view->rubberBandState.active = false;
+        m_view->update();
     }
 }
 
@@ -915,6 +994,52 @@ void MainWindow::onDrawRectangle() {
     m_view->rubberBandState.intermediatePoints.clear();
 }
 
+void MainWindow::onGetPointKeyPressed(QString key) {
+    if (!currentGetPointRequest.active) return;
+
+    // Switch to keyboard mode
+    m_view->getPointState.keyboardMode = true;
+
+    // Activate commandInput and insert the key
+    commandInput->setFocus();
+
+    // Insert the key at cursor position (after prompt)
+    int cursorPos = commandInput->cursorPosition();
+    if (cursorPos < promptLength) {
+        cursorPos = promptLength;
+    }
+
+    QString currentText = commandInput->text();
+    QString newText = currentText.left(cursorPos) + key + currentText.mid(cursorPos);
+
+    commandInput->setText(newText);
+    commandInput->setCursorPosition(cursorPos + key.length());
+
+    // Update focus management
+    updateGetPointFocus();
+}
+
+bool MainWindow::isCommandInputEmpty() const {
+    QString text = commandInput->text().trimmed();
+    // Remove prompt to check actual user input
+    if (text.startsWith(promptText)) {
+        text = text.mid(promptText.length()).trimmed();
+    }
+    return text.isEmpty();
+}
+
+void MainWindow::updateGetPointFocus() {
+    if (!currentGetPointRequest.active) return;
+
+    if (isCommandInputEmpty() && !m_view->getPointState.keyboardMode) {
+        // Empty input and not in keyboard mode - focus on CadView for mouse picking
+        m_view->setFocus();
+    } else {
+        // User typed something - keep focus on CommandInput
+        commandInput->setFocus();
+    }
+}
+
 // Helper function to create rectangle entity
 void MainWindow::createRectangleEntity(std::shared_ptr<SketchNode> sketch,
                                        const QVector2D& corner1,
@@ -942,6 +1067,48 @@ void MainWindow::createRectangleEntity(std::shared_ptr<SketchNode> sketch,
 
     // Add to sketch
     sketch->entities.push_back(poly);
+}
+
+QVector2D MainWindow::parsePoint(const QString& ptStr) {
+    // Parse "(X Y)" or "X,Y" format
+    QString cleaned = ptStr;
+    cleaned.remove('(').remove(')').remove(',');
+
+    QStringList coords = cleaned.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    if (coords.size() >= 2) {
+        return QVector2D(coords[0].toFloat(), coords[1].toFloat());
+    }
+    return QVector2D(0, 0);
+}
+
+void MainWindow::startRectangleWithFirstPoint(const QVector2D& pt1) {
+    if (!m_view || m_view->doc.sketches.isEmpty()) return;
+
+    std::shared_ptr<SketchNode> sketch = m_view->doc.sketches.last();
+    m_view->pendingSketch = sketch;
+
+    // Setup rubber band
+    m_view->rubberBandState.mode = RubberBandMode::Rectangle;
+    m_view->rubberBandState.startPoint = pt1;
+    m_view->rubberBandState.active = true;
+
+    m_view->startGetPoint("Specify opposite corner:", &pt1);
+
+    currentGetPointRequest.callback = [this, sketch, pt1](QVector2D pt2) {
+        createRectangleEntity(sketch, pt1, pt2);
+        updateFeatureTree();
+        m_view->rubberBandState.active = false;
+        m_view->update();
+    };
+}
+
+void MainWindow::drawRectangleDirect(const QVector2D& pt1, const QVector2D& pt2) {
+    if (!m_view || m_view->doc.sketches.isEmpty()) return;
+
+    std::shared_ptr<SketchNode> sketch = m_view->doc.sketches.last();
+    createRectangleEntity(sketch, pt1, pt2);
+    updateFeatureTree();
+    m_view->update();
 }
 
 // --- CAD UI implementation ---
@@ -1062,6 +1229,7 @@ void MainWindow::createCentral() {
     // Connect GetPoint signals
     connect(m_view, &CadView::pointAcquired, this, &MainWindow::onPointAcquired);
     connect(m_view, &CadView::getPointCancelled, this, &MainWindow::onGetPointCancelled);
+    connect(m_view, &CadView::getPointKeyPressed, this, &MainWindow::onGetPointKeyPressed);
 }
 
 void MainWindow::createFeatureBrowser() {
@@ -1171,6 +1339,7 @@ void MainWindow::onCreateSketch() {
                             sketch->customPlane.vAxis);
         m_view->setSketchView(SketchView::None);
     }
+
     m_view->startSketchMode(sketch);
     updateFeatureTree();
 }

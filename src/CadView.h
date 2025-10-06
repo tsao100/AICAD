@@ -634,6 +634,7 @@ Q_SIGNALS:
     void featureAdded();
     void pointAcquired(QVector2D point);
     void getPointCancelled();
+    void getPointKeyPressed(QString key);
 
 protected:
     void initializeGL() override;

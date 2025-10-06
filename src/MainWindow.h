@@ -37,6 +37,8 @@ public:
     MainWindow();
     ~MainWindow();
 
+    bool isCommandInputEmpty() const;
+
 protected:
     void keyPressEvent(QKeyEvent *event) override;
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -49,6 +51,8 @@ private Q_SLOTS:
     void onPointAcquired(QVector2D point);
     void onGetPointCancelled();
     void onDrawRectangle();
+    void onGetPointKeyPressed(QString key);
+    void updateGetPointFocus();
 
 private:
     // CAD UI
@@ -63,6 +67,11 @@ private:
     void createRectangleEntity(std::shared_ptr<SketchNode> sketch,
                                 const QVector2D& corner1,
                                const QVector2D& corner2);
+
+    // Helper methods for rectangle command
+    QVector2D parsePoint(const QString& ptStr);
+    void startRectangleWithFirstPoint(const QVector2D& pt1);
+    void drawRectangleDirect(const QVector2D& pt1, const QVector2D& pt2);
 
     QAction *m_act2D, *m_act3D;
     QAction *m_actDrawLine, *m_actDrawArc, *m_actDrawRect;
