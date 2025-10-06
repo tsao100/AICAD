@@ -75,8 +75,7 @@ static bool evaluateECLForm(const char* code, cl_object* result) {
 MainWindow::MainWindow()
     : historyIndex(-1), consoleVisible(false)
 {
-    createActions();
-    createToolbar();
+    createMenusAndToolbars();
     createCentral();
     createFeatureBrowser();
 
@@ -672,6 +671,16 @@ void MainWindow::executeCommand() {
         return;
     }
 
+    // Try registered commands first
+    if (executeRegisteredCommand(cmd)) {
+        commandHistory.append(cmd);
+        historyIndex = -1;
+        commandInput->clear();
+        setPrompt("Command: ");
+        consoleOutput->appendPlainText(promptText + cmd);
+        return;
+    }
+
     QString lowerCmd = cmd.toLower();
     if (lowerCmd == "rectangle" || lowerCmd == "rect") {
         commandHistory.append(cmd);
@@ -761,7 +770,7 @@ void MainWindow::executeCommand() {
         } else if (out.startsWith("EXEC_RECTANGLE ")) {
             // Both points provided - draw directly
             QString ptsStr = out.mid(QString("EXEC_RECTANGLE ").length());
-            QStringList pts = ptsStr.split(' ', QString::SkipEmptyParts);
+            QStringList pts = ptsStr.split(' ', Qt::SkipEmptyParts);
             if (pts.size() >= 2) {
                 QVector2D pt1 = parsePoint(pts[0]);
                 QVector2D pt2 = parsePoint(pts[1]);
@@ -781,6 +790,74 @@ void MainWindow::executeCommand() {
     if (!consoleVisible) {
         showResultTemporarily(out);
     }
+}
+
+// Implement command handlers
+void MainWindow::onDrawLine() {
+    consoleOutput->appendPlainText("Line command not yet implemented");
+}
+
+void MainWindow::onDrawArc() {
+    consoleOutput->appendPlainText("Arc command not yet implemented");
+}
+
+void MainWindow::onDrawCircle() {
+    consoleOutput->appendPlainText("Circle command started");
+    // Implementation...
+}
+
+void MainWindow::onSave() {
+    QString fileName = QFileDialog::getSaveFileName(
+        this, tr("Save CAD File"), QString(),
+        tr("CAD Files (*.cad);;All Files (*)"));
+    if (!fileName.isEmpty()) {
+        m_view->doc.saveToFile(fileName);
+    }
+}
+
+void MainWindow::onLoad() {
+    QString fileName = QFileDialog::getOpenFileName(
+        this, tr("Open CAD File"), QString(),
+        tr("CAD Files (*.cad);;All Files (*)"));
+    if (!fileName.isEmpty()) {
+        m_view->doc.loadFromFile(fileName);
+        updateFeatureTree();
+    }
+}
+
+void MainWindow::onPrint() {
+    m_view->printView();
+}
+
+void MainWindow::onExportPdf() {
+    QString file = QFileDialog::getSaveFileName(
+        this, tr("Export PDF"), QString(), tr("PDF Files (*.pdf)"));
+    if (!file.isEmpty())
+        m_view->exportPdf(file);
+}
+
+void MainWindow::onViewTop() {
+    m_view->setSketchView(SketchView::Top);
+    m_view->update();
+}
+
+void MainWindow::onViewFront() {
+    m_view->setSketchView(SketchView::Front);
+    m_view->update();
+}
+
+void MainWindow::onViewRight() {
+    m_view->setSketchView(SketchView::Right);
+    m_view->update();
+}
+
+void MainWindow::onViewIsometric() {
+    m_view->setSketchView(SketchView::None);
+    m_view->update();
+}
+
+void MainWindow::onExit() {
+    close();
 }
 
 void MainWindow::showResultTemporarily(const QString &result) {
@@ -1112,115 +1189,6 @@ void MainWindow::drawRectangleDirect(const QVector2D& pt1, const QVector2D& pt2)
 }
 
 // --- CAD UI implementation ---
-void MainWindow::createActions() {
-    m_act2D = new QAction(tr("2D View"), this);
-    m_act2D->setCheckable(true);
-    connect(m_act2D, &QAction::triggered, this, &MainWindow::toggle2D);
-
-    m_act3D = new QAction(tr("3D View"), this);
-    m_act3D->setCheckable(true);
-    connect(m_act3D, &QAction::triggered, this, &MainWindow::toggle3D);
-
-    m_actDrawLine = new QAction(QIcon(":/icons/line.png"), tr("Draw Line"), this);
-    connect(m_actDrawLine, &QAction::triggered, [this]() {
-        toggle2D();
-    });
-
-    m_actDrawArc = new QAction(QIcon(":/icons/arc.png"), tr("Draw Arc"), this);
-    connect(m_actDrawArc, &QAction::triggered, [this]() {
-        toggle2D();
-    });
-
-    m_actDrawRect = new QAction(QIcon(":/icons/rect.png"), tr("Draw Rect"), this);
-    connect(m_actDrawRect, &QAction::triggered, this, &MainWindow::onDrawRectangle);
-
-    m_actPrint = new QAction(QIcon(":/icons/print.png"), tr("Print"), this);
-    connect(m_actPrint, &QAction::triggered, [this]() {
-        m_view->printView();
-    });
-
-    m_actExportPdf = new QAction(QIcon(":/icons/export_pdf.png"), tr("Export PDF"), this);
-    connect(m_actExportPdf, &QAction::triggered, [this]() {
-        QString file = QFileDialog::getSaveFileName(
-            this, tr("Export PDF"), QString(), tr("PDF Files (*.pdf)"));
-        if (!file.isEmpty())
-            m_view->exportPdf(file);
-    });
-
-    m_actSave = new QAction(QIcon(":/icons/save.png"), tr("Save"), this);
-    connect(m_actSave, &QAction::triggered, [this]() {
-        QString fileName = QFileDialog::getSaveFileName(
-            this, tr("Save CAD File"), QString(),
-            tr("CAD Files (*.txt *.json);;All Files (*)"));
-        if (!fileName.isEmpty()) {
-            // TODO: implement save
-        }
-    });
-
-    m_actLoad = new QAction(QIcon(":/icons/load.png"), tr("Load"), this);
-    connect(m_actLoad, &QAction::triggered, [this]() {
-        QString fileName = QFileDialog::getOpenFileName(
-            this, tr("Open CAD File"), QString(),
-            tr("CAD Files (*.txt *.json);;All Files (*)"));
-        if (!fileName.isEmpty()) {
-            // TODO: implement load
-        }
-    });
-
-    m_actTop = new QAction(QIcon(":/icons/top.png"), tr("Top (XY)"), this);
-    m_actFront = new QAction(QIcon(":/icons/front.png"), tr("Front (XZ)"), this);
-    m_actRight = new QAction(QIcon(":/icons/right.png"), tr("Right (YZ)"), this);
-
-    connect(m_actTop, &QAction::triggered, [this]() {
-        m_view->setSketchView(SketchView::Top);
-        m_view->update();
-        m_act2D->setChecked(true);
-        m_act3D->setChecked(false);
-    });
-
-    connect(m_actFront, &QAction::triggered, [this]() {
-        m_view->setSketchView(SketchView::Front);
-        m_view->update();
-        m_act2D->setChecked(true);
-        m_act3D->setChecked(false);
-    });
-
-    connect(m_actRight, &QAction::triggered, [this]() {
-        m_view->setSketchView(SketchView::Right);
-        m_view->update();
-        m_act2D->setChecked(true);
-        m_act3D->setChecked(false);
-    });
-
-    actionCreateSketch = new QAction(QIcon(":/icons/sketch.png"), "Create Sketch", this);
-    actionCreateExtrude = new QAction(QIcon(":/icons/extrude.png"), "Create Extrusion", this);
-
-    connect(actionCreateSketch, &QAction::triggered, this, &MainWindow::onCreateSketch);
-    connect(actionCreateExtrude, &QAction::triggered, this, &MainWindow::onCreateExtrude);
-}
-
-void MainWindow::createToolbar() {
-    auto *tb = addToolBar(tr("Main"));
-    tb->addAction(actionCreateSketch);
-    tb->addAction(actionCreateExtrude);
-    tb->addSeparator();
-    tb->addAction(m_actDrawLine);
-    tb->addAction(m_actDrawArc);
-    tb->addAction(m_actDrawRect);
-    tb->addSeparator();
-    tb->addAction(m_actSave);
-    tb->addAction(m_actLoad);
-    tb->addSeparator();
-    tb->addAction(m_actPrint);
-    tb->addAction(m_actExportPdf);
-    tb->addSeparator();
-    tb->addAction(m_actTop);
-    tb->addAction(m_actFront);
-    tb->addAction(m_actRight);
-
-    m_act2D->setChecked(true);
-}
-
 void MainWindow::createCentral() {
     m_view = new CadView(this);
     setCentralWidget(m_view);
@@ -1244,6 +1212,127 @@ void MainWindow::createFeatureBrowser() {
     addDockWidget(Qt::LeftDockWidgetArea, dock);
 
     connect(featureTree, &QTreeWidget::itemClicked, this, &MainWindow::onFeatureSelected);
+}
+void MainWindow::registerCommand(const QString& name, const QString& alias, std::function<void()> func) {
+    CommandEntry entry;
+    entry.name = name;
+    entry.alias = alias;
+    entry.func = func;
+    commands.append(entry);
+}
+
+bool MainWindow::executeRegisteredCommand(const QString& cmdName) {
+    QString lower = cmdName.toLower();
+
+    for (const auto& cmd : commands) {
+        if (cmd.name == lower || (!cmd.alias.isEmpty() && cmd.alias == lower)) {
+            cmd.func();
+            return true;
+        }
+    }
+    return false;
+}
+
+void MainWindow::loadMenuConfig(const QString& filename) {
+    QFile file(filename);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "Cannot open menu config:" << filename;
+        return;
+    }
+
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+
+        if (line.isEmpty() || line.startsWith('#')) continue;
+
+        QStringList parts = line.split('|');
+        if (parts.size() < 3) continue;
+
+        QString type = parts[0];
+
+        if (type == "toolbar") {
+            QString id = parts[1];
+            QString label = parts[2];
+            QString icon = parts.size() > 3 ? parts[3] : "";
+            QString shortcut = parts.size() > 4 ? parts[4] : "";
+            QString callback = parts.size() > 5 ? parts[5] : "";
+
+            if (id == "separator") {
+                if (QToolBar* tb = findChild<QToolBar*>("MainToolbar")) {
+                    tb->addSeparator();
+                }
+            } else {
+                QAction* action = new QAction(label, this);
+                if (!icon.isEmpty()) action->setIcon(QIcon(icon));
+                if (!shortcut.isEmpty()) action->setShortcut(QKeySequence(shortcut));
+
+                // Connect to registered command
+                if (!callback.isEmpty()) {
+                    connect(action, &QAction::triggered, this, [this, callback]() {
+                        QMetaObject::invokeMethod(this, callback.toUtf8().constData());
+                    });
+                }
+
+                actions[id] = action;
+                if (QToolBar* tb = findChild<QToolBar*>("MainToolbar")) {
+                    tb->addAction(action);
+                }
+            }
+        }
+        else if (type == "menu") {
+            QString menuName = parts[1];
+            QString id = parts[2];
+            QString label = parts[3];
+            QString shortcut = parts.size() > 4 ? parts[4] : "";
+            QString callback = parts.size() > 5 ? parts[5] : "";
+
+            // Create menu if doesn't exist
+            if (!menus.contains(menuName)) {
+                QMenu* menu = menuBar()->addMenu(menuName);
+                menus[menuName] = menu;
+            }
+
+            QMenu* menu = menus[menuName];
+
+            if (id == "separator") {
+                menu->addSeparator();
+            } else {
+                QAction* action = new QAction(label, this);
+                if (!shortcut.isEmpty()) action->setShortcut(QKeySequence(shortcut));
+
+                if (!callback.isEmpty()) {
+                    connect(action, &QAction::triggered, this, [this, callback]() {
+                        QMetaObject::invokeMethod(this, callback.toUtf8().constData());
+                    });
+                }
+
+                menu->addAction(action);
+                actions[menuName + "_" + id] = action;
+            }
+        }
+        else if (type == "command") {
+            QString name = parts[1];
+            QString alias = parts.size() > 2 ? parts[2] : "";
+            QString callback = parts.size() > 4 ? parts[4] : "";
+
+            if (!callback.isEmpty()) {
+                // Register command with lambda that invokes the method by name
+                registerCommand(name, alias, [this, callback]() {
+                    QMetaObject::invokeMethod(this, callback.toUtf8().constData());
+                });
+            }
+        }
+    }
+}
+
+void MainWindow::createMenusAndToolbars() {
+    // Create toolbar first
+    QToolBar* tb = addToolBar(tr("Main"));
+    tb->setObjectName("MainToolbar");
+
+    // Load menu/toolbar configuration
+    loadMenuConfig("menu.txt");
 }
 
 void MainWindow::updateFeatureTree() {
@@ -1356,14 +1445,4 @@ void MainWindow::onCreateExtrude() {
     if (f && f->type == FeatureType::Sketch) {
         m_view->startExtrudeMode(std::static_pointer_cast<SketchNode>(f));
     }
-}
-
-void MainWindow::toggle2D() {
-    m_act2D->setChecked(true);
-    m_act3D->setChecked(false);
-}
-
-void MainWindow::toggle3D() {
-    m_act2D->setChecked(false);
-    m_act3D->setChecked(true);
 }

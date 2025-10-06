@@ -1,0 +1,50 @@
+# Format: TYPE|ID|LABEL|ICON|SHORTCUT|CALLBACK
+# TYPE: menu, toolbar, command
+# Callbacks must match MainWindow method names
+
+toolbar|sketch|Create Sketch|:/icons/sketch.png||onCreateSketch
+toolbar|extrude|Create Extrusion|:/icons/extrude.png||onCreateExtrude
+toolbar|separator||||
+toolbar|line|Draw Line|:/icons/line.png||onDrawLine
+toolbar|arc|Draw Arc|:/icons/arc.png||onDrawArc
+toolbar|rect|Draw Rectangle|:/icons/rect.png||onDrawRectangle
+toolbar|circle|Draw Circle|:/icons/circle.png||onDrawCircle
+toolbar|separator||||
+toolbar|save|Save|:/icons/save.png|Ctrl+S|onSave
+toolbar|load|Load|:/icons/load.png|Ctrl+O|onLoad
+toolbar|separator||||
+toolbar|print|Print|:/icons/print.png|Ctrl+P|onPrint
+toolbar|exportpdf|Export PDF|:/icons/export_pdf.png||onExportPdf
+toolbar|separator||||
+toolbar|top|Top View|:/icons/top.png|U|onViewTop
+toolbar|front|Front View|:/icons/front.png|F|onViewFront
+toolbar|right|Right View|:/icons/right.png|R|onViewRight
+
+menu|File|save|Save|Ctrl+S|onSave
+menu|File|load|Load|Ctrl+O|onLoad
+menu|File|separator|||
+menu|File|print|Print|Ctrl+P|onPrint
+menu|File|exportpdf|Export PDF||onExportPdf
+menu|File|separator|||
+menu|File|exit|Exit|Ctrl+Q|onExit
+
+menu|Sketch|createsketch|Create Sketch||onCreateSketch
+menu|Sketch|line|Draw Line||onDrawLine
+menu|Sketch|arc|Draw Arc||onDrawArc
+menu|Sketch|rect|Draw Rectangle||onDrawRectangle
+menu|Sketch|circle|Draw Circle||onDrawCircle
+
+menu|Features|extrude|Create Extrusion||onCreateExtrude
+
+menu|View|top|Top (XY)|U|onViewTop
+menu|View|front|Front (XZ)|F|onViewFront
+menu|View|right|Right (YZ)|R|onViewRight
+menu|View|separator|||
+menu|View|isometric|Isometric|I|onViewIsometric
+
+command|rectangle|rect||onDrawRectangle
+command|sketch|||onCreateSketch
+command|extrude|||onCreateExtrude
+command|line|||onDrawLine
+command|arc|||onDrawArc
+command|circle|circ||onDrawCircle

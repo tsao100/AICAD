@@ -53,3 +53,10 @@ HEADERS += \
 
 RESOURCES += \
     resources.qrc
+
+# Copy menu.txt to build directory
+copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD
+first.depends = $(first) copydata
+export(first.depends)
+export(copydata.commands)
+QMAKE_EXTRA_TARGETS += first copydata

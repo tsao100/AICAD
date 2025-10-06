@@ -25,6 +25,7 @@
 #include <QTreeWidget>
 #include <QToolBar>
 #include <QAction>
+#include <QMenuBar>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QInputDialog>
@@ -33,6 +34,15 @@
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
+
+    // Command registry structure
+    struct CommandEntry {
+        QString name;           // Primary command name
+        QString alias;          // Optional alias
+        QString callback;       // Method name to call
+        std::function<void()> func; // Actual function pointer
+    };
+
 public:
     MainWindow();
     ~MainWindow();
@@ -44,26 +54,43 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 private Q_SLOTS:
-    void toggle2D();
-    void toggle3D();
     void executeCommand();
     void fadeOutResult();
     void onPointAcquired(QVector2D point);
     void onGetPointCancelled();
-    void onDrawRectangle();
     void onGetPointKeyPressed(QString key);
     void updateGetPointFocus();
 
-private:
-    // CAD UI
-    void createActions();
-    void createToolbar();
-    void createCentral();
-    void createFeatureBrowser();
-    void updateFeatureTree();
-    void onFeatureSelected(QTreeWidgetItem* item, int column);
+    // CAD command handlers
+    void onDrawRectangle();
+    void onDrawLine();
+    void onDrawArc();
+    void onDrawCircle();
     void onCreateSketch();
     void onCreateExtrude();
+    void onSave();
+    void onLoad();
+    void onPrint();
+    void onExportPdf();
+    void onViewTop();
+    void onViewFront();
+    void onViewRight();
+    void onViewIsometric();
+    void onExit();
+
+private:
+    // CAD UI
+    void createMenusAndToolbars();
+    void createCentral();
+    void createFeatureBrowser();
+
+    // Command system
+    void loadMenuConfig(const QString& filename);
+    void registerCommand(const QString& name, const QString& alias, std::function<void()> func);
+    bool executeRegisteredCommand(const QString& cmdName);
+
+    void updateFeatureTree();
+    void onFeatureSelected(QTreeWidgetItem* item, int column);
     void createRectangleEntity(std::shared_ptr<SketchNode> sketch,
                                 const QVector2D& corner1,
                                const QVector2D& corner2);
@@ -73,13 +100,10 @@ private:
     void startRectangleWithFirstPoint(const QVector2D& pt1);
     void drawRectangleDirect(const QVector2D& pt1, const QVector2D& pt2);
 
-    QAction *m_act2D, *m_act3D;
-    QAction *m_actDrawLine, *m_actDrawArc, *m_actDrawRect;
-    QAction *m_actSave, *m_actLoad;
-    QAction *m_actPrint, *m_actExportPdf;
-    QAction *m_actTop, *m_actFront, *m_actRight;
-    QAction* actionCreateSketch;
-    QAction* actionCreateExtrude;
+    // Command registry
+    QVector<CommandEntry> commands;
+    QHash<QString, QAction*> actions;
+    QHash<QString, QMenu*> menus;
 
     QTreeWidget* featureTree;
     CadView *m_view;
