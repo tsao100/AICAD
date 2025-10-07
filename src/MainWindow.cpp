@@ -703,7 +703,14 @@ void MainWindow::executeCommand() {
 
     // Check if it's a CAD-style command
     QString wrapped;
-    if (!cmd.startsWith('(')) {
+    if (cmd.startsWith('!')) {
+        // Extract variable name after !
+        QString varName = cmd.mid(1).trimmed();
+        if (!varName.isEmpty()) {
+            wrapped = QString("(print %1)").arg(varName);
+        }
+    }
+    else if (!cmd.startsWith('(')) {
         // Qt5/Qt6 compatible string splitting
         QStringList parts;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)

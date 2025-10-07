@@ -20,6 +20,13 @@ unix {
     # If ECL is in a custom location:
     # INCLUDEPATH += /path/to/ecl/include
     # LIBS += -L/path/to/ecl/lib -lecl
+    # Copy menu.txt to build directory
+
+    copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD
+    first.depends = $(first) copydata
+    export(first.depends)
+    export(copydata.commands)
+    QMAKE_EXTRA_TARGETS += first copydata
 }
 
 # ---------- Windows (Qt6 with MSVC) ----------
@@ -40,6 +47,14 @@ win32 {
     mingw: {
         LIBS += -lecl -lgmp -lmpfr
     }
+
+    # 每次編譯完自動複製 menu.txt 到輸出資料夾
+    debug {
+    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/menu.txt) $$shell_path($$OUT_PWD/debug)}
+
+    release {
+    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/menu.txt) $$shell_path($$OUT_PWD/release)}
+
 }
 
 SOURCES += \
@@ -54,9 +69,3 @@ HEADERS += \
 RESOURCES += \
     resources.qrc
 
-# Copy menu.txt to build directory
-copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD
-first.depends = $(first) copydata
-export(first.depends)
-export(copydata.commands)
-QMAKE_EXTRA_TARGETS += first copydata
