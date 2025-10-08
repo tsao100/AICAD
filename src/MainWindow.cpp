@@ -382,13 +382,14 @@ void MainWindow::defineCADCommands() {
 
     // Add command dispatcher that bridges to C++
     const char* commandDispatcher = R"(
+        (progn
         (defparameter *command-pending* nil)
         (defparameter *command-args* nil)
 
         (defun command (cmd &rest args)
           "Dispatch CAD commands to C++ handlers"
           (cond
-            ((string-equal cmd "rectangle")
+            ((or (string-equal cmd "rectangle") (string-equal cmd "rect"))
              (setf *command-pending* "rectangle")
              (setf *command-args* args)
              (cond
@@ -399,7 +400,7 @@ void MainWindow::defineCADCommands() {
                (t
                 "EXEC_RECTANGLE")))
             (t
-             (format nil "Unknown command: ~A" cmd))))
+             (format nil "Unknown command: ~A" cmd)))))
     )";
 
     evaluateECLForm(commandDispatcher, &result);
@@ -777,7 +778,7 @@ void MainWindow::executeCommand() {
         } else if (out.startsWith("EXEC_RECTANGLE ")) {
             // Both points provided - draw directly
             QString ptsStr = out.mid(QString("EXEC_RECTANGLE ").length());
-            QStringList pts = ptsStr.split(' ', Qt::SkipEmptyParts);
+            QStringList pts = ptsStr.split('(', Qt::SkipEmptyParts);
             if (pts.size() >= 2) {
                 QVector2D pt1 = parsePoint(pts[0]);
                 QVector2D pt2 = parsePoint(pts[1]);
@@ -1154,14 +1155,27 @@ void MainWindow::createRectangleEntity(std::shared_ptr<SketchNode> sketch,
 }
 
 QVector2D MainWindow::parsePoint(const QString& ptStr) {
-    // Parse "(X Y)" or "X,Y" format
-    QString cleaned = ptStr;
-    cleaned.remove('(').remove(')').remove(',');
+    // Parse "(X Y)" or "X,Y" or "X Y" format
+    QString cleaned = ptStr.trimmed();
 
+    // Remove parentheses and commas
+    cleaned.remove('(').remove(')').remove(',');
+    cleaned = cleaned.trimmed();
+
+    // Split by whitespace
     QStringList coords = cleaned.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+
     if (coords.size() >= 2) {
-        return QVector2D(coords[0].toFloat(), coords[1].toFloat());
+        bool okX, okY;
+        float x = coords[0].toFloat(&okX);
+        float y = coords[1].toFloat(&okY);
+
+        if (okX && okY) {
+            return QVector2D(x, y);
+        }
     }
+
+    qWarning() << "parsePoint failed for:" << ptStr << "cleaned:" << cleaned << "coords:" << coords;
     return QVector2D(0, 0);
 }
 
