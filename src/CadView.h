@@ -511,10 +511,17 @@ struct Document {
         for (auto& s : sketches) s->draw();
     }
 
+    // In Document struct
     void saveToFile(const QString& filename) {
         QFile file(filename);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
         QTextStream out(&file);
+
+        // Save sketches first
+        out << "Sketches " << sketches.size() << "\n";
+        for (auto& s : sketches) s->save(out);
+
+        // Save features
         out << "Features " << features.size() << "\n";
         for (auto& f : features) f->save(out);
     }
@@ -523,17 +530,42 @@ struct Document {
         QFile file(filename);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
         QTextStream in(&file);
+
+        sketches.clear();
+        features.clear();
+
         QString type; int count;
+
+        // Load sketches
+        in >> type >> count;
+        for (int i = 0; i < count; i++) {
+            QString ft; in >> ft;
+            if (ft == "Sketch") {
+                auto s = std::make_shared<SketchNode>();
+                s->load(in);
+                sketches.push_back(s);
+            }
+        }
+
+        // Load features
         in >> type >> count;
         for (int i = 0; i < count; i++) {
             QString ft; in >> ft;
             std::shared_ptr<FeatureNode> f;
-            if (ft == "Sketch") f = std::make_shared<SketchNode>();
-            else if (ft == "Extrude") f = std::make_shared<ExtrudeNode>();
-            if (f) { f->load(in); features.push_back(f); }
+            if (ft == "Extrude") {
+                auto e = std::make_shared<ExtrudeNode>();
+                e->load(in);
+                e->resolveSketchLink(sketches);
+                f = e;
+            }
+            if (f) features.push_back(f);
         }
-    }
-};
+
+        // Update nextId
+        nextId = 1;
+        for (auto& s : sketches) nextId = qMax(nextId, s->id + 1);
+        for (auto& f : features) nextId = qMax(nextId, f->id + 1);
+    }};
 
 enum class SketchView {
     None,

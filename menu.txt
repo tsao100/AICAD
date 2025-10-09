@@ -1,6 +1,7 @@
 # Format: TYPE|ID|LABEL|ICON|SHORTCUT|CALLBACK
 # TYPE: menu, toolbar, command
 # Callbacks must match MainWindow method names
+# For command: command|name|alias|expectedArgs|callback
 
 toolbar|sketch|Create Sketch|:/icons/sketch.png||onCreateSketch
 toolbar|extrude|Create Extrusion|:/icons/extrude.png||onCreateExtrude
@@ -42,9 +43,11 @@ menu|View|right|Right (YZ)|R|onViewRight
 menu|View|separator|||
 menu|View|isometric|Isometric|I|onViewIsometric
 
-command|rectangle|rect||onDrawRectangle
-command|sketch|||onCreateSketch
-command|extrude|||onCreateExtrude
-command|line|||onDrawLine
-command|arc|||onDrawArc
-command|circle|circ||onDrawCircle
+# Command format: command|name|alias|expectedArgs|callback
+# expectedArgs: -1=variable, 0=none, 1+=fixed count
+command|rectangle|rect|2|onDrawRectangle
+command|sketch||0|onCreateSketch
+command|extrude||1|onCreateExtrude
+command|line|l|2|onDrawLine
+command|arc||3|onDrawArc
+command|circle|c|2|onDrawCircle

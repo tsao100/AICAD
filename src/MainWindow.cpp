@@ -83,6 +83,7 @@ MainWindow::MainWindow()
     // This prevents ECL from interfering with OpenGL context creation
     QTimer::singleShot(0, this, [this]() {
         initECL();
+        initializeCADCommands();
         // Set initial prompt
         setPrompt("Command: ");
     });
@@ -380,30 +381,17 @@ void MainWindow::defineCADCommands() {
 
     evaluateECLForm(rectangleCommand, &result);
 
-    // Add command dispatcher that bridges to C++
-    const char* commandDispatcher = R"(
-        (progn
-        (defparameter *command-pending* nil)
-        (defparameter *command-args* nil)
-
+    // Define ECL wrapper that calls C++ unified command system
+    const char* commandWrapper = R"(
         (defun command (cmd &rest args)
-          "Dispatch CAD commands to C++ handlers"
-          (cond
-            ((or (string-equal cmd "rectangle") (string-equal cmd "rect"))
-             (setf *command-pending* "rectangle")
-             (setf *command-args* args)
-             (cond
-               ((>= (length args) 2)
-                (format nil "EXEC_RECTANGLE ~A ~A" (first args) (second args)))
-               ((= (length args) 1)
-                (format nil "EXEC_RECTANGLE_P1 ~A" (first args)))
-               (t
-                "EXEC_RECTANGLE")))
-            (t
-             (format nil "Unknown command: ~A" cmd)))))
+          "Execute CAD commands - bridges to C++ handler"
+          (let ((cmd-str (if (stringp cmd) cmd (string-downcase (symbol-name cmd))))
+                (args-str (mapcar #'princ-to-string args)))
+            (format nil "EXEC_CMD ~A~{ ~A~}" cmd-str args-str)))
     )";
 
-    evaluateECLForm(commandDispatcher, &result);
+     evaluateECLForm(commandWrapper, &result);
+
 
     // Setup C++ <-> Lisp bridge (would need additional work)
     setupGetPointECLInterface();
@@ -703,8 +691,38 @@ void MainWindow::executeCommand() {
     setPrompt("Command: ");
 
     // Check if it's a CAD-style command
+    // Check if it's a direct CAD command
     QString wrapped;
-    if (cmd.startsWith('!')) {
+    QStringList parts;
+    if (cmd.startsWith("(command")) {
+        QStringList parts = parseLispList(cmd);
+
+        if (!parts.isEmpty()) {
+            QString cmdName = parts[0].remove("\"").trimmed();
+            QStringList args = parts.mid(1);
+
+            consoleOutput->appendPlainText(promptText + cmd);
+            executeCADCommand(cmdName, args);
+            commandInput->clear();
+            setPrompt("Command: ");
+            return;
+        }
+    }
+    // Check if it's a direct CAD command
+    else if (!cmd.startsWith('(') && !cmd.startsWith('!')) {
+        QStringList parts = cmd.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+
+        QString cmdName = parts[0].toLower();
+        if (cadCommands.contains(cmdName)) {
+            QStringList args = parts.mid(1);
+
+            consoleOutput->appendPlainText(promptText + cmd);
+            executeCADCommand(cmdName, args);
+            commandInput->clear();
+            setPrompt("Command: ");
+            return;
+        }
+    } else if (cmd.startsWith('!')) {
         // Extract variable name after !
         QString varName = cmd.mid(1).trimmed();
         if (!varName.isEmpty()) {
@@ -1288,7 +1306,6 @@ void MainWindow::loadMenuConfig(const QString& filename) {
                 if (!icon.isEmpty()) action->setIcon(QIcon(icon));
                 if (!shortcut.isEmpty()) action->setShortcut(QKeySequence(shortcut));
 
-                // Connect to registered command
                 if (!callback.isEmpty()) {
                     connect(action, &QAction::triggered, this, [this, callback]() {
                         QMetaObject::invokeMethod(this, callback.toUtf8().constData());
@@ -1308,7 +1325,6 @@ void MainWindow::loadMenuConfig(const QString& filename) {
             QString shortcut = parts.size() > 4 ? parts[4] : "";
             QString callback = parts.size() > 5 ? parts[5] : "";
 
-            // Create menu if doesn't exist
             if (!menus.contains(menuName)) {
                 QMenu* menu = menuBar()->addMenu(menuName);
                 menus[menuName] = menu;
@@ -1335,18 +1351,224 @@ void MainWindow::loadMenuConfig(const QString& filename) {
         else if (type == "command") {
             QString name = parts[1];
             QString alias = parts.size() > 2 ? parts[2] : "";
+            QString expectedArgsStr = parts.size() > 3 ? parts[3] : "-1";
             QString callback = parts.size() > 4 ? parts[4] : "";
 
             if (!callback.isEmpty()) {
-                // Register command with lambda that invokes the method by name
-                registerCommand(name, alias, [this, callback]() {
-                    QMetaObject::invokeMethod(this, callback.toUtf8().constData());
-                });
+                QStringList aliases;
+                if (!alias.isEmpty()) {
+                    aliases << alias;
+                }
+
+                int expectedArgs = expectedArgsStr.toInt();
+
+                registerCADCommand(
+                    name,
+                    aliases,
+                    expectedArgs,
+                    "", // Description
+                    expectedArgs > 0, // Interactive if expects args
+                    callback,
+                    [this, callback](const QStringList& args) {
+                        if (args.isEmpty()) {
+                            QMetaObject::invokeMethod(this, callback.toUtf8().constData());
+                        } else {
+                            // Arguments provided - let initializeCADCommands() override handle it
+                            QMetaObject::invokeMethod(this, callback.toUtf8().constData());
+                        }
+                    }
+                    );
             }
         }
     }
 }
 
+void MainWindow::initializeCADCommands() {
+    // Commands are now registered from menu.txt in loadMenuConfig()
+    // Only add special handlers that need argument processing here
+
+    // Override RECTANGLE with argument handling
+    if (cadCommands.contains("rectangle")) {
+        CADCommand& cmd = cadCommands["rectangle"];
+        cmd.expectedArgs = 2;
+        cmd.description = "Draw a rectangle by specifying two opposite corners";
+        cmd.handler = [this](const QStringList& args) {
+            if (args.isEmpty()) {
+                onDrawRectangle();
+                return;
+            }
+
+            if (args.size() >= 2) {
+                QVector2D pt1 = parseLispPoint(args[0]);
+                QVector2D pt2 = parseLispPoint(args[1]);
+
+                consoleOutput->appendPlainText(
+                    QString("Specify first corner: (%1, %2)")
+                        .arg(pt1.x(), 0, 'f', 3).arg(pt1.y(), 0, 'f', 3)
+                    );
+                consoleOutput->appendPlainText(
+                    QString("Specify opposite corner: (%1, %2)")
+                        .arg(pt2.x(), 0, 'f', 3).arg(pt2.y(), 0, 'f', 3)
+                    );
+
+                drawRectangleDirect(pt1, pt2);
+            } else if (args.size() == 1) {
+                QVector2D pt1 = parseLispPoint(args[0]);
+                consoleOutput->appendPlainText(
+                    QString("Specify first corner: (%1, %2)")
+                        .arg(pt1.x(), 0, 'f', 3).arg(pt1.y(), 0, 'f', 3)
+                    );
+                startRectangleWithFirstPoint(pt1);
+            }
+        };
+
+        // Also register for alias
+        if (cadCommands.contains("rect")) {
+            cadCommands["rect"] = cmd;
+        }
+    }
+
+    // Add more specialized handlers as needed
+    // For commands that need argument parsing (line, circle, etc.)
+}
+
+void MainWindow::registerCADCommand(
+    const QString& name,
+    const QStringList& aliases,
+    int expectedArgs,
+    const QString& description,
+    bool interactive,
+    const QString& qtSlot,
+    std::function<void(const QStringList&)> handler)
+{
+    CADCommand cmd;
+    cmd.name = name;
+    cmd.aliases = aliases;
+    cmd.handler = handler;
+    cmd.expectedArgs = expectedArgs;
+    cmd.description = description;
+    cmd.interactive = interactive;
+    cmd.qtSlot = qtSlot;
+
+    cadCommands[name.toLower()] = cmd;
+
+    // Register aliases
+    for (const QString& alias : aliases) {
+        cadCommands[alias.toLower()] = cmd;
+    }
+}
+
+void MainWindow::executeCADCommand(const QString& name, const QStringList& args) {
+    QString lowerName = name.toLower();
+
+    if (!cadCommands.contains(lowerName)) {
+        consoleOutput->appendPlainText(QString("Unknown command: %1").arg(name));
+        showResultTemporarily(QString("Unknown command: %1").arg(name));
+        return;
+    }
+
+    const CADCommand& cmd = cadCommands[lowerName];
+
+    // Execute handler
+    cmd.handler(args);
+}
+
+QStringList MainWindow::parseLispList(const QString& str) {
+    QStringList result;
+
+    // Use ECL to parse the Lisp expression
+    QByteArray bytes = str.toUtf8();
+    const char* cstr = bytes.constData();
+
+    cl_object form = Cnil;
+
+    CL_CATCH_ALL_BEGIN(ecl_process_env()) {
+        form = c_string_to_object(cstr);
+    } CL_CATCH_ALL_IF_CAUGHT {
+        qWarning() << "Failed to parse Lisp expression:" << str;
+        return result;
+    } CL_CATCH_ALL_END;
+
+    if (form == Cnil || form == NULL) {
+        return result;
+    }
+
+    // Check if it's a list starting with 'command
+    if (ECL_LISTP(form) && form != Cnil) {
+        cl_object first = cl_car(form);
+
+        // Check if first element is 'command or "command"
+        QString firstStr = eclObjectToQString(first).toLower();
+        if (firstStr == "command") {
+            // Get rest of arguments
+            cl_object rest = cl_cdr(form);
+
+            while (rest != Cnil && ECL_LISTP(rest)) {
+                cl_object item = cl_car(rest);
+                QString itemStr = eclObjectToQString(item);
+                result << itemStr;
+                rest = cl_cdr(rest);
+            }
+        }
+    }
+
+    return result;
+}
+
+QVector2D MainWindow::parseLispPoint(const QString& str) {
+    QString cleaned = str.trimmed();
+
+    // Try parsing as Lisp list first using ECL
+//    if (cleaned.startsWith("(") || cleaned.startsWith("'(")) {
+        QString expr = cleaned;
+        if (expr.startsWith("'(")) {
+            expr = expr.mid(1);  // Remove the leading quote
+        }
+
+        QByteArray bytes = expr.toUtf8();
+        const char* cstr = bytes.constData();
+
+        cl_object form = Cnil;
+
+        CL_CATCH_ALL_BEGIN(ecl_process_env()) {
+            form = c_string_to_object(cstr);
+        } CL_CATCH_ALL_IF_CAUGHT {
+            form = Cnil;
+        } CL_CATCH_ALL_END;
+
+        if (form != Cnil && form != NULL && ECL_LISTP(form)) {
+            cl_object x_obj = cl_car(form);
+            cl_object y_obj = cl_cadr(form);
+
+            double x = 0.0f;
+            double y = 0.0f;
+
+            if (cl_realp(x_obj)) x = ecl_to_double(x_obj);
+            if (cl_realp(y_obj)) y = ecl_to_double(y_obj);
+
+            return QVector2D(x, y);
+        }
+//    }
+/*
+    // Fall back to string parsing for formats like "0,0" or "0 0"
+    cleaned.remove("'(").remove("(").remove(")").remove("\"");
+    cleaned.replace(",", " ");
+    cleaned = cleaned.simplified();
+
+    QStringList parts = cleaned.split(' ', Qt::SkipEmptyParts);
+
+    if (parts.size() >= 2) {
+        bool okX, okY;
+        float x = parts[0].toFloat(&okX);
+        float y = parts[1].toFloat(&okY);
+
+        if (okX && okY) {
+            return QVector2D(x, y);
+        }
+    }
+
+    return QVector2D(0, 0);*/
+}
 void MainWindow::createMenusAndToolbars() {
     // Create toolbar first
     QToolBar* tb = addToolBar(tr("Main"));

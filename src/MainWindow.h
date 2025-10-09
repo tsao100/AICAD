@@ -79,6 +79,33 @@ private Q_SLOTS:
     void onExit();
 
 private:
+    // Unified command system
+    struct CADCommand {
+        QString name;
+        QStringList aliases;
+        std::function<void(const QStringList&)> handler;
+        int expectedArgs; // -1 = variable, 0+ = fixed count
+        QString description;
+        bool interactive; // Whether command needs interactive point input
+        QString qtSlot; // Qt slot/method name for menu/toolbar binding
+    };
+
+    QHash<QString, CADCommand> cadCommands;
+
+    void registerCADCommand(const QString& name,
+                            const QStringList& aliases,
+                            int expectedArgs,
+                            const QString& description,
+                            bool interactive,
+                            const QString& qtSlot,
+                            std::function<void(const QStringList&)> handler);
+    void executeCADCommand(const QString& name, const QStringList& args);
+    void initializeCADCommands();
+
+    // Helper to parse Lisp-style points
+    QVector2D parseLispPoint(const QString& str);
+    QStringList parseLispList(const QString& str);
+
     // CAD UI
     void createMenusAndToolbars();
     void createCentral();
