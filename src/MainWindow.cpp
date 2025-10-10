@@ -61,13 +61,15 @@ static bool evaluateECLForm(const char* code, cl_object* result) {
 
     bool success = true;
     *result = Cnil;
-
+#ifdef _MSC_VER
+    *result = cl_eval(form);
+#else
     CL_CATCH_ALL_BEGIN(ecl_process_env()) {
         *result = cl_eval(form);
     } CL_CATCH_ALL_IF_CAUGHT {
         success = false;
     } CL_CATCH_ALL_END;
-
+#endif
     return success;
 }
 
@@ -1481,14 +1483,16 @@ QStringList MainWindow::parseLispList(const QString& str) {
     const char* cstr = bytes.constData();
 
     cl_object form = Cnil;
-
+#ifdef _MSC_VER
+    form = c_string_to_object(cstr);
+#else
     CL_CATCH_ALL_BEGIN(ecl_process_env()) {
         form = c_string_to_object(cstr);
     } CL_CATCH_ALL_IF_CAUGHT {
         qWarning() << "Failed to parse Lisp expression:" << str;
         return result;
     } CL_CATCH_ALL_END;
-
+#endif
     if (form == Cnil || form == NULL) {
         return result;
     }
@@ -1530,12 +1534,15 @@ QVector2D MainWindow::parseLispPoint(const QString& str) {
 
         cl_object form = Cnil;
 
+#ifdef _MSC_VER
+        form = c_string_to_object(cstr);
+#else
         CL_CATCH_ALL_BEGIN(ecl_process_env()) {
             form = c_string_to_object(cstr);
         } CL_CATCH_ALL_IF_CAUGHT {
             form = Cnil;
         } CL_CATCH_ALL_END;
-
+#endif
         if (form != Cnil && form != NULL && ECL_LISTP(form)) {
             cl_object x_obj = cl_car(form);
             cl_object y_obj = cl_cadr(form);
