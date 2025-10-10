@@ -1519,7 +1519,7 @@ QVector2D MainWindow::parseLispPoint(const QString& str) {
     QString cleaned = str.trimmed();
 
     // Try parsing as Lisp list first using ECL
-//    if (cleaned.startsWith("(") || cleaned.startsWith("'(")) {
+    if (cleaned.startsWith("(") || cleaned.startsWith("'(")) {
         QString expr = cleaned;
         if (expr.startsWith("'(")) {
             expr = expr.mid(1);  // Remove the leading quote
@@ -1548,8 +1548,8 @@ QVector2D MainWindow::parseLispPoint(const QString& str) {
 
             return QVector2D(x, y);
         }
-//    }
-/*
+    }
+
     // Fall back to string parsing for formats like "0,0" or "0 0"
     cleaned.remove("'(").remove("(").remove(")").remove("\"");
     cleaned.replace(",", " ");
@@ -1567,7 +1567,7 @@ QVector2D MainWindow::parseLispPoint(const QString& str) {
         }
     }
 
-    return QVector2D(0, 0);*/
+    return QVector2D(0, 0);
 }
 void MainWindow::createMenusAndToolbars() {
     // Create toolbar first
@@ -1581,32 +1581,65 @@ void MainWindow::createMenusAndToolbars() {
 void MainWindow::updateFeatureTree() {
     featureTree->clear();
 
+    // Create root nodes
     QTreeWidgetItem* sketchesRoot = new QTreeWidgetItem(featureTree);
-    sketchesRoot->setText(0, "Sketches");
-
-    for (auto& s : m_view->doc.sketches) {
-        QTreeWidgetItem* item = new QTreeWidgetItem(sketchesRoot);
-        item->setText(0, s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name);
-        item->setIcon(0, QIcon(":/icons/sketch.png"));
-        item->setData(0, Qt::UserRole, s->id);
-    }
+    sketchesRoot->setText(0, "Free Sketches");
+    sketchesRoot->setExpanded(true);
 
     QTreeWidgetItem* featuresRoot = new QTreeWidgetItem(featureTree);
     featuresRoot->setText(0, "Features");
+    featuresRoot->setExpanded(true);
 
+    // Track which sketches are used by features
+    QSet<int> usedSketchIds;
+
+    // First pass: identify used sketches
     for (auto& f : m_view->doc.features) {
-        QTreeWidgetItem* item = new QTreeWidgetItem(featuresRoot);
-        item->setText(0, f->name.isEmpty() ? QString("Feature %1").arg(f->id) : f->name);
+        if (f->type == FeatureType::Extrude) {
+            auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
+            if (auto s = extrude->sketch.lock()) {
+                usedSketchIds.insert(s->id);
+            }
+        }
+    }
+
+    // Add free (unused) sketches to Sketches folder
+    for (auto& s : m_view->doc.sketches) {
+        if (!usedSketchIds.contains(s->id)) {
+            QTreeWidgetItem* item = new QTreeWidgetItem(sketchesRoot);
+            item->setText(0, s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name);
+            item->setIcon(0, QIcon(":/icons/sketch.png"));
+            item->setData(0, Qt::UserRole, s->id);
+        }
+    }
+
+    // Build feature tree with sketch children
+    for (auto& f : m_view->doc.features) {
+        QTreeWidgetItem* featureItem = new QTreeWidgetItem(featuresRoot);
+        featureItem->setText(0, f->name.isEmpty() ? QString("%1 %2").arg(featureTypeToString(f->type)).arg(f->id) : f->name);
+        featureItem->setData(0, Qt::UserRole, f->id);
 
         switch (f->type) {
-        case FeatureType::Extrude:
-            item->setIcon(0, QIcon(":/icons/extrude.png"));
+        case FeatureType::Extrude: {
+            featureItem->setIcon(0, QIcon(":/icons/extrude.png"));
+
+            // Add sketch as child of extrude feature
+            auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
+            if (auto s = extrude->sketch.lock()) {
+                QTreeWidgetItem* sketchChild = new QTreeWidgetItem(featureItem);
+                sketchChild->setText(0, QString("└ %1").arg(
+                                            s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name));
+                sketchChild->setIcon(0, QIcon(":/icons/sketch.png"));
+                sketchChild->setData(0, Qt::UserRole, s->id);
+                sketchChild->setForeground(0, QBrush(QColor(100, 150, 200))); // Blue tint for linked items
+            }
             break;
+        }
         default:
             break;
         }
 
-        item->setData(0, Qt::UserRole, f->id);
+        featureItem->setExpanded(true);
     }
 
     featureTree->expandAll();

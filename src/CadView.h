@@ -19,6 +19,14 @@ enum class FeatureType {
     // Later: Revolve, Fillet, Boolean, etc.
 };
 
+static QString featureTypeToString(FeatureType type) {
+    switch (type) {
+    case FeatureType::Sketch:  return "Sketch";
+    case FeatureType::Extrude: return "Extrude";
+    default:                   return "Unknown";
+    }
+}
+
 enum class CadMode {
     Idle,
     Sketching,
@@ -355,15 +363,18 @@ struct SketchNode : public FeatureNode {
     }
 
     void load(QTextStream& in) override {
-        int n; in >> id >> (int&)plane >> n;
+        int n, planeInt;
+        in >> id >> planeInt >> n;
+        plane = static_cast<SketchPlane>(planeInt);
+
         for (int i = 0; i < n; i++) {
             QString type; in >> type;
             std::shared_ptr<Entity> e;
             if (type == "Polyline") e = std::make_shared<PolylineEntity>();
-        /*    else if (type == "Arc") e = std::make_shared<ArcEntity>();
-            else if (type == "Line") e = std::make_shared<LineEntity>();
-            else if (type == "Spline") e = std::make_shared<SplineEntity>();*/
-            if (e) { e->load(in); entities.push_back(e); }
+            if (e) {
+                e->load(in);
+                entities.push_back(e);
+            }
         }
     }
 };
@@ -438,10 +449,11 @@ struct ExtrudeNode : public FeatureNode {
         pendingSketchId = sketchId;
     }
 
-    void resolveSketchLink(const QVector<std::shared_ptr<FeatureNode>>& features) {
-        for (auto& f : features) {
-            if (f->type == FeatureType::Sketch && f->id == pendingSketchId) {
-                sketch = std::static_pointer_cast<SketchNode>(f);
+    void resolveSketchLink(const QVector<std::shared_ptr<SketchNode>>& sketches) {
+        if (pendingSketchId < 0) return;
+        for (auto& s : sketches) {
+            if (s->id == pendingSketchId) {
+                sketch = s;
                 break;
             }
         }
