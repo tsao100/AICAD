@@ -48,6 +48,7 @@ public:
     ~MainWindow();
 
     bool isCommandInputEmpty() const;
+    void loadFileFromCommandLine(const QString& filename);
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -70,6 +71,7 @@ private Q_SLOTS:
     void onCreateExtrude();
     void onSave();
     void onLoad();
+    void onLoadLisp();
     void onPrint();
     void onExportPdf();
     void onViewTop();
@@ -77,6 +79,7 @@ private Q_SLOTS:
     void onViewRight();
     void onViewIsometric();
     void onExit();
+    void onToggleObjectSnap();
 
 private:
     // Unified command system
@@ -101,6 +104,8 @@ private:
                             std::function<void(const QStringList&)> handler);
     void executeCADCommand(const QString& name, const QStringList& args);
     void initializeCADCommands();
+    void autoLoadFiles();
+    void loadLispFile(const QString& filename);
 
     // Helper to parse Lisp-style points
     QVector2D parseLispPoint(const QString& str);

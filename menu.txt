@@ -23,6 +23,7 @@ toolbar|right|Right View|:/icons/right.png|R|onViewRight
 
 menu|File|save|Save|Ctrl+S|onSave
 menu|File|load|Load|Ctrl+O|onLoad
+menu|File|load_lisp|Load Lisp File...|Ctrl+Shift+L|onLoadLisp
 menu|File|separator|||
 menu|File|print|Print|Ctrl+P|onPrint
 menu|File|exportpdf|Export PDF||onExportPdf

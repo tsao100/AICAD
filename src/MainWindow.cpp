@@ -63,6 +63,7 @@ static bool evaluateECLForm(const char* code, cl_object* result) {
     *result = Cnil;
 #ifdef _MSC_VER
     *result = cl_eval(form);
+    success = (*result != OBJNULL);
 #else
     CL_CATCH_ALL_BEGIN(ecl_process_env()) {
         *result = cl_eval(form);
@@ -88,6 +89,8 @@ MainWindow::MainWindow()
         initializeCADCommands();
         // Set initial prompt
         setPrompt("Command: ");
+        // Auto-load files after initialization
+        autoLoadFiles();
     });
 
     setWindowTitle("Qt CAD Viewer with Lisp");
@@ -402,6 +405,14 @@ void MainWindow::defineCADCommands() {
 void MainWindow::keyPressEvent(QKeyEvent *event) {
     if (event->key() == Qt::Key_F2) {
         toggleConsole();
+        event->accept();
+    } else if (event->key() == Qt::Key_F3) {
+        onToggleObjectSnap();
+        event->accept();
+    } else if (event->key() == Qt::Key_Escape) {
+        if (m_view) {
+            m_view->clearSelection();
+        }
         event->accept();
     } else {
         QMainWindow::keyPressEvent(event);
@@ -836,7 +847,7 @@ void MainWindow::onDrawCircle() {
 
 void MainWindow::onSave() {
     QString fileName = QFileDialog::getSaveFileName(
-        this, tr("Save CAD File"), QString(),
+        this, tr("Save CAD File"), "../../Draw",
         tr("CAD Files (*.cad);;All Files (*)"));
     if (!fileName.isEmpty()) {
         m_view->doc.saveToFile(fileName);
@@ -845,11 +856,22 @@ void MainWindow::onSave() {
 
 void MainWindow::onLoad() {
     QString fileName = QFileDialog::getOpenFileName(
-        this, tr("Open CAD File"), QString(),
+        this, tr("Open CAD File"), "../../Draw",
         tr("CAD Files (*.cad);;All Files (*)"));
     if (!fileName.isEmpty()) {
         m_view->doc.loadFromFile(fileName);
         updateFeatureTree();
+    }
+}
+
+// Add menu command to load Lisp files interactively
+    void MainWindow::onLoadLisp() {
+    QString fileName = QFileDialog::getOpenFileName(
+        this, tr("Load Lisp File"), QString(),
+        tr("Lisp Files (*.lsp *.lisp);;All Files (*)"));
+
+    if (!fileName.isEmpty()) {
+        loadLispFile(fileName);
     }
 }
 
@@ -1385,6 +1407,17 @@ void MainWindow::loadMenuConfig(const QString& filename) {
     }
 }
 
+void MainWindow::onToggleObjectSnap() {
+    if (!m_view) return;
+
+    bool enabled = !m_view->isObjectSnapEnabled();
+    m_view->setObjectSnapEnabled(enabled);
+
+    QString msg = enabled ? "Object snap: ON" : "Object snap: OFF";
+    showResultTemporarily(msg);
+    consoleOutput->appendPlainText(msg);
+}
+
 void MainWindow::initializeCADCommands() {
     // Commands are now registered from menu.txt in loadMenuConfig()
     // Only add special handlers that need argument processing here
@@ -1430,6 +1463,34 @@ void MainWindow::initializeCADCommands() {
         }
     }
 
+    // Object snap toggle command
+    registerCADCommand(
+        "osnap",
+        QStringList() << "os",
+        0,
+        "Toggle object snap",
+        false,
+        "onToggleObjectSnap",
+        [this](const QStringList&) {
+            onToggleObjectSnap();
+        }
+        );
+
+    // Escape key handler for clearing selection
+    registerCADCommand(
+        "esc",
+        QStringList() << "escape",
+        0,
+        "Clear selection",
+        false,
+        "",
+        [this](const QStringList&) {
+            if (m_view) {
+                m_view->clearSelection();
+                consoleOutput->appendPlainText("Selection cleared.");
+            }
+        }
+        );
     // Add more specialized handlers as needed
     // For commands that need argument parsing (line, circle, etc.)
 }
@@ -1729,3 +1790,75 @@ void MainWindow::onCreateExtrude() {
         m_view->startExtrudeMode(std::static_pointer_cast<SketchNode>(f));
     }
 }
+
+// Add new method to auto-load files
+void MainWindow::autoLoadFiles() {
+    // Load Lisp file
+    QString lispFile = "../../../my.lsp";
+    if (QFile::exists(lispFile)) {
+        loadLispFile(lispFile);
+        consoleOutput->appendPlainText(QString("Loaded: %1").arg(lispFile));
+    } else {
+        qWarning() << "Lisp file not found:" << lispFile;
+        consoleOutput->appendPlainText(QString("Warning: %1 not found").arg(lispFile));
+    }
+
+    // Load CAD file
+    QString cadFile = "../../Draw/sample1.cad";
+    if (QFile::exists(cadFile)) {
+        m_view->doc.loadFromFile(cadFile);
+        updateFeatureTree();
+        m_view->update();
+        consoleOutput->appendPlainText(QString("Loaded: %1").arg(cadFile));
+        showResultTemporarily(QString("Loaded: %1").arg(cadFile));
+    } else {
+        qWarning() << "CAD file not found:" << cadFile;
+        consoleOutput->appendPlainText(QString("Warning: %1 not found").arg(cadFile));
+    }
+}
+
+// Add method to load Lisp files
+void MainWindow::loadLispFile(const QString& filename) {
+    QFile file(filename);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        consoleOutput->appendPlainText(QString("ERROR: Cannot open %1").arg(filename));
+        return;
+    }
+
+    QTextStream in(&file);
+    QString content = in.readAll();
+    file.close();
+
+    // Wrap content in progn to evaluate all forms
+    QString wrappedContent = QString("(progn %1)").arg(content);
+
+    // Evaluate the Lisp code
+    QByteArray codeBytes = wrappedContent.toUtf8();
+    const char* codeStr = codeBytes.constData();
+
+    cl_object result = Cnil;
+    bool success = evaluateECLForm(codeStr, &result);
+
+    if (success) {
+        consoleOutput->appendPlainText(QString("Lisp file loaded: %1").arg(filename));
+    } else {
+        consoleOutput->appendPlainText(QString("ERROR loading Lisp file: %1").arg(filename));
+    }
+}
+
+void MainWindow::loadFileFromCommandLine(const QString& filename) {
+    QTimer::singleShot(100, this, [this, filename]() {
+        if (filename.endsWith(".cad")) {
+            if (QFile::exists(filename)) {
+                m_view->doc.loadFromFile(filename);
+                updateFeatureTree();
+                m_view->update();
+                showResultTemporarily(QString("Loaded: %1").arg(filename));
+            }
+        } else if (filename.endsWith(".lsp") || filename.endsWith(".lisp")) {
+            loadLispFile(filename);
+        }
+    });
+}
+
+

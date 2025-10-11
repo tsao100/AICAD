@@ -653,6 +653,10 @@ public:
     QVector2D worldToPlane(const QVector3D& worldPt);
     QVector3D planeToWorld(const QVector2D& planePt);
 
+    void setObjectSnapEnabled(bool enabled) { objectSnapEnabled = enabled; update(); }
+    bool isObjectSnapEnabled() const { return objectSnapEnabled; }
+    void clearSelection();
+
     // GetPoint state
     struct GetPointState {
         bool active = false;
@@ -714,6 +718,50 @@ private:
     int highlightedFeatureId = -1;
     EditMode editMode = EditMode::None;
     CadMode mode = CadMode::Idle;
-};
+
+    // Selection and highlighting
+    struct EntityRef {
+        std::shared_ptr<Entity> entity;
+        std::shared_ptr<SketchNode> parentSketch;
+        int entityIndex;
+
+        bool operator==(const EntityRef& other) const {
+            return entity.get() == other.entity.get();
+        }
+    };
+
+    EntityRef hoveredEntity;
+    QVector<EntityRef> selectedEntities;
+    bool objectSnapEnabled = true;
+    float snapTolerance = 0.5f; // World units
+
+    // Grip system
+    struct Grip {
+        QVector3D position;
+        EntityRef entityRef;
+        int pointIndex; // Which point in the entity
+        bool hovered = false;
+    };
+    QVector<Grip> activeGrips;
+    int hoveredGripIndex = -1;
+    int draggedGripIndex = -1;
+
+    // Object snap
+    struct SnapPoint {
+        QVector3D position;
+        QString snapType; // "endpoint", "midpoint", "center", "nearest"
+        EntityRef entityRef;
+    };
+    SnapPoint currentSnapPoint;
+    bool snapActive = false;
+
+    // Helper methods
+    EntityRef pickEntity(const QPoint& screenPos);
+    void updateGrips();
+    void drawGrips();
+    void drawSnapMarker(const QVector3D& pos, const QString& snapType);
+    SnapPoint findNearestSnapPoint(const QVector3D& worldPos);
+    float distanceToEntity(const QVector3D& point, const EntityRef& entityRef);
+    QVector<QVector3D> getEntitySnapPoints(const EntityRef& entityRef);};
 
 #endif // CADVIEW_H

@@ -288,6 +288,136 @@ void CadView::resizeGL(int w, int h) {
     setSketchView(currentView);
 }
 
+// ==================== Grip System ====================
+void CadView::updateGrips() {
+    activeGrips.clear();
+
+    for (const auto& entityRef : selectedEntities) {
+        if (entityRef.entity->type == EntityType::Polyline) {
+            auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
+
+            for (int i = 0; i < poly->points.size(); ++i) {
+                Grip grip;
+                grip.position = poly->points[i];
+                grip.entityRef = entityRef;
+                grip.pointIndex = i;
+                activeGrips.append(grip);
+            }
+        }
+    }
+}
+
+void CadView::drawGrips() {
+    if (activeGrips.isEmpty()) return;
+
+    glDisable(GL_DEPTH_TEST);
+    glPointSize(8.0f);
+
+    for (int i = 0; i < activeGrips.size(); ++i) {
+        const Grip& grip = activeGrips[i];
+
+        if (i == hoveredGripIndex) {
+            glColor3f(1.0f, 0.5f, 0.0f); // Orange when hovered
+        } else {
+            glColor3f(0.0f, 0.5f, 1.0f); // Blue
+        }
+
+        glBegin(GL_POINTS);
+        glVertex3f(grip.position.x(), grip.position.y(), grip.position.z());
+        glEnd();
+
+        // Draw grip box
+        glBegin(GL_LINE_LOOP);
+        float size = 0.2f;
+        glVertex3f(grip.position.x() - size, grip.position.y() - size, grip.position.z());
+        glVertex3f(grip.position.x() + size, grip.position.y() - size, grip.position.z());
+        glVertex3f(grip.position.x() + size, grip.position.y() + size, grip.position.z());
+        glVertex3f(grip.position.x() - size, grip.position.y() + size, grip.position.z());
+        glEnd();
+    }
+
+    glPointSize(1.0f);
+    glEnable(GL_DEPTH_TEST);
+}
+
+// ==================== Object Snap ====================
+QVector<QVector3D> CadView::getEntitySnapPoints(const EntityRef& entityRef) {
+    QVector<QVector3D> points;
+
+    if (!entityRef.entity) return points;
+
+    if (entityRef.entity->type == EntityType::Polyline) {
+        auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
+
+        // Endpoints
+        for (const auto& pt : poly->points) {
+            points.append(pt);
+        }
+
+        // Midpoints
+        for (int i = 0; i < poly->points.size() - 1; ++i) {
+            QVector3D mid = (poly->points[i] + poly->points[i + 1]) / 2.0f;
+            points.append(mid);
+        }
+    }
+
+    return points;
+}
+
+CadView::SnapPoint CadView::findNearestSnapPoint(const QVector3D& worldPos) {
+    SnapPoint result;
+    result.entityRef.entity = nullptr;
+
+    float minDist = snapTolerance * 3; // Larger snap radius
+
+    // Check all entities in all sketches
+    for (auto& sketch : doc.sketches) {
+        for (int i = 0; i < sketch->entities.size(); ++i) {
+            EntityRef ref = {sketch->entities[i], sketch, i};
+            QVector<QVector3D> snapPts = getEntitySnapPoints(ref);
+
+            for (const auto& snapPt : snapPts) {
+                float dist = (worldPos - snapPt).length();
+
+                if (dist < minDist) {
+                    minDist = dist;
+                    result.position = snapPt;
+                    result.entityRef = ref;
+                    result.snapType = "endpoint"; // Simplified
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+void CadView::drawSnapMarker(const QVector3D& pos, const QString& snapType) {
+    glDisable(GL_DEPTH_TEST);
+    glLineWidth(2.0f);
+    glColor3f(0.0f, 1.0f, 0.0f); // Green
+
+    float size = 0.3f;
+
+    // Draw square marker
+    glBegin(GL_LINE_LOOP);
+    glVertex3f(pos.x() - size, pos.y() - size, pos.z());
+    glVertex3f(pos.x() + size, pos.y() - size, pos.z());
+    glVertex3f(pos.x() + size, pos.y() + size, pos.z());
+    glVertex3f(pos.x() - size, pos.y() + size, pos.z());
+    glEnd();
+
+    glLineWidth(1.0f);
+    glEnable(GL_DEPTH_TEST);
+}
+
+void CadView::clearSelection() {
+    selectedEntities.clear();
+    activeGrips.clear();
+    hoveredEntity.entity = nullptr;
+    update();
+}
+
 void CadView::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -301,6 +431,39 @@ void CadView::paintGL() {
     glLoadMatrixf(view.constData());
 
     drawAxes();
+    // Draw entities with highlighting
+    for (auto& sketch : doc.sketches) {
+        for (int i = 0; i < sketch->entities.size(); ++i) {
+            auto& entity = sketch->entities[i];
+
+            // Check if selected
+            bool isSelected = false;
+            for (const auto& sel : selectedEntities) {
+                if (sel.entity.get() == entity.get()) {
+                    isSelected = true;
+                    break;
+                }
+            }
+
+            // Check if hovered
+            bool isHovered = (hoveredEntity.entity.get() == entity.get());
+
+            if (isSelected) {
+                glLineWidth(3.0f);
+                glColor3f(0.0f, 0.8f, 1.0f); // Cyan for selected
+            } else if (isHovered) {
+                glLineWidth(2.0f);
+                glColor3f(1.0f, 1.0f, 0.0f); // Yellow for hover
+            } else {
+                glLineWidth(1.0f);
+                glColor3f(1.0f, 1.0f, 1.0f); // White normal
+            }
+
+            entity->draw();
+        }
+    }
+
+    glLineWidth(1.0f);
 
     doc.drawAll();
 
@@ -326,6 +489,14 @@ void CadView::paintGL() {
 //        drawRubberBandLine(getPointState.previousPoint, getPointState.currentPoint);
 //        drawRectangle({getPointState.previousPoint, getPointState.currentPoint}, Qt::DashLine);
 //    }
+
+    // Draw grips
+    drawGrips();
+
+    // Draw snap marker
+    if (snapActive && currentSnapPoint.entityRef.entity) {
+        drawSnapMarker(currentSnapPoint.position, currentSnapPoint.snapType);
+    }
 
     // Draw unified rubber band
     drawRubberBand();
@@ -387,7 +558,58 @@ static QVector<QVector3D> rectanglePointsForPlane(
 
 void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
-        // Handle GetPoint mode FIRST (highest priority)
+        // Check grip click first
+        if (hoveredGripIndex >= 0) {
+            draggedGripIndex = hoveredGripIndex;
+            return;
+        }
+
+        // Handle GetPoint mode
+        if (getPointState.active && !getPointState.keyboardMode) {
+            QVector3D worldPos = screenToWorld(event->pos());
+
+            // Use snap point if active
+            if (snapActive && currentSnapPoint.entityRef.entity) {
+                worldPos = currentSnapPoint.position;
+            }
+
+            QVector2D planePt = worldToPlane(worldPos);
+            getPointState.active = false;
+            emit pointAcquired(planePt);
+            update();
+            return;
+        }
+
+        // Entity selection
+        EntityRef picked = pickEntity(event->pos());
+        if (picked.entity) {
+            bool isSelected = false;
+            for (const auto& sel : selectedEntities) {
+                if (sel == picked) {
+                    isSelected = true;
+                    break;
+                }
+            }
+
+            if (!isSelected) {
+                if (!(event->modifiers() & Qt::ShiftModifier)) {
+                    selectedEntities.clear();
+                }
+                selectedEntities.append(picked);
+                updateGrips();
+            }
+            update();
+            return;
+        } else {
+            // Clicked empty space - clear selection
+            if (!(event->modifiers() & Qt::ShiftModifier)) {
+                selectedEntities.clear();
+                activeGrips.clear();
+                update();
+            }
+        }
+
+    // Handle GetPoint mode FIRST (highest priority)
         if (getPointState.active && !getPointState.keyboardMode) {
             QVector3D worldPos = screenToWorld(event->pos());
             QVector2D planePt = worldToPlane(worldPos);
@@ -447,6 +669,66 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
+    // Update hover state
+    if (!(draggedGripIndex >= 0)) {
+        EntityRef hovered = pickEntity(event->pos());
+        if (!(hovered == hoveredEntity)) {
+            hoveredEntity = hovered;
+            update();
+        }
+
+        // Check grip hover
+        if (!selectedEntities.isEmpty()) {
+            QVector3D worldPos = screenToWorld(event->pos());
+            hoveredGripIndex = -1;
+
+            for (int i = 0; i < activeGrips.size(); ++i) {
+                float dist = (worldPos - activeGrips[i].position).length();
+                if (dist < snapTolerance * 2) {
+                    hoveredGripIndex = i;
+                    break;
+                }
+            }
+            update();
+        }
+    }
+
+    // Handle grip dragging
+    if (draggedGripIndex >= 0 && (event->buttons() & Qt::LeftButton)) {
+        QVector3D worldPos = screenToWorld(event->pos());
+        QVector2D planePt = worldToPlane(worldPos);
+
+        Grip& grip = activeGrips[draggedGripIndex];
+        auto poly = std::dynamic_pointer_cast<PolylineEntity>(grip.entityRef.entity);
+
+        if (poly && grip.pointIndex < poly->points.size()) {
+            poly->points[grip.pointIndex] = planeToWorld(planePt);
+            updateGrips();
+        }
+
+        update();
+        return;
+    }
+
+    // Object snap during getpoint
+    if (getPointState.active && objectSnapEnabled) {
+        QVector3D worldPos = screenToWorld(event->pos());
+        SnapPoint snap = findNearestSnapPoint(worldPos);
+
+        if (snap.entityRef.entity) {
+            snapActive = true;
+            currentSnapPoint = snap;
+            rubberBandState.currentPoint = worldToPlane(snap.position);
+        } else {
+            snapActive = false;
+            rubberBandState.currentPoint = worldToPlane(worldPos);
+        }
+
+        rubberBandState.active = getPointState.hasPreviousPoint;
+        update();
+        return;
+    }
+
     // ... existing mouse move handling ...
     if ((event->buttons() & Qt::RightButton) && currentView == SketchView::None) {
         int dx = event->pos().x() - lastMousePos.x();
@@ -489,6 +771,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
             camera.pan(right * panDelta.x() + up * panDelta.y());
         }
+
         update();
         return;
     }
@@ -534,6 +817,10 @@ void CadView::wheelEvent(QWheelEvent* event) {
 }
 
 void CadView::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        draggedGripIndex = -1;
+    }
+
     if (event->button() == Qt::MiddleButton) {
         setCursor(Qt::ArrowCursor); // ✅ restore cursor
     }
@@ -812,6 +1099,73 @@ void CadView::drawRubberBand() {
 
     glDisable(GL_LINE_STIPPLE);
     glLineWidth(1.0f);
+}
+
+// ==================== Entity Picking ====================
+CadView::EntityRef CadView::pickEntity(const QPoint& screenPos) {
+    EntityRef result;
+    result.entity = nullptr;
+
+    QVector3D rayOrigin, rayDir;
+    QVector3D worldPos = screenToWorld(screenPos);
+
+    // Cast ray for picking
+    float minDist = std::numeric_limits<float>::max();
+
+    // Check all sketches
+    for (auto& sketch : doc.sketches) {
+        for (int i = 0; i < sketch->entities.size(); ++i) {
+            auto& entity = sketch->entities[i];
+            float dist = distanceToEntity(worldPos, {entity, sketch, i});
+
+            if (dist < snapTolerance && dist < minDist) {
+                minDist = dist;
+                result.entity = entity;
+                result.parentSketch = sketch;
+                result.entityIndex = i;
+            }
+        }
+    }
+
+    return result;
+}
+
+float CadView::distanceToEntity(const QVector3D& point, const EntityRef& entityRef) {
+    if (!entityRef.entity) return std::numeric_limits<float>::max();
+
+    if (entityRef.entity->type == EntityType::Polyline) {
+        auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
+        float minDist = std::numeric_limits<float>::max();
+
+        for (int i = 0; i < poly->points.size() - 1; ++i) {
+            QVector3D p1 = poly->points[i];
+            QVector3D p2 = poly->points[i + 1];
+
+            // Point-to-line-segment distance
+            QVector3D v = p2 - p1;
+            QVector3D w = point - p1;
+            float c1 = QVector3D::dotProduct(w, v);
+
+            if (c1 <= 0) {
+                minDist = qMin(minDist, (point - p1).length());
+                continue;
+            }
+
+            float c2 = QVector3D::dotProduct(v, v);
+            if (c1 >= c2) {
+                minDist = qMin(minDist, (point - p2).length());
+                continue;
+            }
+
+            float b = c1 / c2;
+            QVector3D pb = p1 + b * v;
+            minDist = qMin(minDist, (point - pb).length());
+        }
+
+        return minDist;
+    }
+
+    return std::numeric_limits<float>::max();
 }
 
 void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {

@@ -13,6 +13,12 @@
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     MainWindow w;
+
+    // Pass command line args to window
+    if (argc > 1) {
+        w.loadFileFromCommandLine(QString::fromUtf8(argv[1]));
+    }
+
     w.show();
     return app.exec();
 }
