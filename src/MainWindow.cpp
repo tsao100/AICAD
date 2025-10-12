@@ -1261,6 +1261,8 @@ void MainWindow::createCentral() {
     connect(m_view, &CadView::pointAcquired, this, &MainWindow::onPointAcquired);
     connect(m_view, &CadView::getPointCancelled, this, &MainWindow::onGetPointCancelled);
     connect(m_view, &CadView::getPointKeyPressed, this, &MainWindow::onGetPointKeyPressed);
+
+    connect(m_view, &CadView::sketchEditModeChanged, this, &MainWindow::onSketchEditModeChanged);
 }
 
 void MainWindow::createFeatureBrowser() {
@@ -1491,6 +1493,24 @@ void MainWindow::initializeCADCommands() {
             }
         }
         );
+
+    // closesketch
+    registerCADCommand(
+        "closesketch",
+        QStringList() << "cs" << "exit",
+        0,
+        "Exit sketch edit mode",
+        false,
+        "",
+        [this](const QStringList&) {
+            if (m_view->isInSketchEditMode()) {
+                m_view->exitSketchEditMode();
+            } else {
+                consoleOutput->appendPlainText("Not in sketch edit mode.");
+            }
+        }
+        );
+
     // Add more specialized handlers as needed
     // For commands that need argument parsing (line, circle, etc.)
 }
@@ -1646,10 +1666,72 @@ void MainWindow::createMenusAndToolbars() {
     loadMenuConfig("menu.txt");
 }
 
+// New helper method to create sketch item widget with eye button
+QWidget* MainWindow::createSketchItemWidget(
+    std::shared_ptr<SketchNode> sketch,
+    const QIcon& eyeOpenIcon,
+    const QIcon& eyeCloseIcon)
+{
+    QWidget* widget = new QWidget();
+    QHBoxLayout* layout = new QHBoxLayout(widget);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+
+    // Eye button
+    QPushButton* eyeButton = new QPushButton(widget);
+    eyeButton->setIcon(sketch->visible ? eyeOpenIcon : eyeCloseIcon);
+    eyeButton->setIconSize(QSize(16, 16));
+    eyeButton->setFixedSize(20, 20);
+    eyeButton->setFlat(true);
+    eyeButton->setStyleSheet(
+        "QPushButton { border: none; background: transparent; }"
+        "QPushButton:hover { background: rgba(255, 255, 255, 30); border-radius: 3px; }"
+        );
+    eyeButton->setToolTip(sketch->visible ? "Hide sketch" : "Show sketch");
+
+    // Store sketch ID in button
+    eyeButton->setProperty("sketchId", sketch->id);
+
+    // Connect button click
+    connect(eyeButton, &QPushButton::clicked, this, [this, sketch, eyeButton, eyeOpenIcon, eyeCloseIcon]() {
+        sketch->visible = !sketch->visible;
+        eyeButton->setIcon(sketch->visible ? eyeOpenIcon : eyeCloseIcon);
+        eyeButton->setToolTip(sketch->visible ? "Hide sketch" : "Show sketch");
+        m_view->update();
+
+        QString msg = sketch->visible ?
+                          QString("%1 visible").arg(sketch->name) :
+                          QString("%1 hidden").arg(sketch->name);
+        consoleOutput->appendPlainText(msg);
+    });
+
+    // Sketch icon
+    QLabel* iconLabel = new QLabel(widget);
+    iconLabel->setPixmap(QIcon(":/icons/sketch.png").pixmap(16, 16));
+
+    // Sketch name label
+    QLabel* nameLabel = new QLabel(
+        sketch->name.isEmpty() ? QString("Sketch %1").arg(sketch->id) : sketch->name,
+        widget
+        );
+    nameLabel->setStyleSheet("color: white;");
+
+    layout->addWidget(eyeButton);
+    layout->addWidget(iconLabel);
+    layout->addWidget(nameLabel);
+    layout->addStretch();
+
+    widget->setLayout(layout);
+    return widget;
+}
+
 void MainWindow::updateFeatureTree() {
     featureTree->clear();
 
-    // Create root nodes
+    // Load eye icons
+    QIcon eyeOpenIcon(":/icons/eyeOpen.png");
+    QIcon eyeCloseIcon(":/icons/eyeClose.png");
+
     QTreeWidgetItem* sketchesRoot = new QTreeWidgetItem(featureTree);
     sketchesRoot->setText(0, "Free Sketches");
     sketchesRoot->setExpanded(true);
@@ -1658,53 +1740,65 @@ void MainWindow::updateFeatureTree() {
     featuresRoot->setText(0, "Features");
     featuresRoot->setExpanded(true);
 
-    // Track which sketches are used by features
     QSet<int> usedSketchIds;
 
-    // First pass: identify used sketches
+    // Mark attached sketches
     for (auto& f : m_view->doc.features) {
         if (f->type == FeatureType::Extrude) {
             auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
             if (auto s = extrude->sketch.lock()) {
                 usedSketchIds.insert(s->id);
+                s->isAttached = true;
             }
         }
     }
 
-    // Add free (unused) sketches to Sketches folder
+    // Add free sketches with eye icons
     for (auto& s : m_view->doc.sketches) {
         if (!usedSketchIds.contains(s->id)) {
+            s->isAttached = false;
             QTreeWidgetItem* item = new QTreeWidgetItem(sketchesRoot);
-            item->setText(0, s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name);
+
+            // Create widget with eye button
+            QWidget* widget = createSketchItemWidget(s, eyeOpenIcon, eyeCloseIcon);
+
+            item->setText(0, s->name.isEmpty() ?
+                                 QString("Sketch %1").arg(s->id) : s->name);
             item->setIcon(0, QIcon(":/icons/sketch.png"));
             item->setData(0, Qt::UserRole, s->id);
+            item->setData(0, Qt::UserRole + 1, "sketch");
+
+            featureTree->setItemWidget(item, 0, widget);
         }
     }
 
-    // Build feature tree with sketch children
+    // Build feature tree with eye icons for attached sketches
     for (auto& f : m_view->doc.features) {
         QTreeWidgetItem* featureItem = new QTreeWidgetItem(featuresRoot);
-        featureItem->setText(0, f->name.isEmpty() ? QString("%1 %2").arg(featureTypeToString(f->type)).arg(f->id) : f->name);
+        featureItem->setText(0, f->name.isEmpty() ?
+                                    QString("%1 %2").arg(featureTypeToString(f->type)).arg(f->id) : f->name);
         featureItem->setData(0, Qt::UserRole, f->id);
+        featureItem->setData(0, Qt::UserRole + 1, "feature");
 
-        switch (f->type) {
-        case FeatureType::Extrude: {
+        if (f->type == FeatureType::Extrude) {
             featureItem->setIcon(0, QIcon(":/icons/extrude.png"));
 
-            // Add sketch as child of extrude feature
             auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
             if (auto s = extrude->sketch.lock()) {
                 QTreeWidgetItem* sketchChild = new QTreeWidgetItem(featureItem);
-                sketchChild->setText(0, QString("└ %1").arg(
-                                            s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name));
+
+                // Create widget with eye button for child sketch
+                QWidget* widget = createSketchItemWidget(s, eyeOpenIcon, eyeCloseIcon);
+
+                sketchChild->setText(0, s->name.isEmpty() ?
+                                            QString("└ Sketch %1").arg(s->id) : QString("└ %1").arg(s->name));
                 sketchChild->setIcon(0, QIcon(":/icons/sketch.png"));
                 sketchChild->setData(0, Qt::UserRole, s->id);
-                sketchChild->setForeground(0, QBrush(QColor(100, 150, 200))); // Blue tint for linked items
+                sketchChild->setData(0, Qt::UserRole + 1, "sketch");
+                sketchChild->setForeground(0, QBrush(QColor(100, 150, 200)));
+
+                featureTree->setItemWidget(sketchChild, 0, widget);
             }
-            break;
-        }
-        default:
-            break;
         }
 
         featureItem->setExpanded(true);
@@ -1715,9 +1809,37 @@ void MainWindow::updateFeatureTree() {
 
 void MainWindow::onFeatureSelected(QTreeWidgetItem* item, int /*column*/) {
     int featureId = item->data(0, Qt::UserRole).toInt();
-    auto f = m_view->doc.findFeature(featureId);
-    if (f) {
-        m_view->highlightFeature(featureId);
+    QString itemType = item->data(0, Qt::UserRole + 1).toString();
+
+    if (itemType == "sketch") {
+        // Enter sketch edit mode (eye button handles visibility separately)
+        for (auto& s : m_view->doc.sketches) {
+            if (s->id == featureId) {
+                m_view->enterSketchEditMode(s);
+                consoleOutput->appendPlainText(QString("Editing: %1").arg(s->name));
+                break;
+            }
+        }
+    } else if (itemType == "feature") {
+        auto f = m_view->doc.findFeature(featureId);
+        if (f) {
+            m_view->highlightFeature(featureId);
+        }
+    }
+}
+
+void MainWindow::onSketchEditModeChanged(bool active, int sketchId) {
+    if (active) {
+        // Update status or UI
+        for (auto& s : m_view->doc.sketches) {
+            if (s->id == sketchId) {
+                setWindowTitle(QString("Qt CAD Viewer - Editing: %1").arg(s->name));
+                break;
+            }
+        }
+    } else {
+        setWindowTitle("Qt CAD Viewer with Lisp");
+        consoleOutput->appendPlainText("Sketch editing closed.");
     }
 }
 

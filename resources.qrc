@@ -21,5 +21,9 @@
         <file>icons/right.png</file>
         <file>icons/save.png</file>
         <file>icons/top.png</file>
+        <file>icons/close.png</file>
+        <file>icons/eyeClose.png</file>
+        <file>icons/eyeOpen.png</file>
+        <file>icons/return.png</file>
     </qresource>
 </RCC>

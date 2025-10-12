@@ -80,6 +80,7 @@ private Q_SLOTS:
     void onViewIsometric();
     void onExit();
     void onToggleObjectSnap();
+    void onSketchEditModeChanged(bool active, int sketchId);
 
 private:
     // Unified command system
@@ -94,6 +95,10 @@ private:
     };
 
     QHash<QString, CADCommand> cadCommands;
+    QWidget* createSketchItemWidget(
+        std::shared_ptr<SketchNode> sketch,
+        const QIcon& eyeOpenIcon,
+        const QIcon& eyeCloseIcon);
 
     void registerCADCommand(const QString& name,
                             const QStringList& aliases,

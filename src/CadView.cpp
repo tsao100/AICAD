@@ -286,6 +286,10 @@ void CadView::initializeGL() {
 void CadView::resizeGL(int w, int h) {
     glViewport(0,0,w,h);
     setSketchView(currentView);
+
+    if (closeSketchButton && closeSketchButton->isVisible()) {
+        closeSketchButton->setGeometry(w - 140, 10, 130, 35);
+    }
 }
 
 // ==================== Grip System ====================
@@ -418,6 +422,76 @@ void CadView::clearSelection() {
     update();
 }
 
+void CadView::enterSketchEditMode(std::shared_ptr<SketchNode> sketch) {
+    if (!sketch) return;
+
+    sketchEditMode = true;
+    currentEditSketch = sketch;
+    pendingSketch = sketch;
+
+    // Set view to sketch plane
+    switch (sketch->plane) {
+    case SketchPlane::XY:
+        setSketchView(SketchView::Top);
+        break;
+    case SketchPlane::XZ:
+        setSketchView(SketchView::Front);
+        break;
+    case SketchPlane::YZ:
+        setSketchView(SketchView::Right);
+        break;
+    case SketchPlane::Custom:
+        setSketchView(SketchView::None);
+        break;
+    }
+
+    // Show close button
+    if (!closeSketchButton) {
+        closeSketchButton = new QPushButton("✕ Close Sketch", this);
+        closeSketchButton->setStyleSheet(
+            "QPushButton { "
+            "background: rgba(200, 50, 50, 220); "
+            "color: white; "
+            "font-weight: bold; "
+            "font-size: 14px; "
+            "padding: 8px 15px; "
+            "border: 2px solid darkred; "
+            "border-radius: 5px; "
+            "} "
+            "QPushButton:hover { "
+            "background: rgba(255, 70, 70, 240); "
+            "}"
+            );
+        connect(closeSketchButton, &QPushButton::clicked, this, [this]() {
+            exitSketchEditMode();
+        });
+    }
+
+    closeSketchButton->setGeometry(width() - 140, 10, 130, 35);
+    closeSketchButton->show();
+    closeSketchButton->raise();
+
+    update();
+    emit sketchEditModeChanged(true, sketch->id);
+}
+
+void CadView::exitSketchEditMode() {
+    sketchEditMode = false;
+    currentEditSketch.reset();
+    pendingSketch.reset();
+
+    if (closeSketchButton) {
+        closeSketchButton->hide();
+    }
+
+    // Return to isometric view
+    setSketchView(SketchView::None);
+
+    clearSelection();
+    update();
+    emit sketchEditModeChanged(false, -1);
+}
+
 void CadView::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -431,32 +505,49 @@ void CadView::paintGL() {
     glLoadMatrixf(view.constData());
 
     drawAxes();
-    // Draw entities with highlighting
+
+    // Draw sketches (check visibility and edit mode)
     for (auto& sketch : doc.sketches) {
+        // Show if:
+        // 1. In edit mode and this is the current sketch, OR
+        // 2. Not attached to feature and visible flag is true, OR
+        // 3. Attached but user toggled visibility on
+        bool shouldShow = (sketchEditMode && currentEditSketch.get() == sketch.get()) ||
+                          (!sketch->isAttached && sketch->visible) ||
+                          (sketch->isAttached && sketch->visible);
+
+        if (!shouldShow) continue;
+
         for (int i = 0; i < sketch->entities.size(); ++i) {
             auto& entity = sketch->entities[i];
 
-            // Check if selected
-            bool isSelected = false;
-            for (const auto& sel : selectedEntities) {
-                if (sel.entity.get() == entity.get()) {
-                    isSelected = true;
-                    break;
+            // Highlight if in edit mode
+            if (sketchEditMode && currentEditSketch.get() == sketch.get()) {
+                // Check if selected/hovered
+                bool isSelected = false;
+                for (const auto& sel : selectedEntities) {
+                    if (sel.entity.get() == entity.get()) {
+                        isSelected = true;
+                        break;
+                    }
                 }
-            }
 
-            // Check if hovered
-            bool isHovered = (hoveredEntity.entity.get() == entity.get());
+                bool isHovered = (hoveredEntity.entity.get() == entity.get());
 
-            if (isSelected) {
-                glLineWidth(3.0f);
-                glColor3f(0.0f, 0.8f, 1.0f); // Cyan for selected
-            } else if (isHovered) {
-                glLineWidth(2.0f);
-                glColor3f(1.0f, 1.0f, 0.0f); // Yellow for hover
+                if (isSelected) {
+                    glLineWidth(3.0f);
+                    glColor3f(0.0f, 0.8f, 1.0f);
+                } else if (isHovered) {
+                    glLineWidth(2.0f);
+                    glColor3f(1.0f, 1.0f, 0.0f);
+                } else {
+                    glLineWidth(1.5f);
+                    glColor3f(1.0f, 1.0f, 1.0f);
+                }
             } else {
+                // Non-edit mode - draw dimmed
                 glLineWidth(1.0f);
-                glColor3f(1.0f, 1.0f, 1.0f); // White normal
+                glColor3f(0.6f, 0.6f, 0.6f);
             }
 
             entity->draw();
@@ -476,22 +567,14 @@ void CadView::paintGL() {
         f->draw();
     }
 
-//    if (awaitingHeight) {
-//        drawRectangle({getPointState.previousPoint, getPointState.currentPoint}, Qt::DashLine);
-//    }
-
     if (awaitingHeight && pendingSketch) {
         drawExtrudedCube(previewHeight, true);
     }
 
-    // Draw GetPoint rubber band
-//    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
-//        drawRubberBandLine(getPointState.previousPoint, getPointState.currentPoint);
-//        drawRectangle({getPointState.previousPoint, getPointState.currentPoint}, Qt::DashLine);
-//    }
-
-    // Draw grips
-    drawGrips();
+    // Only draw grips in sketch edit mode
+    if (sketchEditMode) {
+        drawGrips();
+    }
 
     // Draw snap marker
     if (snapActive && currentSnapPoint.entityRef.entity) {
