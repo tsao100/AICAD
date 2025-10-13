@@ -11,7 +11,6 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFile>
-#include <QPushButton>
 #include <vector>
 
 enum class FeatureType {
@@ -181,7 +180,7 @@ struct PolylineEntity : public Entity {
             float x, y, z;
             in >> x >> y >> z;
             points[i] = QVector3D(x, y, z);
-            }
+        }
     }
 };
 /*
@@ -239,7 +238,7 @@ struct Sketch {
             QString type; in >> type;
             std::shared_ptr<Entity> e;
             if (type == "Polyline") e = std::make_shared<PolylineEntity>();
-        /*    else if (type == "Arc") e = std::make_shared<ArcEntity>();
+            /*    else if (type == "Arc") e = std::make_shared<ArcEntity>();
             else if (type == "Line") e = std::make_shared<LineEntity>();
             else if (type == "Spline") e = std::make_shared<SplineEntity>();*/
             if (e) { e->load(in); entities.push_back(e); }
@@ -269,7 +268,7 @@ struct ExtrudeEntity : public Entity {
                 }
             }
         }
-        }
+    }
 
 
     static void drawExtrusion(const QVector<QVector3D>& base,
@@ -347,8 +346,6 @@ struct SketchNode : public FeatureNode {
     SketchPlane plane;
     CustomPlane customPlane; // For arbitrary planes
     QVector<std::shared_ptr<Entity>> entities;
-    bool visible = true;  // visibility toggle
-    bool isAttached = false; // attached to feature flag
 
     SketchNode() { type = FeatureType::Sketch; }
 
@@ -660,11 +657,6 @@ public:
     bool isObjectSnapEnabled() const { return objectSnapEnabled; }
     void clearSelection();
 
-    void enterSketchEditMode(std::shared_ptr<SketchNode> sketch);
-    void exitSketchEditMode();
-    bool isInSketchEditMode() const { return sketchEditMode; }
-    std::shared_ptr<SketchNode> getCurrentEditSketch() const { return currentEditSketch; }
-
     // GetPoint state
     struct GetPointState {
         bool active = false;
@@ -685,13 +677,19 @@ public:
     };
 
     RubberBandState rubberBandState;
+    void setActiveSketch(std::shared_ptr<SketchNode> sketch);
+    void exitSketchEdit();
+    void toggleSketchVisibility(int sketchId);
+    bool isSketchVisible(int sketchId) const;
+    std::shared_ptr<SketchNode> getActiveSketch() const { return activeSketch; }
+    void toggleFeatureVisibility(int featureId);
+    bool isFeatureVisible(int featureId) const;
 
 Q_SIGNALS:
     void featureAdded();
     void pointAcquired(QVector2D point);
     void getPointCancelled();
     void getPointKeyPressed(QString key);
-    void sketchEditModeChanged(bool active, int sketchId);
 
 protected:
     void initializeGL() override;
@@ -712,10 +710,6 @@ private:
 
     void drawRubberBandLine(const QVector2D& p1, const QVector2D& p2);
     void drawRubberBand();
-
-    bool sketchEditMode = false;
-    std::shared_ptr<SketchNode> currentEditSketch;
-    QPushButton* closeSketchButton = nullptr;
 
     QPoint lastMousePos;
     Rectangle2D currentRect;
@@ -775,6 +769,11 @@ private:
     void drawSnapMarker(const QVector3D& pos, const QString& snapType);
     SnapPoint findNearestSnapPoint(const QVector3D& worldPos);
     float distanceToEntity(const QVector3D& point, const EntityRef& entityRef);
-    QVector<QVector3D> getEntitySnapPoints(const EntityRef& entityRef);};
+    QVector<QVector3D> getEntitySnapPoints(const EntityRef& entityRef);
+
+    std::shared_ptr<SketchNode> activeSketch; // Currently editing sketch
+    QSet<int> hiddenSketches; // IDs of hidden sketches
+    QSet<int> hiddenFeatures; // IDs of hidden features
+};
 
 #endif // CADVIEW_H

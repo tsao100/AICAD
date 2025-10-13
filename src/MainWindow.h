@@ -80,7 +80,8 @@ private Q_SLOTS:
     void onViewIsometric();
     void onExit();
     void onToggleObjectSnap();
-    void onSketchEditModeChanged(bool active, int sketchId);
+    void onReturnFromSketch();
+    void onToggleSketchVisibility();
 
 private:
     // Unified command system
@@ -95,10 +96,6 @@ private:
     };
 
     QHash<QString, CADCommand> cadCommands;
-    QWidget* createSketchItemWidget(
-        std::shared_ptr<SketchNode> sketch,
-        const QIcon& eyeOpenIcon,
-        const QIcon& eyeCloseIcon);
 
     void registerCADCommand(const QString& name,
                             const QStringList& aliases,
@@ -129,7 +126,7 @@ private:
     void updateFeatureTree();
     void onFeatureSelected(QTreeWidgetItem* item, int column);
     void createRectangleEntity(std::shared_ptr<SketchNode> sketch,
-                                const QVector2D& corner1,
+                               const QVector2D& corner1,
                                const QVector2D& corner2);
 
     // Helper methods for rectangle command
@@ -180,5 +177,7 @@ private:
     GetPointRequest currentGetPointRequest;
 
     void setupGetPointECLInterface();
-};
+
+    QToolBar* sketchToolbar;
+    QAction* returnAction;};
 #endif // MAINWINDOW_H
