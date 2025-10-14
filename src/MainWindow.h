@@ -29,6 +29,10 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QSplitter>
+#include <QTableWidget>
+#include <QDoubleSpinBox>
+#include <QHeaderView>
 
 #include "CadView.h"
 
@@ -82,6 +86,9 @@ private Q_SLOTS:
     void onToggleObjectSnap();
     void onReturnFromSketch();
     void onToggleSketchVisibility();
+    void onTreeContextMenu(const QPoint& pos);
+    void onEditSketch();
+    void onEditExtrude();
 
 private:
     // Unified command system
@@ -178,6 +185,26 @@ private:
 
     void setupGetPointECLInterface();
 
-    QToolBar* sketchToolbar;
-    QAction* returnAction;};
+    QDockWidget* comboDock;
+    QTabWidget* comboView;
+    QWidget* taskWidget;
+    QWidget* modelWidget;
+    QSplitter* modelSplitter;
+    QTabWidget* propertyTabs;
+    QTableWidget* dataTable;
+    QTextEdit* viewText;
+    QPushButton* returnButton;
+    QTreeWidgetItem* contextMenuItem;
+    QWidget* propertyWidget;
+
+    void createPropertyWidget();
+    void showPropertyWidget(const QString& title);
+    void hidePropertyWidget();
+    void createTaskWidget();
+    void createModelWidget();
+    void showTaskWidget(const QString& title);
+    void hideTaskWidget();
+    void updatePropertySheets(std::shared_ptr<FeatureNode> feature);
+    void clearPropertySheets();
+};
 #endif // MAINWINDOW_H

@@ -511,7 +511,9 @@ struct Document {
     std::shared_ptr<FeatureNode> findFeature(int id) const {
         for (auto& f : sketches)
             if (f->id == id) return f;
-        return nullptr;
+        for (auto& f : features)
+            if (f->id == id) return f;
+         return nullptr;
     }
 
     void rebuildAll() {

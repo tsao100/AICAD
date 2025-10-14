@@ -1264,18 +1264,372 @@ void MainWindow::createCentral() {
 }
 
 void MainWindow::createFeatureBrowser() {
-    QDockWidget* dock = new QDockWidget("Feature Tree", this);
-    dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    comboDock = new QDockWidget("Model Browser", this);
+    comboDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
-    featureTree = new QTreeWidget(dock);
-    featureTree->setColumnCount(1);
-    featureTree->setHeaderLabel("Features");
+    // Create tab widget for combo view
+    comboView = new QTabWidget(comboDock);
 
-    dock->setWidget(featureTree);
-    addDockWidget(Qt::LeftDockWidgetArea, dock);
+    // Model tab with splitter
+    createModelWidget();
+    comboView->addTab(modelWidget, "Model");
+
+    // Task widget tab
+    createTaskWidget();
+    comboView->addTab(taskWidget, "Task");
+
+    comboDock->setWidget(comboView);
+    addDockWidget(Qt::LeftDockWidgetArea, comboDock);
 
     connect(featureTree, &QTreeWidget::itemClicked, this, &MainWindow::onFeatureSelected);
 }
+
+void MainWindow::createModelWidget() {
+    modelWidget = new QWidget();
+    QVBoxLayout* mainLayout = new QVBoxLayout(modelWidget);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+
+    // Create splitter for tree and property sheets
+    modelSplitter = new QSplitter(Qt::Vertical);
+
+    // Feature tree (top half)
+    featureTree = new QTreeWidget();
+    featureTree->setColumnCount(1);
+    featureTree->setHeaderLabel("Features");
+    featureTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(featureTree, &QTreeWidget::customContextMenuRequested,
+            this, &MainWindow::onTreeContextMenu);
+
+    modelSplitter->addWidget(featureTree);
+
+    // Property sheets (bottom half)
+    propertyTabs = new QTabWidget();
+
+    // View tab - text display
+    viewText = new QTextEdit();
+    viewText->setReadOnly(true);
+    viewText->setStyleSheet("font-family: monospace; font-size: 10pt;");
+    propertyTabs->addTab(viewText, "View");
+
+    // Data tab - table display
+    dataTable = new QTableWidget();
+    dataTable->setColumnCount(2);
+    dataTable->setHorizontalHeaderLabels(QStringList() << "Property" << "Value");
+    dataTable->horizontalHeader()->setStretchLastSection(true);
+    dataTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    propertyTabs->addTab(dataTable, "Data");
+
+    modelSplitter->addWidget(propertyTabs);
+
+    // Set initial splitter sizes (60% tree, 40% properties)
+    modelSplitter->setStretchFactor(0, 6);
+    modelSplitter->setStretchFactor(1, 4);
+
+    mainLayout->addWidget(modelSplitter);
+}
+
+void MainWindow::createTaskWidget() {
+    taskWidget = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(taskWidget);
+
+    // Title label
+    QLabel* titleLabel = new QLabel("No Active Task");
+    titleLabel->setObjectName("taskTitle");
+    titleLabel->setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px; background: #e0e0e0;");
+    layout->addWidget(titleLabel);
+
+    // Task content area
+    QWidget* taskContent = new QWidget();
+    taskContent->setObjectName("taskContent");
+    QVBoxLayout* contentLayout = new QVBoxLayout(taskContent);
+    contentLayout->addWidget(new QLabel("Select an item to edit"));
+    layout->addWidget(taskContent);
+
+    layout->addStretch();
+
+    // Return button at bottom
+    returnButton = new QPushButton(QIcon(":/icons/return.png"), "Exit Edit Mode");
+    returnButton->setStyleSheet("QPushButton { padding: 8px; font-size: 12pt; }");
+    returnButton->setVisible(false);
+    connect(returnButton, &QPushButton::clicked, this, &MainWindow::onReturnFromSketch);
+    layout->addWidget(returnButton);
+}
+
+void MainWindow::showTaskWidget(const QString& title) {
+    QLabel* titleLabel = taskWidget->findChild<QLabel*>("taskTitle");
+    if (titleLabel) {
+        titleLabel->setText(title);
+    }
+
+    returnButton->setVisible(true);
+    comboView->setCurrentWidget(taskWidget);
+}
+
+void MainWindow::hideTaskWidget() {
+    QLabel* titleLabel = taskWidget->findChild<QLabel*>("taskTitle");
+    if (titleLabel) {
+        titleLabel->setText("No Active Task");
+    }
+
+    // Clear task content
+    QWidget* taskContent = taskWidget->findChild<QWidget*>("taskContent");
+    if (taskContent) {
+        QLayout* oldLayout = taskContent->layout();
+        if (oldLayout) {
+            QLayoutItem* item;
+            while ((item = oldLayout->takeAt(0)) != nullptr) {
+                if (item->widget()) {
+                    item->widget()->deleteLater();
+                }
+                delete item;
+            }
+            delete oldLayout;
+        }
+
+        QVBoxLayout* newLayout = new QVBoxLayout(taskContent);
+        newLayout->addWidget(new QLabel("Select an item to edit"));
+    }
+
+    returnButton->setVisible(false);
+    comboView->setCurrentIndex(0); // Back to Model tab
+}
+
+void MainWindow::updatePropertySheets(std::shared_ptr<FeatureNode> feature) {
+    if (!feature) {
+        clearPropertySheets();
+        return;
+    }
+
+    // Update View tab
+    QString viewInfo;
+    viewInfo += QString("Type: %1\n").arg(featureTypeToString(feature->type));
+    viewInfo += QString("ID: %1\n").arg(feature->id);
+    viewInfo += QString("Name: %1\n").arg(feature->name);
+    viewInfo += QString("\n");
+
+    if (feature->type == FeatureType::Sketch) {
+        auto sketch = std::static_pointer_cast<SketchNode>(feature);
+        viewInfo += QString("Plane: %1\n").arg(sketchPlaneToString(sketch->plane));
+        viewInfo += QString("Entities: %1\n").arg(sketch->entities.size());
+
+        for (int i = 0; i < sketch->entities.size(); ++i) {
+            auto& entity = sketch->entities[i];
+            if (entity->type == EntityType::Polyline) {
+                auto poly = std::dynamic_pointer_cast<PolylineEntity>(entity);
+                viewInfo += QString("  [%1] Polyline: %2 points\n").arg(i).arg(poly->points.size());
+            }
+        }
+    }
+    else if (feature->type == FeatureType::Extrude) {
+        auto extrude = std::static_pointer_cast<ExtrudeNode>(feature);
+        viewInfo += QString("Height: %1\n").arg(extrude->height, 0, 'f', 3);
+        viewInfo += QString("Direction: (%1, %2, %3)\n")
+                        .arg(extrude->direction.x(), 0, 'f', 3)
+                        .arg(extrude->direction.y(), 0, 'f', 3)
+                        .arg(extrude->direction.z(), 0, 'f', 3);
+
+        if (auto sketch = extrude->sketch.lock()) {
+            viewInfo += QString("Base Sketch: %1 (ID: %2)\n").arg(sketch->name).arg(sketch->id);
+        }
+    }
+
+    viewText->setText(viewInfo);
+
+    // Update Data tab
+    dataTable->setRowCount(0);
+
+    int row = 0;
+    auto addRow = [this, &row](const QString& prop, const QString& value) {
+        dataTable->insertRow(row);
+        dataTable->setItem(row, 0, new QTableWidgetItem(prop));
+        dataTable->setItem(row, 1, new QTableWidgetItem(value));
+        row++;
+    };
+
+    addRow("Type", featureTypeToString(feature->type));
+    addRow("ID", QString::number(feature->id));
+    addRow("Name", feature->name);
+
+    if (feature->type == FeatureType::Sketch) {
+        auto sketch = std::static_pointer_cast<SketchNode>(feature);
+        addRow("Plane", sketchPlaneToString(sketch->plane));
+        addRow("Entity Count", QString::number(sketch->entities.size()));
+    }
+    else if (feature->type == FeatureType::Extrude) {
+        auto extrude = std::static_pointer_cast<ExtrudeNode>(feature);
+        addRow("Height", QString::number(extrude->height, 'f', 3));
+        addRow("Direction X", QString::number(extrude->direction.x(), 'f', 3));
+        addRow("Direction Y", QString::number(extrude->direction.y(), 'f', 3));
+        addRow("Direction Z", QString::number(extrude->direction.z(), 'f', 3));
+
+        if (auto sketch = extrude->sketch.lock()) {
+            addRow("Base Sketch", QString("%1 (ID: %2)").arg(sketch->name).arg(sketch->id));
+        }
+    }
+
+    dataTable->resizeColumnsToContents();
+}
+
+void MainWindow::clearPropertySheets() {
+    viewText->clear();
+    dataTable->setRowCount(0);
+}
+
+void MainWindow::onTreeContextMenu(const QPoint& pos) {
+    QTreeWidgetItem* item = featureTree->itemAt(pos);
+    if (!item) return;
+
+    contextMenuItem = item;
+    int featureId = item->data(0, Qt::UserRole).toInt();
+    auto f = m_view->doc.findFeature(featureId);
+
+    if (!f) return;
+
+    QMenu contextMenu;
+
+    if (f->type == FeatureType::Sketch) {
+        QAction* editAction = contextMenu.addAction(QIcon(":/icons/sketch.png"), "Edit Sketch");
+        connect(editAction, &QAction::triggered, this, &MainWindow::onEditSketch);
+
+        contextMenu.addSeparator();
+
+        QAction* visAction = contextMenu.addAction(
+            m_view->isSketchVisible(f->id) ? "Hide" : "Show");
+        connect(visAction, &QAction::triggered, this, [this, f]() {
+            m_view->toggleSketchVisibility(f->id);
+            updateFeatureTree();
+        });
+    }
+    else if (f->type == FeatureType::Extrude) {
+        QAction* editAction = contextMenu.addAction(QIcon(":/icons/extrude.png"), "Edit Extrude");
+        connect(editAction, &QAction::triggered, this, &MainWindow::onEditExtrude);
+
+        contextMenu.addSeparator();
+
+        QAction* visAction = contextMenu.addAction(
+            m_view->isFeatureVisible(f->id) ? "Hide" : "Show");
+        connect(visAction, &QAction::triggered, this, [this, f]() {
+            m_view->toggleFeatureVisibility(f->id);
+            updateFeatureTree();
+        });
+
+        auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
+        if (auto sketch = extrude->sketch.lock()) {
+            contextMenu.addSeparator();
+            QAction* editSketchAction = contextMenu.addAction(
+                QIcon(":/icons/sketch.png"), "Edit Parent Sketch");
+            connect(editSketchAction, &QAction::triggered, this, [this, sketch]() {
+                m_view->setActiveSketch(sketch);
+                showTaskWidget(QString("Editing: %1").arg(sketch->name));
+            });
+        }
+    }
+
+    contextMenu.exec(featureTree->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::onEditSketch() {
+    if (!contextMenuItem) return;
+
+    int featureId = contextMenuItem->data(0, Qt::UserRole).toInt();
+    auto f = m_view->doc.findFeature(featureId);
+
+    if (f && f->type == FeatureType::Sketch) {
+        auto sketch = std::static_pointer_cast<SketchNode>(f);
+        m_view->setActiveSketch(sketch);
+        showTaskWidget(QString("Editing: %1").arg(sketch->name));
+
+        // Update task content
+        QWidget* taskContent = taskWidget->findChild<QWidget*>("taskContent");
+        if (taskContent) {
+            QLayout* oldLayout = taskContent->layout();
+            if (oldLayout) {
+                QLayoutItem* item;
+                while ((item = oldLayout->takeAt(0)) != nullptr) {
+                    if (item->widget()) item->widget()->deleteLater();
+                    delete item;
+                }
+                delete oldLayout;
+            }
+
+            QVBoxLayout* layout = new QVBoxLayout(taskContent);
+
+            QLabel* infoLabel = new QLabel(QString("Plane: %1\nEntities: %2")
+                                               .arg(sketchPlaneToString(sketch->plane))
+                                               .arg(sketch->entities.size()));
+            layout->addWidget(infoLabel);
+
+            layout->addWidget(new QLabel("\nSketch Tools:"));
+
+            QPushButton* rectBtn = new QPushButton("Draw Rectangle");
+            connect(rectBtn, &QPushButton::clicked, this, &MainWindow::onDrawRectangle);
+            layout->addWidget(rectBtn);
+
+            layout->addStretch();
+        }
+    }
+}
+
+void MainWindow::onEditExtrude() {
+    if (!contextMenuItem) return;
+
+    int featureId = contextMenuItem->data(0, Qt::UserRole).toInt();
+    auto f = m_view->doc.findFeature(featureId);
+
+    if (f && f->type == FeatureType::Extrude) {
+        auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
+        showTaskWidget(QString("Editing: %1").arg(extrude->name));
+
+        // Update task content
+        QWidget* taskContent = taskWidget->findChild<QWidget*>("taskContent");
+        if (taskContent) {
+            QLayout* oldLayout = taskContent->layout();
+            if (oldLayout) {
+                QLayoutItem* item;
+                while ((item = oldLayout->takeAt(0)) != nullptr) {
+                    if (item->widget()) item->widget()->deleteLater();
+                    delete item;
+                }
+                delete oldLayout;
+            }
+
+            QVBoxLayout* layout = new QVBoxLayout(taskContent);
+
+            QLabel* heightLabel = new QLabel("Height:");
+            layout->addWidget(heightLabel);
+
+            QDoubleSpinBox* heightSpin = new QDoubleSpinBox();
+            heightSpin->setRange(0.1, 1000.0);
+            heightSpin->setValue(extrude->height);
+            heightSpin->setSingleStep(0.1);
+            heightSpin->setDecimals(3);
+
+            connect(heightSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                    this, [this, extrude](double value) {
+                        extrude->height = value;
+                        extrude->evaluate();
+                        m_view->update();
+                        updatePropertySheets(extrude);
+                    });
+
+            layout->addWidget(heightSpin);
+            layout->addStretch();
+        }
+
+        m_view->highlightFeature(extrude->id);
+        updatePropertySheets(extrude);
+    }
+}
+
+void MainWindow::onReturnFromSketch() {
+    if (m_view) {
+        m_view->exitSketchEdit();
+        hideTaskWidget();
+        clearPropertySheets();
+        updateFeatureTree();
+    }
+}
+
 void MainWindow::registerCommand(const QString& name, const QString& alias, std::function<void()> func) {
     CommandEntry entry;
     entry.name = name;
@@ -1642,27 +1996,8 @@ void MainWindow::createMenusAndToolbars() {
     QToolBar* tb = addToolBar(tr("Main"));
     tb->setObjectName("MainToolbar");
 
-    // Create sketch editing toolbar (initially hidden)
-    sketchToolbar = addToolBar(tr("Sketch Edit"));
-    sketchToolbar->setObjectName("SketchToolbar");
-
-    returnAction = new QAction(QIcon(":/icons/return.png"), tr("Exit Sketch"), this);
-    returnAction->setToolTip("Exit sketch editing mode");
-    connect(returnAction, &QAction::triggered, this, &MainWindow::onReturnFromSketch);
-    sketchToolbar->addAction(returnAction);
-
-    sketchToolbar->setVisible(false);
-
     // Load menu/toolbar configuration
     loadMenuConfig("menu.txt");
-}
-
-void MainWindow::onReturnFromSketch() {
-    if (m_view) {
-        m_view->exitSketchEdit();
-        sketchToolbar->setVisible(false);
-        updateFeatureTree();
-    }
 }
 
 void MainWindow::onToggleSketchVisibility() {
@@ -1696,12 +2031,11 @@ void MainWindow::updateFeatureTree() {
         }
     }
 
-    // Add free sketches with eye icon
+    // Add free sketches with clickable eye icon
     for (auto& s : m_view->doc.sketches) {
         if (!usedSketchIds.contains(s->id)) {
             QTreeWidgetItem* item = new QTreeWidgetItem(sketchesRoot);
 
-            // Create widget with eye icon button
             QWidget* widget = new QWidget();
             QHBoxLayout* layout = new QHBoxLayout(widget);
             layout->setContentsMargins(0, 0, 0, 0);
@@ -1712,7 +2046,6 @@ void MainWindow::updateFeatureTree() {
             eyeBtn->setMaximumSize(16, 16);
             eyeBtn->setIcon(QIcon(m_view->isSketchVisible(s->id) ?
                                       ":/icons/eyeOpen.png" : ":/icons/eyeClose.png"));
-            eyeBtn->setProperty("sketchId", s->id);
             connect(eyeBtn, &QPushButton::clicked, this, [this, s]() {
                 m_view->toggleSketchVisibility(s->id);
                 updateFeatureTree();
@@ -1734,12 +2067,11 @@ void MainWindow::updateFeatureTree() {
         }
     }
 
-    // Build feature tree with eye icons
+    // Build feature tree with clickable eye icons
     for (auto& f : m_view->doc.features) {
         QTreeWidgetItem* featureItem = new QTreeWidgetItem(featuresRoot);
         featureItem->setData(0, Qt::UserRole, f->id);
 
-        // Create widget with eye icon for feature
         QWidget* featureWidget = new QWidget();
         QHBoxLayout* featureLayout = new QHBoxLayout(featureWidget);
         featureLayout->setContentsMargins(0, 0, 0, 0);
@@ -1763,15 +2095,13 @@ void MainWindow::updateFeatureTree() {
         case FeatureType::Extrude: {
             featureIcon->setPixmap(QIcon(":/icons/extrude.png").pixmap(16, 16));
 
-            // Add sketch as child of extrude feature
             auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
             if (auto s = extrude->sketch.lock()) {
                 QTreeWidgetItem* sketchChild = new QTreeWidgetItem(featureItem);
 
-                // Create widget with eye icon for child sketch
                 QWidget* widget = new QWidget();
                 QHBoxLayout* layout = new QHBoxLayout(widget);
-                layout->setContentsMargins(20, 0, 0, 0); // Indent for child
+                layout->setContentsMargins(20, 0, 0, 0);
                 layout->setSpacing(2);
 
                 QPushButton* eyeBtn = new QPushButton();
@@ -1787,7 +2117,7 @@ void MainWindow::updateFeatureTree() {
                 QLabel* icon = new QLabel();
                 icon->setPixmap(QIcon(":/icons/sketch.png").pixmap(16, 16));
 
-                QLabel* text = new QLabel(QString(" %1").arg(
+                QLabel* text = new QLabel(QString("└ %1").arg(
                     s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name));
                 text->setStyleSheet("color: rgb(100, 150, 200);");
 
@@ -1822,14 +2152,10 @@ void MainWindow::onFeatureSelected(QTreeWidgetItem* item, int /*column*/) {
     auto f = m_view->doc.findFeature(featureId);
 
     if (f) {
-        if (f->type == FeatureType::Sketch) {
-            // Enter sketch editing mode
-            auto sketch = std::static_pointer_cast<SketchNode>(f);
-            m_view->setActiveSketch(sketch);
-            sketchToolbar->setVisible(true);
-        } else {
-            m_view->highlightFeature(featureId);
-        }
+        m_view->highlightFeature(featureId);
+        updatePropertySheets(f);
+    } else {
+        clearPropertySheets();
     }
 }
 
