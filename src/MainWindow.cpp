@@ -1278,6 +1278,11 @@ void MainWindow::createFeatureBrowser() {
     createTaskWidget();
     comboView->addTab(taskWidget, "Task");
 
+    int index = comboView->indexOf(taskWidget);
+    if (index >= 0) {
+        comboView->setTabVisible(index, false);  // Qt 5.15+
+    }
+
     comboDock->setWidget(comboView);
     addDockWidget(Qt::LeftDockWidgetArea, comboDock);
 
@@ -1332,6 +1337,18 @@ void MainWindow::createTaskWidget() {
     taskWidget = new QWidget();
     QVBoxLayout* layout = new QVBoxLayout(taskWidget);
 
+    // Return button at top
+    returnButton = new QPushButton(QIcon(":/icons/return.png"), "Return");
+    returnButton->setStyleSheet("QPushButton { padding: 8px; font-size: 12pt; }");
+    returnButton->setVisible(false);
+
+    // Force the button to its natural size
+    returnButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    returnButton->resize(returnButton->sizeHint());
+    connect(returnButton, &QPushButton::clicked, this, &MainWindow::onReturnFromSketch);
+    layout->addWidget(returnButton);
+    layout->setAlignment(returnButton, Qt::AlignHCenter);
+
     // Title label
     QLabel* titleLabel = new QLabel("No Active Task");
     titleLabel->setObjectName("taskTitle");
@@ -1347,15 +1364,14 @@ void MainWindow::createTaskWidget() {
 
     layout->addStretch();
 
-    // Return button at bottom
-    returnButton = new QPushButton(QIcon(":/icons/return.png"), "Exit Edit Mode");
-    returnButton->setStyleSheet("QPushButton { padding: 8px; font-size: 12pt; }");
-    returnButton->setVisible(false);
-    connect(returnButton, &QPushButton::clicked, this, &MainWindow::onReturnFromSketch);
-    layout->addWidget(returnButton);
 }
 
 void MainWindow::showTaskWidget(const QString& title) {
+    int index = comboView->indexOf(taskWidget);
+    if (index >= 0) {
+        comboView->setTabVisible(index, true);  // Qt 5.15+
+    }
+
     QLabel* titleLabel = taskWidget->findChild<QLabel*>("taskTitle");
     if (titleLabel) {
         titleLabel->setText(title);
@@ -1392,6 +1408,10 @@ void MainWindow::hideTaskWidget() {
 
     returnButton->setVisible(false);
     comboView->setCurrentIndex(0); // Back to Model tab
+    int index = comboView->indexOf(taskWidget);
+    if (index >= 0) {
+        comboView->setTabVisible(index, false);  // Qt 5.15+
+    }
 }
 
 void MainWindow::updatePropertySheets(std::shared_ptr<FeatureNode> feature) {
