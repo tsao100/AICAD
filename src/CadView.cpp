@@ -298,7 +298,8 @@ void CadView::updateGrips() {
 
             for (int i = 0; i < poly->points.size(); ++i) {
                 Grip grip;
-                grip.position = poly->points[i];
+                // Convert 2D plane point to 3D world
+                grip.position = planeToWorld(poly->points[i]);
                 grip.entityRef = entityRef;
                 grip.pointIndex = i;
                 activeGrips.append(grip);
@@ -343,24 +344,22 @@ void CadView::drawGrips() {
 // ==================== Object Snap ====================
 QVector<QVector3D> CadView::getEntitySnapPoints(const EntityRef& entityRef) {
     QVector<QVector3D> points;
-
     if (!entityRef.entity) return points;
 
     if (entityRef.entity->type == EntityType::Polyline) {
         auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
 
-        // Endpoints
+        // Convert 2D points to 3D for snapping
         for (const auto& pt : poly->points) {
-            points.append(pt);
+            points.append(planeToWorld(pt));
         }
 
         // Midpoints
         for (int i = 0; i < poly->points.size() - 1; ++i) {
-            QVector3D mid = (poly->points[i] + poly->points[i + 1]) / 2.0f;
-            points.append(mid);
+            QVector2D mid = (poly->points[i] + poly->points[i + 1]) / 2.0f;
+            points.append(planeToWorld(mid));
         }
     }
-
     return points;
 }
 
@@ -595,46 +594,54 @@ QVector3D planeNormal(SketchPlane plane) {
 
 static QVector<QVector3D> rectanglePointsForPlane(
     const Rectangle2D& rect,
-    SketchPlane plane)
+    SketchPlane plane,
+    const CustomPlane* customPlane = nullptr)
 {
     QVector<QVector3D> pts;
 
     switch (plane) {
     case SketchPlane::XY: {
-        float z = rect.p1.z();
-        pts << QVector3D(rect.p1.x(), rect.p1.y(), z)
-            << QVector3D(rect.p2.x(), rect.p1.y(), z)
-            << QVector3D(rect.p2.x(), rect.p2.y(), z)
-            << QVector3D(rect.p1.x(), rect.p2.y(), z)
-            << QVector3D(rect.p1.x(), rect.p1.y(), z);
+        pts << QVector3D(rect.p1.x(), rect.p1.y(), 0)
+            << QVector3D(rect.p2.x(), rect.p1.y(), 0)
+            << QVector3D(rect.p2.x(), rect.p2.y(), 0)
+            << QVector3D(rect.p1.x(), rect.p2.y(), 0)
+            << QVector3D(rect.p1.x(), rect.p1.y(), 0);
         break;
     }
     case SketchPlane::YZ: {
-        float x = rect.p1.x();
-        pts << QVector3D(x, rect.p1.y(), rect.p1.z())
-            << QVector3D(x, rect.p2.y(), rect.p1.z())
-            << QVector3D(x, rect.p2.y(), rect.p2.z())
-            << QVector3D(x, rect.p1.y(), rect.p2.z())
-            << QVector3D(x, rect.p1.y(), rect.p1.z());
+        pts << QVector3D(0, rect.p1.x(), rect.p1.y())
+            << QVector3D(0, rect.p2.x(), rect.p1.y())
+            << QVector3D(0, rect.p2.x(), rect.p2.y())
+            << QVector3D(0, rect.p1.x(), rect.p2.y())
+            << QVector3D(0, rect.p1.x(), rect.p1.y());
         break;
     }
     case SketchPlane::XZ: {
-        float y = rect.p1.y();
-        pts << QVector3D(rect.p1.x(), y, rect.p1.z())
-            << QVector3D(rect.p2.x(), y, rect.p1.z())
-            << QVector3D(rect.p2.x(), y, rect.p2.z())
-            << QVector3D(rect.p1.x(), y, rect.p2.z())
-            << QVector3D(rect.p1.x(), y, rect.p1.z());
+        pts << QVector3D(rect.p1.x(), 0, rect.p1.y())
+            << QVector3D(rect.p2.x(), 0, rect.p1.y())
+            << QVector3D(rect.p2.x(), 0, rect.p2.y())
+            << QVector3D(rect.p1.x(), 0, rect.p2.y())
+            << QVector3D(rect.p1.x(), 0, rect.p1.y());
         break;
     }
-    default:
+    case SketchPlane::Custom: {
+        if (customPlane) {
+            auto to3D = [&](const QVector2D& p2d) {
+                return customPlane->origin +
+                       customPlane->uAxis * p2d.x() +
+                       customPlane->vAxis * p2d.y();
+            };
+            pts << to3D(rect.p1)
+                << to3D(QVector2D(rect.p2.x(), rect.p1.y()))
+                << to3D(rect.p2)
+                << to3D(QVector2D(rect.p1.x(), rect.p2.y()))
+                << to3D(rect.p1);
+        }
         break;
     }
-
+    }
     return pts;
 }
-
-
 
 void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
@@ -782,10 +789,9 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         auto poly = std::dynamic_pointer_cast<PolylineEntity>(grip.entityRef.entity);
 
         if (poly && grip.pointIndex < poly->points.size()) {
-            poly->points[grip.pointIndex] = planeToWorld(planePt);
+            poly->points[grip.pointIndex] = planePt; // Store as 2D
             updateGrips();
         }
-
         update();
         return;
     }
@@ -1057,6 +1063,7 @@ QVector3D CadView::planeToWorld(const QVector2D& planePt) {
         return QVector3D(planePt.x(), planePt.y(), 0);
     }
 }
+
 void CadView::startGetPoint(const QString& prompt, const QVector2D* previousPt) {
     getPointState.active = true;
     getPointState.prompt = prompt;
@@ -1251,48 +1258,19 @@ float CadView::distanceToEntity(const QVector3D& point, const EntityRef& entityR
 void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
     if (!pendingSketch) return;
 
-    // 1. Get plane definition from sketch
-    SketchPlane plane = pendingSketch->plane;
-    QVector3D origin(0,0,0);
-    QVector3D normal = planeNormal(plane);
+    // Convert 2D corners to 3D
+    QVector3D v0 = planeToWorld(QVector2D(rect.p1.x(), rect.p1.y()));
+    QVector3D v1 = planeToWorld(QVector2D(rect.p2.x(), rect.p1.y()));
+    QVector3D v2 = planeToWorld(rect.p2);
+    QVector3D v3 = planeToWorld(QVector2D(rect.p1.x(), rect.p2.y()));
 
-    QVector3D u, v;
-    CadView::planeBasis(normal, u, v);  // local 2D basis on this plane
-
-    // 2. Convert corner points (rect.p1, rect.p2) from "picked" world points into plane coords
-    // project onto plane basis
-    auto toPlane = [&](const QVector3D& p) {
-        return QVector2D(QVector3D::dotProduct(p - origin, u),
-                         QVector3D::dotProduct(p - origin, v));
-    };
-
-    QVector2D p1_2d = toPlane(rect.p1);
-    QVector2D p2_2d = toPlane(rect.p2);
-
-    // 3. Build 4 corners in 2D plane coordinates
-    QVector2D v0_2d(p1_2d.x(), p1_2d.y());
-    QVector2D v1_2d(p2_2d.x(), p1_2d.y());
-    QVector2D v2_2d(p2_2d.x(), p2_2d.y());
-    QVector2D v3_2d(p1_2d.x(), p2_2d.y());
-
-    // 4. Map back to world coordinates
-    auto toWorld = [&](const QVector2D& p2d) {
-        return origin + u * p2d.x() + v * p2d.y();
-    };
-
-    QVector3D v0 = toWorld(v0_2d);
-    QVector3D v1 = toWorld(v1_2d);
-    QVector3D v2 = toWorld(v2_2d);
-    QVector3D v3 = toWorld(v3_2d);
-
-    // 5. Draw with OpenGL
     if (style == Qt::DashLine) {
         glEnable(GL_LINE_STIPPLE);
-        glLineStipple(1, 0xF0F0); // dashed
-        glColor3f(1.0f, 1.0f, 0.0f); // yellow
+        glLineStipple(1, 0xF0F0);
+        glColor3f(1.0f, 1.0f, 0.0f);
     } else {
         glDisable(GL_LINE_STIPPLE);
-        glColor3f(1.0f, 1.0f, 1.0f); // white
+        glColor3f(1.0f, 1.0f, 1.0f);
     }
 
     glBegin(GL_LINE_LOOP);
@@ -1307,39 +1285,36 @@ void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
 }
 
 void CadView::drawExtrudedCube(float height, bool ghost) {
-
-    // Base corners - adjust based on sketch plane
-    QVector3D v0, v1, v2, v3;
-    QVector3D extrusionDir;
-
     auto poly = std::make_shared<PolylineEntity>();
-    poly->points = rectanglePointsForPlane(currentRect, pendingSketch->plane);
-    v0 = poly->points[0]; // bottom-left
-    v1 = poly->points[1]; // bottom-right
-    v2 = poly->points[2]; // top-right
-    v3 = poly->points[3]; // top-left
 
+    // Get 3D points for drawing
+    QVector<QVector3D> pts3D = rectanglePointsForPlane(
+        currentRect,
+        pendingSketch->plane,
+        pendingSketch->plane == SketchPlane::Custom ? &pendingSketch->customPlane : nullptr
+        );
+
+    QVector3D v0 = pts3D[0];
+    QVector3D v1 = pts3D[1];
+    QVector3D v2 = pts3D[2];
+    QVector3D v3 = pts3D[3];
+
+    QVector3D extrusionDir;
     switch (pendingSketch->plane) {
-    case SketchPlane::XY: // Top plane (original behavior)
+    case SketchPlane::XY:
         extrusionDir = QVector3D(0, 0, height);
         break;
-
-    case SketchPlane::XZ: // Front plane
+    case SketchPlane::XZ:
         extrusionDir = QVector3D(0, height, 0);
         break;
-
-    case SketchPlane::YZ: // Right plane
+    case SketchPlane::YZ:
         extrusionDir = QVector3D(height, 0, 0);
         break;
-
     case SketchPlane::Custom:
-        // For custom planes, you might need additional logic
-        // This assumes XY plane as default for now
-        extrusionDir = QVector3D(0, 0, height);
+        extrusionDir = pendingSketch->customPlane.normal * height;
         break;
     }
 
-    // Extruded (opposite face) corners
     QVector3D v4 = v0 + extrusionDir;
     QVector3D v5 = v1 + extrusionDir;
     QVector3D v6 = v2 + extrusionDir;

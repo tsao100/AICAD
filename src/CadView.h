@@ -12,6 +12,7 @@
 #include <QWheelEvent>
 #include <QFile>
 #include <vector>
+#include <cmath>
 
 enum class FeatureType {
     Sketch,
@@ -50,6 +51,27 @@ struct CustomPlane {
     QVector3D vAxis;
 };
 
+CustomPlane createPlane(const QVector3D& origin, const QVector3D& normalInput)
+{
+    CustomPlane plane;
+    plane.origin = origin;
+
+    // Ensure normal is normalized
+    QVector3D normal = normalInput.normalized();
+    plane.normal = normal;
+
+    // Choose a helper vector not parallel to the normal
+    QVector3D helper = (fabs(normal.x()) > 0.9f) ? QVector3D(0, 1, 0)
+                                                 : QVector3D(1, 0, 0);
+
+    // Compute orthonormal basis (u, v) using cross products
+    plane.uAxis = QVector3D::crossProduct(normal, helper).normalized();
+    plane.vAxis = QVector3D::crossProduct(normal, plane.uAxis).normalized();
+
+    return plane;
+}
+
+
 struct FeatureNode {
     int id;
     FeatureType type;
@@ -65,8 +87,8 @@ struct FeatureNode {
 };
 
 struct Rectangle2D {
-    QVector3D p1;
-    QVector3D p2;
+    QVector2D p1;
+    QVector2D p2;
 };
 
 enum class EntityType {
@@ -148,17 +170,16 @@ struct ArcEntity : public Entity {
 };
 */
 struct PolylineEntity : public Entity {
-    QVector<QVector3D> points;
+    QVector<QVector2D> points;
 
     PolylineEntity() { type = EntityType::Polyline; }
 
     void draw() const override {
         if (points.isEmpty()) return;
-
         glColor3f(1, 1, 1);
         glBegin(GL_LINE_STRIP);
         for (const auto& p : points) {
-            glVertex3f(p.x(), p.y(), p.z());
+            glVertex3f(p.x(), p.y(), 0.0f); // Z=0 in local plane coords
         }
         glEnd();
     }
@@ -166,7 +187,7 @@ struct PolylineEntity : public Entity {
     void save(QTextStream& out) const override {
         out << "Polyline " << static_cast<int>(plane) << " " << points.size();
         for (const auto& p : points)
-            out << " " << p.x() << " " << p.y() << " " << p.z();
+            out << " " << p.x() << " " << p.y();
         out << "\n";
     }
 
@@ -174,12 +195,11 @@ struct PolylineEntity : public Entity {
         int planeInt, n;
         in >> planeInt >> n;
         plane = static_cast<SketchPlane>(planeInt);
-
         points.resize(n);
         for (int i = 0; i < n; ++i){
-            float x, y, z;
-            in >> x >> y >> z;
-            points[i] = QVector3D(x, y, z);
+            float x, y;
+            in >> x >> y;
+            points[i] = QVector2D(x, y);
         }
     }
 };
@@ -270,7 +290,6 @@ struct ExtrudeEntity : public Entity {
         }
     }
 
-
     static void drawExtrusion(const QVector<QVector3D>& base,
                               float height,
                               const QVector3D& dir)
@@ -310,7 +329,6 @@ struct ExtrudeEntity : public Entity {
         }
         glEnd();
     }
-
 
     void save(QTextStream& out) const override {
         int sketchId = sketch.expired() ? -1 : sketch.lock()->id;
