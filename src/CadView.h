@@ -31,7 +31,8 @@ static QString featureTypeToString(FeatureType type) {
 enum class CadMode {
     Idle,
     Sketching,
-    Extruding
+    Extruding,
+    SelectingFace
 };
 
 // Rubber band drawing system
@@ -51,7 +52,7 @@ struct CustomPlane {
     QVector3D vAxis;
 };
 
-CustomPlane createPlane(const QVector3D& origin, const QVector3D& normalInput)
+inline CustomPlane createPlane(const QVector3D& origin, const QVector3D& normalInput)
 {
     CustomPlane plane;
     plane.origin = origin;
@@ -71,6 +72,17 @@ CustomPlane createPlane(const QVector3D& origin, const QVector3D& normalInput)
     return plane;
 }
 
+struct Face {
+    QVector<QVector3D> vertices; // Face vertices in 3D
+    QVector3D normal;             // Face normal
+    QVector3D center;             // Face center point
+    int featureId;                // Parent feature ID
+    int faceIndex;                // Index within feature
+
+    CustomPlane toCustomPlane() const {
+        return createPlane(center, normal);
+    }
+};
 
 struct FeatureNode {
     int id;
@@ -267,7 +279,7 @@ struct Sketch {
 };
 
 struct ExtrudeEntity : public Entity {
-    std::weak_ptr<Sketch> sketch; // weak reference to avoid cycles
+    std::weak_ptr<Sketch> sketch;
     float height;
     QVector3D direction;
 
@@ -277,34 +289,56 @@ struct ExtrudeEntity : public Entity {
         if (auto s = sketch.lock()) {
             s->draw();
 
-            // Collect closed polylines from the sketch
             for (const auto& e : s->entities) {
                 if (e->type == EntityType::Polyline) {
                     auto poly = std::dynamic_pointer_cast<PolylineEntity>(e);
                     if (!poly || poly->points.size() < 3) continue;
 
-                    // Extrude each polyline
-                    drawExtrusion(poly->points, height, direction);
+                    // Pass 2D points directly
+                    drawExtrusion(poly->points, height, direction, poly->plane);
                 }
             }
         }
     }
 
-    static void drawExtrusion(const QVector<QVector3D>& base,
+    static void drawExtrusion(const QVector<QVector2D>& base,
                               float height,
-                              const QVector3D& dir)
+                              const QVector3D& dir,
+                              SketchPlane plane)
     {
+        // Convert 2D points to 3D based on plane
+        QVector<QVector3D> base3D;
+        for (const auto& pt2d : base) {
+            QVector3D pt3d;
+            switch (plane) {
+            case SketchPlane::XY:
+                pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
+                break;
+            case SketchPlane::XZ:
+                pt3d = QVector3D(pt2d.x(), 0, pt2d.y());
+                break;
+            case SketchPlane::YZ:
+                pt3d = QVector3D(0, pt2d.x(), pt2d.y());
+                break;
+            case SketchPlane::Custom:
+                // For custom planes, would need access to CustomPlane data
+                pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
+                break;
+            }
+            base3D.append(pt3d);
+        }
+
         QVector3D offset = dir.normalized() * height;
 
-        // --- Draw side walls ---
+        // Draw side walls
         glColor3f(0.2f, 0.7f, 1.0f);
         glBegin(GL_QUADS);
-        for (int i = 0; i < base.size(); i++) {
-            int j = (i + 1) % base.size(); // next vertex, wrap around
-            QVector3D v0 = base[i];
-            QVector3D v1 = base[j];
+        for (int i = 0; i < base3D.size(); i++) {
+            int j = (i + 1) % base3D.size();
+            QVector3D v0 = base3D[i];
+            QVector3D v1 = base3D[j];
             QVector3D v2 = v1 + offset;
-            QVector3D v3 = base[i] + offset;
+            QVector3D v3 = v0 + offset;
 
             glVertex3f(v0.x(), v0.y(), v0.z());
             glVertex3f(v1.x(), v1.y(), v1.z());
@@ -313,17 +347,17 @@ struct ExtrudeEntity : public Entity {
         }
         glEnd();
 
-        // --- Draw bottom face ---
+        // Draw bottom face
         glColor3f(0.1f, 0.5f, 0.8f);
         glBegin(GL_POLYGON);
-        for (const auto& v : base)
+        for (const auto& v : base3D)
             glVertex3f(v.x(), v.y(), v.z());
         glEnd();
 
-        // --- Draw top face ---
+        // Draw top face
         glColor3f(0.1f, 0.5f, 0.8f);
         glBegin(GL_POLYGON);
-        for (const auto& v : base) {
+        for (const auto& v : base3D) {
             QVector3D vt = v + offset;
             glVertex3f(vt.x(), vt.y(), vt.z());
         }
@@ -344,7 +378,6 @@ struct ExtrudeEntity : public Entity {
         in >> x >> y >> z;
         direction = QVector3D(x, y, z);
         plane = static_cast<SketchPlane>(planeInt);
-
         pendingSketchId = sketchId;
     }
 
@@ -398,7 +431,7 @@ struct SketchNode : public FeatureNode {
 };
 
 struct ExtrudeNode : public FeatureNode {
-    std::weak_ptr<SketchNode> sketch;  // reference to SketchNode
+    std::weak_ptr<SketchNode> sketch;
     float height;
     QVector3D direction;
 
@@ -408,37 +441,59 @@ struct ExtrudeNode : public FeatureNode {
         auto s = sketch.lock();
         if (!s || s->entities.empty()) return;
 
-        // Assume first entity is PolylineEntity with 4 corners (rectangle)
         auto poly = std::dynamic_pointer_cast<PolylineEntity>(s->entities.front());
         if (!poly || poly->points.size() < 4) return;
+
+        // Convert 2D points to 3D based on sketch plane
+        QVector<QVector3D> base3D;
+        for (const auto& pt2d : poly->points) {
+            QVector3D pt3d;
+            switch (s->plane) {
+            case SketchPlane::XY:
+                pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
+                break;
+            case SketchPlane::XZ:
+                pt3d = QVector3D(pt2d.x(), 0, pt2d.y());
+                break;
+            case SketchPlane::YZ:
+                pt3d = QVector3D(0, pt2d.x(), pt2d.y());
+                break;
+            case SketchPlane::Custom:
+                pt3d = s->customPlane.origin +
+                       s->customPlane.uAxis * pt2d.x() +
+                       s->customPlane.vAxis * pt2d.y();
+                break;
+            }
+            base3D.append(pt3d);
+        }
 
         QVector3D n = direction.normalized();
         QVector3D offset = n * height;
 
-        // --- Bottom face (from sketch) ---
+        // Draw bottom face (from sketch)
         glColor3f(0.1f, 0.5f, 0.8f);
         glBegin(GL_QUADS);
         for (int i = 0; i < 4; ++i) {
-            const QVector3D& p = poly->points[i];
+            const QVector3D& p = base3D[i];
             glVertex3f(p.x(), p.y(), p.z());
         }
         glEnd();
 
-        // --- Top face (offset by extrusion height) ---
+        // Draw top face (offset by extrusion height)
         glColor3f(0.1f, 0.5f, 0.8f);
         glBegin(GL_QUADS);
         for (int i = 0; i < 4; ++i) {
-            QVector3D p = poly->points[i] + offset;
+            QVector3D p = base3D[i] + offset;
             glVertex3f(p.x(), p.y(), p.z());
         }
         glEnd();
 
-        // --- Side faces ---
+        // Draw side faces
         glColor3f(0.2f, 0.7f, 1.0f);
         for (int i = 0; i < 4; ++i) {
             int j = (i + 1) % 4;
-            QVector3D p1 = poly->points[i];
-            QVector3D p2 = poly->points[j];
+            QVector3D p1 = base3D[i];
+            QVector3D p2 = base3D[j];
             QVector3D p3 = p2 + offset;
             QVector3D p4 = p1 + offset;
 
@@ -479,8 +534,7 @@ struct ExtrudeNode : public FeatureNode {
     }
 
     void evaluate() override {
-        // For now: no geometry caching.
-        // Later: build triangulated mesh from sketch + height.
+        // For now: no geometry caching
     }
 
 private:
@@ -705,11 +759,20 @@ public:
     void toggleFeatureVisibility(int featureId);
     bool isFeatureVisible(int featureId) const;
 
+    QVector<Face> getAllFaces() const;
+    Face* pickFace(const QPoint& screenPos);
+    void highlightFace(Face* face);
+    void startFaceSelectionMode();
+    Camera& getCamera() { return camera; }
+    const Camera& getCamera() const { return camera; }
+
 Q_SIGNALS:
     void featureAdded();
     void pointAcquired(QVector2D point);
     void getPointCancelled();
     void getPointKeyPressed(QString key);
+    void faceSelected(CustomPlane plane);
+    void statusMessage(QString message);
 
 protected:
     void initializeGL() override;
@@ -794,6 +857,12 @@ private:
     std::shared_ptr<SketchNode> activeSketch; // Currently editing sketch
     QSet<int> hiddenSketches; // IDs of hidden sketches
     QSet<int> hiddenFeatures; // IDs of hidden features
+
+    Face* hoveredFace = nullptr;
+    Face* selectedFace = nullptr;
+
+    void drawFaceHighlight(const Face& face, const QColor& color);
+    QVector<Face> extractFacesFromFeature(std::shared_ptr<FeatureNode> feature);
 };
 
 #endif // CADVIEW_H

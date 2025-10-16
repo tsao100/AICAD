@@ -266,12 +266,15 @@ void CadView::startSketchMode(std::shared_ptr<SketchNode> sketch) {
 void CadView::startExtrudeMode(std::shared_ptr<SketchNode> sketch) {
     editMode = EditMode::Extruding;
     pendingSketch = sketch;
+
     if (auto polyline = std::dynamic_pointer_cast<PolylineEntity>(sketch->entities.at(0))) {
         if (polyline->points.size() >= 2) {
+            // Store 2D points directly
             currentRect.p1 = polyline->points[0];
             currentRect.p2 = polyline->points[2]; // Assuming rectangular order
         }
     }
+
     awaitingHeight = true;
     mode = CadMode::Extruding;
     qDebug() << "Extrude mode started on sketch" << sketch->id;
@@ -361,6 +364,204 @@ QVector<QVector3D> CadView::getEntitySnapPoints(const EntityRef& entityRef) {
         }
     }
     return points;
+}
+
+QVector<Face> CadView::extractFacesFromFeature(std::shared_ptr<FeatureNode> feature) {
+    QVector<Face> faces;
+
+    if (feature->type != FeatureType::Extrude) return faces;
+
+    auto extrude = std::static_pointer_cast<ExtrudeNode>(feature);
+    auto s = extrude->sketch.lock();
+    if (!s || s->entities.empty()) return faces;
+
+    auto poly = std::dynamic_pointer_cast<PolylineEntity>(s->entities.front());
+    if (!poly || poly->points.size() < 3) return faces;
+
+    // Convert 2D points to 3D
+    QVector<QVector3D> base3D;
+    for (const auto& pt2d : poly->points) {
+        QVector3D pt3d;
+        switch (s->plane) {
+        case SketchPlane::XY:
+            pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
+            break;
+        case SketchPlane::XZ:
+            pt3d = QVector3D(pt2d.x(), 0, pt2d.y());
+            break;
+        case SketchPlane::YZ:
+            pt3d = QVector3D(0, pt2d.x(), pt2d.y());
+            break;
+        case SketchPlane::Custom:
+            pt3d = s->customPlane.origin +
+                   s->customPlane.uAxis * pt2d.x() +
+                   s->customPlane.vAxis * pt2d.y();
+            break;
+        }
+        base3D.append(pt3d);
+    }
+
+    QVector3D offset = extrude->direction.normalized() * extrude->height;
+
+    // Bottom face
+    Face bottomFace;
+    bottomFace.vertices = base3D;
+    bottomFace.normal = -extrude->direction.normalized();
+    bottomFace.center = QVector3D(0, 0, 0);
+    for (const auto& v : base3D) bottomFace.center += v;
+    bottomFace.center /= base3D.size();
+    bottomFace.featureId = feature->id;
+    bottomFace.faceIndex = 0;
+    faces.append(bottomFace);
+
+    // Top face
+    Face topFace;
+    for (const auto& v : base3D) {
+        topFace.vertices.append(v + offset);
+    }
+    topFace.normal = extrude->direction.normalized();
+    topFace.center = QVector3D(0, 0, 0);
+    for (const auto& v : topFace.vertices) topFace.center += v;
+    topFace.center /= topFace.vertices.size();
+    topFace.featureId = feature->id;
+    topFace.faceIndex = 1;
+    faces.append(topFace);
+
+    // Side faces
+    for (int i = 0; i < base3D.size() - 1; ++i) {
+        Face sideFace;
+        sideFace.vertices.append(base3D[i]);
+        sideFace.vertices.append(base3D[i + 1]);
+        sideFace.vertices.append(base3D[i + 1] + offset);
+        sideFace.vertices.append(base3D[i] + offset);
+
+        // Calculate face normal
+        QVector3D edge1 = sideFace.vertices[1] - sideFace.vertices[0];
+        QVector3D edge2 = sideFace.vertices[3] - sideFace.vertices[0];
+        sideFace.normal = QVector3D::crossProduct(edge1, edge2).normalized();
+
+        sideFace.center = QVector3D(0, 0, 0);
+        for (const auto& v : sideFace.vertices) sideFace.center += v;
+        sideFace.center /= 4.0f;
+
+        sideFace.featureId = feature->id;
+        sideFace.faceIndex = 2 + i;
+        faces.append(sideFace);
+    }
+
+    return faces;
+}
+
+QVector<Face> CadView::getAllFaces() const {
+    QVector<Face> allFaces;
+
+    for (auto& feature : doc.features) {
+        allFaces.append(const_cast<CadView*>(this)->extractFacesFromFeature(feature));
+    }
+
+    return allFaces;
+}
+
+Face* CadView::pickFace(const QPoint& screenPos) {
+    QVector3D rayOrigin, rayDir;
+    QVector3D worldPos = screenToWorld(screenPos);
+
+    // Get ray direction
+    float x = (2.0f * screenPos.x()) / width() - 1.0f;
+    float y = 1.0f - (2.0f * screenPos.y()) / height();
+    QVector4D rayClip(x, y, -1.0f, 1.0f);
+    QVector4D rayFarClip(x, y, 1.0f, 1.0f);
+
+    QMatrix4x4 inv = (camera.getProjectionMatrix() * camera.getViewMatrix()).inverted();
+    QVector4D rayStartWorld = inv * rayClip;
+    QVector4D rayEndWorld = inv * rayFarClip;
+    rayStartWorld /= rayStartWorld.w();
+    rayEndWorld /= rayEndWorld.w();
+
+    rayOrigin = QVector3D(rayStartWorld);
+    rayDir = (QVector3D(rayEndWorld) - rayOrigin).normalized();
+
+    QVector<Face> allFaces = getAllFaces();
+    Face* closestFace = nullptr;
+    float minDist = std::numeric_limits<float>::max();
+
+    for (int i = 0; i < allFaces.size(); ++i) {
+        Face& face = allFaces[i];
+
+        // Ray-plane intersection
+        float denom = QVector3D::dotProduct(face.normal, rayDir);
+        if (fabs(denom) < 0.0001f) continue; // Parallel
+
+        float t = QVector3D::dotProduct(face.center - rayOrigin, face.normal) / denom;
+        if (t < 0) continue; // Behind camera
+
+        QVector3D hitPoint = rayOrigin + rayDir * t;
+
+        // Check if hit point is inside face polygon
+        bool inside = true;
+        for (int j = 0; j < face.vertices.size(); ++j) {
+            int next = (j + 1) % face.vertices.size();
+            QVector3D edge = face.vertices[next] - face.vertices[j];
+            QVector3D toPoint = hitPoint - face.vertices[j];
+            QVector3D cross = QVector3D::crossProduct(edge, toPoint);
+
+            if (QVector3D::dotProduct(cross, face.normal) < 0) {
+                inside = false;
+                break;
+            }
+        }
+
+        if (inside && t < minDist) {
+            minDist = t;
+            // Store in a persistent location
+            static QVector<Face> faceStorage;
+            if (faceStorage.size() <= i) {
+                faceStorage = allFaces;
+            }
+            closestFace = &faceStorage[i];
+        }
+    }
+
+    return closestFace;
+}
+
+void CadView::drawFaceHighlight(const Face& face, const QColor& color) {
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Draw semi-transparent face
+    glColor4f(color.redF(), color.greenF(), color.blueF(), 0.3f);
+    glBegin(GL_POLYGON);
+    for (const auto& v : face.vertices) {
+        glVertex3f(v.x(), v.y(), v.z());
+    }
+    glEnd();
+
+    // Draw border
+    glLineWidth(3.0f);
+    glColor4f(color.redF(), color.greenF(), color.blueF(), 0.8f);
+    glBegin(GL_LINE_LOOP);
+    for (const auto& v : face.vertices) {
+        glVertex3f(v.x(), v.y(), v.z());
+    }
+    glEnd();
+
+    glLineWidth(1.0f);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+}
+
+void CadView::highlightFace(Face* face) {
+    selectedFace = face;
+    update();
+}
+
+void CadView::startFaceSelectionMode() {
+    mode = CadMode::SelectingFace;
+    setCursor(Qt::CrossCursor);
+    update();
+    qDebug() << "Face selection mode started - click on a face to select";
 }
 
 CadView::SnapPoint CadView::findNearestSnapPoint(const QVector3D& worldPos) {
@@ -481,48 +682,14 @@ void CadView::paintGL() {
 
     drawAxes();
 
-    // Draw entities with highlighting and visibility checks
+    // Draw entities with proper 2D->3D conversion
     for (auto& sketch : doc.sketches) {
-        // Check if sketch is used by a feature
-        bool isUsedByFeature = false;
-        for (auto& f : doc.features) {
-            if (f->type == FeatureType::Extrude) {
-                auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
-                if (auto s = extrude->sketch.lock()) {
-                    if (s->id == sketch->id) {
-                        isUsedByFeature = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Check if sketch is used by an active (visible) extrude feature
-        bool isUsedByVisibleExtrude = false;
-        for (auto& f : doc.features) {
-            if (f->type == FeatureType::Extrude && isFeatureVisible(f->id)) {
-                auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
-                if (auto s = extrude->sketch.lock()) {
-                    if (s->id == sketch->id) {
-                        isUsedByVisibleExtrude = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Skip if:
-        // 1. Hidden by user AND not being actively edited
-        // 2. Used by a *visible* feature AND not being actively edited
-        if ((!isSketchVisible(sketch->id) && sketch != activeSketch) ||
-            (isUsedByVisibleExtrude && sketch != activeSketch)) {
-            continue;
-        }
+        // Set up sketch context for planeToWorld conversion
+        pendingSketch = sketch;
 
         for (int i = 0; i < sketch->entities.size(); ++i) {
             auto& entity = sketch->entities[i];
 
-            // Check if selected
             bool isSelected = false;
             for (const auto& sel : selectedEntities) {
                 if (sel.entity.get() == entity.get()) {
@@ -531,33 +698,39 @@ void CadView::paintGL() {
                 }
             }
 
-            // Check if hovered
             bool isHovered = (hoveredEntity.entity.get() == entity.get());
 
             if (isSelected) {
                 glLineWidth(3.0f);
-                glColor3f(0.0f, 0.8f, 1.0f); // Cyan for selected
+                glColor3f(0.0f, 0.8f, 1.0f);
             } else if (isHovered) {
                 glLineWidth(2.0f);
-                glColor3f(1.0f, 1.0f, 0.0f); // Yellow for hover
+                glColor3f(1.0f, 1.0f, 0.0f);
             } else {
                 glLineWidth(1.0f);
-                glColor3f(1.0f, 1.0f, 1.0f); // White normal
+                glColor3f(1.0f, 1.0f, 1.0f);
             }
 
-            entity->draw();
+            // Draw polyline with 2D->3D conversion
+            if (entity->type == EntityType::Polyline) {
+                auto poly = std::dynamic_pointer_cast<PolylineEntity>(entity);
+                if (poly && !poly->points.empty()) {
+                    glBegin(GL_LINE_STRIP);
+                    for (const auto& p : poly->points) {
+                        QVector3D p3d = planeToWorld(p);
+                        glVertex3f(p3d.x(), p3d.y(), p3d.z());
+                    }
+                    glEnd();
+                }
+            }
         }
     }
 
     glLineWidth(1.0f);
 
-    // Draw features with visibility check
-    for (auto& f : doc.features) {
-        // Skip hidden features
-        if (!isFeatureVisible(f->id)) {
-            continue;
-        }
+    doc.drawAll();
 
+    for (auto& f : doc.features) {
         if (f->id == highlightedFeatureId) {
             glColor3f(1.0f, 0.0f, 0.0f);
         } else {
@@ -566,22 +739,27 @@ void CadView::paintGL() {
         f->draw();
     }
 
+    // Draw face highlights
+    if (hoveredFace) {
+        drawFaceHighlight(*hoveredFace, QColor(255, 255, 0)); // Yellow for hover
+    }
+
+    if (selectedFace && selectedFace != hoveredFace) {
+        drawFaceHighlight(*selectedFace, QColor(0, 255, 0)); // Green for selected
+    }
+
     if (awaitingHeight && pendingSketch) {
         drawExtrudedCube(previewHeight, true);
     }
 
-    // Draw grips
     drawGrips();
 
-    // Draw snap marker
     if (snapActive && currentSnapPoint.entityRef.entity) {
         drawSnapMarker(currentSnapPoint.position, currentSnapPoint.snapType);
     }
 
-    // Draw unified rubber band
     drawRubberBand();
 }
-
 QVector3D planeNormal(SketchPlane plane) {
     switch (plane) {
     case SketchPlane::XY: return QVector3D(0,0,1);
@@ -645,6 +823,17 @@ static QVector<QVector3D> rectanglePointsForPlane(
 
 void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        // Check if in face selection mode
+        if (mode == CadMode::SelectingFace) {
+            Face* face = pickFace(event->pos());
+            if (face) {
+                selectedFace = face;
+                emit faceSelected(face->toCustomPlane());
+                mode = CadMode::Idle;
+                update();
+                return;
+            }
+        }
         // Check grip click first
         if (hoveredGripIndex >= 0) {
             draggedGripIndex = hoveredGripIndex;
@@ -747,6 +936,26 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
+    if (mode == CadMode::SelectingFace) {
+        Face* face = pickFace(event->pos());
+        if (face) {
+            QString msg = QString("Face %1 of Feature %2 - Normal: (%3, %4, %5)")
+                              .arg(face->faceIndex)
+                              .arg(face->featureId)
+                              .arg(face->normal.x(), 0, 'f', 2)
+                              .arg(face->normal.y(), 0, 'f', 2)
+                              .arg(face->normal.z(), 0, 'f', 2);
+            emit statusMessage(msg);
+        }
+    }
+    // Update face hover
+    if (mode == CadMode::SelectingFace || mode == CadMode::Idle) {
+        Face* face = pickFace(event->pos());
+        if (face != hoveredFace) {
+            hoveredFace = face;
+            update();
+        }
+    }
     // Update rubber band for GetPoint
     if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
         QVector3D worldPos = screenToWorld(event->pos());
@@ -864,13 +1073,13 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
     if (!awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
-        currentRect.p2 = worldPos;
+        currentRect.p2 = worldToPlane(worldPos); // ✅ Convert 3D to 2D
         update();
     }
 
     if (mode == CadMode::Extruding && awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
-        baseP2 = currentRect.p2;
+        baseP2 = planeToWorld(currentRect.p2); // Convert 2D back to 3D for distance calc
         previewHeight = (worldPos - baseP2).length();
         update();
     }
@@ -1131,8 +1340,8 @@ void CadView::drawRubberBand() {
     case RubberBandMode::Rectangle: {
         // Reuse existing drawRectangle logic
         Rectangle2D rect;
-        rect.p1 = planeToWorld(rubberBandState.startPoint);
-        rect.p2 = planeToWorld(rubberBandState.currentPoint);
+        rect.p1 = rubberBandState.startPoint;
+        rect.p2 = rubberBandState.currentPoint;
         drawRectangle(rect, Qt::DashLine);
         break;
     }
@@ -1224,9 +1433,10 @@ float CadView::distanceToEntity(const QVector3D& point, const EntityRef& entityR
         auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
         float minDist = std::numeric_limits<float>::max();
 
+        // Convert 2D points to 3D for distance calculation
         for (int i = 0; i < poly->points.size() - 1; ++i) {
-            QVector3D p1 = poly->points[i];
-            QVector3D p2 = poly->points[i + 1];
+            QVector3D p1 = planeToWorld(poly->points[i]);
+            QVector3D p2 = planeToWorld(poly->points[i + 1]);
 
             // Point-to-line-segment distance
             QVector3D v = p2 - p1;

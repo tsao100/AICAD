@@ -33,6 +33,7 @@
 #include <QTableWidget>
 #include <QDoubleSpinBox>
 #include <QHeaderView>
+#include <QStatusBar>
 
 #include "CadView.h"
 
@@ -148,6 +149,7 @@ private:
 
     QTreeWidget* featureTree;
     CadView *m_view;
+    QStatusBar* statusBar;
 
     // ECL/Lisp integration
     void initECL();

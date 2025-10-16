@@ -1179,17 +1179,8 @@ void MainWindow::createRectangleEntity(std::shared_ptr<SketchNode> sketch,
     QVector2D c3 = corner2;
     QVector2D c4 = QVector2D(corner1.x(), corner2.y());
 
-    // Convert to 3D world coordinates
-    QVector<QVector3D> rectPoints;
-    rectPoints << m_view->planeToWorld(c1)
-               << m_view->planeToWorld(c2)
-               << m_view->planeToWorld(c3)
-               << m_view->planeToWorld(c4)
-               << m_view->planeToWorld(c1); // Close the loop
-
-    // Create polyline entity
     auto poly = std::make_shared<PolylineEntity>();
-    poly->points = rectPoints;
+    poly->points << c1 << c2 << c3 << c4 << c1; // Already 2D
     poly->plane = sketch->plane;
 
     // Add to sketch
@@ -1255,6 +1246,10 @@ void MainWindow::drawRectangleDirect(const QVector2D& pt1, const QVector2D& pt2)
 void MainWindow::createCentral() {
     m_view = new CadView(this);
     setCentralWidget(m_view);
+
+    statusBar = new QStatusBar(this);
+    setStatusBar(statusBar);
+
     connect(m_view, &CadView::featureAdded, this, &MainWindow::updateFeatureTree);
 
     // Connect GetPoint signals
@@ -2184,7 +2179,8 @@ void MainWindow::onCreateSketch() {
 
     QStringList planes = { "XY (Top)", "XZ (Front)", "YZ (Right)",
                           "XY (Bottom)", "XZ (Back)", "YZ (Left)" ,
-                          "Custom (1,1,1) at origin" };
+                          "Custom (1,1,1) at origin",
+                          "Select Face..." };
 
     bool ok;
     QString choice = QInputDialog::getItem(this,
@@ -2197,8 +2193,43 @@ void MainWindow::onCreateSketch() {
     if (!ok || choice.isEmpty())
         return;
 
+    if (choice == "Select Face...") {
+        // Enter face selection mode
+        m_view->startFaceSelectionMode();
+        showResultTemporarily("Click on a face to create sketch plane");
+
+        // Connect to face selection signal (disconnect after use)
+        connect(m_view, &CadView::faceSelected, this, [this](CustomPlane plane) {
+            disconnect(m_view, &CadView::faceSelected, this, nullptr);
+
+            // Create sketch on selected face
+            auto sketch = m_view->doc.createSketch(SketchPlane::Custom);
+            sketch->customPlane = plane;
+
+            // Orient view to face normal
+            m_view->getCamera().lookAt(
+                plane.origin + plane.normal * 10.0f,
+                plane.origin,
+                plane.vAxis
+                );
+            m_view->setSketchView(SketchView::None);
+
+            m_view->startSketchMode(sketch);
+            updateFeatureTree();
+
+            consoleOutput->appendPlainText(
+                QString("Sketch created on face at (%1, %2, %3)")
+                    .arg(plane.origin.x(), 0, 'f', 2)
+                    .arg(plane.origin.y(), 0, 'f', 2)
+                    .arg(plane.origin.z(), 0, 'f', 2)
+                );
+        }, Qt::UniqueConnection);
+
+        return;
+    }
+
     SketchPlane plane = SketchPlane::Custom;
-    if (choice.startsWith("XY (Top)")) {
+     if (choice.startsWith("XY (Top)")) {
         plane = SketchPlane::XY;
         m_view->setSketchView(SketchView::Top);
     } else if (choice.startsWith("XZ (Front)")) {
@@ -2216,18 +2247,18 @@ void MainWindow::onCreateSketch() {
     } else if (choice.startsWith("YZ (Left)")) {
         plane = SketchPlane::YZ;
         m_view->setSketchView(SketchView::Left);
+    } else if (choice.startsWith("Custom")) {
+        plane = SketchPlane::Custom;
     }
 
     // Create sketch once for all cases
     auto sketch = m_view->doc.createSketch(plane);
 
-    // Configure custom plane if needed
-    if (choice.startsWith("Custom")) {
-        sketch->customPlane.origin = QVector3D(0, 0, 0);
-        sketch->customPlane.normal = QVector3D(1, 1, 1).normalized();
-        CadView::planeBasis(sketch->customPlane.normal,
-                            sketch->customPlane.uAxis,
-                            sketch->customPlane.vAxis);
+    if (plane == SketchPlane::Custom && !choice.contains("Face")) {
+        sketch->customPlane = createPlane(
+            QVector3D(0, 0, 0),
+            QVector3D(1, 1, 1)
+            );
         m_view->setSketchView(SketchView::None);
     }
 
