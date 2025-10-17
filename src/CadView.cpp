@@ -12,6 +12,7 @@ Camera::Camera() {
     distance = 10.0f;
     pitch = -30.0f;
     yaw = 30.0f;
+    orthoLeft = orthoRight = orthoBottom = orthoTop = 0.0f;
 }
 
 void Camera::setPerspective(float fov, float aspect, float nearPlane, float farPlane) {
@@ -299,9 +300,11 @@ void CadView::updateGrips() {
         if (entityRef.entity->type == EntityType::Polyline) {
             auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
 
+            // Use parent sketch for correct plane conversion
+            pendingSketch = entityRef.parentSketch;
+
             for (int i = 0; i < poly->points.size(); ++i) {
                 Grip grip;
-                // Convert 2D plane point to 3D world
                 grip.position = planeToWorld(poly->points[i]);
                 grip.entityRef = entityRef;
                 grip.pointIndex = i;
@@ -315,6 +318,16 @@ void CadView::drawGrips() {
     if (activeGrips.isEmpty()) return;
 
     glDisable(GL_DEPTH_TEST);
+
+    // Calculate adaptive grip size based on view distance
+    float viewDist = (camera.position - camera.target).length();
+    float gripSize = viewDist * 0.015f; // Adaptive size
+
+    if (!camera.isPerspective()) {
+        // For orthographic, use viewport-based sizing
+        gripSize = (camera.orthoRight - camera.orthoLeft) * 0.01f;
+    }
+
     glPointSize(8.0f);
 
     for (int i = 0; i < activeGrips.size(); ++i) {
@@ -330,13 +343,12 @@ void CadView::drawGrips() {
         glVertex3f(grip.position.x(), grip.position.y(), grip.position.z());
         glEnd();
 
-        // Draw grip box
+        // Draw grip box with adaptive size
         glBegin(GL_LINE_LOOP);
-        float size = 0.2f;
-        glVertex3f(grip.position.x() - size, grip.position.y() - size, grip.position.z());
-        glVertex3f(grip.position.x() + size, grip.position.y() - size, grip.position.z());
-        glVertex3f(grip.position.x() + size, grip.position.y() + size, grip.position.z());
-        glVertex3f(grip.position.x() - size, grip.position.y() + size, grip.position.z());
+        glVertex3f(grip.position.x() - gripSize, grip.position.y() - gripSize, grip.position.z());
+        glVertex3f(grip.position.x() + gripSize, grip.position.y() - gripSize, grip.position.z());
+        glVertex3f(grip.position.x() + gripSize, grip.position.y() + gripSize, grip.position.z());
+        glVertex3f(grip.position.x() - gripSize, grip.position.y() + gripSize, grip.position.z());
         glEnd();
     }
 
@@ -349,15 +361,16 @@ QVector<QVector3D> CadView::getEntitySnapPoints(const EntityRef& entityRef) {
     QVector<QVector3D> points;
     if (!entityRef.entity) return points;
 
+    // Set correct sketch context
+    pendingSketch = entityRef.parentSketch;
+
     if (entityRef.entity->type == EntityType::Polyline) {
         auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
 
-        // Convert 2D points to 3D for snapping
         for (const auto& pt : poly->points) {
             points.append(planeToWorld(pt));
         }
 
-        // Midpoints
         for (int i = 0; i < poly->points.size() - 1; ++i) {
             QVector2D mid = (poly->points[i] + poly->points[i + 1]) / 2.0f;
             points.append(planeToWorld(mid));
@@ -568,10 +581,20 @@ CadView::SnapPoint CadView::findNearestSnapPoint(const QVector3D& worldPos) {
     SnapPoint result;
     result.entityRef.entity = nullptr;
 
-    float minDist = snapTolerance * 3; // Larger snap radius
+    // Adaptive snap tolerance based on view
+    float viewDist = (camera.position - camera.target).length();
+    float adaptiveSnapTolerance = viewDist * 0.02f;
 
-    // Check all entities in all sketches
+    if (!camera.isPerspective()) {
+        adaptiveSnapTolerance = (camera.orthoRight - camera.orthoLeft) * 0.015f;
+    }
+
+    float minDist = adaptiveSnapTolerance;
+
     for (auto& sketch : doc.sketches) {
+        // Set sketch context for correct plane conversion
+        pendingSketch = sketch;
+
         for (int i = 0; i < sketch->entities.size(); ++i) {
             EntityRef ref = {sketch->entities[i], sketch, i};
             QVector<QVector3D> snapPts = getEntitySnapPoints(ref);
@@ -583,7 +606,7 @@ CadView::SnapPoint CadView::findNearestSnapPoint(const QVector3D& worldPos) {
                     minDist = dist;
                     result.position = snapPt;
                     result.entityRef = ref;
-                    result.snapType = "endpoint"; // Simplified
+                    result.snapType = "endpoint";
                 }
             }
         }
@@ -595,11 +618,16 @@ CadView::SnapPoint CadView::findNearestSnapPoint(const QVector3D& worldPos) {
 void CadView::drawSnapMarker(const QVector3D& pos, const QString& snapType) {
     glDisable(GL_DEPTH_TEST);
     glLineWidth(2.0f);
-    glColor3f(0.0f, 1.0f, 0.0f); // Green
+    glColor3f(0.0f, 1.0f, 0.0f);
 
-    float size = 0.3f;
+    // Adaptive marker size
+    float viewDist = (camera.position - camera.target).length();
+    float size = viewDist * 0.02f;
 
-    // Draw square marker
+    if (!camera.isPerspective()) {
+        size = (camera.orthoRight - camera.orthoLeft) * 0.015f;
+    }
+
     glBegin(GL_LINE_LOOP);
     glVertex3f(pos.x() - size, pos.y() - size, pos.z());
     glVertex3f(pos.x() + size, pos.y() - size, pos.z());
@@ -1001,14 +1029,22 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
             update();
         }
 
-        // Check grip hover
-        if (!selectedEntities.isEmpty()) {
+        // Check grip hover with adaptive tolerance
+        if (!selectedEntities.isEmpty() && !(draggedGripIndex >= 0)) {
             QVector3D worldPos = screenToWorld(event->pos());
             hoveredGripIndex = -1;
 
+            // Adaptive tolerance based on view distance
+            float viewDist = (camera.position - camera.target).length();
+            float adaptiveTolerance = viewDist * 0.03f;
+
+            if (!camera.isPerspective()) {
+                adaptiveTolerance = (camera.orthoRight - camera.orthoLeft) * 0.02f;
+            }
+
             for (int i = 0; i < activeGrips.size(); ++i) {
                 float dist = (worldPos - activeGrips[i].position).length();
-                if (dist < snapTolerance * 2) {
+                if (dist < adaptiveTolerance) {
                     hoveredGripIndex = i;
                     break;
                 }
@@ -1020,13 +1056,18 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     // Handle grip dragging
     if (draggedGripIndex >= 0 && (event->buttons() & Qt::LeftButton)) {
         QVector3D worldPos = screenToWorld(event->pos());
-        QVector2D planePt = worldToPlane(worldPos);
 
         Grip& grip = activeGrips[draggedGripIndex];
+
+        // Set correct sketch context for plane conversion
+        pendingSketch = grip.entityRef.parentSketch;
+
+        QVector2D planePt = worldToPlane(worldPos);
+
         auto poly = std::dynamic_pointer_cast<PolylineEntity>(grip.entityRef.entity);
 
         if (poly && grip.pointIndex < poly->points.size()) {
-            poly->points[grip.pointIndex] = planePt; // Store as 2D
+            poly->points[grip.pointIndex] = planePt;
             updateGrips();
         }
         update();

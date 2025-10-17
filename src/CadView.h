@@ -716,10 +716,10 @@ public:
     QVector3D up;
     float fov_; // already stored for perspective
     bool isPerspective() const { return perspectiveMode; }
+    float orthoLeft, orthoRight, orthoBottom, orthoTop;
 
 private:
     // Projection parameters
-    float orthoLeft, orthoRight, orthoBottom, orthoTop;
     float nearPlane_, farPlane_;
     QMatrix4x4 projection;
     float distance;
@@ -851,7 +851,7 @@ private:
     EntityRef hoveredEntity;
     QVector<EntityRef> selectedEntities;
     bool objectSnapEnabled = true;
-    float snapTolerance = 0.5f; // World units
+    float snapTolerance = 0.3f; // World units
 
     // Grip system
     struct Grip {
