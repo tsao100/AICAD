@@ -50,6 +50,22 @@ struct CustomPlane {
     QVector3D normal;
     QVector3D uAxis;
     QVector3D vAxis;
+
+    void save(QTextStream& out) const {
+        out << origin.x() << " " << origin.y() << " " << origin.z() << " "
+            << normal.x() << " " << normal.y() << " " << normal.z() << " "
+            << uAxis.x() << " " << uAxis.y() << " " << uAxis.z() << " "
+            << vAxis.x() << " " << vAxis.y() << " " << vAxis.z() << " ";
+    }
+
+    void load(QTextStream& in) {
+        float ox, oy, oz, nx, ny, nz, ux, uy, uz, vx, vy, vz;
+        in >> ox >> oy >> oz >> nx >> ny >> nz >> ux >> uy >> uz >> vx >> vy >> vz;
+        origin = QVector3D(ox, oy, oz);
+        normal = QVector3D(nx, ny, nz);
+        uAxis = QVector3D(ux, uy, uz);
+        vAxis = QVector3D(vx, vy, vz);
+    }
 };
 
 inline CustomPlane createPlane(const QVector3D& origin, const QVector3D& normalInput)
@@ -395,31 +411,44 @@ private:
 
 struct SketchNode : public FeatureNode {
     SketchPlane plane;
-    CustomPlane customPlane; // For arbitrary planes
+    CustomPlane customPlane;
     QVector<std::shared_ptr<Entity>> entities;
 
     SketchNode() { type = FeatureType::Sketch; }
 
-    void evaluate() override {
-        // Sketch is already geometric, nothing special
-    }
+    void evaluate() override {}
 
     void draw() const override {
         for (auto& e : entities) e->draw();
     }
 
     void save(QTextStream& out) const override {
-        out << "Sketch " << id << " " << int(plane) << " " << entities.size() << "\n";
+        out << "Sketch " << id << " " << int(plane) << " ";
+        if (plane == SketchPlane::Custom) {
+            out << "1 ";
+            customPlane.save(out);
+        } else {
+            out << "0 ";
+        }
+        out << entities.size() << "\n";
         for (auto& e : entities) e->save(out);
     }
 
     void load(QTextStream& in) override {
-        int n, planeInt;
-        in >> id >> planeInt >> n;
+        int planeInt, hasCustomPlane;
+        in >> id >> planeInt >> hasCustomPlane;
         plane = static_cast<SketchPlane>(planeInt);
 
+        if (hasCustomPlane) {
+            customPlane.load(in);
+        }
+
+        int n;
+        in >> n;
+
         for (int i = 0; i < n; i++) {
-            QString type; in >> type;
+            QString type;
+            in >> type;
             std::shared_ptr<Entity> e;
             if (type == "Polyline") e = std::make_shared<PolylineEntity>();
             if (e) {
@@ -603,11 +632,9 @@ struct Document {
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
         QTextStream out(&file);
 
-        // Save sketches first
         out << "Sketches " << sketches.size() << "\n";
         for (auto& s : sketches) s->save(out);
 
-        // Save features
         out << "Features " << features.size() << "\n";
         for (auto& f : features) f->save(out);
     }
@@ -620,12 +647,13 @@ struct Document {
         sketches.clear();
         features.clear();
 
-        QString type; int count;
+        QString type;
+        int count;
 
-        // Load sketches
         in >> type >> count;
         for (int i = 0; i < count; i++) {
-            QString ft; in >> ft;
+            QString ft;
+            in >> ft;
             if (ft == "Sketch") {
                 auto s = std::make_shared<SketchNode>();
                 s->load(in);
@@ -633,10 +661,10 @@ struct Document {
             }
         }
 
-        // Load features
         in >> type >> count;
         for (int i = 0; i < count; i++) {
-            QString ft; in >> ft;
+            QString ft;
+            in >> ft;
             std::shared_ptr<FeatureNode> f;
             if (ft == "Extrude") {
                 auto e = std::make_shared<ExtrudeNode>();
@@ -647,11 +675,11 @@ struct Document {
             if (f) features.push_back(f);
         }
 
-        // Update nextId
         nextId = 1;
         for (auto& s : sketches) nextId = qMax(nextId, s->id + 1);
         for (auto& f : features) nextId = qMax(nextId, f->id + 1);
-    }};
+    }
+};
 
 enum class SketchView {
     None,

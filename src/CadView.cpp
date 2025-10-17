@@ -682,11 +682,36 @@ void CadView::paintGL() {
 
     drawAxes();
 
-    // Draw entities with proper 2D->3D conversion
+    // Draw sketches
     for (auto& sketch : doc.sketches) {
-        // Set up sketch context for planeToWorld conversion
+        // Skip if hidden (regardless of feature usage)
+        if (!isSketchVisible(sketch->id)) {
+            continue;
+        }
+
+        // Check if used by a visible extrude
+        bool usedByVisibleExtrude = false;
+        for (auto& f : doc.features) {
+            if (f->type == FeatureType::Extrude && isFeatureVisible(f->id)) {
+                auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
+                if (auto s = extrude->sketch.lock()) {
+                    if (s->id == sketch->id) {
+                        usedByVisibleExtrude = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Hide sketch if used by visible extrude AND not actively editing
+        if (usedByVisibleExtrude && sketch != activeSketch) {
+            continue;
+        }
+
+        // Set up sketch context
         pendingSketch = sketch;
 
+        // Draw entities
         for (int i = 0; i < sketch->entities.size(); ++i) {
             auto& entity = sketch->entities[i];
 
@@ -711,7 +736,6 @@ void CadView::paintGL() {
                 glColor3f(1.0f, 1.0f, 1.0f);
             }
 
-            // Draw polyline with 2D->3D conversion
             if (entity->type == EntityType::Polyline) {
                 auto poly = std::dynamic_pointer_cast<PolylineEntity>(entity);
                 if (poly && !poly->points.empty()) {
@@ -728,9 +752,12 @@ void CadView::paintGL() {
 
     glLineWidth(1.0f);
 
-    doc.drawAll();
-
+    // Draw features
     for (auto& f : doc.features) {
+        if (!isFeatureVisible(f->id)) {
+            continue;
+        }
+
         if (f->id == highlightedFeatureId) {
             glColor3f(1.0f, 0.0f, 0.0f);
         } else {
@@ -741,11 +768,11 @@ void CadView::paintGL() {
 
     // Draw face highlights
     if (hoveredFace) {
-        drawFaceHighlight(*hoveredFace, QColor(255, 255, 0)); // Yellow for hover
+        drawFaceHighlight(*hoveredFace, QColor(255, 255, 0));
     }
 
     if (selectedFace && selectedFace != hoveredFace) {
-        drawFaceHighlight(*selectedFace, QColor(0, 255, 0)); // Green for selected
+        drawFaceHighlight(*selectedFace, QColor(0, 255, 0));
     }
 
     if (awaitingHeight && pendingSketch) {
@@ -760,6 +787,7 @@ void CadView::paintGL() {
 
     drawRubberBand();
 }
+
 QVector3D planeNormal(SketchPlane plane) {
     switch (plane) {
     case SketchPlane::XY: return QVector3D(0,0,1);

@@ -2046,7 +2046,7 @@ void MainWindow::updateFeatureTree() {
         }
     }
 
-    // Add free sketches with clickable eye icon
+    // Add free sketches
     for (auto& s : m_view->doc.sketches) {
         if (!usedSketchIds.contains(s->id)) {
             QTreeWidgetItem* item = new QTreeWidgetItem(sketchesRoot);
@@ -2059,10 +2059,14 @@ void MainWindow::updateFeatureTree() {
             QPushButton* eyeBtn = new QPushButton();
             eyeBtn->setFlat(true);
             eyeBtn->setMaximumSize(16, 16);
-            eyeBtn->setIcon(QIcon(m_view->isSketchVisible(s->id) ?
-                                      ":/icons/eyeOpen.png" : ":/icons/eyeClose.png"));
-            connect(eyeBtn, &QPushButton::clicked, this, [this, s]() {
-                m_view->toggleSketchVisibility(s->id);
+            bool visible = m_view->isSketchVisible(s->id);
+            eyeBtn->setIcon(QIcon(visible ? ":/icons/eyeOpen.png" : ":/icons/eyeClose.png"));
+
+            // Capture sketch ID by value
+            int sketchId = s->id;
+            connect(eyeBtn, &QPushButton::clicked, this, [this, sketchId]() {
+                m_view->toggleSketchVisibility(sketchId);
+                m_view->update();
                 updateFeatureTree();
             });
 
@@ -2082,7 +2086,7 @@ void MainWindow::updateFeatureTree() {
         }
     }
 
-    // Build feature tree with clickable eye icons
+    // Build feature tree
     for (auto& f : m_view->doc.features) {
         QTreeWidgetItem* featureItem = new QTreeWidgetItem(featuresRoot);
         featureItem->setData(0, Qt::UserRole, f->id);
@@ -2095,10 +2099,15 @@ void MainWindow::updateFeatureTree() {
         QPushButton* featureEyeBtn = new QPushButton();
         featureEyeBtn->setFlat(true);
         featureEyeBtn->setMaximumSize(16, 16);
-        featureEyeBtn->setIcon(QIcon(m_view->isFeatureVisible(f->id) ?
+        bool featureVisible = m_view->isFeatureVisible(f->id);
+        featureEyeBtn->setIcon(QIcon(featureVisible ?
                                          ":/icons/eyeOpen.png" : ":/icons/eyeClose.png"));
-        connect(featureEyeBtn, &QPushButton::clicked, this, [this, f]() {
-            m_view->toggleFeatureVisibility(f->id);
+
+        // Capture feature ID by value
+        int featureId = f->id;
+        connect(featureEyeBtn, &QPushButton::clicked, this, [this, featureId]() {
+            m_view->toggleFeatureVisibility(featureId);
+            m_view->update();
             updateFeatureTree();
         });
 
@@ -2106,8 +2115,7 @@ void MainWindow::updateFeatureTree() {
         QLabel* featureText = new QLabel(f->name.isEmpty() ?
                                              QString("%1 %2").arg(featureTypeToString(f->type)).arg(f->id) : f->name);
 
-        switch (f->type) {
-        case FeatureType::Extrude: {
+        if (f->type == FeatureType::Extrude) {
             featureIcon->setPixmap(QIcon(":/icons/extrude.png").pixmap(16, 16));
 
             auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
@@ -2122,10 +2130,15 @@ void MainWindow::updateFeatureTree() {
                 QPushButton* eyeBtn = new QPushButton();
                 eyeBtn->setFlat(true);
                 eyeBtn->setMaximumSize(16, 16);
-                eyeBtn->setIcon(QIcon(m_view->isSketchVisible(s->id) ?
+                bool sketchVisible = m_view->isSketchVisible(s->id);
+                eyeBtn->setIcon(QIcon(sketchVisible ?
                                           ":/icons/eyeOpen.png" : ":/icons/eyeClose.png"));
-                connect(eyeBtn, &QPushButton::clicked, this, [this, s]() {
-                    m_view->toggleSketchVisibility(s->id);
+
+                // Capture sketch ID by value
+                int sketchId = s->id;
+                connect(eyeBtn, &QPushButton::clicked, this, [this, sketchId]() {
+                    m_view->toggleSketchVisibility(sketchId);
+                    m_view->update();
                     updateFeatureTree();
                 });
 
@@ -2144,10 +2157,6 @@ void MainWindow::updateFeatureTree() {
                 sketchChild->setData(0, Qt::UserRole, s->id);
                 featureTree->setItemWidget(sketchChild, 0, widget);
             }
-            break;
-        }
-        default:
-            break;
         }
 
         featureLayout->addWidget(featureEyeBtn);
