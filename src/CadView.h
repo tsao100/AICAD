@@ -890,6 +890,7 @@ private:
     Face* selectedFace = nullptr;
 
     void drawFaceHighlight(const Face& face, const QColor& color);
+    void getPlaneBasis(std::shared_ptr<SketchNode> sketch, QVector3D& uAxis, QVector3D& vAxis);
     QVector<Face> extractFacesFromFeature(std::shared_ptr<FeatureNode> feature);
 };
 

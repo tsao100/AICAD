@@ -319,12 +319,10 @@ void CadView::drawGrips() {
 
     glDisable(GL_DEPTH_TEST);
 
-    // Calculate adaptive grip size based on view distance
     float viewDist = (camera.position - camera.target).length();
-    float gripSize = viewDist * 0.015f; // Adaptive size
+    float gripSize = viewDist * 0.015f;
 
     if (!camera.isPerspective()) {
-        // For orthographic, use viewport-based sizing
         gripSize = (camera.orthoRight - camera.orthoLeft) * 0.01f;
     }
 
@@ -334,21 +332,29 @@ void CadView::drawGrips() {
         const Grip& grip = activeGrips[i];
 
         if (i == hoveredGripIndex) {
-            glColor3f(1.0f, 0.5f, 0.0f); // Orange when hovered
+            glColor3f(1.0f, 0.5f, 0.0f);
         } else {
-            glColor3f(0.0f, 0.5f, 1.0f); // Blue
+            glColor3f(0.0f, 0.5f, 1.0f);
         }
 
         glBegin(GL_POINTS);
         glVertex3f(grip.position.x(), grip.position.y(), grip.position.z());
         glEnd();
 
-        // Draw grip box with adaptive size
+        QVector3D uAxis, vAxis;
+        getPlaneBasis(grip.entityRef.parentSketch, uAxis, vAxis);
+
+        QVector3D p = grip.position;
+        QVector3D p0 = p - uAxis * gripSize - vAxis * gripSize;
+        QVector3D p1 = p + uAxis * gripSize - vAxis * gripSize;
+        QVector3D p2 = p + uAxis * gripSize + vAxis * gripSize;
+        QVector3D p3 = p - uAxis * gripSize + vAxis * gripSize;
+
         glBegin(GL_LINE_LOOP);
-        glVertex3f(grip.position.x() - gripSize, grip.position.y() - gripSize, grip.position.z());
-        glVertex3f(grip.position.x() + gripSize, grip.position.y() - gripSize, grip.position.z());
-        glVertex3f(grip.position.x() + gripSize, grip.position.y() + gripSize, grip.position.z());
-        glVertex3f(grip.position.x() - gripSize, grip.position.y() + gripSize, grip.position.z());
+        glVertex3f(p0.x(), p0.y(), p0.z());
+        glVertex3f(p1.x(), p1.y(), p1.z());
+        glVertex3f(p2.x(), p2.y(), p2.z());
+        glVertex3f(p3.x(), p3.y(), p3.z());
         glEnd();
     }
 
@@ -377,6 +383,39 @@ QVector<QVector3D> CadView::getEntitySnapPoints(const EntityRef& entityRef) {
         }
     }
     return points;
+}
+
+// Add this helper function before drawGrips()
+void CadView::getPlaneBasis(std::shared_ptr<SketchNode> sketch, QVector3D& uAxis, QVector3D& vAxis) {
+    if (!sketch) {
+        uAxis = QVector3D(1, 0, 0);
+        vAxis = QVector3D(0, 1, 0);
+        return;
+    }
+
+    if (sketch->plane == SketchPlane::Custom) {
+        uAxis = sketch->customPlane.uAxis;
+        vAxis = sketch->customPlane.vAxis;
+    } else {
+        switch (sketch->plane) {
+        case SketchPlane::XY:
+            uAxis = QVector3D(1, 0, 0);
+            vAxis = QVector3D(0, 1, 0);
+            break;
+        case SketchPlane::XZ:
+            uAxis = QVector3D(1, 0, 0);
+            vAxis = QVector3D(0, 0, 1);
+            break;
+        case SketchPlane::YZ:
+            uAxis = QVector3D(0, 1, 0);
+            vAxis = QVector3D(0, 0, 1);
+            break;
+        default:
+            uAxis = QVector3D(1, 0, 0);
+            vAxis = QVector3D(0, 1, 0);
+            break;
+        }
+    }
 }
 
 QVector<Face> CadView::extractFacesFromFeature(std::shared_ptr<FeatureNode> feature) {
@@ -620,7 +659,6 @@ void CadView::drawSnapMarker(const QVector3D& pos, const QString& snapType) {
     glLineWidth(2.0f);
     glColor3f(0.0f, 1.0f, 0.0f);
 
-    // Adaptive marker size
     float viewDist = (camera.position - camera.target).length();
     float size = viewDist * 0.02f;
 
@@ -628,11 +666,23 @@ void CadView::drawSnapMarker(const QVector3D& pos, const QString& snapType) {
         size = (camera.orthoRight - camera.orthoLeft) * 0.015f;
     }
 
+    QVector3D uAxis, vAxis;
+    std::shared_ptr<SketchNode> contextSketch =
+        currentSnapPoint.entityRef.parentSketch ?
+            currentSnapPoint.entityRef.parentSketch : pendingSketch;
+
+    getPlaneBasis(contextSketch, uAxis, vAxis);
+
+    QVector3D p0 = pos - uAxis * size - vAxis * size;
+    QVector3D p1 = pos + uAxis * size - vAxis * size;
+    QVector3D p2 = pos + uAxis * size + vAxis * size;
+    QVector3D p3 = pos - uAxis * size + vAxis * size;
+
     glBegin(GL_LINE_LOOP);
-    glVertex3f(pos.x() - size, pos.y() - size, pos.z());
-    glVertex3f(pos.x() + size, pos.y() - size, pos.z());
-    glVertex3f(pos.x() + size, pos.y() + size, pos.z());
-    glVertex3f(pos.x() - size, pos.y() + size, pos.z());
+    glVertex3f(p0.x(), p0.y(), p0.z());
+    glVertex3f(p1.x(), p1.y(), p1.z());
+    glVertex3f(p2.x(), p2.y(), p2.z());
+    glVertex3f(p3.x(), p3.y(), p3.z());
     glEnd();
 
     glLineWidth(1.0f);
