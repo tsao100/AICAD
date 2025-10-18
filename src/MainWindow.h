@@ -141,6 +141,7 @@ private:
     QVector2D parsePoint(const QString& ptStr);
     void startRectangleWithFirstPoint(const QVector2D& pt1);
     void drawRectangleDirect(const QVector2D& pt1, const QVector2D& pt2);
+    void setActiveSketch(std::shared_ptr<SketchNode> sketch);
 
     // Command registry
     QVector<CommandEntry> commands;

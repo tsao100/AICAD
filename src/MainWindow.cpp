@@ -74,6 +74,15 @@ static bool evaluateECLForm(const char* code, cl_object* result) {
     return success;
 }
 
+// Add near the top of MainWindow.cpp, after includes
+static QString featureTypeToString(FeatureType type) {
+    switch (type) {
+    case FeatureType::Sketch:  return "Sketch";
+    case FeatureType::Extrude: return "Extrude";
+    default:                   return "Unknown";
+    }
+}
+
 // ctor
 MainWindow::MainWindow()
     : historyIndex(-1), consoleVisible(false)
@@ -1022,22 +1031,18 @@ void MainWindow::onGetPointCancelled() {
 void MainWindow::onDrawRectangle() {
     if (!m_view) return;
 
-    // Check if we have an active sketch or create one
     if (m_view->doc.sketches.isEmpty()) {
-        // No sketch exists - need to create one first
         QMessageBox::information(this,
                                  tr("No Sketch"),
                                  tr("Please create a sketch first using 'Create Sketch' button."));
         return;
     }
 
-    // Use the most recent sketch or let user select
     std::shared_ptr<SketchNode> targetSketch;
 
     if (m_view->doc.sketches.size() == 1) {
         targetSketch = m_view->doc.sketches.last();
     } else {
-        // Multiple sketches - ask user to select from tree
         QTreeWidgetItem* item = featureTree->currentItem();
         if (item) {
             int featureId = item->data(0, Qt::UserRole).toInt();
@@ -1055,33 +1060,32 @@ void MainWindow::onDrawRectangle() {
         }
     }
 
-    // Set appropriate view for the sketch plane
-    switch (targetSketch->plane) {
-    case SketchPlane::XY:
+    // Orient view to sketch plane
+    QString planeName = targetSketch->plane.getDisplayName();
+    if (planeName == "XY") {
         m_view->setSketchView(SketchView::Top);
-        break;
-    case SketchPlane::XZ:
+    } else if (planeName == "XZ") {
         m_view->setSketchView(SketchView::Front);
-        break;
-    case SketchPlane::YZ:
+    } else if (planeName == "YZ") {
         m_view->setSketchView(SketchView::Right);
-        break;
-    default:
-        break;
+    } else {
+        // Custom plane
+        m_view->getCamera().lookAt(
+            targetSketch->plane.origin + targetSketch->plane.normal * 10.0f,
+            targetSketch->plane.origin,
+            targetSketch->plane.vAxis
+            );
+        m_view->setSketchView(SketchView::None);
     }
 
-    // Store the target sketch for use in callbacks
     m_view->pendingSketch = targetSketch;
 
     consoleOutput->appendPlainText("=== Draw Rectangle ===");
 
-    // Step 1: Get first corner
     m_view->startGetPoint("Specify first corner:");
 
-    // Capture by value (shared_ptr is ref-counted, safe to copy)
     std::shared_ptr<SketchNode> sketch = targetSketch;
 
-    // Setup callback for first corner
     currentGetPointRequest.callback = [this, sketch](QVector2D corner1) {
         consoleOutput->appendPlainText(
             QString("First corner: (%1, %2)")
@@ -1089,7 +1093,6 @@ void MainWindow::onDrawRectangle() {
                 .arg(corner1.y(), 0, 'f', 3)
             );
 
-        // Step 2: Get opposite corner with rubber band preview
         m_view->rubberBandState.mode = RubberBandMode::Rectangle;
         m_view->rubberBandState.startPoint = corner1;
         m_view->rubberBandState.currentPoint = corner1;
@@ -1097,8 +1100,6 @@ void MainWindow::onDrawRectangle() {
 
         m_view->startGetPoint("Specify opposite corner:", &corner1);
 
-        // CRITICAL: Use pendingCallback to avoid self-assignment during callback execution
-        // Setup callback for second corner - capture corner1 and sketch
         currentGetPointRequest.pendingCallback = [this, sketch, corner1](QVector2D corner2) {
             consoleOutput->appendPlainText(
                 QString("Opposite corner: (%1, %2)")
@@ -1106,7 +1107,6 @@ void MainWindow::onDrawRectangle() {
                     .arg(corner2.y(), 0, 'f', 3)
                 );
 
-            // Create the rectangle
             createRectangleEntity(sketch, corner1, corner2);
 
             consoleOutput->appendPlainText("Rectangle created.");
@@ -1115,7 +1115,6 @@ void MainWindow::onDrawRectangle() {
         };
     };
 
-    // Clear rubber band state after point acquisition
     m_view->rubberBandState.active = false;
     m_view->rubberBandState.mode = RubberBandMode::None;
     m_view->rubberBandState.intermediatePoints.clear();
@@ -1173,17 +1172,15 @@ void MainWindow::createRectangleEntity(std::shared_ptr<SketchNode> sketch,
                                        const QVector2D& corner2) {
     if (!sketch) return;
 
-    // Create 4 corners in 2D plane coordinates
     QVector2D c1 = corner1;
     QVector2D c2 = QVector2D(corner2.x(), corner1.y());
     QVector2D c3 = corner2;
     QVector2D c4 = QVector2D(corner1.x(), corner2.y());
 
     auto poly = std::make_shared<PolylineEntity>();
-    poly->points << c1 << c2 << c3 << c4 << c1; // Already 2D
-    poly->plane = sketch->plane;
+    poly->points << c1 << c2 << c3 << c4 << c1;
+    poly->plane = sketch->plane; // Store plane info
 
-    // Add to sketch
     sketch->entities.push_back(poly);
 }
 
@@ -1415,7 +1412,6 @@ void MainWindow::updatePropertySheets(std::shared_ptr<FeatureNode> feature) {
         return;
     }
 
-    // Update View tab
     QString viewInfo;
     viewInfo += QString("Type: %1\n").arg(featureTypeToString(feature->type));
     viewInfo += QString("ID: %1\n").arg(feature->id);
@@ -1424,7 +1420,15 @@ void MainWindow::updatePropertySheets(std::shared_ptr<FeatureNode> feature) {
 
     if (feature->type == FeatureType::Sketch) {
         auto sketch = std::static_pointer_cast<SketchNode>(feature);
-        viewInfo += QString("Plane: %1\n").arg(sketchPlaneToString(sketch->plane));
+        viewInfo += QString("Plane: %1\n").arg(sketch->plane.getDisplayName());
+        viewInfo += QString("Origin: (%1, %2, %3)\n")
+                        .arg(sketch->plane.origin.x(), 0, 'f', 2)
+                        .arg(sketch->plane.origin.y(), 0, 'f', 2)
+                        .arg(sketch->plane.origin.z(), 0, 'f', 2);
+        viewInfo += QString("Normal: (%1, %2, %3)\n")
+                        .arg(sketch->plane.normal.x(), 0, 'f', 2)
+                        .arg(sketch->plane.normal.y(), 0, 'f', 2)
+                        .arg(sketch->plane.normal.z(), 0, 'f', 2);
         viewInfo += QString("Entities: %1\n").arg(sketch->entities.size());
 
         for (int i = 0; i < sketch->entities.size(); ++i) {
@@ -1445,6 +1449,7 @@ void MainWindow::updatePropertySheets(std::shared_ptr<FeatureNode> feature) {
 
         if (auto sketch = extrude->sketch.lock()) {
             viewInfo += QString("Base Sketch: %1 (ID: %2)\n").arg(sketch->name).arg(sketch->id);
+            viewInfo += QString("Base Plane: %1\n").arg(sketch->plane.getDisplayName());
         }
     }
 
@@ -1467,7 +1472,13 @@ void MainWindow::updatePropertySheets(std::shared_ptr<FeatureNode> feature) {
 
     if (feature->type == FeatureType::Sketch) {
         auto sketch = std::static_pointer_cast<SketchNode>(feature);
-        addRow("Plane", sketchPlaneToString(sketch->plane));
+        addRow("Plane", sketch->plane.getDisplayName());
+        addRow("Origin X", QString::number(sketch->plane.origin.x(), 'f', 3));
+        addRow("Origin Y", QString::number(sketch->plane.origin.y(), 'f', 3));
+        addRow("Origin Z", QString::number(sketch->plane.origin.z(), 'f', 3));
+        addRow("Normal X", QString::number(sketch->plane.normal.x(), 'f', 3));
+        addRow("Normal Y", QString::number(sketch->plane.normal.y(), 'f', 3));
+        addRow("Normal Z", QString::number(sketch->plane.normal.z(), 'f', 3));
         addRow("Entity Count", QString::number(sketch->entities.size()));
     }
     else if (feature->type == FeatureType::Extrude) {
@@ -1479,6 +1490,7 @@ void MainWindow::updatePropertySheets(std::shared_ptr<FeatureNode> feature) {
 
         if (auto sketch = extrude->sketch.lock()) {
             addRow("Base Sketch", QString("%1 (ID: %2)").arg(sketch->name).arg(sketch->id));
+            addRow("Base Plane", sketch->plane.getDisplayName());
         }
     }
 
@@ -1554,7 +1566,6 @@ void MainWindow::onEditSketch() {
         m_view->setActiveSketch(sketch);
         showTaskWidget(QString("Editing: %1").arg(sketch->name));
 
-        // Update task content
         QWidget* taskContent = taskWidget->findChild<QWidget*>("taskContent");
         if (taskContent) {
             QLayout* oldLayout = taskContent->layout();
@@ -1569,8 +1580,11 @@ void MainWindow::onEditSketch() {
 
             QVBoxLayout* layout = new QVBoxLayout(taskContent);
 
-            QLabel* infoLabel = new QLabel(QString("Plane: %1\nEntities: %2")
-                                               .arg(sketchPlaneToString(sketch->plane))
+            QLabel* infoLabel = new QLabel(QString("Plane: %1\nOrigin: (%2, %3, %4)\nEntities: %5")
+                                               .arg(sketch->plane.getDisplayName())
+                                               .arg(sketch->plane.origin.x(), 0, 'f', 2)
+                                               .arg(sketch->plane.origin.y(), 0, 'f', 2)
+                                               .arg(sketch->plane.origin.z(), 0, 'f', 2)
                                                .arg(sketch->entities.size()));
             layout->addWidget(infoLabel);
 
@@ -2145,7 +2159,7 @@ void MainWindow::updateFeatureTree() {
                 QLabel* icon = new QLabel();
                 icon->setPixmap(QIcon(":/icons/sketch.png").pixmap(16, 16));
 
-                QLabel* text = new QLabel(QString("└ %1").arg(
+                QLabel* text = new QLabel(QString("%1").arg(
                     s->name.isEmpty() ? QString("Sketch %1").arg(s->id) : s->name));
                 text->setStyleSheet("color: rgb(100, 150, 200);");
 
@@ -2203,19 +2217,14 @@ void MainWindow::onCreateSketch() {
         return;
 
     if (choice == "Select Face...") {
-        // Enter face selection mode
         m_view->startFaceSelectionMode();
         showResultTemporarily("Click on a face to create sketch plane");
 
-        // Connect to face selection signal (disconnect after use)
         connect(m_view, &CadView::faceSelected, this, [this](CustomPlane plane) {
             disconnect(m_view, &CadView::faceSelected, this, nullptr);
 
-            // Create sketch on selected face
-            auto sketch = m_view->doc.createSketch(SketchPlane::Custom);
-            sketch->customPlane = plane;
+            auto sketch = m_view->doc.createSketch(plane);
 
-            // Orient view to face normal
             m_view->getCamera().lookAt(
                 plane.origin + plane.normal * 10.0f,
                 plane.origin,
@@ -2237,40 +2246,32 @@ void MainWindow::onCreateSketch() {
         return;
     }
 
-    SketchPlane plane = SketchPlane::Custom;
-     if (choice.startsWith("XY (Top)")) {
-        plane = SketchPlane::XY;
+    CustomPlane plane;
+
+    if (choice.startsWith("XY (Top)")) {
+        plane = CustomPlane::XY();
         m_view->setSketchView(SketchView::Top);
     } else if (choice.startsWith("XZ (Front)")) {
-        plane = SketchPlane::XZ;
+        plane = CustomPlane::XZ();
         m_view->setSketchView(SketchView::Front);
     } else if (choice.startsWith("YZ (Right)")) {
-        plane = SketchPlane::YZ;
+        plane = CustomPlane::YZ();
         m_view->setSketchView(SketchView::Right);
     } else if (choice.startsWith("XY (Bottom)")) {
-        plane = SketchPlane::XY;
+        plane = CustomPlane::XY();
         m_view->setSketchView(SketchView::Bottom);
     } else if (choice.startsWith("XZ (Back)")) {
-        plane = SketchPlane::XZ;
+        plane = CustomPlane::XZ();
         m_view->setSketchView(SketchView::Back);
     } else if (choice.startsWith("YZ (Left)")) {
-        plane = SketchPlane::YZ;
+        plane = CustomPlane::YZ();
         m_view->setSketchView(SketchView::Left);
     } else if (choice.startsWith("Custom")) {
-        plane = SketchPlane::Custom;
-    }
-
-    // Create sketch once for all cases
-    auto sketch = m_view->doc.createSketch(plane);
-
-    if (plane == SketchPlane::Custom && !choice.contains("Face")) {
-        sketch->customPlane = createPlane(
-            QVector3D(0, 0, 0),
-            QVector3D(1, 1, 1)
-            );
+        plane = createPlane(QVector3D(0, 0, 0), QVector3D(1, 1, 1));
         m_view->setSketchView(SketchView::None);
     }
 
+    auto sketch = m_view->doc.createSketch(plane);
     m_view->startSketchMode(sketch);
     updateFeatureTree();
 }

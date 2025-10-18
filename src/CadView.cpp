@@ -128,41 +128,30 @@ void CadView::setSketchView(SketchView view) {
     switch(view)
     {
     case SketchView::Top:
-        // Looking down along +Z
         camera.lookAt(QVector3D(0,0,10), QVector3D(0,0,0), QVector3D(0,1,0));
         camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
         break;
-
     case SketchView::Bottom:
-        // Looking up along -Z
         camera.lookAt(QVector3D(0,0,-10), QVector3D(0,0,0), QVector3D(0,1,0));
         camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
         break;
-
     case SketchView::Front:
-        // Looking along -Y
         camera.lookAt(QVector3D(0,-10,0), QVector3D(0,0,0), QVector3D(0,0,1));
         camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
         break;
-
     case SketchView::Back:
-        // Looking along +Y
         camera.lookAt(QVector3D(0,10,0), QVector3D(0,0,0), QVector3D(0,0,1));
         camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
         break;
-
-    case SketchView::Right: // Right side
+    case SketchView::Right:
         camera.lookAt(QVector3D(10,0,0), QVector3D(0,0,0), QVector3D(0,0,1));
         camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
         break;
-
     case SketchView::Left:
         camera.lookAt(QVector3D(-10,0,0), QVector3D(0,0,0), QVector3D(0,0,1));
         camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
         break;
-
-    default: // Isometric / perspective
-        // Standard isometric: rotate 35.264° around X and 45° around Y
+    default:
         camera.setOrientation(-35.264f, 45.0f, 15.0f);
         camera.lookAt(QVector3D(5.773f,5.773f,5.773f), QVector3D(0,0,0), QVector3D(0,0,1));
         camera.setPerspective(45.0f, aspect, 0.1f, 100.0f);
@@ -173,11 +162,10 @@ void CadView::setSketchView(SketchView view) {
 }
 
 QVector3D CadView::screenToWorld(const QPoint& screenPos) {
-    // Convert screen → NDC
     float x = (2.0f * screenPos.x()) / width() - 1.0f;
     float y = 1.0f - (2.0f * screenPos.y()) / height();
-    QVector4D rayClip(x, y, -1.0f, 1.0f); // start at near plane in clip space
-    QVector4D rayFarClip(x, y, 1.0f, 1.0f); // end at far plane
+    QVector4D rayClip(x, y, -1.0f, 1.0f);
+    QVector4D rayFarClip(x, y, 1.0f, 1.0f);
 
     QMatrix4x4 inv = (camera.getProjectionMatrix() * camera.getViewMatrix()).inverted();
     QVector4D rayStartWorld = inv * rayClip;
@@ -188,35 +176,32 @@ QVector3D CadView::screenToWorld(const QPoint& screenPos) {
     QVector3D rayOrigin = QVector3D(rayStartWorld);
     QVector3D rayDir = (QVector3D(rayEndWorld) - rayOrigin).normalized();
 
-    // Choose plane depending on view
-    QVector3D planeNormal(0,0,1); // default Z=0 plane
-    float planeD = 0.0f;          // plane equation: n·p + d = 0
+    QVector3D planeNormal(0,0,1);
+    float planeD = 0.0f;
 
-    switch (currentView) {
-    case SketchView::Top:
-    case SketchView::Bottom:
-        planeNormal = QVector3D(0,0,1); planeD = 0; break; // XY plane
-    case SketchView::Front:
-    case SketchView::Back:
-        planeNormal = QVector3D(0,1,0); planeD = 0; break; // XZ plane
-    case SketchView::Right:
-    case SketchView::Left:
-        planeNormal = QVector3D(1,0,0); planeD = 0; break; // YZ plane
-    default:
-        // Check for custom plane
-        if (pendingSketch && pendingSketch->plane == SketchPlane::Custom) {
-            planeNormal = pendingSketch->customPlane.normal;
-            planeD = -QVector3D::dotProduct(planeNormal, pendingSketch->customPlane.origin);
-        } else {
+    if (pendingSketch) {
+        planeNormal = pendingSketch->plane.normal;
+        planeD = -QVector3D::dotProduct(planeNormal, pendingSketch->plane.origin);
+    } else {
+        switch (currentView) {
+        case SketchView::Top:
+        case SketchView::Bottom:
+            planeNormal = QVector3D(0,0,1); planeD = 0; break;
+        case SketchView::Front:
+        case SketchView::Back:
+            planeNormal = QVector3D(0,1,0); planeD = 0; break;
+        case SketchView::Right:
+        case SketchView::Left:
+            planeNormal = QVector3D(1,0,0); planeD = 0; break;
+        default:
             planeNormal = QVector3D(0,0,1); planeD = 0;
+            break;
         }
-        break;
     }
 
-    // Ray-plane intersection: t = -(n·o + d) / (n·dir)
     float denom = QVector3D::dotProduct(planeNormal, rayDir);
     if (qFuzzyIsNull(denom)) {
-        return rayOrigin; // Parallel → return origin
+        return rayOrigin;
     }
     float t = -(QVector3D::dotProduct(planeNormal, rayOrigin) + planeD) / denom;
     return rayOrigin + t * rayDir;
@@ -270,9 +255,8 @@ void CadView::startExtrudeMode(std::shared_ptr<SketchNode> sketch) {
 
     if (auto polyline = std::dynamic_pointer_cast<PolylineEntity>(sketch->entities.at(0))) {
         if (polyline->points.size() >= 2) {
-            // Store 2D points directly
             currentRect.p1 = polyline->points[0];
-            currentRect.p2 = polyline->points[2]; // Assuming rectangular order
+            currentRect.p2 = polyline->points[2];
         }
     }
 
@@ -393,29 +377,8 @@ void CadView::getPlaneBasis(std::shared_ptr<SketchNode> sketch, QVector3D& uAxis
         return;
     }
 
-    if (sketch->plane == SketchPlane::Custom) {
-        uAxis = sketch->customPlane.uAxis;
-        vAxis = sketch->customPlane.vAxis;
-    } else {
-        switch (sketch->plane) {
-        case SketchPlane::XY:
-            uAxis = QVector3D(1, 0, 0);
-            vAxis = QVector3D(0, 1, 0);
-            break;
-        case SketchPlane::XZ:
-            uAxis = QVector3D(1, 0, 0);
-            vAxis = QVector3D(0, 0, 1);
-            break;
-        case SketchPlane::YZ:
-            uAxis = QVector3D(0, 1, 0);
-            vAxis = QVector3D(0, 0, 1);
-            break;
-        default:
-            uAxis = QVector3D(1, 0, 0);
-            vAxis = QVector3D(0, 1, 0);
-            break;
-        }
-    }
+    uAxis = sketch->plane.uAxis;
+    vAxis = sketch->plane.vAxis;
 }
 
 QVector<Face> CadView::extractFacesFromFeature(std::shared_ptr<FeatureNode> feature) {
@@ -430,26 +393,12 @@ QVector<Face> CadView::extractFacesFromFeature(std::shared_ptr<FeatureNode> feat
     auto poly = std::dynamic_pointer_cast<PolylineEntity>(s->entities.front());
     if (!poly || poly->points.size() < 3) return faces;
 
-    // Convert 2D points to 3D
+    // Convert 2D points to 3D using plane basis
     QVector<QVector3D> base3D;
     for (const auto& pt2d : poly->points) {
-        QVector3D pt3d;
-        switch (s->plane) {
-        case SketchPlane::XY:
-            pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
-            break;
-        case SketchPlane::XZ:
-            pt3d = QVector3D(pt2d.x(), 0, pt2d.y());
-            break;
-        case SketchPlane::YZ:
-            pt3d = QVector3D(0, pt2d.x(), pt2d.y());
-            break;
-        case SketchPlane::Custom:
-            pt3d = s->customPlane.origin +
-                   s->customPlane.uAxis * pt2d.x() +
-                   s->customPlane.vAxis * pt2d.y();
-            break;
-        }
+        QVector3D pt3d = s->plane.origin +
+                         s->plane.uAxis * pt2d.x() +
+                         s->plane.vAxis * pt2d.y();
         base3D.append(pt3d);
     }
 
@@ -487,7 +436,6 @@ QVector<Face> CadView::extractFacesFromFeature(std::shared_ptr<FeatureNode> feat
         sideFace.vertices.append(base3D[i + 1] + offset);
         sideFace.vertices.append(base3D[i] + offset);
 
-        // Calculate face normal
         QVector3D edge1 = sideFace.vertices[1] - sideFace.vertices[0];
         QVector3D edge2 = sideFace.vertices[3] - sideFace.vertices[0];
         sideFace.normal = QVector3D::crossProduct(edge1, edge2).normalized();
@@ -516,7 +464,6 @@ QVector<Face> CadView::getAllFaces() const {
 
 Face* CadView::pickFace(const QPoint& screenPos) {
     QVector3D rayOrigin, rayDir;
-    QVector3D worldPos = screenToWorld(screenPos);
 
     // Get ray direction
     float x = (2.0f * screenPos.x()) / width() - 1.0f;
@@ -699,15 +646,27 @@ void CadView::clearSelection() {
 void CadView::setActiveSketch(std::shared_ptr<SketchNode> sketch) {
     activeSketch = sketch;
     if (sketch) {
-        // Set view to sketch plane
-        switch (sketch->plane) {
-        case SketchPlane::XY: setSketchView(SketchView::Top); break;
-        case SketchPlane::XZ: setSketchView(SketchView::Front); break;
-        case SketchPlane::YZ: setSketchView(SketchView::Right); break;
-        default: setSketchView(SketchView::None); break;
-        }
         pendingSketch = sketch;
         mode = CadMode::Sketching;
+
+        // Orient camera to sketch plane
+        QString planeName = sketch->plane.getDisplayName();
+
+        if (planeName == "XY") {
+            setSketchView(SketchView::Top);
+        } else if (planeName == "XZ") {
+            setSketchView(SketchView::Front);
+        } else if (planeName == "YZ") {
+            setSketchView(SketchView::Right);
+        } else {
+            // Custom plane - orient to plane normal
+            camera.lookAt(
+                sketch->plane.origin + sketch->plane.normal * 10.0f,
+                sketch->plane.origin,
+                sketch->plane.vAxis
+                );
+            setSketchView(SketchView::None);
+        }
     }
     update();
 }
@@ -866,67 +825,6 @@ void CadView::paintGL() {
     drawRubberBand();
 }
 
-QVector3D planeNormal(SketchPlane plane) {
-    switch (plane) {
-    case SketchPlane::XY: return QVector3D(0,0,1);
-    case SketchPlane::XZ: return QVector3D(0,1,0);
-    case SketchPlane::YZ: return QVector3D(1,0,0);
-    case SketchPlane::Custom: return QVector3D(1,1,1);
-    }
-    return QVector3D(0,0,1); // fallback
-}
-
-static QVector<QVector3D> rectanglePointsForPlane(
-    const Rectangle2D& rect,
-    SketchPlane plane,
-    const CustomPlane* customPlane = nullptr)
-{
-    QVector<QVector3D> pts;
-
-    switch (plane) {
-    case SketchPlane::XY: {
-        pts << QVector3D(rect.p1.x(), rect.p1.y(), 0)
-            << QVector3D(rect.p2.x(), rect.p1.y(), 0)
-            << QVector3D(rect.p2.x(), rect.p2.y(), 0)
-            << QVector3D(rect.p1.x(), rect.p2.y(), 0)
-            << QVector3D(rect.p1.x(), rect.p1.y(), 0);
-        break;
-    }
-    case SketchPlane::YZ: {
-        pts << QVector3D(0, rect.p1.x(), rect.p1.y())
-            << QVector3D(0, rect.p2.x(), rect.p1.y())
-            << QVector3D(0, rect.p2.x(), rect.p2.y())
-            << QVector3D(0, rect.p1.x(), rect.p2.y())
-            << QVector3D(0, rect.p1.x(), rect.p1.y());
-        break;
-    }
-    case SketchPlane::XZ: {
-        pts << QVector3D(rect.p1.x(), 0, rect.p1.y())
-            << QVector3D(rect.p2.x(), 0, rect.p1.y())
-            << QVector3D(rect.p2.x(), 0, rect.p2.y())
-            << QVector3D(rect.p1.x(), 0, rect.p2.y())
-            << QVector3D(rect.p1.x(), 0, rect.p1.y());
-        break;
-    }
-    case SketchPlane::Custom: {
-        if (customPlane) {
-            auto to3D = [&](const QVector2D& p2d) {
-                return customPlane->origin +
-                       customPlane->uAxis * p2d.x() +
-                       customPlane->vAxis * p2d.y();
-            };
-            pts << to3D(rect.p1)
-                << to3D(QVector2D(rect.p2.x(), rect.p1.y()))
-                << to3D(rect.p2)
-                << to3D(QVector2D(rect.p1.x(), rect.p2.y()))
-                << to3D(rect.p1);
-        }
-        break;
-    }
-    }
-    return pts;
-}
-
 void CadView::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         // Check if in face selection mode
@@ -1002,16 +900,20 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        QVector3D worldPos = screenToWorld(event->pos());
-
         // Handle Extrude mode
         if (mode == CadMode::Extruding && awaitingHeight && pendingSketch) {
-            float height = (worldPos - baseP2).length();
+            QVector3D worldPos = screenToWorld(event->pos());
+
+            // Calculate height as projection along plane normal
+            QVector3D baseCenter = planeToWorld((currentRect.p1 + currentRect.p2) / 2.0f);
+            QVector3D toPoint = worldPos - baseCenter;
+            float height = QVector3D::dotProduct(toPoint, pendingSketch->plane.normal);
+            height = qAbs(height); // Always positive
 
             auto extrude = std::make_shared<ExtrudeNode>();
             extrude->sketch = pendingSketch;
             extrude->height = height;
-            extrude->direction = planeNormal(pendingSketch->plane);
+            extrude->direction = pendingSketch->plane.normal;
             extrude->evaluate();
             doc.addFeature(extrude);
 
@@ -1023,7 +925,6 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             update();
             return;
         }
-
     }
 
     if (event->button() == Qt::RightButton) {
@@ -1198,8 +1099,9 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
     if (mode == CadMode::Extruding && awaitingHeight) {
         QVector3D worldPos = screenToWorld(event->pos());
-        baseP2 = planeToWorld(currentRect.p2); // Convert 2D back to 3D for distance calc
-        previewHeight = (worldPos - baseP2).length();
+        QVector3D baseCenter = planeToWorld((currentRect.p1 + currentRect.p2) / 2.0f);
+        QVector3D toPoint = worldPos - baseCenter;
+        previewHeight = qAbs(QVector3D::dotProduct(toPoint, pendingSketch->plane.normal));
         update();
     }
 }
@@ -1323,73 +1225,22 @@ void CadView::planeBasis(const QVector3D& normal, QVector3D& u, QVector3D& v) {
 
 QVector2D CadView::worldToPlane(const QVector3D& worldPt) {
     if (!pendingSketch) {
-        switch (currentView) {
-        case SketchView::Top:
-        case SketchView::Bottom:
-            return QVector2D(worldPt.x(), worldPt.y());
-        case SketchView::Front:
-        case SketchView::Back:
-            return QVector2D(worldPt.x(), worldPt.z());
-        case SketchView::Right:
-        case SketchView::Left:
-            return QVector2D(worldPt.y(), worldPt.z());
-        default:
-            return QVector2D(worldPt.x(), worldPt.y());
-        }
+        return QVector2D(worldPt.x(), worldPt.y());
     }
 
-    // Project onto sketch plane
-    switch (pendingSketch->plane) {
-    case SketchPlane::XY:
-        return QVector2D(worldPt.x(), worldPt.y());
-    case SketchPlane::XZ:
-        return QVector2D(worldPt.x(), worldPt.z());
-    case SketchPlane::YZ:
-        return QVector2D(worldPt.y(), worldPt.z());
-    case SketchPlane::Custom: {
-        // For arbitrary planes: project onto basis
-        QVector3D localPt = worldPt - pendingSketch->customPlane.origin;
-        return QVector2D(QVector3D::dotProduct(localPt, pendingSketch->customPlane.uAxis),
-                         QVector3D::dotProduct(localPt, pendingSketch->customPlane.vAxis));
-    }
-    default:
-        return QVector2D(worldPt.x(), worldPt.y());
-    }
+    QVector3D localPt = worldPt - pendingSketch->plane.origin;
+    return QVector2D(QVector3D::dotProduct(localPt, pendingSketch->plane.uAxis),
+                     QVector3D::dotProduct(localPt, pendingSketch->plane.vAxis));
 }
 
 QVector3D CadView::planeToWorld(const QVector2D& planePt) {
     if (!pendingSketch) {
-        switch (currentView) {
-        case SketchView::Top:
-        case SketchView::Bottom:
-            return QVector3D(planePt.x(), planePt.y(), 0);
-        case SketchView::Front:
-        case SketchView::Back:
-            return QVector3D(planePt.x(), 0, planePt.y());
-        case SketchView::Right:
-        case SketchView::Left:
-            return QVector3D(0, planePt.x(), planePt.y());
-        default:
-            return QVector3D(planePt.x(), planePt.y(), 0);
-        }
+        return QVector3D(planePt.x(), planePt.y(), 0);
     }
 
-    // Use sketch plane with proper axis mapping
-    switch (pendingSketch->plane) {
-    case SketchPlane::XY:
-        return QVector3D(planePt.x(), planePt.y(), 0);
-    case SketchPlane::XZ:
-        return QVector3D(planePt.x(), 0, planePt.y());
-    case SketchPlane::YZ:
-        return QVector3D(0, planePt.x(), planePt.y());
-    case SketchPlane::Custom: {
-        return pendingSketch->customPlane.origin +
-               pendingSketch->customPlane.uAxis * planePt.x() +
-               pendingSketch->customPlane.vAxis * planePt.y();
-    }
-    default:
-        return QVector3D(planePt.x(), planePt.y(), 0);
-    }
+    return pendingSketch->plane.origin +
+           pendingSketch->plane.uAxis * planePt.x() +
+           pendingSketch->plane.vAxis * planePt.y();
 }
 
 void CadView::startGetPoint(const QString& prompt, const QVector2D* previousPt) {
@@ -1614,35 +1465,28 @@ void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
 }
 
 void CadView::drawExtrudedCube(float height, bool ghost) {
+    if (!pendingSketch) return;
+
     auto poly = std::make_shared<PolylineEntity>();
 
-    // Get 3D points for drawing
-    QVector<QVector3D> pts3D = rectanglePointsForPlane(
-        currentRect,
-        pendingSketch->plane,
-        pendingSketch->plane == SketchPlane::Custom ? &pendingSketch->customPlane : nullptr
-        );
+    // Convert 2D rectangle to 3D using plane basis
+    QVector3D v0 = pendingSketch->plane.origin +
+                   pendingSketch->plane.uAxis * currentRect.p1.x() +
+                   pendingSketch->plane.vAxis * currentRect.p1.y();
 
-    QVector3D v0 = pts3D[0];
-    QVector3D v1 = pts3D[1];
-    QVector3D v2 = pts3D[2];
-    QVector3D v3 = pts3D[3];
+    QVector3D v1 = pendingSketch->plane.origin +
+                   pendingSketch->plane.uAxis * currentRect.p2.x() +
+                   pendingSketch->plane.vAxis * currentRect.p1.y();
 
-    QVector3D extrusionDir;
-    switch (pendingSketch->plane) {
-    case SketchPlane::XY:
-        extrusionDir = QVector3D(0, 0, height);
-        break;
-    case SketchPlane::XZ:
-        extrusionDir = QVector3D(0, height, 0);
-        break;
-    case SketchPlane::YZ:
-        extrusionDir = QVector3D(height, 0, 0);
-        break;
-    case SketchPlane::Custom:
-        extrusionDir = pendingSketch->customPlane.normal * height;
-        break;
-    }
+    QVector3D v2 = pendingSketch->plane.origin +
+                   pendingSketch->plane.uAxis * currentRect.p2.x() +
+                   pendingSketch->plane.vAxis * currentRect.p2.y();
+
+    QVector3D v3 = pendingSketch->plane.origin +
+                   pendingSketch->plane.uAxis * currentRect.p1.x() +
+                   pendingSketch->plane.vAxis * currentRect.p2.y();
+
+    QVector3D extrusionDir = pendingSketch->plane.normal * height;
 
     QVector3D v4 = v0 + extrusionDir;
     QVector3D v5 = v1 + extrusionDir;
@@ -1653,7 +1497,7 @@ void CadView::drawExtrudedCube(float height, bool ghost) {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glColor4f(0.2f, 0.8f, 1.0f, 0.6f); // cyan ghost
+        glColor4f(0.2f, 0.8f, 1.0f, 0.6f);
     } else {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         glColor3f(0.2f, 0.8f, 1.0f);
@@ -1661,38 +1505,34 @@ void CadView::drawExtrudedCube(float height, bool ghost) {
 
     glBegin(GL_QUADS);
 
-    // Base face (sketch plane)
+    // Base face
     glVertex3f(v0.x(), v0.y(), v0.z());
     glVertex3f(v1.x(), v1.y(), v1.z());
     glVertex3f(v2.x(), v2.y(), v2.z());
     glVertex3f(v3.x(), v3.y(), v3.z());
 
-    // Top face (extruded face)
+    // Top face
     glVertex3f(v4.x(), v4.y(), v4.z());
     glVertex3f(v7.x(), v7.y(), v7.z());
     glVertex3f(v6.x(), v6.y(), v6.z());
     glVertex3f(v5.x(), v5.y(), v5.z());
 
     // Side faces
-    // v0-v1-v5-v4
     glVertex3f(v0.x(), v0.y(), v0.z());
     glVertex3f(v1.x(), v1.y(), v1.z());
     glVertex3f(v5.x(), v5.y(), v5.z());
     glVertex3f(v4.x(), v4.y(), v4.z());
 
-    // v1-v2-v6-v5
     glVertex3f(v1.x(), v1.y(), v1.z());
     glVertex3f(v2.x(), v2.y(), v2.z());
     glVertex3f(v6.x(), v6.y(), v6.z());
     glVertex3f(v5.x(), v5.y(), v5.z());
 
-    // v2-v3-v7-v6
     glVertex3f(v2.x(), v2.y(), v2.z());
     glVertex3f(v3.x(), v3.y(), v3.z());
     glVertex3f(v7.x(), v7.y(), v7.z());
     glVertex3f(v6.x(), v6.y(), v6.z());
 
-    // v3-v0-v4-v7
     glVertex3f(v3.x(), v3.y(), v3.z());
     glVertex3f(v0.x(), v0.y(), v0.z());
     glVertex3f(v4.x(), v4.y(), v4.z());

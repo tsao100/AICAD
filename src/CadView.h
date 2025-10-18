@@ -20,14 +20,6 @@ enum class FeatureType {
     // Later: Revolve, Fillet, Boolean, etc.
 };
 
-static QString featureTypeToString(FeatureType type) {
-    switch (type) {
-    case FeatureType::Sketch:  return "Sketch";
-    case FeatureType::Extrude: return "Extrude";
-    default:                   return "Unknown";
-    }
-}
-
 enum class CadMode {
     Idle,
     Sketching,
@@ -51,6 +43,34 @@ struct CustomPlane {
     QVector3D uAxis;
     QVector3D vAxis;
 
+    // Predefined plane constructors
+    static CustomPlane XY() {
+        CustomPlane p;
+        p.origin = QVector3D(0, 0, 0);
+        p.normal = QVector3D(0, 0, 1);
+        p.uAxis = QVector3D(1, 0, 0);
+        p.vAxis = QVector3D(0, 1, 0);
+        return p;
+    }
+
+    static CustomPlane XZ() {
+        CustomPlane p;
+        p.origin = QVector3D(0, 0, 0);
+        p.normal = QVector3D(0, 1, 0);
+        p.uAxis = QVector3D(1, 0, 0);
+        p.vAxis = QVector3D(0, 0, 1);
+        return p;
+    }
+
+    static CustomPlane YZ() {
+        CustomPlane p;
+        p.origin = QVector3D(0, 0, 0);
+        p.normal = QVector3D(1, 0, 0);
+        p.uAxis = QVector3D(0, 1, 0);
+        p.vAxis = QVector3D(0, 0, 1);
+        return p;
+    }
+
     void save(QTextStream& out) const {
         out << origin.x() << " " << origin.y() << " " << origin.z() << " "
             << normal.x() << " " << normal.y() << " " << normal.z() << " "
@@ -66,25 +86,28 @@ struct CustomPlane {
         uAxis = QVector3D(ux, uy, uz);
         vAxis = QVector3D(vx, vy, vz);
     }
+
+    QString getDisplayName() const {
+        // Detect standard planes
+        if (normal == QVector3D(0, 0, 1) && origin == QVector3D(0, 0, 0))
+            return "XY";
+        if (normal == QVector3D(0, 1, 0) && origin == QVector3D(0, 0, 0))
+            return "XZ";
+        if (normal == QVector3D(1, 0, 0) && origin == QVector3D(0, 0, 0))
+            return "YZ";
+        return QString("Custom (%1, %2, %3)").arg(normal.x(), 0, 'f', 2).arg(normal.y(), 0, 'f', 2).arg(normal.z(), 0, 'f', 2);
+    }
 };
 
 inline CustomPlane createPlane(const QVector3D& origin, const QVector3D& normalInput)
 {
     CustomPlane plane;
     plane.origin = origin;
-
-    // Ensure normal is normalized
     QVector3D normal = normalInput.normalized();
     plane.normal = normal;
-
-    // Choose a helper vector not parallel to the normal
-    QVector3D helper = (fabs(normal.x()) > 0.9f) ? QVector3D(0, 1, 0)
-                                                 : QVector3D(1, 0, 0);
-
-    // Compute orthonormal basis (u, v) using cross products
+    QVector3D helper = (fabs(normal.x()) > 0.9f) ? QVector3D(0, 1, 0) : QVector3D(1, 0, 0);
     plane.uAxis = QVector3D::crossProduct(normal, helper).normalized();
     plane.vAxis = QVector3D::crossProduct(normal, plane.uAxis).normalized();
-
     return plane;
 }
 
@@ -127,16 +150,9 @@ enum class EntityType {
     Extrude
 };
 
-enum class SketchPlane {
-    XY,   // Top
-    XZ,   // Front
-    YZ,   // Right
-    Custom
-};
-
 struct Entity {
     EntityType type;
-    SketchPlane plane;
+    CustomPlane plane;
     int id;                // unique ID for entity
     QString layer;         // optional: layer or group
 
@@ -207,22 +223,24 @@ struct PolylineEntity : public Entity {
         glColor3f(1, 1, 1);
         glBegin(GL_LINE_STRIP);
         for (const auto& p : points) {
-            glVertex3f(p.x(), p.y(), 0.0f); // Z=0 in local plane coords
+            glVertex3f(p.x(), p.y(), 0.0f);
         }
         glEnd();
     }
 
     void save(QTextStream& out) const override {
-        out << "Polyline " << static_cast<int>(plane) << " " << points.size();
+        out << "Polyline ";
+        plane.save(out);
+        out << points.size();
         for (const auto& p : points)
             out << " " << p.x() << " " << p.y();
         out << "\n";
     }
 
     void load(QTextStream& in) override {
-        int planeInt, n;
-        in >> planeInt >> n;
-        plane = static_cast<SketchPlane>(planeInt);
+        plane.load(in);
+        int n;
+        in >> n;
         points.resize(n);
         for (int i = 0; i < n; ++i){
             float x, y;
@@ -259,159 +277,9 @@ struct SplineEntity : public Entity {
     }
 };
 */
-struct Sketch {
-    int id;                       // unique sketch ID
-    SketchPlane plane;            // sketch plane (XY, XZ, YZ, Custom)
-    QVector<std::shared_ptr<Entity>> entities; // only 2D entities
-
-    void addEntity(const std::shared_ptr<Entity>& e) {
-        entities.push_back(e);
-    }
-
-    void draw() const {
-        for (auto& e : entities)
-            e->draw();
-    }
-
-    void save(QTextStream& out) const {
-        out << "Sketch " << id << " " << int(plane) << " " << entities.size() << "\n";
-        for (auto& e : entities)
-            e->save(out);
-    }
-
-    void load(QTextStream& in) {
-        int n;
-        in >> id >> (int&)plane >> n;
-        for (int i = 0; i < n; i++) {
-            QString type; in >> type;
-            std::shared_ptr<Entity> e;
-            if (type == "Polyline") e = std::make_shared<PolylineEntity>();
-            /*    else if (type == "Arc") e = std::make_shared<ArcEntity>();
-            else if (type == "Line") e = std::make_shared<LineEntity>();
-            else if (type == "Spline") e = std::make_shared<SplineEntity>();*/
-            if (e) { e->load(in); entities.push_back(e); }
-        }
-    }
-};
-
-struct ExtrudeEntity : public Entity {
-    std::weak_ptr<Sketch> sketch;
-    float height;
-    QVector3D direction;
-
-    ExtrudeEntity() { type = EntityType::Extrude; }
-
-    void draw() const override {
-        if (auto s = sketch.lock()) {
-            s->draw();
-
-            for (const auto& e : s->entities) {
-                if (e->type == EntityType::Polyline) {
-                    auto poly = std::dynamic_pointer_cast<PolylineEntity>(e);
-                    if (!poly || poly->points.size() < 3) continue;
-
-                    // Pass 2D points directly
-                    drawExtrusion(poly->points, height, direction, poly->plane);
-                }
-            }
-        }
-    }
-
-    static void drawExtrusion(const QVector<QVector2D>& base,
-                              float height,
-                              const QVector3D& dir,
-                              SketchPlane plane)
-    {
-        // Convert 2D points to 3D based on plane
-        QVector<QVector3D> base3D;
-        for (const auto& pt2d : base) {
-            QVector3D pt3d;
-            switch (plane) {
-            case SketchPlane::XY:
-                pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
-                break;
-            case SketchPlane::XZ:
-                pt3d = QVector3D(pt2d.x(), 0, pt2d.y());
-                break;
-            case SketchPlane::YZ:
-                pt3d = QVector3D(0, pt2d.x(), pt2d.y());
-                break;
-            case SketchPlane::Custom:
-                // For custom planes, would need access to CustomPlane data
-                pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
-                break;
-            }
-            base3D.append(pt3d);
-        }
-
-        QVector3D offset = dir.normalized() * height;
-
-        // Draw side walls
-        glColor3f(0.2f, 0.7f, 1.0f);
-        glBegin(GL_QUADS);
-        for (int i = 0; i < base3D.size(); i++) {
-            int j = (i + 1) % base3D.size();
-            QVector3D v0 = base3D[i];
-            QVector3D v1 = base3D[j];
-            QVector3D v2 = v1 + offset;
-            QVector3D v3 = v0 + offset;
-
-            glVertex3f(v0.x(), v0.y(), v0.z());
-            glVertex3f(v1.x(), v1.y(), v1.z());
-            glVertex3f(v2.x(), v2.y(), v2.z());
-            glVertex3f(v3.x(), v3.y(), v3.z());
-        }
-        glEnd();
-
-        // Draw bottom face
-        glColor3f(0.1f, 0.5f, 0.8f);
-        glBegin(GL_POLYGON);
-        for (const auto& v : base3D)
-            glVertex3f(v.x(), v.y(), v.z());
-        glEnd();
-
-        // Draw top face
-        glColor3f(0.1f, 0.5f, 0.8f);
-        glBegin(GL_POLYGON);
-        for (const auto& v : base3D) {
-            QVector3D vt = v + offset;
-            glVertex3f(vt.x(), vt.y(), vt.z());
-        }
-        glEnd();
-    }
-
-    void save(QTextStream& out) const override {
-        int sketchId = sketch.expired() ? -1 : sketch.lock()->id;
-        out << "Extrude " << static_cast<int>(plane) << " " << sketchId << " "
-            << height << " "
-            << direction.x() << " " << direction.y() << " " << direction.z() << "\n";
-    }
-
-    void load(QTextStream& in) override {
-        int planeInt, sketchId;
-        in >> planeInt >> sketchId >> height;
-        float x, y, z;
-        in >> x >> y >> z;
-        direction = QVector3D(x, y, z);
-        plane = static_cast<SketchPlane>(planeInt);
-        pendingSketchId = sketchId;
-    }
-
-    void resolveSketchLink(const QVector<std::shared_ptr<Sketch>>& sketches) {
-        if (pendingSketchId < 0) return;
-        for (auto& s : sketches)
-            if (s->id == pendingSketchId)
-                sketch = s;
-        pendingSketchId = -1;
-    }
-
-private:
-    int pendingSketchId = -1;
-};
 
 struct SketchNode : public FeatureNode {
-    SketchPlane plane;
-    CustomPlane customPlane;
+    CustomPlane plane; // Changed from SketchPlane + CustomPlane
     QVector<std::shared_ptr<Entity>> entities;
 
     SketchNode() { type = FeatureType::Sketch; }
@@ -423,26 +291,15 @@ struct SketchNode : public FeatureNode {
     }
 
     void save(QTextStream& out) const override {
-        out << "Sketch " << id << " " << int(plane) << " ";
-        if (plane == SketchPlane::Custom) {
-            out << "1 ";
-            customPlane.save(out);
-        } else {
-            out << "0 ";
-        }
+        out << "Sketch " << id << " ";
+        plane.save(out);
         out << entities.size() << "\n";
         for (auto& e : entities) e->save(out);
     }
 
     void load(QTextStream& in) override {
-        int planeInt, hasCustomPlane;
-        in >> id >> planeInt >> hasCustomPlane;
-        plane = static_cast<SketchPlane>(planeInt);
-
-        if (hasCustomPlane) {
-            customPlane.load(in);
-        }
-
+        in >> id;
+        plane.load(in);
         int n;
         in >> n;
 
@@ -473,33 +330,19 @@ struct ExtrudeNode : public FeatureNode {
         auto poly = std::dynamic_pointer_cast<PolylineEntity>(s->entities.front());
         if (!poly || poly->points.size() < 4) return;
 
-        // Convert 2D points to 3D based on sketch plane
+        // Convert 2D points to 3D using plane basis
         QVector<QVector3D> base3D;
         for (const auto& pt2d : poly->points) {
-            QVector3D pt3d;
-            switch (s->plane) {
-            case SketchPlane::XY:
-                pt3d = QVector3D(pt2d.x(), pt2d.y(), 0);
-                break;
-            case SketchPlane::XZ:
-                pt3d = QVector3D(pt2d.x(), 0, pt2d.y());
-                break;
-            case SketchPlane::YZ:
-                pt3d = QVector3D(0, pt2d.x(), pt2d.y());
-                break;
-            case SketchPlane::Custom:
-                pt3d = s->customPlane.origin +
-                       s->customPlane.uAxis * pt2d.x() +
-                       s->customPlane.vAxis * pt2d.y();
-                break;
-            }
+            QVector3D pt3d = s->plane.origin +
+                             s->plane.uAxis * pt2d.x() +
+                             s->plane.vAxis * pt2d.y();
             base3D.append(pt3d);
         }
 
         QVector3D n = direction.normalized();
         QVector3D offset = n * height;
 
-        // Draw bottom face (from sketch)
+        // Draw bottom face
         glColor3f(0.1f, 0.5f, 0.8f);
         glBegin(GL_QUADS);
         for (int i = 0; i < 4; ++i) {
@@ -508,7 +351,7 @@ struct ExtrudeNode : public FeatureNode {
         }
         glEnd();
 
-        // Draw top face (offset by extrusion height)
+        // Draw top face
         glColor3f(0.1f, 0.5f, 0.8f);
         glBegin(GL_QUADS);
         for (int i = 0; i < 4; ++i) {
@@ -562,23 +405,11 @@ struct ExtrudeNode : public FeatureNode {
         pendingSketchId = -1;
     }
 
-    void evaluate() override {
-        // For now: no geometry caching
-    }
+    void evaluate() override {}
 
 private:
     int pendingSketchId = -1;
 };
-
-inline QString sketchPlaneToString(SketchPlane plane) {
-    switch (plane) {
-    case SketchPlane::XY: return "XY";
-    case SketchPlane::XZ: return "XZ";
-    case SketchPlane::YZ: return "YZ";
-    case SketchPlane::Custom: return "Custom";
-    }
-    return "Unknown"; // fallback
-}
 
 struct Document {
     QVector<std::shared_ptr<SketchNode>> sketches;
@@ -591,10 +422,10 @@ struct Document {
         features.push_back(f);
     }
 
-    std::shared_ptr<SketchNode> createSketch(SketchPlane plane){
+    std::shared_ptr<SketchNode> createSketch(const CustomPlane& plane){
         auto sketch = std::make_shared<SketchNode>();
         sketch->id = nextId++;
-        sketch->name = QString("Sketch %1 (%2)").arg(sketch->id).arg(sketchPlaneToString(plane));
+        sketch->name = QString("Sketch %1 (%2)").arg(sketch->id).arg(plane.getDisplayName());
         sketch->plane = plane;
         sketches.push_back(sketch);
         return sketch;
