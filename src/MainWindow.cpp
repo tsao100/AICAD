@@ -911,7 +911,7 @@ void MainWindow::onViewRight() {
 }
 
 void MainWindow::onViewIsometric() {
-    m_view->setSketchView(SketchView::None);
+    m_view->setSketchView(SketchView::Custom);
     m_view->update();
 }
 
@@ -1059,26 +1059,6 @@ void MainWindow::onDrawRectangle() {
             return;
         }
     }
-
-    // Orient view to sketch plane
-    QString planeName = targetSketch->plane.getDisplayName();
-    if (planeName == "XY") {
-        m_view->setSketchView(SketchView::Top);
-    } else if (planeName == "XZ") {
-        m_view->setSketchView(SketchView::Front);
-    } else if (planeName == "YZ") {
-        m_view->setSketchView(SketchView::Right);
-    } else {
-        // Custom plane
-        m_view->getCamera().lookAt(
-            targetSketch->plane.origin + targetSketch->plane.normal * 10.0f,
-            targetSketch->plane.origin,
-            targetSketch->plane.vAxis
-            );
-        m_view->setSketchView(SketchView::None);
-    }
-
-    m_view->pendingSketch = targetSketch;
 
     consoleOutput->appendPlainText("=== Draw Rectangle ===");
 
@@ -1563,6 +1543,26 @@ void MainWindow::onEditSketch() {
 
     if (f && f->type == FeatureType::Sketch) {
         auto sketch = std::static_pointer_cast<SketchNode>(f);
+
+        // Orient view to sketch plane
+        QString planeName = sketch->plane.getDisplayName();
+        if (planeName == "XY") {
+            m_view->setSketchView(SketchView::Top);
+        } else if (planeName == "XZ") {
+            m_view->setSketchView(SketchView::Front);
+        } else if (planeName == "YZ") {
+            m_view->setSketchView(SketchView::Right);
+        } else {
+            // Custom plane
+            m_view->getCamera().lookAt(
+                sketch->plane.origin + sketch->plane.normal * 10.0f,
+                sketch->plane.origin,
+                sketch->plane.vAxis
+                );
+            m_view->setSketchView(SketchView::Custom);
+        }
+        m_view->pendingSketch = sketch;
+
         m_view->setActiveSketch(sketch);
         showTaskWidget(QString("Editing: %1").arg(sketch->name));
 
@@ -2230,7 +2230,7 @@ void MainWindow::onCreateSketch() {
                 plane.origin,
                 plane.vAxis
                 );
-            m_view->setSketchView(SketchView::None);
+            m_view->setSketchView(SketchView::Custom);
 
             m_view->startSketchMode(sketch);
             updateFeatureTree();
@@ -2268,7 +2268,7 @@ void MainWindow::onCreateSketch() {
         m_view->setSketchView(SketchView::Left);
     } else if (choice.startsWith("Custom")) {
         plane = createPlane(QVector3D(0, 0, 0), QVector3D(1, 1, 1));
-        m_view->setSketchView(SketchView::None);
+        m_view->setSketchView(SketchView::Custom);
     }
 
     auto sketch = m_view->doc.createSketch(plane);

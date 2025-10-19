@@ -113,7 +113,7 @@ void Camera::pan(const QVector3D& delta) {
 
 // ---------------- CadView Implementation ----------------
 CadView::CadView(QWidget* parent)
-    : QOpenGLWidget(parent), currentView(SketchView::None)
+    : QOpenGLWidget(parent), currentView(SketchView::Custom)
 {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
@@ -150,6 +150,30 @@ void CadView::setSketchView(SketchView view) {
     case SketchView::Left:
         camera.lookAt(QVector3D(-10,0,0), QVector3D(0,0,0), QVector3D(0,0,1));
         camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        break;
+    case SketchView::Custom:
+        // Custom plane view - requires pendingSketch or activeSketch to be set
+        if (pendingSketch) {
+            camera.lookAt(
+                pendingSketch->plane.origin + pendingSketch->plane.normal * 10.0f,
+                pendingSketch->plane.origin,
+                pendingSketch->plane.vAxis
+                );
+            camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        } else if (activeSketch) {
+            camera.lookAt(
+                activeSketch->plane.origin + activeSketch->plane.normal * 10.0f,
+                activeSketch->plane.origin,
+                activeSketch->plane.vAxis
+                );
+            camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        }
+        break;
+    case SketchView::ISO:// Isometric / perspective
+        // Standard isometric: rotate 35.264° around X and 45° around Y
+        camera.setOrientation(-35.264f, 45.0f, 15.0f);
+        camera.lookAt(QVector3D(5.773f,5.773f,5.773f), QVector3D(0,0,0), QVector3D(0,0,1));
+        camera.setPerspective(45.0f, aspect, 0.1f, 100.0f);
         break;
     default:
         camera.setOrientation(-35.264f, 45.0f, 15.0f);
@@ -304,7 +328,7 @@ void CadView::drawGrips() {
     glDisable(GL_DEPTH_TEST);
 
     float viewDist = (camera.position - camera.target).length();
-    float gripSize = viewDist * 0.015f;
+    float gripSize = viewDist * 0.01f;
 
     if (!camera.isPerspective()) {
         gripSize = (camera.orthoRight - camera.orthoLeft) * 0.01f;
@@ -607,10 +631,10 @@ void CadView::drawSnapMarker(const QVector3D& pos, const QString& snapType) {
     glColor3f(0.0f, 1.0f, 0.0f);
 
     float viewDist = (camera.position - camera.target).length();
-    float size = viewDist * 0.02f;
+    float size = viewDist * 0.01f;
 
     if (!camera.isPerspective()) {
-        size = (camera.orthoRight - camera.orthoLeft) * 0.015f;
+        size = (camera.orthoRight - camera.orthoLeft) * 0.01f;
     }
 
     QVector3D uAxis, vAxis;
@@ -659,13 +683,7 @@ void CadView::setActiveSketch(std::shared_ptr<SketchNode> sketch) {
         } else if (planeName == "YZ") {
             setSketchView(SketchView::Right);
         } else {
-            // Custom plane - orient to plane normal
-            camera.lookAt(
-                sketch->plane.origin + sketch->plane.normal * 10.0f,
-                sketch->plane.origin,
-                sketch->plane.vAxis
-                );
-            setSketchView(SketchView::None);
+            setSketchView(SketchView::Custom);
         }
     }
     update();
@@ -675,7 +693,7 @@ void CadView::exitSketchEdit() {
     activeSketch.reset();
     pendingSketch.reset();
     mode = CadMode::Idle;
-    setSketchView(SketchView::None);
+    setSketchView(SketchView::Custom);
     update();
 }
 
@@ -1045,7 +1063,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     }
 
     // ... existing mouse move handling ...
-    if ((event->buttons() & Qt::RightButton) && currentView == SketchView::None) {
+    if ((event->buttons() & Qt::RightButton) && currentView == SketchView::Custom) {
         int dx = event->pos().x() - lastMousePos.x();
         int dy = event->pos().y() - lastMousePos.y();
         camera.orbit(-dy * 0.5f, -dx * 0.5f);
@@ -1113,7 +1131,7 @@ void CadView::wheelEvent(QWheelEvent* event) {
     // 1. Get world coordinate under cursor BEFORE zoom
     QVector3D before = screenToWorld(cursorPos);
 
-    if (currentView == SketchView::None) {
+    if (currentView == SketchView::Custom) {
         // Free orbit/perspective mode zoom
         camera.zoom(numSteps * 10.0f);
     } else {
@@ -1169,7 +1187,7 @@ void CadView::keyPressEvent(QKeyEvent* event) {
     case Qt::Key_R: setSketchView(SketchView::Right); break;
     case Qt::Key_F: setSketchView(SketchView::Front); break;
     case Qt::Key_B: setSketchView(SketchView::Back); break;
-    case Qt::Key_I: setSketchView(SketchView::None); break;
+    case Qt::Key_I: setSketchView(SketchView::ISO); break;
     default: QWidget::keyPressEvent(event); break;
     }
 }

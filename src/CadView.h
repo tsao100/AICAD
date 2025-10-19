@@ -95,7 +95,9 @@ struct CustomPlane {
             return "XZ";
         if (normal == QVector3D(1, 0, 0) && origin == QVector3D(0, 0, 0))
             return "YZ";
-        return QString("Custom (%1, %2, %3)").arg(normal.x(), 0, 'f', 2).arg(normal.y(), 0, 'f', 2).arg(normal.z(), 0, 'f', 2);
+        return QString("Custom (%1, %2, %3)").arg(normal.x(), 0, 'f', 2)
+                                             .arg(normal.y(), 0, 'f', 2)
+                                             .arg(normal.z(), 0, 'f', 2);
     }
 };
 
@@ -513,13 +515,14 @@ struct Document {
 };
 
 enum class SketchView {
-    None,
+    Custom,
     Top,    // XY
     Front,  // XZ
     Right,    // YZ
     Bottom,
     Back,
-    Left
+    Left,
+    ISO
 };
 
 // Embedded Camera class
