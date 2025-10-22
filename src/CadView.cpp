@@ -312,9 +312,11 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     Standard_Real xv, yv, zv;
     m_view->Convert(xp, yp, xv, yv, zv);
 
-    gp_Pnt eyePnt;
-    gp_Dir eyeDir;
-    m_view->ConvertWithProj(xp, yp, xv, yv, zv, eyePnt.ChangeCoord(), eyeDir.ChangeCoord());
+    Standard_Real dirX, dirY, dirZ;
+    m_view->ConvertWithProj(xp, yp, xv, yv, zv, dirX, dirY, dirZ);
+
+    gp_Pnt eyePnt(xv, yv, zv);
+    gp_Dir eyeDir(dirX, dirY, dirZ);
 
     CustomPlane plane;
     if (!m_pendingSketch.IsNull() && m_document) {
