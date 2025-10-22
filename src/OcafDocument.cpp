@@ -2,6 +2,7 @@
 #include <TDataStd_TreeNode.hxx>
 #include <TDataStd_RealArray.hxx>
 #include <TDataStd_IntegerArray.hxx>
+#include <TDF_ChildIterator.hxx>
 #include <BinDrivers.hxx>
 #include <QFile>
 
@@ -232,7 +233,7 @@ QString OcafDocument::getFeatureName(TDF_Label label) const {
     Handle(TDataStd_Name) nameAttr;
     if (label.FindAttribute(TDataStd_Name::GetID(), nameAttr)) {
         TCollection_ExtendedString extStr = nameAttr->Get();
-        return QString::fromStdWString(extStr.ToWideString());
+        return QString::fromUtf16(reinterpret_cast<const char16_t*>(extStr.ToExtString()));
     }
     return "Unnamed";
 }
