@@ -3,16 +3,10 @@
 
 #define QT_NO_KEYWORDS
 
-// CRITICAL ORDER:
-// 1. Include ECL first (before any Qt headers)
-// 2. Undefine 'slots' macro to avoid conflict with ECL's object.h
-// 3. Include Qt headers
-// 4. Include other project headers
+#ifdef HAVE_ECL
+#include <ecl/ecl.h>a
+#endif
 
-#include <ecl/ecl.h>
-
-
-// Now safely include Qt headers
 #include <QMainWindow>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -29,31 +23,17 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QInputDialog>
-#include <QSplitter>
-#include <QTableWidget>
-#include <QDoubleSpinBox>
-#include <QHeaderView>
 #include <QStatusBar>
 
 #include "CadView.h"
+#include "OcafDocument.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
-    // Command registry structure
-    struct CommandEntry {
-        QString name;           // Primary command name
-        QString alias;          // Optional alias
-        QString callback;       // Method name to call
-        std::function<void()> func; // Actual function pointer
-    };
-
 public:
     MainWindow();
     ~MainWindow();
-
-    bool isCommandInputEmpty() const;
-    void loadFileFromCommandLine(const QString& filename);
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -64,19 +44,13 @@ private Q_SLOTS:
     void fadeOutResult();
     void onPointAcquired(QVector2D point);
     void onGetPointCancelled();
-    void onGetPointKeyPressed(QString key);
-    void updateGetPointFocus();
 
-    // CAD command handlers
     void onDrawRectangle();
     void onDrawLine();
-    void onDrawArc();
-    void onDrawCircle();
     void onCreateSketch();
     void onCreateExtrude();
     void onSave();
     void onLoad();
-    void onLoadLisp();
     void onPrint();
     void onExportPdf();
     void onViewTop();
@@ -84,79 +58,19 @@ private Q_SLOTS:
     void onViewRight();
     void onViewIsometric();
     void onExit();
-    void onToggleObjectSnap();
-    void onReturnFromSketch();
-    void onToggleSketchVisibility();
-    void onTreeContextMenu(const QPoint& pos);
-    void onEditSketch();
-    void onEditExtrude();
+
+    void onFeatureSelected(QTreeWidgetItem* item, int column);
+    void updateFeatureTree();
 
 private:
-    // Unified command system
-    struct CADCommand {
-        QString name;
-        QStringList aliases;
-        std::function<void(const QStringList&)> handler;
-        int expectedArgs; // -1 = variable, 0+ = fixed count
-        QString description;
-        bool interactive; // Whether command needs interactive point input
-        QString qtSlot; // Qt slot/method name for menu/toolbar binding
-    };
-
-    QHash<QString, CADCommand> cadCommands;
-
-    void registerCADCommand(const QString& name,
-                            const QStringList& aliases,
-                            int expectedArgs,
-                            const QString& description,
-                            bool interactive,
-                            const QString& qtSlot,
-                            std::function<void(const QStringList&)> handler);
-    void executeCADCommand(const QString& name, const QStringList& args);
-    void initializeCADCommands();
-    void autoLoadFiles();
-    void loadLispFile(const QString& filename);
-
-    // Helper to parse Lisp-style points
-    QVector2D parseLispPoint(const QString& str);
-    QStringList parseLispList(const QString& str);
-
-    // CAD UI
     void createMenusAndToolbars();
     void createCentral();
     void createFeatureBrowser();
 
-    // Command system
-    void loadMenuConfig(const QString& filename);
-    void registerCommand(const QString& name, const QString& alias, std::function<void()> func);
-    bool executeRegisteredCommand(const QString& cmdName);
-
-    void updateFeatureTree();
-    void onFeatureSelected(QTreeWidgetItem* item, int column);
-    void createRectangleEntity(std::shared_ptr<SketchNode> sketch,
-                               const QVector2D& corner1,
-                               const QVector2D& corner2);
-
-    // Helper methods for rectangle command
-    QVector2D parsePoint(const QString& ptStr);
-    void startRectangleWithFirstPoint(const QVector2D& pt1);
-    void drawRectangleDirect(const QVector2D& pt1, const QVector2D& pt2);
-    void setActiveSketch(std::shared_ptr<SketchNode> sketch);
-
-    // Command registry
-    QVector<CommandEntry> commands;
-    QHash<QString, QAction*> actions;
-    QHash<QString, QMenu*> menus;
-
-    QTreeWidget* featureTree;
-    CadView *m_view;
-    QStatusBar* statusBar;
-
-    // ECL/Lisp integration
+#ifdef HAVE_ECL
     void initECL();
     void toggleConsole();
     void showResultTemporarily(const QString &result);
-    void defineCADCommands();
     void setPrompt(const QString &prompt);
 
     QPlainTextEdit *consoleOutput;
@@ -174,40 +88,30 @@ private:
     bool consoleVisible;
     QString promptText;
     int promptLength;
+#endif
 
-    // GetPoint state management
-    struct GetPointRequest {
-        bool active = false;
-        QString prompt;
-        bool hasPreviousPoint = false;
-        QVector2D previousPoint;
-        std::function<void(QVector2D)> callback;
-        std::function<void(QVector2D)> pendingCallback;
+    void registerCommand(const QString& name, const QString& alias, std::function<void()> func);
+
+    QTreeWidget* featureTree;
+    CadView *m_view;
+    QStatusBar* statusBar;
+
+    OcafDocument m_document;
+
+    TDF_Label m_pendingSketch;
+    TDF_Label m_activeSketch;
+
+    QVector<QVector2D> m_rectanglePoints;
+    bool m_waitingForSecondPoint;
+
+    struct CommandEntry {
+        QString name;
+        QString alias;
+        std::function<void()> func;
     };
-    GetPointRequest currentGetPointRequest;
-
-    void setupGetPointECLInterface();
-
-    QDockWidget* comboDock;
-    QTabWidget* comboView;
-    QWidget* taskWidget;
-    QWidget* modelWidget;
-    QSplitter* modelSplitter;
-    QTabWidget* propertyTabs;
-    QTableWidget* dataTable;
-    QTextEdit* viewText;
-    QPushButton* returnButton;
-    QTreeWidgetItem* contextMenuItem;
-    QWidget* propertyWidget;
-
-    void createPropertyWidget();
-    void showPropertyWidget(const QString& title);
-    void hidePropertyWidget();
-    void createTaskWidget();
-    void createModelWidget();
-    void showTaskWidget(const QString& title);
-    void hideTaskWidget();
-    void updatePropertySheets(std::shared_ptr<FeatureNode> feature);
-    void clearPropertySheets();
+    QVector<CommandEntry> commands;
+    QHash<QString, QAction*> actions;
+    QHash<QString, QMenu*> menus;
 };
-#endif // MAINWINDOW_H
+
+#endif

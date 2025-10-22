@@ -10,6 +10,41 @@ unix {
 
     # GCC specific options
     QMAKE_CXXFLAGS += -Wall -Wextra
+    # --- OCCT 8.0.0 paths ---
+    OCCT_DIR = /usr/local/occt
+
+    INCLUDEPATH += $$OCCT_DIR/include/opencascade
+    LIBS += -L$$OCCT_DIR/lib -Wl,-rpath,$$OCCT_DIR/lib
+
+    # Essential OCCT libraries
+    LIBS += -lTKernel \
+            -lTKMath \
+            -lTKG2d \
+            -lTKG3d \
+            -lTKGeomBase \
+            -lTKBRep \
+            -lTKTopAlgo \
+            -lTKPrim \
+            -lTKV3d \
+            -lTKOpenGl \
+            -lTKService \
+            -lTKLCAF \
+            -lTKCAF \
+            -lTKCDF \
+            -lTKVCAF \
+            -lTKMesh \
+            -lTKHLR \
+            -lTKBO \
+            -lTKBool \
+            -lTKOffset \
+            -lTKFillet \
+            -lTKXSBase
+
+    # Link X11 (required for OpenGL context)
+    LIBS += -lX11 -lXext
+
+    DEFINES += __linux__
+    QMAKE_CXXFLAGS += -std=c++11
 
     # ECL headers (adjust path if needed)
     INCLUDEPATH += /usr/include/ecl
@@ -35,6 +70,40 @@ win32 {
     CONFIG += c++17
     LIBS += -lopengl32
     DEFINES += _USE_MATH_DEFINES
+    # --- OCCT 7.8.0 paths ---
+    OCC_INC = D:/Git/OCCT/OCCT-install/inc
+    OCC_LIB = D:/Git/OCCT/OCCT-install/win64/vc14/lib
+    OCC_BIN = D:/Git/OCCT/OCCT-install/win64/vc14/bin
+
+    INCLUDEPATH += $$OCC_INC
+    LIBS += -L$$OCC_LIB
+
+    # Add PATH for DLLs during execution
+    QMAKE_POST_LINK += $$quote(cmd /C "set PATH=$$OCC_BIN;%PATH% && echo Added OCCT bin to PATH")
+
+    # OCCT core libs (adjusted for 7.8.0)
+    LIBS += -lTKernel \
+            -lTKMath \
+            -lTKG2d \
+            -lTKG3d \
+            -lTKGeomBase \
+            -lTKBRep \
+            -lTKTopAlgo \
+            -lTKPrim \
+            -lTKV3d \
+            -lTKOpenGl \
+            -lTKService \
+            -lTKLCAF \
+            -lTKCAF \
+            -lTKCDF \
+            -lTKVCAF \
+            -lTKMesh \
+            -lTKHLR \
+            -lTKBO \
+            -lTKBool \
+            -lTKOffset \
+            -lTKFillet \
+            -lTKXSBase
 
     # ECL paths - ADJUST THESE TO YOUR ECL INSTALLATION
     INCLUDEPATH += D:/Git/ecl/v24.5.10/vc143-x64
@@ -55,12 +124,14 @@ win32 {
 
 SOURCES += \
     src/CadView.cpp \
+    src/OcafDocument.cpp \
     src/main.cpp \
     src/MainWindow.cpp
 
 HEADERS += \
     src/CadView.h \
-    src/MainWindow.h
+    src/MainWindow.h \
+    src/OcafDocument.h
 
 RESOURCES += \
     resources.qrc

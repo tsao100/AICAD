@@ -1,23 +1,35 @@
 #ifndef CADVIEW_H
 #define CADVIEW_H
 
-#include <QOpenGLWidget>
-#include <QOpenGLFunctions>
-#include <QMatrix4x4>
-#include <QVector3D>
-#include <QPrinter>
-#include <QPainter>
-#include <QPdfWriter>
+#include <QWidget>
 #include <QMouseEvent>
 #include <QWheelEvent>
-#include <QFile>
-#include <vector>
-#include <cmath>
+#include <QKeyEvent>
 
-enum class FeatureType {
-    Sketch,
-    Extrude,
-    // Later: Revolve, Fillet, Boolean, etc.
+#include <AIS_InteractiveContext.hxx>
+#include <V3d_View.hxx>
+#include <V3d_Viewer.hxx>
+#include <Aspect_DisplayConnection.hxx>
+#include <Aspect_Handle.hxx>
+#include <OpenGl_GraphicDriver.hxx>
+#include <AIS_Shape.hxx>
+#include <AIS_ViewCube.hxx>
+
+#include "OcafDocument.h"
+
+#include <QVector2D>
+#include <QVector3D>
+#include <QPoint>
+
+enum class SketchView {
+    None,
+    Top,
+    Bottom,
+    Front,
+    Back,
+    Right,
+    Left,
+    Isometric
 };
 
 enum class CadMode {
@@ -27,705 +39,87 @@ enum class CadMode {
     SelectingFace
 };
 
-// Rubber band drawing system
 enum class RubberBandMode {
     None,
     Line,
     Rectangle,
-    Polyline,
-    Arc,
-    Circle
+    Polyline
 };
 
-struct CustomPlane {
-    QVector3D origin;
-    QVector3D normal;
-    QVector3D uAxis;
-    QVector3D vAxis;
+class OcafDocument;
 
-    // Predefined plane constructors
-    static CustomPlane XY() {
-        CustomPlane p;
-        p.origin = QVector3D(0, 0, 0);
-        p.normal = QVector3D(0, 0, 1);
-        p.uAxis = QVector3D(1, 0, 0);
-        p.vAxis = QVector3D(0, 1, 0);
-        return p;
-    }
-
-    static CustomPlane XZ() {
-        CustomPlane p;
-        p.origin = QVector3D(0, 0, 0);
-        p.normal = QVector3D(0, 1, 0);
-        p.uAxis = QVector3D(1, 0, 0);
-        p.vAxis = QVector3D(0, 0, 1);
-        return p;
-    }
-
-    static CustomPlane YZ() {
-        CustomPlane p;
-        p.origin = QVector3D(0, 0, 0);
-        p.normal = QVector3D(1, 0, 0);
-        p.uAxis = QVector3D(0, 1, 0);
-        p.vAxis = QVector3D(0, 0, 1);
-        return p;
-    }
-
-    void save(QTextStream& out) const {
-        out << origin.x() << " " << origin.y() << " " << origin.z() << " "
-            << normal.x() << " " << normal.y() << " " << normal.z() << " "
-            << uAxis.x() << " " << uAxis.y() << " " << uAxis.z() << " "
-            << vAxis.x() << " " << vAxis.y() << " " << vAxis.z() << " ";
-    }
-
-    void load(QTextStream& in) {
-        float ox, oy, oz, nx, ny, nz, ux, uy, uz, vx, vy, vz;
-        in >> ox >> oy >> oz >> nx >> ny >> nz >> ux >> uy >> uz >> vx >> vy >> vz;
-        origin = QVector3D(ox, oy, oz);
-        normal = QVector3D(nx, ny, nz);
-        uAxis = QVector3D(ux, uy, uz);
-        vAxis = QVector3D(vx, vy, vz);
-    }
-
-    QString getDisplayName() const {
-        // Detect standard planes
-        if (normal == QVector3D(0, 0, 1) && origin == QVector3D(0, 0, 0))
-            return "XY";
-        if (normal == QVector3D(0, 1, 0) && origin == QVector3D(0, 0, 0))
-            return "XZ";
-        if (normal == QVector3D(1, 0, 0) && origin == QVector3D(0, 0, 0))
-            return "YZ";
-        return QString("Custom (%1, %2, %3)").arg(normal.x(), 0, 'f', 2)
-                                             .arg(normal.y(), 0, 'f', 2)
-                                             .arg(normal.z(), 0, 'f', 2);
-    }
-};
-
-inline CustomPlane createPlane(const QVector3D& origin, const QVector3D& normalInput)
-{
-    CustomPlane plane;
-    plane.origin = origin;
-    QVector3D normal = normalInput.normalized();
-    plane.normal = normal;
-    QVector3D helper = (fabs(normal.x()) > 0.9f) ? QVector3D(0, 1, 0) : QVector3D(1, 0, 0);
-    plane.uAxis = QVector3D::crossProduct(normal, helper).normalized();
-    plane.vAxis = QVector3D::crossProduct(normal, plane.uAxis).normalized();
-    return plane;
-}
-
-struct Face {
-    QVector<QVector3D> vertices; // Face vertices in 3D
-    QVector3D normal;             // Face normal
-    QVector3D center;             // Face center point
-    int featureId;                // Parent feature ID
-    int faceIndex;                // Index within feature
-
-    CustomPlane toCustomPlane() const {
-        return createPlane(center, normal);
-    }
-};
-
-struct FeatureNode {
-    int id;
-    FeatureType type;
-    QString name;   // user-facing name
-    QVector<int> parents; // IDs of parent nodes (dependencies)
-    QVector<int> children;
-
-    virtual ~FeatureNode() {}
-    virtual void evaluate() = 0;  // recompute geometry
-    virtual void draw() const = 0;
-    virtual void save(QTextStream& out) const = 0;
-    virtual void load(QTextStream& in) = 0;
-};
-
-struct Rectangle2D {
-    QVector2D p1;
-    QVector2D p2;
-};
-
-enum class EntityType {
-    Line,
-    Arc,
-    Polyline,
-    Spline,
-    Extrude
-};
-
-struct Entity {
-    EntityType type;
-    CustomPlane plane;
-    int id;                // unique ID for entity
-    QString layer;         // optional: layer or group
-
-    virtual ~Entity() {}
-    virtual void draw() const = 0;
-    virtual void save(QTextStream& out) const = 0;
-    virtual void load(QTextStream& in) = 0;
-};
-
-/*
-struct LineEntity : public Entity {
-    QVector3D p1, p2;
-
-    LineEntity() { type = EntityType::Line; }
-
-    void draw() const override;
-    void save(QTextStream& out) const override {
-        out << "Line " << static_cast<int>(plane) << " " << p1.x() << " " << p1.y() << " " << p1.z()
-            << " " << p2.x() << " " << p2.y() << " " << p2.z() << "\n";
-    }
-    void load(QTextStream& in) override {
-        int planeInt;
-        in >> planeInt;
-        plane = static_cast<SketchPlane>(planeInt);
-
-        float x, y, z;
-        in >> x >> y >> z;
-        p1 = QVector3D(x, y, z);
-
-        in >> x >> y >> z;
-        p2 = QVector3D(x, y, z);
-    }
-};
-
-struct ArcEntity : public Entity {
-    QVector3D center;
-    float radius;
-    float startAngle, endAngle; // degrees
-
-    ArcEntity() { type = EntityType::Arc; }
-
-    void draw() const override;
-    void save(QTextStream& out) const override {
-        out << "Arc " << static_cast<int>(plane) << " "
-            << center.x() << " " << center.y() << " " << center.z()
-            << " " << radius << " " << startAngle << " " << endAngle << "\n";
-    }
-    void load(QTextStream& in) override {
-        int planeInt;
-        in >> planeInt;
-        plane = static_cast<SketchPlane>(planeInt);
-
-        float x, y, z;
-        in >> x >> y >> z;
-        center = QVector3D(x, y, z);
-
-        in >> radius >> startAngle >> endAngle;
-    }
-};
-*/
-struct PolylineEntity : public Entity {
-    QVector<QVector2D> points;
-
-    PolylineEntity() { type = EntityType::Polyline; }
-
-    void draw() const override {
-        if (points.isEmpty()) return;
-        glColor3f(1, 1, 1);
-        glBegin(GL_LINE_STRIP);
-        for (const auto& p : points) {
-            glVertex3f(p.x(), p.y(), 0.0f);
-        }
-        glEnd();
-    }
-
-    void save(QTextStream& out) const override {
-        out << "Polyline ";
-        plane.save(out);
-        out << points.size();
-        for (const auto& p : points)
-            out << " " << p.x() << " " << p.y();
-        out << "\n";
-    }
-
-    void load(QTextStream& in) override {
-        plane.load(in);
-        int n;
-        in >> n;
-        points.resize(n);
-        for (int i = 0; i < n; ++i){
-            float x, y;
-            in >> x >> y;
-            points[i] = QVector2D(x, y);
-        }
-    }
-};
-/*
-struct SplineEntity : public Entity {
-    QVector<QVector3D> controlPoints;
-
-    SplineEntity() { type = EntityType::Spline; }
-
-    void draw() const override;
-
-    void save(QTextStream& out) const override {
-        out << "Spline " << static_cast<int>(plane) << " " << controlPoints.size();
-        for (const auto& p : controlPoints)
-            out << " " << p.x() << " " << p.y() << " " << p.z();
-        out << "\n";
-    }
-
-    void load(QTextStream& in) override {
-        int planeInt, n;
-        in >> planeInt >> n;
-        plane = static_cast<SketchPlane>(planeInt);
-
-        controlPoints.resize(n);
-        for (int i = 0; i < n; ++i){
-            float x, y, z;
-            in >> x >> y >> z;
-            controlPoints[i] = QVector3D(x, y, z);}
-    }
-};
-*/
-
-struct SketchNode : public FeatureNode {
-    CustomPlane plane; // Changed from SketchPlane + CustomPlane
-    QVector<std::shared_ptr<Entity>> entities;
-
-    SketchNode() { type = FeatureType::Sketch; }
-
-    void evaluate() override {}
-
-    void draw() const override {
-        for (auto& e : entities) e->draw();
-    }
-
-    void save(QTextStream& out) const override {
-        out << "Sketch " << id << " ";
-        plane.save(out);
-        out << entities.size() << "\n";
-        for (auto& e : entities) e->save(out);
-    }
-
-    void load(QTextStream& in) override {
-        in >> id;
-        plane.load(in);
-        int n;
-        in >> n;
-
-        for (int i = 0; i < n; i++) {
-            QString type;
-            in >> type;
-            std::shared_ptr<Entity> e;
-            if (type == "Polyline") e = std::make_shared<PolylineEntity>();
-            if (e) {
-                e->load(in);
-                entities.push_back(e);
-            }
-        }
-    }
-};
-
-struct ExtrudeNode : public FeatureNode {
-    std::weak_ptr<SketchNode> sketch;
-    float height;
-    QVector3D direction;
-
-    ExtrudeNode() { type = FeatureType::Extrude; }
-
-    void draw() const override {
-        auto s = sketch.lock();
-        if (!s || s->entities.empty()) return;
-
-        auto poly = std::dynamic_pointer_cast<PolylineEntity>(s->entities.front());
-        if (!poly || poly->points.size() < 4) return;
-
-        // Convert 2D points to 3D using plane basis
-        QVector<QVector3D> base3D;
-        for (const auto& pt2d : poly->points) {
-            QVector3D pt3d = s->plane.origin +
-                             s->plane.uAxis * pt2d.x() +
-                             s->plane.vAxis * pt2d.y();
-            base3D.append(pt3d);
-        }
-
-        QVector3D n = direction.normalized();
-        QVector3D offset = n * height;
-
-        // Draw bottom face
-        glColor3f(0.1f, 0.5f, 0.8f);
-        glBegin(GL_QUADS);
-        for (int i = 0; i < 4; ++i) {
-            const QVector3D& p = base3D[i];
-            glVertex3f(p.x(), p.y(), p.z());
-        }
-        glEnd();
-
-        // Draw top face
-        glColor3f(0.1f, 0.5f, 0.8f);
-        glBegin(GL_QUADS);
-        for (int i = 0; i < 4; ++i) {
-            QVector3D p = base3D[i] + offset;
-            glVertex3f(p.x(), p.y(), p.z());
-        }
-        glEnd();
-
-        // Draw side faces
-        glColor3f(0.2f, 0.7f, 1.0f);
-        for (int i = 0; i < 4; ++i) {
-            int j = (i + 1) % 4;
-            QVector3D p1 = base3D[i];
-            QVector3D p2 = base3D[j];
-            QVector3D p3 = p2 + offset;
-            QVector3D p4 = p1 + offset;
-
-            glBegin(GL_QUADS);
-            glVertex3f(p1.x(), p1.y(), p1.z());
-            glVertex3f(p2.x(), p2.y(), p2.z());
-            glVertex3f(p3.x(), p3.y(), p3.z());
-            glVertex3f(p4.x(), p4.y(), p4.z());
-            glEnd();
-        }
-    }
-
-    void save(QTextStream& out) const override {
-        int sketchId = sketch.expired() ? -1 : sketch.lock()->id;
-        out << "Extrude " << id << " " << sketchId << " "
-            << height << " "
-            << direction.x() << " " << direction.y() << " " << direction.z() << "\n";
-    }
-
-    void load(QTextStream& in) override {
-        int sketchId;
-        in >> id >> sketchId >> height;
-        float x, y, z;
-        in >> x >> y >> z;
-        direction = QVector3D(x, y, z);
-        pendingSketchId = sketchId;
-    }
-
-    void resolveSketchLink(const QVector<std::shared_ptr<SketchNode>>& sketches) {
-        if (pendingSketchId < 0) return;
-        for (auto& s : sketches) {
-            if (s->id == pendingSketchId) {
-                sketch = s;
-                break;
-            }
-        }
-        pendingSketchId = -1;
-    }
-
-    void evaluate() override {}
-
-private:
-    int pendingSketchId = -1;
-};
-
-struct Document {
-    QVector<std::shared_ptr<SketchNode>> sketches;
-    QVector<std::shared_ptr<FeatureNode>> features;
-    int nextId = 1;
-
-    void addFeature(const std::shared_ptr<FeatureNode>& f) {
-        f->id = nextId++;
-        f->name = QString("Feature %1").arg(f->id);
-        features.push_back(f);
-    }
-
-    std::shared_ptr<SketchNode> createSketch(const CustomPlane& plane){
-        auto sketch = std::make_shared<SketchNode>();
-        sketch->id = nextId++;
-        sketch->name = QString("Sketch %1 (%2)").arg(sketch->id).arg(plane.getDisplayName());
-        sketch->plane = plane;
-        sketches.push_back(sketch);
-        return sketch;
-    }
-
-    void addDependency(int parentId, int childId) {
-        auto parent = findFeature(parentId);
-        auto child = findFeature(childId);
-        if (parent && child) {
-            parent->children.push_back(childId);
-            child->parents.push_back(parentId);
-        }
-    }
-
-    std::shared_ptr<FeatureNode> findFeature(int id) const {
-        for (auto& f : sketches)
-            if (f->id == id) return f;
-        for (auto& f : features)
-            if (f->id == id) return f;
-         return nullptr;
-    }
-
-    void rebuildAll() {
-        for (auto& f : features) f->evaluate();
-    }
-
-    void drawAll() const {
-        for (auto& f : features) f->draw();
-        for (auto& s : sketches) s->draw();
-    }
-
-    // In Document struct
-    void saveToFile(const QString& filename) {
-        QFile file(filename);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
-        QTextStream out(&file);
-
-        out << "Sketches " << sketches.size() << "\n";
-        for (auto& s : sketches) s->save(out);
-
-        out << "Features " << features.size() << "\n";
-        for (auto& f : features) f->save(out);
-    }
-
-    void loadFromFile(const QString& filename) {
-        QFile file(filename);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
-        QTextStream in(&file);
-
-        sketches.clear();
-        features.clear();
-
-        QString type;
-        int count;
-
-        in >> type >> count;
-        for (int i = 0; i < count; i++) {
-            QString ft;
-            in >> ft;
-            if (ft == "Sketch") {
-                auto s = std::make_shared<SketchNode>();
-                s->load(in);
-                sketches.push_back(s);
-            }
-        }
-
-        in >> type >> count;
-        for (int i = 0; i < count; i++) {
-            QString ft;
-            in >> ft;
-            std::shared_ptr<FeatureNode> f;
-            if (ft == "Extrude") {
-                auto e = std::make_shared<ExtrudeNode>();
-                e->load(in);
-                e->resolveSketchLink(sketches);
-                f = e;
-            }
-            if (f) features.push_back(f);
-        }
-
-        nextId = 1;
-        for (auto& s : sketches) nextId = qMax(nextId, s->id + 1);
-        for (auto& f : features) nextId = qMax(nextId, f->id + 1);
-    }
-};
-
-enum class SketchView {
-    Custom,
-    Top,    // XY
-    Front,  // XZ
-    Right,    // YZ
-    Bottom,
-    Back,
-    Left,
-    ISO
-};
-
-// Embedded Camera class
-class Camera {
-public:
-    Camera();
-
-    void setPerspective(float fov, float aspect, float nearPlane, float farPlane);
-    void setOrthographic(float left, float right, float bottom, float top, float nearPlane, float farPlane);
-
-    QMatrix4x4 getViewMatrix() const;
-    QMatrix4x4 getProjectionMatrix() const;
-
-    void lookAt(const QVector3D& pos, const QVector3D& tgt, const QVector3D& upVec);
-    void orbit(float deltaX, float deltaY);
-    void zoom(float amount);
-
-    void setOrientation(float newPitch, float newYaw, float newDistance); // setter for pitch/yaw/distance
-
-    void scaleOrtho(float scale);
-    void pan(const QVector3D& delta);
-
-    QVector3D position;
-    QVector3D target;
-    QVector3D up;
-    float fov_; // already stored for perspective
-    bool isPerspective() const { return perspectiveMode; }
-    float orthoLeft, orthoRight, orthoBottom, orthoTop;
-
-private:
-    // Projection parameters
-    float nearPlane_, farPlane_;
-    QMatrix4x4 projection;
-    float distance;
-    float pitch; // rotation around X
-    float yaw;   // rotation around Y
-    bool perspectiveMode;
-};
-
-class CadView : public QOpenGLWidget, protected QOpenGLFunctions
-{
+class CadView : public QWidget {
     Q_OBJECT
 
 public:
-    CadView(QWidget* parent = nullptr);
+    explicit CadView(QWidget* parent = nullptr);
     ~CadView();
-    enum class EditMode { None, Sketching, Extruding };
 
+    void setDocument(OcafDocument* doc);
     void setSketchView(SketchView view);
-    QVector3D screenToWorld(const QPoint& screenPos);
-    Document doc;
-    std::shared_ptr<SketchNode> pendingSketch;
-    void highlightFeature(int id);
-    void printView();
-    void exportPdf(const QString &file);
-    void startSketchMode(std::shared_ptr<SketchNode> sketch);
-    void startExtrudeMode(std::shared_ptr<SketchNode> sketch);
+    void refreshView();
 
-    // GetPoint functionality
-    void startGetPoint(const QString& prompt, const QVector2D* previousPt = nullptr);
-    void cancelGetPoint();
+    Handle(AIS_InteractiveContext) getContext() const { return m_context; }
+    Handle(V3d_View) getView() const { return m_view; }
 
-    static void planeBasis(const QVector3D& normal, QVector3D& u, QVector3D& v);
-    QVector2D worldToPlane(const QVector3D& worldPt);
-    QVector3D planeToWorld(const QVector2D& planePt);
+    void displayAllFeatures();
+    void displayFeature(TDF_Label label);
+    void highlightFeature(int featureId);
 
-    void setObjectSnapEnabled(bool enabled) { objectSnapEnabled = enabled; update(); }
-    bool isObjectSnapEnabled() const { return objectSnapEnabled; }
-    void clearSelection();
+    void setMode(CadMode mode) { m_mode = mode; }
+    CadMode getMode() const { return m_mode; }
 
-    // GetPoint state
-    struct GetPointState {
-        bool active = false;
-        QString prompt;
-        bool hasPreviousPoint = false;
-        QVector2D previousPoint;
-        QVector2D currentPoint;
-        bool keyboardMode = false;
-    };
-    GetPointState getPointState;
+    void setRubberBandMode(RubberBandMode mode);
+    void setPendingSketch(TDF_Label sketch);
 
-    struct RubberBandState {
-        RubberBandMode mode = RubberBandMode::None;
-        QVector2D startPoint;
-        QVector2D currentPoint;
-        QVector<QVector2D> intermediatePoints; // For polyline
-        bool active = false;
-    };
+    QVector2D screenToPlane(const QPoint& screenPos);
 
-    RubberBandState rubberBandState;
-    void setActiveSketch(std::shared_ptr<SketchNode> sketch);
-    void exitSketchEdit();
-    void toggleSketchVisibility(int sketchId);
-    bool isSketchVisible(int sketchId) const;
-    std::shared_ptr<SketchNode> getActiveSketch() const { return activeSketch; }
-    void toggleFeatureVisibility(int featureId);
-    bool isFeatureVisible(int featureId) const;
-
-    QVector<Face> getAllFaces() const;
-    Face* pickFace(const QPoint& screenPos);
-    void highlightFace(Face* face);
-    void startFaceSelectionMode();
-    Camera& getCamera() { return camera; }
-    const Camera& getCamera() const { return camera; }
+    SketchView getCurrentView() const { return m_currentView; }
 
 Q_SIGNALS:
-    void featureAdded();
     void pointAcquired(QVector2D point);
     void getPointCancelled();
     void getPointKeyPressed(QString key);
-    void faceSelected(CustomPlane plane);
-    void statusMessage(QString message);
 
 protected:
-    void initializeGL() override;
-    void resizeGL(int w, int h) override;
-    void paintGL() override;
-
+    void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
-    void wheelEvent(QWheelEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
+    QPaintEngine* paintEngine() const override { return nullptr; }
+
 private:
-    void drawAxes();
-    void drawRectangle(const Rectangle2D& rect, Qt::PenStyle style);
-    void drawExtrudedCube(float height, bool ghost);
-    QVector3D mapToPlane(int x, int y);
+    void initializeViewer();
+    void fitAll();
 
-    void drawRubberBandLine(const QVector2D& p1, const QVector2D& p2);
-    void drawRubberBand();
+    TopoDS_Shape createPolylineShape(const QVector<QVector2D>& points, const CustomPlane& plane);
+    TopoDS_Shape createExtrudeShape(TDF_Label sketchLabel, double height);
 
-    QPoint lastMousePos;
-    Rectangle2D currentRect;
-    bool awaitingHeight = false;
-    QVector3D baseP2;
-    float previewHeight = 0.0f;
+    Handle(AIS_InteractiveContext) m_context;
+    Handle(V3d_View) m_view;
+    Handle(V3d_Viewer) m_viewer;
 
-    std::vector<Rectangle2D> extrudedRects;
-    SketchView currentView;
+    OcafDocument* m_document;
 
-    Camera camera;
+    SketchView m_currentView;
+    CadMode m_mode;
+    RubberBandMode m_rubberBandMode;
 
-    int highlightedFeatureId = -1;
-    EditMode editMode = EditMode::None;
-    CadMode mode = CadMode::Idle;
+    TDF_Label m_pendingSketch;
 
-    // Selection and highlighting
-    struct EntityRef {
-        std::shared_ptr<Entity> entity;
-        std::shared_ptr<SketchNode> parentSketch;
-        int entityIndex;
+    QPoint m_lastMousePos;
+    bool m_mousePressed;
+    Qt::MouseButton m_pressedButton;
 
-        bool operator==(const EntityRef& other) const {
-            return entity.get() == other.entity.get();
-        }
-    };
+    QVector<QVector2D> m_sketchPoints;
+    QVector2D m_currentPoint;
+    bool m_hasCurrentPoint;
 
-    EntityRef hoveredEntity;
-    QVector<EntityRef> selectedEntities;
-    bool objectSnapEnabled = true;
-    float snapTolerance = 0.3f; // World units
-
-    // Grip system
-    struct Grip {
-        QVector3D position;
-        EntityRef entityRef;
-        int pointIndex; // Which point in the entity
-        bool hovered = false;
-    };
-    QVector<Grip> activeGrips;
-    int hoveredGripIndex = -1;
-    int draggedGripIndex = -1;
-
-    // Object snap
-    struct SnapPoint {
-        QVector3D position;
-        QString snapType; // "endpoint", "midpoint", "center", "nearest"
-        EntityRef entityRef;
-    };
-    SnapPoint currentSnapPoint;
-    bool snapActive = false;
-
-    // Helper methods
-    EntityRef pickEntity(const QPoint& screenPos);
-    void updateGrips();
-    void drawGrips();
-    void drawSnapMarker(const QVector3D& pos, const QString& snapType);
-    SnapPoint findNearestSnapPoint(const QVector3D& worldPos);
-    float distanceToEntity(const QVector3D& point, const EntityRef& entityRef);
-    QVector<QVector3D> getEntitySnapPoints(const EntityRef& entityRef);
-
-    std::shared_ptr<SketchNode> activeSketch; // Currently editing sketch
-    QSet<int> hiddenSketches; // IDs of hidden sketches
-    QSet<int> hiddenFeatures; // IDs of hidden features
-
-    Face* hoveredFace = nullptr;
-    Face* selectedFace = nullptr;
-
-    void drawFaceHighlight(const Face& face, const QColor& color);
-    void getPlaneBasis(std::shared_ptr<SketchNode> sketch, QVector3D& uAxis, QVector3D& vAxis);
-    QVector<Face> extractFacesFromFeature(std::shared_ptr<FeatureNode> feature);
+    Handle(AIS_ViewCube) m_viewCube;
 };
 
-#endif // CADVIEW_H
+#endif

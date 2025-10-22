@@ -1,1565 +1,452 @@
 #include "CadView.h"
-#include <QKeyEvent>
-#include <QtMath>
+
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <GC_MakeSegment.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Vec.hxx>
+
+#include <Quantity_Color.hxx>
+#include <Aspect_Window.hxx>
+
 #include <QDebug>
-#include <QPrintDialog>
 
-// ---------------- Camera Implementation ----------------
-Camera::Camera() {
-    position = QVector3D(0,0,10);
-    target = QVector3D(0,0,0);
-    up = QVector3D(0,1,0);
-    distance = 10.0f;
-    pitch = -30.0f;
-    yaw = 30.0f;
-    orthoLeft = orthoRight = orthoBottom = orthoTop = 0.0f;
-}
+#ifdef _WIN32
+#include <WNT_Window.hxx>
+#else
+#include <Xw_Window.hxx>
+#endif
 
-void Camera::setPerspective(float fov, float aspect, float nearPlane, float farPlane) {
-    projection.setToIdentity();
-    projection.perspective(fov, aspect, nearPlane, farPlane);
-    perspectiveMode = true;
-    fov_ = fov;  // ✅ store FOV so pan can use it later
-}
+#include <QApplication>
+#include <QPainter>
 
-void Camera::setOrthographic(float left, float right, float bottom, float top, float nearPlane, float farPlane) {
-    orthoLeft = left; orthoRight = right; orthoBottom = bottom; orthoTop = top;
-    nearPlane_ = nearPlane; farPlane_ = farPlane;
-    projection.setToIdentity();
-    projection.ortho(left, right, bottom, top, nearPlane, farPlane);
-    perspectiveMode = false;
-}
-
-QMatrix4x4 Camera::getViewMatrix() const {
-    QMatrix4x4 view;
-    view.lookAt(position, target, up);
-    return view;
-}
-
-QMatrix4x4 Camera::getProjectionMatrix() const {
-    return projection;
-}
-
-void Camera::lookAt(const QVector3D& pos, const QVector3D& tgt, const QVector3D& upVec) {
-    position = pos;
-    target = tgt;
-    up = upVec;
-    distance = (position - target).length();
-}
-
-void Camera::orbit(float deltaX, float deltaY) {
-    // Compute current direction from target to camera
-    QVector3D dir = position - target;
-    float distance = dir.length();
-    dir.normalize();
-
-    // Compute current yaw and pitch from direction
-    float radPitch = qAsin(dir.y());
-    float radYaw = qAtan2(dir.x(), dir.z());
-
-    // Apply deltas
-    radYaw += qDegreesToRadians(deltaX);
-    radPitch += qDegreesToRadians(deltaY);
-
-    // Clamp pitch to avoid gimbal lock
-    radPitch = qBound(qDegreesToRadians(-89.0f), radPitch, qDegreesToRadians(89.0f));
-
-    // Compute new direction
-    dir.setX(qCos(radPitch) * qSin(radYaw));
-    dir.setY(qSin(radPitch));
-    dir.setZ(qCos(radPitch) * qCos(radYaw));
-
-    // Update position
-    position = target + dir * distance;
-}
-
-void Camera::zoom(float amount) {
-    // Direction from camera to target
-    QVector3D viewDir = (target - position).normalized();
-
-    // Move camera along view direction
-    position += viewDir * amount;
-
-    // Prevent flipping through target
-    float minDist = 0.1f;
-    if ((position - target).length() < minDist) {
-        position = target - viewDir * minDist;
-    }
-
-    // Update distance (if you still want to track it separately)
-    distance = (position - target).length();
-}
-
-void Camera::setOrientation(float newPitch, float newYaw, float newDistance) {
-    pitch = newPitch;
-    yaw = newYaw;
-    distance = newDistance;
-    orbit(0,0); // update position
-}
-
-void Camera::scaleOrtho(float scale) {
-    orthoLeft   *= scale;
-    orthoRight  *= scale;
-    orthoBottom *= scale;
-    orthoTop    *= scale;
-    setOrthographic(orthoLeft, orthoRight, orthoBottom, orthoTop, nearPlane_, farPlane_);
-}
-
-void Camera::pan(const QVector3D& delta) {
-    position += delta;
-    target   += delta;
-}
-
-
-// ---------------- CadView Implementation ----------------
 CadView::CadView(QWidget* parent)
-    : QOpenGLWidget(parent), currentView(SketchView::Custom)
+    : QWidget(parent)
+    , m_document(nullptr)
+    , m_currentView(SketchView::Isometric)
+    , m_mode(CadMode::Idle)
+    , m_rubberBandMode(RubberBandMode::None)
+    , m_mousePressed(false)
+    , m_hasCurrentPoint(false)
 {
+    setAttribute(Qt::WA_PaintOnScreen);
+    setAttribute(Qt::WA_NoSystemBackground);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+    setBackgroundRole(QPalette::NoRole);
+
+    initializeViewer();
 }
 
-CadView::~CadView() {}
+CadView::~CadView() {
+}
+
+void CadView::initializeViewer() {
+#ifdef _WIN32
+    Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection();
+#else
+    Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection("");
+#endif
+
+    Handle(OpenGl_GraphicDriver) graphicDriver = new OpenGl_GraphicDriver(displayConnection);
+
+    m_viewer = new V3d_Viewer(graphicDriver);
+    m_viewer->SetDefaultLights();
+    m_viewer->SetLightOn();
+
+    m_view = m_viewer->CreateView();
+
+#ifdef _WIN32
+    Handle(WNT_Window) window = new WNT_Window((Aspect_Handle)winId());
+#else
+    Handle(Xw_Window) window = new Xw_Window(displayConnection, (Aspect_Drawable)winId());
+#endif
+
+    m_view->SetWindow(window);
+    if (!window->IsMapped()) {
+        window->Map();
+    }
+
+    m_view->SetBackgroundColor(Quantity_NOC_GRAY80);
+    m_view->MustBeResized();
+    m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GOLD, 0.08);
+
+    m_context = new AIS_InteractiveContext(m_viewer);
+    m_context->SetDisplayMode(AIS_Shaded, Standard_True);
+
+    m_viewCube = new AIS_ViewCube();
+    m_viewCube->SetBoxColor(Quantity_NOC_GRAY75);
+    m_viewCube->SetSize(55);
+    m_viewCube->SetFontHeight(12);
+    m_viewCube->SetAxesLabels("X", "Y", "Z");
+    m_viewCube->SetTransformPersistence(
+        new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_LOWER, Graphic3d_Vec2i(85, 85)));
+    m_context->Display(m_viewCube, Standard_False);
+
+    setSketchView(SketchView::Isometric);
+}
+
+void CadView::setDocument(OcafDocument* doc) {
+    m_document = doc;
+    displayAllFeatures();
+}
 
 void CadView::setSketchView(SketchView view) {
-    currentView = view;
-    float aspect = float(width())/float(height());
+    m_currentView = view;
 
-    switch(view)
-    {
+    switch(view) {
     case SketchView::Top:
-        camera.lookAt(QVector3D(0,0,10), QVector3D(0,0,0), QVector3D(0,1,0));
-        camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        m_view->SetProj(V3d_Zpos);
         break;
     case SketchView::Bottom:
-        camera.lookAt(QVector3D(0,0,-10), QVector3D(0,0,0), QVector3D(0,1,0));
-        camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        m_view->SetProj(V3d_Zneg);
         break;
     case SketchView::Front:
-        camera.lookAt(QVector3D(0,-10,0), QVector3D(0,0,0), QVector3D(0,0,1));
-        camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        m_view->SetProj(V3d_Yneg);
         break;
     case SketchView::Back:
-        camera.lookAt(QVector3D(0,10,0), QVector3D(0,0,0), QVector3D(0,0,1));
-        camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        m_view->SetProj(V3d_Ypos);
         break;
     case SketchView::Right:
-        camera.lookAt(QVector3D(10,0,0), QVector3D(0,0,0), QVector3D(0,0,1));
-        camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        m_view->SetProj(V3d_Xpos);
         break;
     case SketchView::Left:
-        camera.lookAt(QVector3D(-10,0,0), QVector3D(0,0,0), QVector3D(0,0,1));
-        camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
+        m_view->SetProj(V3d_Xneg);
         break;
-    case SketchView::Custom:
-        // Custom plane view - requires pendingSketch or activeSketch to be set
-        if (pendingSketch) {
-            camera.lookAt(
-                pendingSketch->plane.origin + pendingSketch->plane.normal * 10.0f,
-                pendingSketch->plane.origin,
-                pendingSketch->plane.vAxis
-                );
-            camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
-        } else if (activeSketch) {
-            camera.lookAt(
-                activeSketch->plane.origin + activeSketch->plane.normal * 10.0f,
-                activeSketch->plane.origin,
-                activeSketch->plane.vAxis
-                );
-            camera.setOrthographic(-5*aspect,5*aspect,-5,5,-20,20);
-        }
-        break;
-    case SketchView::ISO:// Isometric / perspective
-        // Standard isometric: rotate 35.264° around X and 45° around Y
-        camera.setOrientation(-35.264f, 45.0f, 15.0f);
-        camera.lookAt(QVector3D(5.773f,5.773f,5.773f), QVector3D(0,0,0), QVector3D(0,0,1));
-        camera.setPerspective(45.0f, aspect, 0.1f, 100.0f);
-        break;
+    case SketchView::Isometric:
     default:
-        camera.setOrientation(-35.264f, 45.0f, 15.0f);
-        camera.lookAt(QVector3D(5.773f,5.773f,5.773f), QVector3D(0,0,0), QVector3D(0,0,1));
-        camera.setPerspective(45.0f, aspect, 0.1f, 100.0f);
+        m_view->SetProj(V3d_XposYnegZpos);
         break;
     }
 
+    fitAll();
     update();
 }
 
-QVector3D CadView::screenToWorld(const QPoint& screenPos) {
-    float x = (2.0f * screenPos.x()) / width() - 1.0f;
-    float y = 1.0f - (2.0f * screenPos.y()) / height();
-    QVector4D rayClip(x, y, -1.0f, 1.0f);
-    QVector4D rayFarClip(x, y, 1.0f, 1.0f);
+void CadView::fitAll() {
+    if (!m_view.IsNull()) {
+        m_view->FitAll();
+        m_view->ZFitAll();
+        update();
+    }
+}
 
-    QMatrix4x4 inv = (camera.getProjectionMatrix() * camera.getViewMatrix()).inverted();
-    QVector4D rayStartWorld = inv * rayClip;
-    QVector4D rayEndWorld   = inv * rayFarClip;
-    rayStartWorld /= rayStartWorld.w();
-    rayEndWorld   /= rayEndWorld.w();
+void CadView::refreshView() {
+    if (!m_view.IsNull()) {
+        m_view->Redraw();
+        update();
+    }
+}
 
-    QVector3D rayOrigin = QVector3D(rayStartWorld);
-    QVector3D rayDir = (QVector3D(rayEndWorld) - rayOrigin).normalized();
+void CadView::displayAllFeatures() {
+    if (!m_document) return;
 
-    QVector3D planeNormal(0,0,1);
-    float planeD = 0.0f;
+    m_context->RemoveAll(Standard_False);
+    m_context->Display(m_viewCube, Standard_False);
 
-    if (pendingSketch) {
-        planeNormal = pendingSketch->plane.normal;
-        planeD = -QVector3D::dotProduct(planeNormal, pendingSketch->plane.origin);
+    QVector<TDF_Label> features = m_document->getFeatures();
+    for (const TDF_Label& label : features) {
+        displayFeature(label);
+    }
+
+    fitAll();
+}
+
+void CadView::displayFeature(TDF_Label label) {
+    if (label.IsNull() || !m_document) return;
+
+    FeatureType type = m_document->getFeatureType(label);
+    TopoDS_Shape shape;
+
+    if (type == FeatureType::Sketch) {
+        QVector<QVector<QVector2D>> polylines = m_document->getSketchPolylines(label);
+        CustomPlane plane = m_document->getSketchPlane(label);
+
+        for (const auto& points : polylines) {
+            if (!points.isEmpty()) {
+                shape = createPolylineShape(points, plane);
+
+                Handle(AIS_Shape) aisShape = new AIS_Shape(shape);
+                aisShape->SetColor(Quantity_NOC_WHITE);
+                aisShape->SetWidth(2.0);
+                m_context->Display(aisShape, Standard_False);
+            }
+        }
+    } else if (type == FeatureType::Extrude) {
+        TDF_Label sketchLabel = m_document->getExtrudeSketch(label);
+        double height = m_document->getExtrudeHeight(label);
+
+        if (sketchLabel.IsNull()) {
+            qWarning() << "Extrude feature" << m_document->getFeatureId(label)
+                       << "references invalid sketch - cannot display";
+            return;
+        }
+
+        shape = createExtrudeShape(sketchLabel, height);
+
+        if (!shape.IsNull()) {
+            m_document->setShape(label, shape);
+
+            Handle(AIS_Shape) aisShape = new AIS_Shape(shape);
+            aisShape->SetColor(Quantity_NOC_LIGHTSTEELBLUE);
+            m_context->Display(aisShape, Standard_False);
+        } else {
+            qWarning() << "Failed to create extrude shape for feature"
+                       << m_document->getFeatureId(label);
+        }
+    }
+
+    m_context->UpdateCurrentViewer();
+}
+
+TopoDS_Shape CadView::createPolylineShape(const QVector<QVector2D>& points, const CustomPlane& plane) {
+    if (points.size() < 2) return TopoDS_Shape();
+
+    try {
+        BRepBuilderAPI_MakeWire wireBuilder;
+
+        for (int i = 0; i < points.size() - 1; ++i) {
+            QVector3D p1_3d = plane.origin + plane.uAxis * points[i].x() + plane.vAxis * points[i].y();
+            QVector3D p2_3d = plane.origin + plane.uAxis * points[i+1].x() + plane.vAxis * points[i+1].y();
+
+            gp_Pnt gp1(p1_3d.x(), p1_3d.y(), p1_3d.z());
+            gp_Pnt gp2(p2_3d.x(), p2_3d.y(), p2_3d.z());
+
+            if (gp1.Distance(gp2) > Precision::Confusion()) {
+                BRepBuilderAPI_MakeEdge edgeBuilder(gp1, gp2);
+                if (edgeBuilder.IsDone()) {
+                    wireBuilder.Add(edgeBuilder.Edge());
+                }
+            }
+        }
+
+        if (wireBuilder.IsDone()) {
+            return wireBuilder.Wire();
+        }
+    } catch (...) {
+    }
+
+    return TopoDS_Shape();
+}
+
+TopoDS_Shape CadView::createExtrudeShape(TDF_Label sketchLabel, double height) {
+    if (sketchLabel.IsNull() || !m_document) return TopoDS_Shape();
+
+    QVector<QVector<QVector2D>> polylines = m_document->getSketchPolylines(sketchLabel);
+    if (polylines.isEmpty()) return TopoDS_Shape();
+
+    CustomPlane plane = m_document->getSketchPlane(sketchLabel);
+
+    const QVector<QVector2D>& points = polylines.first();
+    if (points.size() < 3) return TopoDS_Shape();
+
+    try {
+        BRepBuilderAPI_MakeWire wireBuilder;
+
+        for (int i = 0; i < points.size(); ++i) {
+            int next = (i + 1) % points.size();
+
+            QVector3D p1_3d = plane.origin + plane.uAxis * points[i].x() + plane.vAxis * points[i].y();
+            QVector3D p2_3d = plane.origin + plane.uAxis * points[next].x() + plane.vAxis * points[next].y();
+
+            gp_Pnt gp1(p1_3d.x(), p1_3d.y(), p1_3d.z());
+            gp_Pnt gp2(p2_3d.x(), p2_3d.y(), p2_3d.z());
+
+            if (gp1.Distance(gp2) > Precision::Confusion()) {
+                BRepBuilderAPI_MakeEdge edgeBuilder(gp1, gp2);
+                if (edgeBuilder.IsDone()) {
+                    wireBuilder.Add(edgeBuilder.Edge());
+                }
+            }
+        }
+
+        if (!wireBuilder.IsDone()) return TopoDS_Shape();
+
+        TopoDS_Wire wire = wireBuilder.Wire();
+
+        gp_Pln gpPlane = plane.toGpPln();
+        BRepBuilderAPI_MakeFace faceBuilder(gpPlane, wire);
+
+        if (!faceBuilder.IsDone()) return TopoDS_Shape();
+
+        TopoDS_Face face = faceBuilder.Face();
+
+        gp_Vec extrudeVec(plane.normal.x() * height,
+                          plane.normal.y() * height,
+                          plane.normal.z() * height);
+
+        BRepPrimAPI_MakePrism prismBuilder(face, extrudeVec);
+
+        if (prismBuilder.IsDone()) {
+            return prismBuilder.Shape();
+        }
+    } catch (...) {
+    }
+
+    return TopoDS_Shape();
+}
+
+void CadView::highlightFeature(int featureId) {
+    update();
+}
+
+void CadView::setRubberBandMode(RubberBandMode mode) {
+    m_rubberBandMode = mode;
+    m_sketchPoints.clear();
+    m_hasCurrentPoint = false;
+}
+
+void CadView::setPendingSketch(TDF_Label sketch) {
+    m_pendingSketch = sketch;
+}
+
+QVector2D CadView::screenToPlane(const QPoint& screenPos) {
+    if (m_view.IsNull()) return QVector2D(0, 0);
+
+    Standard_Integer xp = screenPos.x();
+    Standard_Integer yp = screenPos.y();
+
+    Standard_Real xv, yv, zv;
+    m_view->Convert(xp, yp, xv, yv, zv);
+
+    gp_Pnt eyePnt;
+    gp_Dir eyeDir;
+    m_view->ConvertWithProj(xp, yp, xv, yv, zv, eyePnt.ChangeCoord(), eyeDir.ChangeCoord());
+
+    CustomPlane plane;
+    if (!m_pendingSketch.IsNull() && m_document) {
+        plane = m_document->getSketchPlane(m_pendingSketch);
     } else {
-        switch (currentView) {
+        switch (m_currentView) {
         case SketchView::Top:
         case SketchView::Bottom:
-            planeNormal = QVector3D(0,0,1); planeD = 0; break;
+            plane = CustomPlane::XY();
+            break;
         case SketchView::Front:
         case SketchView::Back:
-            planeNormal = QVector3D(0,1,0); planeD = 0; break;
+            plane = CustomPlane::XZ();
+            break;
         case SketchView::Right:
         case SketchView::Left:
-            planeNormal = QVector3D(1,0,0); planeD = 0; break;
+            plane = CustomPlane::YZ();
+            break;
         default:
-            planeNormal = QVector3D(0,0,1); planeD = 0;
+            plane = CustomPlane::XY();
             break;
         }
     }
 
-    float denom = QVector3D::dotProduct(planeNormal, rayDir);
-    if (qFuzzyIsNull(denom)) {
-        return rayOrigin;
-    }
-    float t = -(QVector3D::dotProduct(planeNormal, rayOrigin) + planeD) / denom;
-    return rayOrigin + t * rayDir;
-}
+    gp_Pln gpPlane = plane.toGpPln();
+    gp_Lin line(eyePnt, eyeDir);
 
-void CadView::highlightFeature(int id) {
-    highlightedFeatureId = id;
-    update();
-}
+    IntAna_IntConicQuad intersection(line, gpPlane, Precision::Angular());
 
-// -------------------- Printing --------------------
-void CadView::printView() {
-    QPrinter printer(QPrinter::HighResolution);
-    printer.setPageOrientation(QPageLayout::Landscape);
-    QPrintDialog dlg(&printer,this);
-    if (dlg.exec()==QDialog::Accepted) {
-        QPainter painter(&printer);
-        render(&painter);
-    }
-}
+    if (intersection.IsDone() && intersection.NbPoints() > 0) {
+        gp_Pnt intersectPnt = intersection.Point(1);
 
-void CadView::exportPdf(const QString &file) {
-    QPdfWriter pdf(file);
-    pdf.setPageOrientation(QPageLayout::Landscape);
-    pdf.setPageSize(QPageSize(QPageSize::A4));
+        QVector3D worldPt(intersectPnt.X(), intersectPnt.Y(), intersectPnt.Z());
+        QVector3D localPt = worldPt - plane.origin;
 
-    QPainter painter(&pdf);
-    QRect pageRect = pdf.pageLayout().paintRectPixels(pdf.resolution());
-    QRectF srcRect = rect();
+        float u = QVector3D::dotProduct(localPt, plane.uAxis);
+        float v = QVector3D::dotProduct(localPt, plane.vAxis);
 
-    qreal sx = (qreal)pageRect.width()  / srcRect.width();
-    qreal sy = (qreal)pageRect.height() / srcRect.height();
-    qreal s = qMin(sx, sy);
-
-    painter.translate(pageRect.center());
-    painter.scale(s, s);
-    painter.translate(-srcRect.center());
-    render(&painter); // render widget to PDF
-}
-
-void CadView::startSketchMode(std::shared_ptr<SketchNode> sketch) {
-    pendingSketch = sketch;
-    mode = CadMode::Sketching;
-    update();
-    qDebug() << "Sketch mode started on sketch" << sketch->id;
-}
-
-void CadView::startExtrudeMode(std::shared_ptr<SketchNode> sketch) {
-    editMode = EditMode::Extruding;
-    pendingSketch = sketch;
-
-    if (auto polyline = std::dynamic_pointer_cast<PolylineEntity>(sketch->entities.at(0))) {
-        if (polyline->points.size() >= 2) {
-            currentRect.p1 = polyline->points[0];
-            currentRect.p2 = polyline->points[2];
-        }
+        return QVector2D(u, v);
     }
 
-    awaitingHeight = true;
-    mode = CadMode::Extruding;
-    qDebug() << "Extrude mode started on sketch" << sketch->id;
+    return QVector2D(xv, yv);
 }
 
-void CadView::initializeGL() {
-    initializeOpenGLFunctions();
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.8f,0.8f,0.8f,1.0f);
-}
-
-void CadView::resizeGL(int w, int h) {
-    glViewport(0,0,w,h);
-    setSketchView(currentView);
-}
-
-// ==================== Grip System ====================
-void CadView::updateGrips() {
-    activeGrips.clear();
-
-    for (const auto& entityRef : selectedEntities) {
-        if (entityRef.entity->type == EntityType::Polyline) {
-            auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
-
-            // Use parent sketch for correct plane conversion
-            pendingSketch = entityRef.parentSketch;
-
-            for (int i = 0; i < poly->points.size(); ++i) {
-                Grip grip;
-                grip.position = planeToWorld(poly->points[i]);
-                grip.entityRef = entityRef;
-                grip.pointIndex = i;
-                activeGrips.append(grip);
-            }
-        }
+void CadView::paintEvent(QPaintEvent* event) {
+    if (!m_view.IsNull()) {
+        m_view->InvalidateImmediate();
+        FlushViewEvents(m_context, m_view, Standard_True);
     }
 }
 
-void CadView::drawGrips() {
-    if (activeGrips.isEmpty()) return;
-
-    glDisable(GL_DEPTH_TEST);
-
-    float viewDist = (camera.position - camera.target).length();
-    float gripSize = viewDist * 0.01f;
-
-    if (!camera.isPerspective()) {
-        gripSize = (camera.orthoRight - camera.orthoLeft) * 0.01f;
+void CadView::resizeEvent(QResizeEvent* event) {
+    if (!m_view.IsNull()) {
+        m_view->MustBeResized();
     }
-
-    glPointSize(8.0f);
-
-    for (int i = 0; i < activeGrips.size(); ++i) {
-        const Grip& grip = activeGrips[i];
-
-        if (i == hoveredGripIndex) {
-            glColor3f(1.0f, 0.5f, 0.0f);
-        } else {
-            glColor3f(0.0f, 0.5f, 1.0f);
-        }
-
-        glBegin(GL_POINTS);
-        glVertex3f(grip.position.x(), grip.position.y(), grip.position.z());
-        glEnd();
-
-        QVector3D uAxis, vAxis;
-        getPlaneBasis(grip.entityRef.parentSketch, uAxis, vAxis);
-
-        QVector3D p = grip.position;
-        QVector3D p0 = p - uAxis * gripSize - vAxis * gripSize;
-        QVector3D p1 = p + uAxis * gripSize - vAxis * gripSize;
-        QVector3D p2 = p + uAxis * gripSize + vAxis * gripSize;
-        QVector3D p3 = p - uAxis * gripSize + vAxis * gripSize;
-
-        glBegin(GL_LINE_LOOP);
-        glVertex3f(p0.x(), p0.y(), p0.z());
-        glVertex3f(p1.x(), p1.y(), p1.z());
-        glVertex3f(p2.x(), p2.y(), p2.z());
-        glVertex3f(p3.x(), p3.y(), p3.z());
-        glEnd();
-    }
-
-    glPointSize(1.0f);
-    glEnable(GL_DEPTH_TEST);
-}
-
-// ==================== Object Snap ====================
-QVector<QVector3D> CadView::getEntitySnapPoints(const EntityRef& entityRef) {
-    QVector<QVector3D> points;
-    if (!entityRef.entity) return points;
-
-    // Set correct sketch context
-    pendingSketch = entityRef.parentSketch;
-
-    if (entityRef.entity->type == EntityType::Polyline) {
-        auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
-
-        for (const auto& pt : poly->points) {
-            points.append(planeToWorld(pt));
-        }
-
-        for (int i = 0; i < poly->points.size() - 1; ++i) {
-            QVector2D mid = (poly->points[i] + poly->points[i + 1]) / 2.0f;
-            points.append(planeToWorld(mid));
-        }
-    }
-    return points;
-}
-
-// Add this helper function before drawGrips()
-void CadView::getPlaneBasis(std::shared_ptr<SketchNode> sketch, QVector3D& uAxis, QVector3D& vAxis) {
-    if (!sketch) {
-        uAxis = QVector3D(1, 0, 0);
-        vAxis = QVector3D(0, 1, 0);
-        return;
-    }
-
-    uAxis = sketch->plane.uAxis;
-    vAxis = sketch->plane.vAxis;
-}
-
-QVector<Face> CadView::extractFacesFromFeature(std::shared_ptr<FeatureNode> feature) {
-    QVector<Face> faces;
-
-    if (feature->type != FeatureType::Extrude) return faces;
-
-    auto extrude = std::static_pointer_cast<ExtrudeNode>(feature);
-    auto s = extrude->sketch.lock();
-    if (!s || s->entities.empty()) return faces;
-
-    auto poly = std::dynamic_pointer_cast<PolylineEntity>(s->entities.front());
-    if (!poly || poly->points.size() < 3) return faces;
-
-    // Convert 2D points to 3D using plane basis
-    QVector<QVector3D> base3D;
-    for (const auto& pt2d : poly->points) {
-        QVector3D pt3d = s->plane.origin +
-                         s->plane.uAxis * pt2d.x() +
-                         s->plane.vAxis * pt2d.y();
-        base3D.append(pt3d);
-    }
-
-    QVector3D offset = extrude->direction.normalized() * extrude->height;
-
-    // Bottom face
-    Face bottomFace;
-    bottomFace.vertices = base3D;
-    bottomFace.normal = -extrude->direction.normalized();
-    bottomFace.center = QVector3D(0, 0, 0);
-    for (const auto& v : base3D) bottomFace.center += v;
-    bottomFace.center /= base3D.size();
-    bottomFace.featureId = feature->id;
-    bottomFace.faceIndex = 0;
-    faces.append(bottomFace);
-
-    // Top face
-    Face topFace;
-    for (const auto& v : base3D) {
-        topFace.vertices.append(v + offset);
-    }
-    topFace.normal = extrude->direction.normalized();
-    topFace.center = QVector3D(0, 0, 0);
-    for (const auto& v : topFace.vertices) topFace.center += v;
-    topFace.center /= topFace.vertices.size();
-    topFace.featureId = feature->id;
-    topFace.faceIndex = 1;
-    faces.append(topFace);
-
-    // Side faces
-    for (int i = 0; i < base3D.size() - 1; ++i) {
-        Face sideFace;
-        sideFace.vertices.append(base3D[i]);
-        sideFace.vertices.append(base3D[i + 1]);
-        sideFace.vertices.append(base3D[i + 1] + offset);
-        sideFace.vertices.append(base3D[i] + offset);
-
-        QVector3D edge1 = sideFace.vertices[1] - sideFace.vertices[0];
-        QVector3D edge2 = sideFace.vertices[3] - sideFace.vertices[0];
-        sideFace.normal = QVector3D::crossProduct(edge1, edge2).normalized();
-
-        sideFace.center = QVector3D(0, 0, 0);
-        for (const auto& v : sideFace.vertices) sideFace.center += v;
-        sideFace.center /= 4.0f;
-
-        sideFace.featureId = feature->id;
-        sideFace.faceIndex = 2 + i;
-        faces.append(sideFace);
-    }
-
-    return faces;
-}
-
-QVector<Face> CadView::getAllFaces() const {
-    QVector<Face> allFaces;
-
-    for (auto& feature : doc.features) {
-        allFaces.append(const_cast<CadView*>(this)->extractFacesFromFeature(feature));
-    }
-
-    return allFaces;
-}
-
-Face* CadView::pickFace(const QPoint& screenPos) {
-    QVector3D rayOrigin, rayDir;
-
-    // Get ray direction
-    float x = (2.0f * screenPos.x()) / width() - 1.0f;
-    float y = 1.0f - (2.0f * screenPos.y()) / height();
-    QVector4D rayClip(x, y, -1.0f, 1.0f);
-    QVector4D rayFarClip(x, y, 1.0f, 1.0f);
-
-    QMatrix4x4 inv = (camera.getProjectionMatrix() * camera.getViewMatrix()).inverted();
-    QVector4D rayStartWorld = inv * rayClip;
-    QVector4D rayEndWorld = inv * rayFarClip;
-    rayStartWorld /= rayStartWorld.w();
-    rayEndWorld /= rayEndWorld.w();
-
-    rayOrigin = QVector3D(rayStartWorld);
-    rayDir = (QVector3D(rayEndWorld) - rayOrigin).normalized();
-
-    QVector<Face> allFaces = getAllFaces();
-    Face* closestFace = nullptr;
-    float minDist = std::numeric_limits<float>::max();
-
-    for (int i = 0; i < allFaces.size(); ++i) {
-        Face& face = allFaces[i];
-
-        // Ray-plane intersection
-        float denom = QVector3D::dotProduct(face.normal, rayDir);
-        if (fabs(denom) < 0.0001f) continue; // Parallel
-
-        float t = QVector3D::dotProduct(face.center - rayOrigin, face.normal) / denom;
-        if (t < 0) continue; // Behind camera
-
-        QVector3D hitPoint = rayOrigin + rayDir * t;
-
-        // Check if hit point is inside face polygon
-        bool inside = true;
-        for (int j = 0; j < face.vertices.size(); ++j) {
-            int next = (j + 1) % face.vertices.size();
-            QVector3D edge = face.vertices[next] - face.vertices[j];
-            QVector3D toPoint = hitPoint - face.vertices[j];
-            QVector3D cross = QVector3D::crossProduct(edge, toPoint);
-
-            if (QVector3D::dotProduct(cross, face.normal) < 0) {
-                inside = false;
-                break;
-            }
-        }
-
-        if (inside && t < minDist) {
-            minDist = t;
-            // Store in a persistent location
-            static QVector<Face> faceStorage;
-            if (faceStorage.size() <= i) {
-                faceStorage = allFaces;
-            }
-            closestFace = &faceStorage[i];
-        }
-    }
-
-    return closestFace;
-}
-
-void CadView::drawFaceHighlight(const Face& face, const QColor& color) {
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    // Draw semi-transparent face
-    glColor4f(color.redF(), color.greenF(), color.blueF(), 0.3f);
-    glBegin(GL_POLYGON);
-    for (const auto& v : face.vertices) {
-        glVertex3f(v.x(), v.y(), v.z());
-    }
-    glEnd();
-
-    // Draw border
-    glLineWidth(3.0f);
-    glColor4f(color.redF(), color.greenF(), color.blueF(), 0.8f);
-    glBegin(GL_LINE_LOOP);
-    for (const auto& v : face.vertices) {
-        glVertex3f(v.x(), v.y(), v.z());
-    }
-    glEnd();
-
-    glLineWidth(1.0f);
-    glDisable(GL_BLEND);
-    glEnable(GL_DEPTH_TEST);
-}
-
-void CadView::highlightFace(Face* face) {
-    selectedFace = face;
-    update();
-}
-
-void CadView::startFaceSelectionMode() {
-    mode = CadMode::SelectingFace;
-    setCursor(Qt::CrossCursor);
-    update();
-    qDebug() << "Face selection mode started - click on a face to select";
-}
-
-CadView::SnapPoint CadView::findNearestSnapPoint(const QVector3D& worldPos) {
-    SnapPoint result;
-    result.entityRef.entity = nullptr;
-
-    // Adaptive snap tolerance based on view
-    float viewDist = (camera.position - camera.target).length();
-    float adaptiveSnapTolerance = viewDist * 0.02f;
-
-    if (!camera.isPerspective()) {
-        adaptiveSnapTolerance = (camera.orthoRight - camera.orthoLeft) * 0.015f;
-    }
-
-    float minDist = adaptiveSnapTolerance;
-
-    for (auto& sketch : doc.sketches) {
-        // Set sketch context for correct plane conversion
-        pendingSketch = sketch;
-
-        for (int i = 0; i < sketch->entities.size(); ++i) {
-            EntityRef ref = {sketch->entities[i], sketch, i};
-            QVector<QVector3D> snapPts = getEntitySnapPoints(ref);
-
-            for (const auto& snapPt : snapPts) {
-                float dist = (worldPos - snapPt).length();
-
-                if (dist < minDist) {
-                    minDist = dist;
-                    result.position = snapPt;
-                    result.entityRef = ref;
-                    result.snapType = "endpoint";
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
-void CadView::drawSnapMarker(const QVector3D& pos, const QString& snapType) {
-    glDisable(GL_DEPTH_TEST);
-    glLineWidth(2.0f);
-    glColor3f(0.0f, 1.0f, 0.0f);
-
-    float viewDist = (camera.position - camera.target).length();
-    float size = viewDist * 0.01f;
-
-    if (!camera.isPerspective()) {
-        size = (camera.orthoRight - camera.orthoLeft) * 0.01f;
-    }
-
-    QVector3D uAxis, vAxis;
-    std::shared_ptr<SketchNode> contextSketch =
-        currentSnapPoint.entityRef.parentSketch ?
-            currentSnapPoint.entityRef.parentSketch : pendingSketch;
-
-    getPlaneBasis(contextSketch, uAxis, vAxis);
-
-    QVector3D p0 = pos - uAxis * size - vAxis * size;
-    QVector3D p1 = pos + uAxis * size - vAxis * size;
-    QVector3D p2 = pos + uAxis * size + vAxis * size;
-    QVector3D p3 = pos - uAxis * size + vAxis * size;
-
-    glBegin(GL_LINE_LOOP);
-    glVertex3f(p0.x(), p0.y(), p0.z());
-    glVertex3f(p1.x(), p1.y(), p1.z());
-    glVertex3f(p2.x(), p2.y(), p2.z());
-    glVertex3f(p3.x(), p3.y(), p3.z());
-    glEnd();
-
-    glLineWidth(1.0f);
-    glEnable(GL_DEPTH_TEST);
-}
-
-void CadView::clearSelection() {
-    selectedEntities.clear();
-    activeGrips.clear();
-    hoveredEntity.entity = nullptr;
-    update();
-}
-
-void CadView::setActiveSketch(std::shared_ptr<SketchNode> sketch) {
-    activeSketch = sketch;
-    if (sketch) {
-        pendingSketch = sketch;
-        mode = CadMode::Sketching;
-
-        // Orient camera to sketch plane
-        QString planeName = sketch->plane.getDisplayName();
-
-        if (planeName == "XY") {
-            setSketchView(SketchView::Top);
-        } else if (planeName == "XZ") {
-            setSketchView(SketchView::Front);
-        } else if (planeName == "YZ") {
-            setSketchView(SketchView::Right);
-        } else {
-            setSketchView(SketchView::Custom);
-        }
-    }
-    update();
-}
-
-void CadView::exitSketchEdit() {
-    activeSketch.reset();
-    pendingSketch.reset();
-    mode = CadMode::Idle;
-    setSketchView(SketchView::Custom);
-    update();
-}
-
-void CadView::toggleSketchVisibility(int sketchId) {
-    if (hiddenSketches.contains(sketchId)) {
-        hiddenSketches.remove(sketchId);
-    } else {
-        hiddenSketches.insert(sketchId);
-    }
-    update();
-}
-
-bool CadView::isSketchVisible(int sketchId) const {
-    return !hiddenSketches.contains(sketchId);
-}
-
-void CadView::toggleFeatureVisibility(int featureId) {
-    if (hiddenFeatures.contains(featureId)) {
-        hiddenFeatures.remove(featureId);
-    } else {
-        hiddenFeatures.insert(featureId);
-    }
-    update();
-}
-
-bool CadView::isFeatureVisible(int featureId) const {
-    return !hiddenFeatures.contains(featureId);
-}
-
-void CadView::paintGL() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    QMatrix4x4 projection = camera.getProjectionMatrix();
-    QMatrix4x4 view = camera.getViewMatrix();
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(projection.constData());
-
-    glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixf(view.constData());
-
-    drawAxes();
-
-    // Draw sketches
-    for (auto& sketch : doc.sketches) {
-        // Skip if hidden (regardless of feature usage)
-        if (!isSketchVisible(sketch->id)) {
-            continue;
-        }
-
-        // Check if used by a visible extrude
-        bool usedByVisibleExtrude = false;
-        for (auto& f : doc.features) {
-            if (f->type == FeatureType::Extrude && isFeatureVisible(f->id)) {
-                auto extrude = std::static_pointer_cast<ExtrudeNode>(f);
-                if (auto s = extrude->sketch.lock()) {
-                    if (s->id == sketch->id) {
-                        usedByVisibleExtrude = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Hide sketch if used by visible extrude AND not actively editing
-        if (usedByVisibleExtrude && sketch != activeSketch) {
-            continue;
-        }
-
-        // Set up sketch context
-        pendingSketch = sketch;
-
-        // Draw entities
-        for (int i = 0; i < sketch->entities.size(); ++i) {
-            auto& entity = sketch->entities[i];
-
-            bool isSelected = false;
-            for (const auto& sel : selectedEntities) {
-                if (sel.entity.get() == entity.get()) {
-                    isSelected = true;
-                    break;
-                }
-            }
-
-            bool isHovered = (hoveredEntity.entity.get() == entity.get());
-
-            if (isSelected) {
-                glLineWidth(3.0f);
-                glColor3f(0.0f, 0.8f, 1.0f);
-            } else if (isHovered) {
-                glLineWidth(2.0f);
-                glColor3f(1.0f, 1.0f, 0.0f);
-            } else {
-                glLineWidth(1.0f);
-                glColor3f(1.0f, 1.0f, 1.0f);
-            }
-
-            if (entity->type == EntityType::Polyline) {
-                auto poly = std::dynamic_pointer_cast<PolylineEntity>(entity);
-                if (poly && !poly->points.empty()) {
-                    glBegin(GL_LINE_STRIP);
-                    for (const auto& p : poly->points) {
-                        QVector3D p3d = planeToWorld(p);
-                        glVertex3f(p3d.x(), p3d.y(), p3d.z());
-                    }
-                    glEnd();
-                }
-            }
-        }
-    }
-
-    glLineWidth(1.0f);
-
-    // Draw features
-    for (auto& f : doc.features) {
-        if (!isFeatureVisible(f->id)) {
-            continue;
-        }
-
-        if (f->id == highlightedFeatureId) {
-            glColor3f(1.0f, 0.0f, 0.0f);
-        } else {
-            glColor3f(0.7f, 0.7f, 0.7f);
-        }
-        f->draw();
-    }
-
-    // Draw face highlights
-    if (hoveredFace) {
-        drawFaceHighlight(*hoveredFace, QColor(255, 255, 0));
-    }
-
-    if (selectedFace && selectedFace != hoveredFace) {
-        drawFaceHighlight(*selectedFace, QColor(0, 255, 0));
-    }
-
-    if (awaitingHeight && pendingSketch) {
-        drawExtrudedCube(previewHeight, true);
-    }
-
-    drawGrips();
-
-    if (snapActive && currentSnapPoint.entityRef.entity) {
-        drawSnapMarker(currentSnapPoint.position, currentSnapPoint.snapType);
-    }
-
-    drawRubberBand();
 }
 
 void CadView::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
-        // Check if in face selection mode
-        if (mode == CadMode::SelectingFace) {
-            Face* face = pickFace(event->pos());
-            if (face) {
-                selectedFace = face;
-                emit faceSelected(face->toCustomPlane());
-                mode = CadMode::Idle;
-                update();
-                return;
+    m_lastMousePos = event->pos();
+    m_mousePressed = true;
+    m_pressedButton = event->button();
+
+    if (m_mode == CadMode::Sketching && event->button() == Qt::LeftButton) {
+        QVector2D planePt = screenToPlane(event->pos());
+
+        if (m_rubberBandMode == RubberBandMode::Rectangle) {
+            if (m_sketchPoints.isEmpty()) {
+                m_sketchPoints.append(planePt);
+            } else {
+                m_sketchPoints.append(planePt);
+                Q_EMIT pointAcquired(planePt);
+                m_sketchPoints.clear();
+                m_hasCurrentPoint = false;
             }
+        } else if (m_rubberBandMode == RubberBandMode::Polyline) {
+            m_sketchPoints.append(planePt);
+            Q_EMIT pointAcquired(planePt);
         }
-        // Check grip click first
-        if (hoveredGripIndex >= 0) {
-            draggedGripIndex = hoveredGripIndex;
-            return;
-        }
-
-        // Handle GetPoint mode
-        if (getPointState.active && !getPointState.keyboardMode) {
-            QVector3D worldPos = screenToWorld(event->pos());
-
-            // Use snap point if active
-            if (snapActive && currentSnapPoint.entityRef.entity) {
-                worldPos = currentSnapPoint.position;
-            }
-
-            QVector2D planePt = worldToPlane(worldPos);
-            getPointState.active = false;
-            emit pointAcquired(planePt);
-            update();
-            return;
-        }
-
-        // Entity selection
-        EntityRef picked = pickEntity(event->pos());
-        if (picked.entity) {
-            bool isSelected = false;
-            for (const auto& sel : selectedEntities) {
-                if (sel == picked) {
-                    isSelected = true;
-                    break;
-                }
-            }
-
-            if (!isSelected) {
-                if (!(event->modifiers() & Qt::ShiftModifier)) {
-                    selectedEntities.clear();
-                }
-                selectedEntities.append(picked);
-                updateGrips();
-            }
-            update();
-            return;
-        } else {
-            // Clicked empty space - clear selection
-            if (!(event->modifiers() & Qt::ShiftModifier)) {
-                selectedEntities.clear();
-                activeGrips.clear();
-                update();
-            }
-        }
-
-        // Handle GetPoint mode FIRST (highest priority)
-        if (getPointState.active && !getPointState.keyboardMode) {
-            QVector3D worldPos = screenToWorld(event->pos());
-            QVector2D planePt = worldToPlane(worldPos);
-
-            getPointState.active = false;
-            emit pointAcquired(planePt);
-            update();
-            return;
-        }
-
-        // Handle Extrude mode
-        if (mode == CadMode::Extruding && awaitingHeight && pendingSketch) {
-            QVector3D worldPos = screenToWorld(event->pos());
-
-            // Calculate height as projection along plane normal
-            QVector3D baseCenter = planeToWorld((currentRect.p1 + currentRect.p2) / 2.0f);
-            QVector3D toPoint = worldPos - baseCenter;
-            float height = QVector3D::dotProduct(toPoint, pendingSketch->plane.normal);
-            height = qAbs(height); // Always positive
-
-            auto extrude = std::make_shared<ExtrudeNode>();
-            extrude->sketch = pendingSketch;
-            extrude->height = height;
-            extrude->direction = pendingSketch->plane.normal;
-            extrude->evaluate();
-            doc.addFeature(extrude);
-
-            emit featureAdded();
-
-            awaitingHeight = false;
-            pendingSketch.reset();
-            mode = CadMode::Idle;
-            update();
-            return;
-        }
-    }
-
-    if (event->button() == Qt::RightButton) {
-        // Cancel getpoint on right-click
-        if (getPointState.active) {
-            cancelGetPoint();
-            return;
-        }
-        lastMousePos = event->pos();
-    }
-
-    if (event->button() == Qt::MiddleButton) {
-        lastMousePos = event->pos();
-        setCursor(Qt::ClosedHandCursor);
     }
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
-    if (mode == CadMode::SelectingFace) {
-        Face* face = pickFace(event->pos());
-        if (face) {
-            QString msg = QString("Face %1 of Feature %2 - Normal: (%3, %4, %5)")
-                              .arg(face->faceIndex)
-                              .arg(face->featureId)
-                              .arg(face->normal.x(), 0, 'f', 2)
-                              .arg(face->normal.y(), 0, 'f', 2)
-                              .arg(face->normal.z(), 0, 'f', 2);
-            emit statusMessage(msg);
-        }
-    }
-    // Update face hover
-    if (mode == CadMode::SelectingFace || mode == CadMode::Idle) {
-        Face* face = pickFace(event->pos());
-        if (face != hoveredFace) {
-            hoveredFace = face;
-            update();
-        }
-    }
-    // Update rubber band for GetPoint
-    if (getPointState.active && getPointState.hasPreviousPoint && !getPointState.keyboardMode) {
-        QVector3D worldPos = screenToWorld(event->pos());
-        rubberBandState.currentPoint = worldToPlane(worldPos);
-        rubberBandState.active = true;
+    if (m_mode == CadMode::Sketching) {
+        m_currentPoint = screenToPlane(event->pos());
+        m_hasCurrentPoint = true;
         update();
         return;
     }
 
-    // Update hover state
-    if (!(draggedGripIndex >= 0)) {
-        EntityRef hovered = pickEntity(event->pos());
-        if (!(hovered == hoveredEntity)) {
-            hoveredEntity = hovered;
-            update();
-        }
+    if (m_mousePressed && !m_view.IsNull()) {
+        int dx = event->pos().x() - m_lastMousePos.x();
+        int dy = event->pos().y() - m_lastMousePos.y();
 
-        // Check grip hover with adaptive tolerance
-        if (!selectedEntities.isEmpty() && !(draggedGripIndex >= 0)) {
-            QVector3D worldPos = screenToWorld(event->pos());
-            hoveredGripIndex = -1;
-
-            // Adaptive tolerance based on view distance
-            float viewDist = (camera.position - camera.target).length();
-            float adaptiveTolerance = viewDist * 0.03f;
-
-            if (!camera.isPerspective()) {
-                adaptiveTolerance = (camera.orthoRight - camera.orthoLeft) * 0.02f;
-            }
-
-            for (int i = 0; i < activeGrips.size(); ++i) {
-                float dist = (worldPos - activeGrips[i].position).length();
-                if (dist < adaptiveTolerance) {
-                    hoveredGripIndex = i;
-                    break;
-                }
-            }
-            update();
-        }
-    }
-
-    // Handle grip dragging
-    if (draggedGripIndex >= 0 && (event->buttons() & Qt::LeftButton)) {
-        QVector3D worldPos = screenToWorld(event->pos());
-
-        Grip& grip = activeGrips[draggedGripIndex];
-
-        // Set correct sketch context for plane conversion
-        pendingSketch = grip.entityRef.parentSketch;
-
-        QVector2D planePt = worldToPlane(worldPos);
-
-        auto poly = std::dynamic_pointer_cast<PolylineEntity>(grip.entityRef.entity);
-
-        if (poly && grip.pointIndex < poly->points.size()) {
-            poly->points[grip.pointIndex] = planePt;
-            updateGrips();
-        }
-        update();
-        return;
-    }
-
-    // Object snap during getpoint
-    if (getPointState.active && objectSnapEnabled) {
-        QVector3D worldPos = screenToWorld(event->pos());
-        SnapPoint snap = findNearestSnapPoint(worldPos);
-
-        if (snap.entityRef.entity) {
-            snapActive = true;
-            currentSnapPoint = snap;
-            rubberBandState.currentPoint = worldToPlane(snap.position);
-        } else {
-            snapActive = false;
-            rubberBandState.currentPoint = worldToPlane(worldPos);
-        }
-
-        rubberBandState.active = getPointState.hasPreviousPoint;
-        update();
-        return;
-    }
-
-    // ... existing mouse move handling ...
-    if ((event->buttons() & Qt::RightButton) && currentView == SketchView::Custom) {
-        int dx = event->pos().x() - lastMousePos.x();
-        int dy = event->pos().y() - lastMousePos.y();
-        camera.orbit(-dy * 0.5f, -dx * 0.5f);
-        lastMousePos = event->pos();
-        update();
-        return;
-    }
-
-    if (event->buttons() & Qt::MiddleButton) {
-        QPoint delta = event->pos() - lastMousePos;
-        lastMousePos = event->pos();
-        float aspect = float(width()) / float(qMax(1, height()));
-
-        if (camera.isPerspective()) {
-            float fovY = camera.fov_ * M_PI / 180.0f;
-            float tanHalfFov = tan(fovY / 2.0f);
-
-            float viewHeightAtTarget = 2.0f * (camera.position - camera.target).length() * tanHalfFov;
-            float viewWidthAtTarget  = viewHeightAtTarget * aspect;
-
-            float dx = (float(delta.y()) / qMax(1, height())) * viewHeightAtTarget;
-            float dy = (float(delta.x()) / qMax(1, width()))  * viewWidthAtTarget;
-
-            QMatrix4x4 view = camera.getViewMatrix();
-
-            QVector3D right(view(0,0), view(1,0), view(2,0));
-            QVector3D up   (view(0,1), view(1,1), view(2,1));
-
-            camera.pan(dx * right + dy * up);
-        }
-        else {
-            float scale = 0.01f;
-            QVector3D panDelta(-delta.x() * scale, delta.y() * scale, 0);
-
-            QMatrix4x4 view = camera.getViewMatrix();
-            QVector3D right(view(0,0), view(1,0), view(2,0));
-            QVector3D up(view(0,1), view(1,1), view(2,1));
-
-            camera.pan(right * panDelta.x() + up * panDelta.y());
+        if (m_pressedButton == Qt::MiddleButton) {
+            m_view->Pan(dx, -dy);
+        } else if (m_pressedButton == Qt::RightButton) {
+            m_view->Rotation(event->pos().x(), event->pos().y());
         }
 
         update();
-        return;
     }
 
-    if (!awaitingHeight) {
-        QVector3D worldPos = screenToWorld(event->pos());
-        currentRect.p2 = worldToPlane(worldPos); // ✅ Convert 3D to 2D
-        update();
-    }
-
-    if (mode == CadMode::Extruding && awaitingHeight) {
-        QVector3D worldPos = screenToWorld(event->pos());
-        QVector3D baseCenter = planeToWorld((currentRect.p1 + currentRect.p2) / 2.0f);
-        QVector3D toPoint = worldPos - baseCenter;
-        previewHeight = qAbs(QVector3D::dotProduct(toPoint, pendingSketch->plane.normal));
-        update();
-    }
-}
-
-void CadView::wheelEvent(QWheelEvent* event) {
-    float numSteps = event->angleDelta().y() * 0.001f;  // scale factor
-    QPoint cursorPos = event->position().toPoint();
-
-    // 1. Get world coordinate under cursor BEFORE zoom
-    QVector3D before = screenToWorld(cursorPos);
-
-    if (currentView == SketchView::Custom) {
-        // Free orbit/perspective mode zoom
-        camera.zoom(numSteps * 10.0f);
-    } else {
-        // Orthographic zoom (scale projection window)
-        float scale = (numSteps > 0) ? 0.9f : 1.1f;
-        camera.scaleOrtho(scale);
-    }
-
-    // 2. Get world coordinate under cursor AFTER zoom
-    QVector3D after = screenToWorld(cursorPos);
-
-    // 3. Shift camera target so "before" stays under cursor
-    QVector3D delta = before - after;
-    camera.pan(delta);
-
-    update();
+    m_lastMousePos = event->pos();
 }
 
 void CadView::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
-        draggedGripIndex = -1;
-    }
-
-    if (event->button() == Qt::MiddleButton) {
-        setCursor(Qt::ArrowCursor); // ✅ restore cursor
-    }
+    m_mousePressed = false;
 }
 
+void CadView::wheelEvent(QWheelEvent* event) {
+    if (!m_view.IsNull()) {
+        Standard_Real currentScale = m_view->Scale();
+        Standard_Real delta = event->angleDelta().y() / 120.0;
+        Standard_Real newScale = currentScale * (1.0 + delta * 0.1);
+        m_view->SetScale(newScale);
+        update();
+    }
+}
 
 void CadView::keyPressEvent(QKeyEvent* event) {
-    // Handle GetPoint keyboard input mode
-    if (getPointState.active) {
+    if (m_mode == CadMode::Sketching) {
         if (event->key() == Qt::Key_Escape) {
-            cancelGetPoint();
-            return;
-        }
-
-        // NEW: Forward any printable key to MainWindow's CommandInput
-        if (!event->text().isEmpty() && event->text()[0].isPrint()) {
-            getPointState.keyboardMode = true;
-            // Signal MainWindow to activate commandInput AND insert the key
-            emit getPointKeyPressed(event->text());
-            return;
-        }
-    }
-
-    // ... existing key handling ...
-    switch(event->key())
-    {
-    case Qt::Key_U: setSketchView(SketchView::Top); break;
-    case Qt::Key_D: setSketchView(SketchView::Bottom); break;
-    case Qt::Key_L: setSketchView(SketchView::Left); break;
-    case Qt::Key_R: setSketchView(SketchView::Right); break;
-    case Qt::Key_F: setSketchView(SketchView::Front); break;
-    case Qt::Key_B: setSketchView(SketchView::Back); break;
-    case Qt::Key_I: setSketchView(SketchView::ISO); break;
-    default: QWidget::keyPressEvent(event); break;
-    }
-}
-
-QVector3D CadView::mapToPlane(int x, int y) {
-    float nx = (2.0f * x / width()) - 1.0f;
-    float ny = 1.0f - (2.0f * y / height());
-    QMatrix4x4 inv = (camera.getProjectionMatrix() * camera.getViewMatrix()).inverted();
-    QVector4D nearPoint = inv * QVector4D(nx, ny, -1.0f, 1.0f);
-    QVector4D farPoint  = inv * QVector4D(nx, ny, 1.0f, 1.0f);
-    nearPoint /= nearPoint.w();
-    farPoint  /= farPoint.w();
-    QVector3D p1 = nearPoint.toVector3D();
-    QVector3D p2 = farPoint.toVector3D();
-    QVector3D dir = p2 - p1;
-
-    QVector3D intersection = p1;
-    switch(currentView)
-    {
-    case SketchView::Top:
-        if(dir.z()!=0) intersection = p1 + (-p1.z()/dir.z())*dir;
-        break;
-    case SketchView::Front:
-        if(dir.y()!=0) intersection = p1 + (-p1.y()/dir.y())*dir;
-        break;
-    case SketchView::Right:
-        if(dir.x()!=0) intersection = p1 + (-p1.x()/dir.x())*dir;
-        break;
-    default:
-        if(dir.z()!=0) intersection = p1 + (-p1.z()/dir.z())*dir;
-        break;
-    }
-    return intersection;
-}
-
-void CadView::drawAxes() {
-    glLineWidth(2.0f);
-    glBegin(GL_LINES);
-    glColor3f(1,0,0); glVertex3f(0,0,0); glVertex3f(5,0,0);
-    glColor3f(0,1,0); glVertex3f(0,0,0); glVertex3f(0,5,0);
-    glColor3f(0,0,1); glVertex3f(0,0,0); glVertex3f(0,0,5);
-    glEnd();
-}
-
-// Utility: build orthonormal basis from plane normal
-void CadView::planeBasis(const QVector3D& normal, QVector3D& u, QVector3D& v) {
-    QVector3D n = normal.normalized();
-    // pick an arbitrary vector not parallel to n
-    QVector3D helper = (fabs(n.x()) > 0.9f) ? QVector3D(0,1,0) : QVector3D(1,0,0);
-    u = QVector3D::crossProduct(n, helper).normalized();
-    v = QVector3D::crossProduct(n, u).normalized();
-}
-
-QVector2D CadView::worldToPlane(const QVector3D& worldPt) {
-    if (!pendingSketch) {
-        return QVector2D(worldPt.x(), worldPt.y());
-    }
-
-    QVector3D localPt = worldPt - pendingSketch->plane.origin;
-    return QVector2D(QVector3D::dotProduct(localPt, pendingSketch->plane.uAxis),
-                     QVector3D::dotProduct(localPt, pendingSketch->plane.vAxis));
-}
-
-QVector3D CadView::planeToWorld(const QVector2D& planePt) {
-    if (!pendingSketch) {
-        return QVector3D(planePt.x(), planePt.y(), 0);
-    }
-
-    return pendingSketch->plane.origin +
-           pendingSketch->plane.uAxis * planePt.x() +
-           pendingSketch->plane.vAxis * planePt.y();
-}
-
-void CadView::startGetPoint(const QString& prompt, const QVector2D* previousPt) {
-    getPointState.active = true;
-    getPointState.prompt = prompt;
-    getPointState.keyboardMode = false;
-
-    if (previousPt) {
-        getPointState.hasPreviousPoint = true;
-        getPointState.previousPoint = *previousPt;
-    } else {
-        getPointState.hasPreviousPoint = false;
-    }
-
-    // Notify MainWindow to show prompt in commandInput
-    emit pointAcquired(QVector2D()); // Special signal for prompt setup
-
-    setFocus(); // Ensure CadView gets keyboard input
-    update();
-}
-
-void CadView::cancelGetPoint() {
-    getPointState.active = false;
-    getPointState.hasPreviousPoint = false;
-    getPointState.keyboardMode = false;
-    emit getPointCancelled();
-    update();
-}
-
-void CadView::drawRubberBandLine(const QVector2D& p1, const QVector2D& p2) {
-    QVector3D w1 = planeToWorld(p1);
-    QVector3D w2 = planeToWorld(p2);
-
-    glEnable(GL_LINE_STIPPLE);
-    glLineStipple(1, 0xAAAA);
-    glColor3f(1.0f, 1.0f, 0.0f); // Yellow
-    glLineWidth(1.5f);
-
-    glBegin(GL_LINES);
-    glVertex3f(w1.x(), w1.y(), w1.z());
-    glVertex3f(w2.x(), w2.y(), w2.z());
-    glEnd();
-
-    glDisable(GL_LINE_STIPPLE);
-    glLineWidth(1.0f);
-}
-
-void CadView::drawRubberBand() {
-    if (!rubberBandState.active) return;
-
-    glEnable(GL_LINE_STIPPLE);
-    glLineStipple(1, 0xAAAA);
-    glColor3f(1.0f, 1.0f, 0.0f); // Yellow
-    glLineWidth(1.5f);
-
-    switch (rubberBandState.mode) {
-    case RubberBandMode::Line: {
-        QVector3D w1 = planeToWorld(rubberBandState.startPoint);
-        QVector3D w2 = planeToWorld(rubberBandState.currentPoint);
-        glBegin(GL_LINES);
-        glVertex3f(w1.x(), w1.y(), w1.z());
-        glVertex3f(w2.x(), w2.y(), w2.z());
-        glEnd();
-        break;
-    }
-
-    case RubberBandMode::Rectangle: {
-        // Reuse existing drawRectangle logic
-        Rectangle2D rect;
-        rect.p1 = rubberBandState.startPoint;
-        rect.p2 = rubberBandState.currentPoint;
-        drawRectangle(rect, Qt::DashLine);
-        break;
-    }
-
-    case RubberBandMode::Polyline: {
-        glBegin(GL_LINE_STRIP);
-        for (const auto& pt : rubberBandState.intermediatePoints) {
-            QVector3D w = planeToWorld(pt);
-            glVertex3f(w.x(), w.y(), w.z());
-        }
-        QVector3D wCur = planeToWorld(rubberBandState.currentPoint);
-        glVertex3f(wCur.x(), wCur.y(), wCur.z());
-        glEnd();
-        break;
-    }
-
-    case RubberBandMode::Arc: {
-        // Calculate arc preview
-        QVector2D center = rubberBandState.startPoint;
-        float radius = (rubberBandState.currentPoint - center).length();
-
-        glBegin(GL_LINE_STRIP);
-        for (int i = 0; i <= 32; ++i) {
-            float angle = i * M_PI / 16.0f;
-            QVector2D pt = center + QVector2D(cos(angle), sin(angle)) * radius;
-            QVector3D w = planeToWorld(pt);
-            glVertex3f(w.x(), w.y(), w.z());
-        }
-        glEnd();
-        break;
-    }
-
-    case RubberBandMode::Circle: {
-        QVector2D center = rubberBandState.startPoint;
-        float radius = (rubberBandState.currentPoint - center).length();
-
-        glBegin(GL_LINE_LOOP);
-        for (int i = 0; i < 64; ++i) {
-            float angle = i * 2.0f * M_PI / 64.0f;
-            QVector2D pt = center + QVector2D(cos(angle), sin(angle)) * radius;
-            QVector3D w = planeToWorld(pt);
-            glVertex3f(w.x(), w.y(), w.z());
-        }
-        glEnd();
-        break;
-    }
-
-    default:
-        break;
-    }
-
-    glDisable(GL_LINE_STIPPLE);
-    glLineWidth(1.0f);
-}
-
-// ==================== Entity Picking ====================
-CadView::EntityRef CadView::pickEntity(const QPoint& screenPos) {
-    EntityRef result;
-    result.entity = nullptr;
-
-    QVector3D rayOrigin, rayDir;
-    QVector3D worldPos = screenToWorld(screenPos);
-
-    // Cast ray for picking
-    float minDist = std::numeric_limits<float>::max();
-
-    // Check all sketches
-    for (auto& sketch : doc.sketches) {
-        for (int i = 0; i < sketch->entities.size(); ++i) {
-            auto& entity = sketch->entities[i];
-            float dist = distanceToEntity(worldPos, {entity, sketch, i});
-
-            if (dist < snapTolerance && dist < minDist) {
-                minDist = dist;
-                result.entity = entity;
-                result.parentSketch = sketch;
-                result.entityIndex = i;
+            Q_EMIT getPointCancelled();
+            m_sketchPoints.clear();
+            m_hasCurrentPoint = false;
+            update();
+        } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            if (!m_sketchPoints.isEmpty() && m_rubberBandMode == RubberBandMode::Polyline) {
+                Q_EMIT getPointKeyPressed("ENTER");
             }
         }
     }
 
-    return result;
-}
-
-float CadView::distanceToEntity(const QVector3D& point, const EntityRef& entityRef) {
-    if (!entityRef.entity) return std::numeric_limits<float>::max();
-
-    if (entityRef.entity->type == EntityType::Polyline) {
-        auto poly = std::dynamic_pointer_cast<PolylineEntity>(entityRef.entity);
-        float minDist = std::numeric_limits<float>::max();
-
-        // Convert 2D points to 3D for distance calculation
-        for (int i = 0; i < poly->points.size() - 1; ++i) {
-            QVector3D p1 = planeToWorld(poly->points[i]);
-            QVector3D p2 = planeToWorld(poly->points[i + 1]);
-
-            // Point-to-line-segment distance
-            QVector3D v = p2 - p1;
-            QVector3D w = point - p1;
-            float c1 = QVector3D::dotProduct(w, v);
-
-            if (c1 <= 0) {
-                minDist = qMin(minDist, (point - p1).length());
-                continue;
-            }
-
-            float c2 = QVector3D::dotProduct(v, v);
-            if (c1 >= c2) {
-                minDist = qMin(minDist, (point - p2).length());
-                continue;
-            }
-
-            float b = c1 / c2;
-            QVector3D pb = p1 + b * v;
-            minDist = qMin(minDist, (point - pb).length());
-        }
-
-        return minDist;
-    }
-
-    return std::numeric_limits<float>::max();
-}
-
-void CadView::drawRectangle(const Rectangle2D& rect, Qt::PenStyle style) {
-    if (!pendingSketch) return;
-
-    // Convert 2D corners to 3D
-    QVector3D v0 = planeToWorld(QVector2D(rect.p1.x(), rect.p1.y()));
-    QVector3D v1 = planeToWorld(QVector2D(rect.p2.x(), rect.p1.y()));
-    QVector3D v2 = planeToWorld(rect.p2);
-    QVector3D v3 = planeToWorld(QVector2D(rect.p1.x(), rect.p2.y()));
-
-    if (style == Qt::DashLine) {
-        glEnable(GL_LINE_STIPPLE);
-        glLineStipple(1, 0xF0F0);
-        glColor3f(1.0f, 1.0f, 0.0f);
-    } else {
-        glDisable(GL_LINE_STIPPLE);
-        glColor3f(1.0f, 1.0f, 1.0f);
-    }
-
-    glBegin(GL_LINE_LOOP);
-    glVertex3f(v0.x(), v0.y(), v0.z());
-    glVertex3f(v1.x(), v1.y(), v1.z());
-    glVertex3f(v2.x(), v2.y(), v2.z());
-    glVertex3f(v3.x(), v3.y(), v3.z());
-    glEnd();
-
-    if (style == Qt::DashLine)
-        glDisable(GL_LINE_STIPPLE);
-}
-
-void CadView::drawExtrudedCube(float height, bool ghost) {
-    if (!pendingSketch) return;
-
-    auto poly = std::make_shared<PolylineEntity>();
-
-    // Convert 2D rectangle to 3D using plane basis
-    QVector3D v0 = pendingSketch->plane.origin +
-                   pendingSketch->plane.uAxis * currentRect.p1.x() +
-                   pendingSketch->plane.vAxis * currentRect.p1.y();
-
-    QVector3D v1 = pendingSketch->plane.origin +
-                   pendingSketch->plane.uAxis * currentRect.p2.x() +
-                   pendingSketch->plane.vAxis * currentRect.p1.y();
-
-    QVector3D v2 = pendingSketch->plane.origin +
-                   pendingSketch->plane.uAxis * currentRect.p2.x() +
-                   pendingSketch->plane.vAxis * currentRect.p2.y();
-
-    QVector3D v3 = pendingSketch->plane.origin +
-                   pendingSketch->plane.uAxis * currentRect.p1.x() +
-                   pendingSketch->plane.vAxis * currentRect.p2.y();
-
-    QVector3D extrusionDir = pendingSketch->plane.normal * height;
-
-    QVector3D v4 = v0 + extrusionDir;
-    QVector3D v5 = v1 + extrusionDir;
-    QVector3D v6 = v2 + extrusionDir;
-    QVector3D v7 = v3 + extrusionDir;
-
-    if (ghost) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glColor4f(0.2f, 0.8f, 1.0f, 0.6f);
-    } else {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glColor3f(0.2f, 0.8f, 1.0f);
-    }
-
-    glBegin(GL_QUADS);
-
-    // Base face
-    glVertex3f(v0.x(), v0.y(), v0.z());
-    glVertex3f(v1.x(), v1.y(), v1.z());
-    glVertex3f(v2.x(), v2.y(), v2.z());
-    glVertex3f(v3.x(), v3.y(), v3.z());
-
-    // Top face
-    glVertex3f(v4.x(), v4.y(), v4.z());
-    glVertex3f(v7.x(), v7.y(), v7.z());
-    glVertex3f(v6.x(), v6.y(), v6.z());
-    glVertex3f(v5.x(), v5.y(), v5.z());
-
-    // Side faces
-    glVertex3f(v0.x(), v0.y(), v0.z());
-    glVertex3f(v1.x(), v1.y(), v1.z());
-    glVertex3f(v5.x(), v5.y(), v5.z());
-    glVertex3f(v4.x(), v4.y(), v4.z());
-
-    glVertex3f(v1.x(), v1.y(), v1.z());
-    glVertex3f(v2.x(), v2.y(), v2.z());
-    glVertex3f(v6.x(), v6.y(), v6.z());
-    glVertex3f(v5.x(), v5.y(), v5.z());
-
-    glVertex3f(v2.x(), v2.y(), v2.z());
-    glVertex3f(v3.x(), v3.y(), v3.z());
-    glVertex3f(v7.x(), v7.y(), v7.z());
-    glVertex3f(v6.x(), v6.y(), v6.z());
-
-    glVertex3f(v3.x(), v3.y(), v3.z());
-    glVertex3f(v0.x(), v0.y(), v0.z());
-    glVertex3f(v4.x(), v4.y(), v4.z());
-    glVertex3f(v7.x(), v7.y(), v7.z());
-
-    glEnd();
-
-    if (ghost) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glDisable(GL_BLEND);
-    }
+    QWidget::keyPressEvent(event);
 }
