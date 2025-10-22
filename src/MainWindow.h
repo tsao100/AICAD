@@ -2,9 +2,10 @@
 #define MAINWINDOW_H
 
 #define QT_NO_KEYWORDS
+#define HAVE_ECL
 
 #ifdef HAVE_ECL
-#include <ecl/ecl.h>a
+#include <ecl/ecl.h>
 #endif
 
 #include <QMainWindow>
@@ -34,6 +35,7 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow();
     ~MainWindow();
+ //   void loadFileFromCommandLine(const QString& filename);
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;

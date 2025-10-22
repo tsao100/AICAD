@@ -631,3 +631,19 @@ void MainWindow::executeCommand() {
     commandInput->clear();
 }
 #endif
+
+// void MainWindow::loadFileFromCommandLine(const QString& filename) {
+//     QTimer::singleShot(100, this, [this, filename]() {
+//         if (filename.endsWith(".cad")) {
+//             if (QFile::exists(filename)) {
+//                 m_view->doc.loadFromFile(filename);
+//                 updateFeatureTree();
+//                 m_view->update();
+//                 showResultTemporarily(QString("Loaded: %1").arg(filename));
+//             }
+//         } else if (filename.endsWith(".lsp") || filename.endsWith(".lisp")) {
+//             loadLispFile(filename);
+//         }
+//     });
+// }
+

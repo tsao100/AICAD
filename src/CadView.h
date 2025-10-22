@@ -75,6 +75,7 @@ public:
     QVector2D screenToPlane(const QPoint& screenPos);
 
     SketchView getCurrentView() const { return m_currentView; }
+    void fitAll();
 
 Q_SIGNALS:
     void pointAcquired(QVector2D point);
@@ -94,7 +95,6 @@ protected:
 
 private:
     void initializeViewer();
-    void fitAll();
 
     TopoDS_Shape createPolylineShape(const QVector<QVector2D>& points, const CustomPlane& plane);
     TopoDS_Shape createExtrudeShape(TDF_Label sketchLabel, double height);

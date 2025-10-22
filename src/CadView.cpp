@@ -8,6 +8,7 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
+#include <IntAna_IntConicQuad.hxx>
 
 #include <Quantity_Color.hxx>
 #include <Aspect_Window.hxx>
@@ -364,7 +365,7 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
 void CadView::paintEvent(QPaintEvent* event) {
     if (!m_view.IsNull()) {
         m_view->InvalidateImmediate();
-        FlushViewEvents(m_context, m_view, Standard_True);
+        m_view->Redraw();
     }
 }
 
