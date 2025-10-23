@@ -38,7 +38,11 @@ unix {
             -lTKBool \
             -lTKOffset \
             -lTKFillet \
-            -lTKXSBase
+            -lTKXSBase \
+            -lTKXCAF \
+            -lTKBin \
+            -lTKBinL \
+            -lTKBinXCAF
 
     # Link X11 (required for OpenGL context)
     LIBS += -lX11 -lXext
@@ -103,7 +107,11 @@ win32 {
             -lTKBool \
             -lTKOffset \
             -lTKFillet \
-            -lTKXSBase
+            -lTKXSBase \
+            -lTKXCAF \
+            -lTKBin \
+            -lTKBinL \
+            -lTKBinXCAF
 
     # ECL paths - ADJUST THESE TO YOUR ECL INSTALLATION
     INCLUDEPATH += D:/Git/ecl/v24.5.10/vc143-x64
