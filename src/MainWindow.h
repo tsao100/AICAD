@@ -25,6 +25,7 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QStatusBar>
+#include <QDebug>>
 
 #include "CadView.h"
 #include "OcafDocument.h"
@@ -65,6 +66,27 @@ private Q_SLOTS:
     void updateFeatureTree();
 
 private:
+    // Unified command system
+    struct CADCommand {
+        QString name;
+        QStringList aliases;
+        std::function<void(const QStringList&)> handler;
+        int expectedArgs; // -1 = variable, 0+ = fixed count
+        QString description;
+        bool interactive; // Whether command needs interactive point input
+        QString qtSlot; // Qt slot/method name for menu/toolbar binding
+    };
+
+    QHash<QString, CADCommand> cadCommands;
+
+    void registerCADCommand(const QString& name,
+                            const QStringList& aliases,
+                            int expectedArgs,
+                            const QString& description,
+                            bool interactive,
+                            const QString& qtSlot,
+                            std::function<void(const QStringList&)> handler);
+    void loadMenuConfig(const QString& filename);
     void createMenusAndToolbars();
     void createCentral();
     void createFeatureBrowser();
@@ -96,7 +118,7 @@ private:
 
     QTreeWidget* featureTree;
     CadView *m_view;
-    QStatusBar* statusBar;
+//    QStatusBar* statusBar;
 
     OcafDocument m_document;
 
