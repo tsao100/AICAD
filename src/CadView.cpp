@@ -32,6 +32,7 @@ CadView::CadView(QWidget* parent)
     , m_rubberBandMode(RubberBandMode::None)
     , m_mousePressed(false)
     , m_hasCurrentPoint(false)
+    , m_viewInitialized(false)
 {
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
@@ -73,7 +74,7 @@ void CadView::initializeViewer() {
 
     m_view->SetBackgroundColor(Quantity_NOC_GRAY80);
     m_view->MustBeResized();
-    m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, Quantity_NOC_GOLD, 0.08);
+    //m_view->TriedronDisplay(Aspect_TOTP_RIGHT_UPPER, Quantity_NOC_GOLD, 0.08);
 
     m_context = new AIS_InteractiveContext(m_viewer);
     m_context->SetDisplayMode(AIS_Shaded, Standard_True);
@@ -84,10 +85,18 @@ void CadView::initializeViewer() {
     m_viewCube->SetFontHeight(12);
     m_viewCube->SetAxesLabels("X", "Y", "Z");
     m_viewCube->SetTransformPersistence(
-        new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_LOWER, Graphic3d_Vec2i(85, 85)));
+        new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(85, 85)));
     m_context->Display(m_viewCube, Standard_False);
 
     setSketchView(SketchView::Isometric);
+
+    // Force initial update - THIS IS THE QTimer::singleShot PART
+    QTimer::singleShot(0, this, [this]() {
+        if (!m_view.IsNull()) {
+            m_view->MustBeResized();
+            m_view->Redraw();
+        }
+    });
 }
 
 void CadView::setDocument(OcafDocument* doc) {
@@ -370,8 +379,14 @@ void CadView::paintEvent(QPaintEvent* event) {
 }
 
 void CadView::resizeEvent(QResizeEvent* event) {
+    Q_UNUSED(event);  // Suppress unused parameter warning
+
+    if (!m_viewInitialized) {
+        return;
+    }
     if (!m_view.IsNull()) {
         m_view->MustBeResized();
+        m_view->Redraw();
     }
 }
 
@@ -379,6 +394,30 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     m_lastMousePos = event->pos();
     m_mousePressed = true;
     m_pressedButton = event->button();
+
+    // --- First, always update OCCT selection to detect viewcube clicks ---
+    if (!m_context.IsNull() && !m_view.IsNull())
+    {
+        // MoveTo must be called before Select to update detected object
+        m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
+
+        if (event->button() == Qt::LeftButton)
+        {
+            m_context->Select(Standard_True);
+
+            // Detect if user clicked on the ViewCube
+            if (m_context->HasDetected())
+            {
+                Handle(AIS_InteractiveObject) picked = m_context->DetectedInteractive();
+                if (!picked.IsNull() && picked == m_viewCube)
+                {
+                    // Let OCCT handle the viewcube interaction automatically
+                    // so we return early and skip sketching logic
+                    return;
+                }
+            }
+        }
+    }
 
     if (m_mode == CadMode::Sketching && event->button() == Qt::LeftButton) {
         QVector2D planePt = screenToPlane(event->pos());
@@ -400,6 +439,33 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
+    // --- Update OCCT hover detection for ViewCube and other AIS objects ---
+    if (!m_context.IsNull() && !m_view.IsNull())
+    {
+        // Always call MoveTo for hover highlight
+        m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
+
+        // Check if hovering over the ViewCube (optional)
+        if (m_context->HasDetected())
+        {
+            Handle(AIS_InteractiveObject) detected = m_context->DetectedInteractive();
+            if (!detected.IsNull() && detected == m_viewCube)
+            {
+                // Optionally emit a Qt signal or change cursor
+                setCursor(Qt::PointingHandCursor);
+            }
+            else
+            {
+                unsetCursor();
+            }
+        }
+        else
+        {
+            unsetCursor();
+        }
+    }
+
+    // --- Sketching mode logic (take priority over view interaction) ---
     if (m_mode == CadMode::Sketching) {
         m_currentPoint = screenToPlane(event->pos());
         m_hasCurrentPoint = true;

@@ -5,6 +5,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
+#include <QTimer>
 
 #include <AIS_InteractiveContext.hxx>
 #include <V3d_View.hxx>
@@ -118,6 +119,7 @@ private:
     QVector<QVector2D> m_sketchPoints;
     QVector2D m_currentPoint;
     bool m_hasCurrentPoint;
+    bool m_viewInitialized;
 
     Handle(AIS_ViewCube) m_viewCube;
 };
