@@ -74,6 +74,7 @@ win32 {
     CONFIG += c++17
     LIBS += -lopengl32
     DEFINES += _USE_MATH_DEFINES
+    DEFINES += QT_NO_OPENGL_ES_2
     # --- OCCT 7.8.0 paths ---
     OCC_INC = D:/Git/OCCT/OCCT-install/inc
     OCC_LIB = D:/Git/OCCT/OCCT-install/win64/vc14/lib

@@ -8,11 +8,15 @@
 
 // Now include application headers (which contain Qt headers)
 #include <QApplication>
+#include <QSurfaceFormat>
 #include "MainWindow.h"
 
 int main(int argc, char **argv) {
 #ifdef _WIN32
     QApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
+    QSurfaceFormat fmt;
+    fmt.setRenderableType(QSurfaceFormat::OpenGL);
+    QSurfaceFormat::setDefaultFormat(fmt);
 #else
     // Force Qt to use XCB before QApplication is created
     const char* session = std::getenv("XDG_SESSION_TYPE");
