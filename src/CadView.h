@@ -15,6 +15,9 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_ViewCube.hxx>
+#include <Graphic3d_ArrayOfPolylines.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <AIS_Line.hxx>
 
 #include "OcafDocument.h"
 
@@ -96,6 +99,9 @@ protected:
 
 private:
     void initializeViewer();
+    Handle(Prs3d_Presentation) m_rubberBandObject;
+    void updateRubberBand();
+    void clearRubberBand();
 
     TopoDS_Shape createPolylineShape(const QVector<QVector2D>& points, const CustomPlane& plane);
     TopoDS_Shape createExtrudeShape(TDF_Label sketchLabel, double height);

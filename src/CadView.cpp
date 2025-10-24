@@ -33,6 +33,7 @@ CadView::CadView(QWidget* parent)
     , m_mousePressed(false)
     , m_hasCurrentPoint(false)
     , m_viewInitialized(false)
+    , m_rubberBandObject(nullptr)
 {
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
@@ -212,6 +213,128 @@ void CadView::displayFeature(TDF_Label label) {
     m_context->UpdateCurrentViewer();
 }
 
+void CadView::updateRubberBand() {
+    if (m_context.IsNull()) return;
+
+    // Clear previous rubber band
+    clearRubberBand();
+
+    if (m_mode != CadMode::Sketching) return;
+    if (m_sketchPoints.isEmpty() || !m_hasCurrentPoint) return;
+
+    // Get the sketch plane
+    CustomPlane plane;
+    if (!m_pendingSketch.IsNull() && m_document) {
+        plane = m_document->getSketchPlane(m_pendingSketch);
+    } else {
+        switch (m_currentView) {
+        case SketchView::Top:
+        case SketchView::Bottom:
+            plane = CustomPlane::XY();
+            break;
+        case SketchView::Front:
+        case SketchView::Back:
+            plane = CustomPlane::XZ();
+            break;
+        case SketchView::Right:
+        case SketchView::Left:
+            plane = CustomPlane::YZ();
+            break;
+        default:
+            plane = CustomPlane::XY();
+            break;
+        }
+    }
+
+    // Helper to convert plane to 3D
+    auto planeToWorld = [&plane](const QVector2D& planePt) -> gp_Pnt {
+        QVector3D worldPt = plane.origin + plane.uAxis * planePt.x() + plane.vAxis * planePt.y();
+        return gp_Pnt(worldPt.x(), worldPt.y(), worldPt.z());
+    };
+
+    if (m_rubberBandMode == RubberBandMode::Rectangle) {
+        // Create rectangle points
+        QVector2D p1 = m_sketchPoints[0];
+        QVector2D p2 = m_currentPoint;
+
+        gp_Pnt gp1 = planeToWorld(QVector2D(p1.x(), p1.y()));
+        gp_Pnt gp2 = planeToWorld(QVector2D(p2.x(), p1.y()));
+        gp_Pnt gp3 = planeToWorld(QVector2D(p2.x(), p2.y()));
+        gp_Pnt gp4 = planeToWorld(QVector2D(p1.x(), p2.y()));
+
+        // Create polyline array (5 points to close rectangle)
+        Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(5);
+        polyline->AddVertex(gp1);
+        polyline->AddVertex(gp2);
+        polyline->AddVertex(gp3);
+        polyline->AddVertex(gp4);
+        polyline->AddVertex(gp1); // Close the loop
+
+        // Create presentation
+        Handle(Prs3d_Presentation) prs = new Prs3d_Presentation(m_context->MainPrsMgr()->StructureManager());
+
+        // Set line attributes (white dashed line)
+        Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+            Quantity_NOC_WHITE,
+            Aspect_TOL_DASH,
+            2.0
+            );
+
+        // Create group and add polyline
+        Handle(Graphic3d_Group) group = prs->NewGroup();
+        group->SetGroupPrimitivesAspect(aspect->Aspect());
+        group->AddPrimitiveArray(polyline);
+
+        // Display presentation
+        prs->SetZLayer(Graphic3d_ZLayerId_Top);
+        prs->SetDisplayPriority(10);
+        prs->Display();
+
+        m_rubberBandObject = prs;
+
+    } else if (m_rubberBandMode == RubberBandMode::Polyline) {
+        if (m_sketchPoints.size() < 1) return;
+
+        // Create polyline with all clicked points plus current point
+        int numPoints = m_sketchPoints.size() + 1;
+        Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(numPoints);
+
+        for (const QVector2D& pt : m_sketchPoints) {
+            polyline->AddVertex(planeToWorld(pt));
+        }
+        polyline->AddVertex(planeToWorld(m_currentPoint));
+
+        // Create presentation
+        Handle(Prs3d_Presentation) prs = new Prs3d_Presentation(m_context->MainPrsMgr()->StructureManager());
+
+        Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+            Quantity_NOC_WHITE,
+            Aspect_TOL_DASH,
+            2.0
+            );
+
+        Handle(Graphic3d_Group) group = prs->NewGroup();
+        group->SetGroupPrimitivesAspect(aspect->Aspect());
+        group->AddPrimitiveArray(polyline);
+
+        prs->SetZLayer(Graphic3d_ZLayerId_Top);
+        prs->SetDisplayPriority(10);
+        prs->Display();
+
+        m_rubberBandObject = prs;
+    }
+
+    m_view->Redraw();
+}
+
+void CadView::clearRubberBand() {
+    if (!m_rubberBandObject.IsNull()) {
+        m_rubberBandObject->Clear();
+        m_rubberBandObject->Erase();
+        m_rubberBandObject.Nullify();
+    }
+}
+
 TopoDS_Shape CadView::createPolylineShape(const QVector<QVector2D>& points, const CustomPlane& plane) {
     if (points.size() < 2) return TopoDS_Shape();
 
@@ -307,6 +430,7 @@ void CadView::setRubberBandMode(RubberBandMode mode) {
     m_rubberBandMode = mode;
     m_sketchPoints.clear();
     m_hasCurrentPoint = false;
+    clearRubberBand();
 }
 
 void CadView::setPendingSketch(TDF_Label sketch) {
@@ -418,24 +542,20 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     m_mousePressed = true;
     m_pressedButton = event->button();
 
-    // --- First, always update OCCT selection to detect viewcube clicks ---
+    // Update OCCT selection
     if (!m_context.IsNull() && !m_view.IsNull())
     {
-        // MoveTo must be called before Select to update detected object
         m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
 
         if (event->button() == Qt::LeftButton)
         {
             m_context->Select(Standard_True);
 
-            // Detect if user clicked on the ViewCube
             if (m_context->HasDetected())
             {
                 Handle(AIS_InteractiveObject) picked = m_context->DetectedInteractive();
                 if (!picked.IsNull() && picked == m_viewCube)
                 {
-                    // Let OCCT handle the viewcube interaction automatically
-                    // so we return early and skip sketching logic
                     return;
                 }
             }
@@ -448,11 +568,12 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         if (m_rubberBandMode == RubberBandMode::Rectangle) {
             if (m_sketchPoints.isEmpty()) {
                 m_sketchPoints.append(planePt);
+                m_hasCurrentPoint = true;
             } else {
-                m_sketchPoints.append(planePt);
                 Q_EMIT pointAcquired(planePt);
                 m_sketchPoints.clear();
                 m_hasCurrentPoint = false;
+                clearRubberBand();
             }
         } else if (m_rubberBandMode == RubberBandMode::Polyline) {
             m_sketchPoints.append(planePt);
@@ -462,19 +583,16 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
-    // --- Update OCCT hover detection for ViewCube and other AIS objects ---
+    // Update OCCT hover detection
     if (!m_context.IsNull() && !m_view.IsNull())
     {
-        // Always call MoveTo for hover highlight
         m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
 
-        // Check if hovering over the ViewCube (optional)
         if (m_context->HasDetected())
         {
             Handle(AIS_InteractiveObject) detected = m_context->DetectedInteractive();
             if (!detected.IsNull() && detected == m_viewCube)
             {
-                // Optionally emit a Qt signal or change cursor
                 setCursor(Qt::PointingHandCursor);
             }
             else
@@ -488,11 +606,11 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         }
     }
 
-    // --- Sketching mode logic (take priority over view interaction) ---
+    // Sketching mode logic
     if (m_mode == CadMode::Sketching) {
         m_currentPoint = screenToPlane(event->pos());
         m_hasCurrentPoint = true;
-        update();
+        updateRubberBand();  // Update rubber band preview
         return;
     }
 
@@ -532,10 +650,12 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             Q_EMIT getPointCancelled();
             m_sketchPoints.clear();
             m_hasCurrentPoint = false;
+            clearRubberBand();
             update();
         } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
             if (!m_sketchPoints.isEmpty() && m_rubberBandMode == RubberBandMode::Polyline) {
                 Q_EMIT getPointKeyPressed("ENTER");
+                clearRubberBand();
             }
         }
     }

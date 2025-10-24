@@ -400,10 +400,19 @@ void MainWindow::onDrawRectangle() {
         return;
     }
 
+    // Check if in orthographic view
+    if (m_view->getCurrentView() == SketchView::None ||
+        m_view->getCurrentView() == SketchView::Isometric) {
+        QMessageBox::warning(this, "Invalid View",
+                             "Please switch to an orthographic view (Top/Front/Right) for sketching.");
+        return;
+    }
+
     m_rectanglePoints.clear();
     m_waitingForSecondPoint = false;
     m_view->setMode(CadMode::Sketching);
     m_view->setRubberBandMode(RubberBandMode::Rectangle);
+    m_view->setPendingSketch(m_activeSketch);
     statusBar()->showMessage("Click first corner of rectangle...");
 }
 
@@ -421,46 +430,48 @@ void MainWindow::onDrawLine() {
 
 void MainWindow::onPointAcquired(QVector2D point) {
     if (m_view->getMode() == CadMode::Sketching) {
-        if (m_view->getCurrentView() == SketchView::None ||
-            m_view->getCurrentView() == SketchView::Isometric) {
-            QMessageBox::warning(this, "Invalid View",
-                                 "Please switch to an orthographic view (Top/Front/Right) for sketching.");
-            m_view->setMode(CadMode::Idle);
-            return;
-        }
 
-        if (!m_waitingForSecondPoint) {
-            m_rectanglePoints.clear();
+        if (m_rectanglePoints.isEmpty()) {
+            // First corner
             m_rectanglePoints.append(point);
             m_waitingForSecondPoint = true;
             statusBar()->showMessage(QString("First corner: (%1, %2). Click opposite corner...")
-                                       .arg(point.x(), 0, 'f', 2)
-                                       .arg(point.y(), 0, 'f', 2));
+                                         .arg(point.x(), 0, 'f', 2)
+                                         .arg(point.y(), 0, 'f', 2));
         } else {
+            // Second corner - create rectangle
             m_rectanglePoints.append(point);
 
             QVector<QVector2D> rectPoints;
             QVector2D p1 = m_rectanglePoints[0];
             QVector2D p2 = m_rectanglePoints[1];
 
+            // Create closed rectangle (5 points)
             rectPoints.append(QVector2D(p1.x(), p1.y()));
             rectPoints.append(QVector2D(p2.x(), p1.y()));
             rectPoints.append(QVector2D(p2.x(), p2.y()));
             rectPoints.append(QVector2D(p1.x(), p2.y()));
-            rectPoints.append(QVector2D(p1.x(), p1.y()));
+            rectPoints.append(QVector2D(p1.x(), p1.y())); // Close the loop
 
             m_document.addPolylineToSketch(m_activeSketch, rectPoints);
             m_view->displayFeature(m_activeSketch);
 
+            // Reset state
             m_view->setMode(CadMode::Idle);
+            m_view->setRubberBandMode(RubberBandMode::None);
+            m_rectanglePoints.clear();
             m_waitingForSecondPoint = false;
-            statusBar()->showMessage("Rectangle created.");
+
+            statusBar()->showMessage(QString("Rectangle created: %1 x %2")
+                                         .arg(qAbs(p2.x() - p1.x()), 0, 'f', 2)
+                                         .arg(qAbs(p2.y() - p1.y()), 0, 'f', 2));
         }
     }
 }
 
 void MainWindow::onGetPointCancelled() {
     m_view->setMode(CadMode::Idle);
+    m_view->setRubberBandMode(RubberBandMode::None);
     m_rectanglePoints.clear();
     m_waitingForSecondPoint = false;
     statusBar()->showMessage("Operation cancelled.");
