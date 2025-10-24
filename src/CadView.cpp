@@ -319,15 +319,36 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     Standard_Integer xp = screenPos.x();
     Standard_Integer yp = screenPos.y();
 
+    // Get the eye position in 3D space
+    Standard_Real xEye, yEye, zEye;
+    m_view->Eye(xEye, yEye, zEye);
+    gp_Pnt eyePnt(xEye, yEye, zEye);
+
+    // Convert screen coordinates to 3D view coordinates
     Standard_Real xv, yv, zv;
     m_view->Convert(xp, yp, xv, yv, zv);
 
-    Standard_Real dirX, dirY, dirZ;
-    m_view->ConvertWithProj(xp, yp, xv, yv, zv, dirX, dirY, dirZ);
+    // Get the projection direction
+    Standard_Real vx, vy, vz;
+    m_view->Proj(vx, vy, vz);
+    gp_Dir projDir(vx, vy, vz);
 
-    gp_Pnt eyePnt(xv, yv, zv);
-    gp_Dir eyeDir(dirX, dirY, dirZ);
+    // Calculate the ray from eye through the screen point
+    gp_Pnt screenPnt(xv, yv, zv);
+    gp_Vec rayVec(eyePnt, screenPnt);
 
+    // For orthographic projection, use projection direction
+    // For perspective projection, use ray from eye to screen point
+    gp_Dir rayDir;
+    if (m_view->Camera()->IsOrthographic()) {
+        rayDir = projDir;
+    } else {
+        rayDir = gp_Dir(rayVec);
+    }
+
+    gp_Lin line(screenPnt, rayDir);
+
+    // Get the sketch plane
     CustomPlane plane;
     if (!m_pendingSketch.IsNull() && m_document) {
         plane = m_document->getSketchPlane(m_pendingSketch);
@@ -352,13 +373,14 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     }
 
     gp_Pln gpPlane = plane.toGpPln();
-    gp_Lin line(eyePnt, eyeDir);
 
+    // Find intersection between ray and plane
     IntAna_IntConicQuad intersection(line, gpPlane, Precision::Angular());
 
     if (intersection.IsDone() && intersection.NbPoints() > 0) {
         gp_Pnt intersectPnt = intersection.Point(1);
 
+        // Convert 3D intersection point to 2D plane coordinates
         QVector3D worldPt(intersectPnt.X(), intersectPnt.Y(), intersectPnt.Z());
         QVector3D localPt = worldPt - plane.origin;
 
@@ -368,6 +390,7 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
         return QVector2D(u, v);
     }
 
+    // Fallback: return screen coordinates converted to view coordinates
     return QVector2D(xv, yv);
 }
 
