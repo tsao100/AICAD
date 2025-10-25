@@ -48,9 +48,9 @@ QString eclObjectToQString(cl_object obj) {
 #endif
 
 MainWindow::MainWindow()
-    : m_waitingForSecondPoint(false)
+    : //m_waitingForSecondPoint(false)
 #ifdef HAVE_ECL
-    , historyIndex(-1), consoleVisible(false)
+     historyIndex(-1), consoleVisible(false)
 #endif
 {
     m_document.newDocument();
@@ -76,95 +76,6 @@ MainWindow::~MainWindow() {
     cl_shutdown();
 #endif
 }
-
-// void MainWindow::createMenusAndToolbars() {
-//     QMenuBar* menuBar = new QMenuBar(this);
-//     setMenuBar(menuBar);
-
-//     QMenu* fileMenu = menuBar->addMenu("&File");
-//     QMenu* viewMenu = menuBar->addMenu("&View");
-//     QMenu* sketchMenu = menuBar->addMenu("&Sketch");
-//     QMenu* featureMenu = menuBar->addMenu("F&eature");
-
-//     QToolBar* mainToolBar = addToolBar("Main");
-//     QToolBar* viewToolBar = addToolBar("View");
-
-//     QAction* newAction = new QAction("&New", this);
-//     newAction->setShortcut(QKeySequence::New);
-//     connect(newAction, &QAction::triggered, [this]() {
-//         m_document.newDocument();
-//         m_view->displayAllFeatures();
-//         updateFeatureTree();
-//     });
-//     fileMenu->addAction(newAction);
-
-//     QAction* saveAction = new QAction("&Save", this);
-//     saveAction->setShortcut(QKeySequence::Save);
-//     connect(saveAction, &QAction::triggered, this, &MainWindow::onSave);
-//     fileMenu->addAction(saveAction);
-//     mainToolBar->addAction(saveAction);
-
-//     QAction* loadAction = new QAction("&Open", this);
-//     loadAction->setShortcut(QKeySequence::Open);
-//     connect(loadAction, &QAction::triggered, this, &MainWindow::onLoad);
-//     fileMenu->addAction(loadAction);
-//     mainToolBar->addAction(loadAction);
-
-//     fileMenu->addSeparator();
-
-//     QAction* exportPdfAction = new QAction("Export &PDF", this);
-//     connect(exportPdfAction, &QAction::triggered, this, &MainWindow::onExportPdf);
-//     fileMenu->addAction(exportPdfAction);
-
-//     fileMenu->addSeparator();
-
-//     QAction* exitAction = new QAction("E&xit", this);
-//     exitAction->setShortcut(QKeySequence::Quit);
-//     connect(exitAction, &QAction::triggered, this, &MainWindow::onExit);
-//     fileMenu->addAction(exitAction);
-
-//     QAction* viewTopAction = new QAction("&Top", this);
-//     connect(viewTopAction, &QAction::triggered, this, &MainWindow::onViewTop);
-//     viewMenu->addAction(viewTopAction);
-//     viewToolBar->addAction(viewTopAction);
-
-//     QAction* viewFrontAction = new QAction("&Front", this);
-//     connect(viewFrontAction, &QAction::triggered, this, &MainWindow::onViewFront);
-//     viewMenu->addAction(viewFrontAction);
-//     viewToolBar->addAction(viewFrontAction);
-
-//     QAction* viewRightAction = new QAction("&Right", this);
-//     connect(viewRightAction, &QAction::triggered, this, &MainWindow::onViewRight);
-//     viewMenu->addAction(viewRightAction);
-//     viewToolBar->addAction(viewRightAction);
-
-//     QAction* viewIsoAction = new QAction("&Isometric", this);
-//     connect(viewIsoAction, &QAction::triggered, this, &MainWindow::onViewIsometric);
-//     viewMenu->addAction(viewIsoAction);
-//     viewToolBar->addAction(viewIsoAction);
-
-//     QAction* sketchAction = new QAction("New &Sketch", this);
-//     connect(sketchAction, &QAction::triggered, this, &MainWindow::onCreateSketch);
-//     sketchMenu->addAction(sketchAction);
-//     mainToolBar->addAction(sketchAction);
-
-//     QAction* rectAction = new QAction("&Rectangle", this);
-//     connect(rectAction, &QAction::triggered, this, &MainWindow::onDrawRectangle);
-//     sketchMenu->addAction(rectAction);
-
-//     QAction* lineAction = new QAction("&Line", this);
-//     connect(lineAction, &QAction::triggered, this, &MainWindow::onDrawLine);
-//     sketchMenu->addAction(lineAction);
-
-//     QAction* extrudeAction = new QAction("&Extrude", this);
-//     connect(extrudeAction, &QAction::triggered, this, &MainWindow::onCreateExtrude);
-//     featureMenu->addAction(extrudeAction);
-//     mainToolBar->addAction(extrudeAction);
-
-//     statusBar = new QStatusBar(this);
-//     setStatusBar(statusBar);
-//     statusBar()->showMessage("Ready");
-// }
 
 void MainWindow::registerCADCommand(
     const QString& name,
@@ -408,8 +319,8 @@ void MainWindow::onDrawRectangle() {
         return;
     }
 
-    m_rectanglePoints.clear();
-    m_waitingForSecondPoint = false;
+    //m_rectanglePoints.clear();
+    //m_waitingForSecondPoint = false;
     m_view->setMode(CadMode::Sketching);
     m_view->setRubberBandMode(RubberBandMode::Rectangle);
     m_view->setPendingSketch(m_activeSketch);
@@ -428,25 +339,25 @@ void MainWindow::onDrawLine() {
     statusBar()->showMessage("Click first point (Enter to finish)...");
 }
 
+// Update onPointAcquired - completely rewritten to handle rectangle properly:
 void MainWindow::onPointAcquired(QVector2D point) {
-    if (m_view->getMode() == CadMode::Sketching) {
+    if (m_view->getMode() != CadMode::Sketching) return;
 
-        if (m_rectanglePoints.isEmpty()) {
-            // First corner
-            m_rectanglePoints.append(point);
-            m_waitingForSecondPoint = true;
-            statusBar()->showMessage(QString("First corner: (%1, %2). Click opposite corner...")
-                                         .arg(point.x(), 0, 'f', 2)
-                                         .arg(point.y(), 0, 'f', 2));
-        } else {
-            // Second corner - create rectangle
-            m_rectanglePoints.append(point);
+    if (m_view->getRubberBandMode() == RubberBandMode::Rectangle) {
+        // This is the SECOND point (first point is already stored in CadView)
+        // Get both points from the signal
+        statusBar()->showMessage(QString("Second corner: (%1, %2). Creating rectangle...")
+                                     .arg(point.x(), 0, 'f', 2)
+                                     .arg(point.y(), 0, 'f', 2));
 
-            QVector<QVector2D> rectPoints;
-            QVector2D p1 = m_rectanglePoints[0];
-            QVector2D p2 = m_rectanglePoints[1];
+        // Get the first point from CadView's internal storage
+        QVector<QVector2D> points = m_view->getSketchPoints();
+        if (points.size() >= 1) {
+            QVector2D p1 = points[0];
+            QVector2D p2 = point;
 
             // Create closed rectangle (5 points)
+            QVector<QVector2D> rectPoints;
             rectPoints.append(QVector2D(p1.x(), p1.y()));
             rectPoints.append(QVector2D(p2.x(), p1.y()));
             rectPoints.append(QVector2D(p2.x(), p2.y()));
@@ -459,21 +370,23 @@ void MainWindow::onPointAcquired(QVector2D point) {
             // Reset state
             m_view->setMode(CadMode::Idle);
             m_view->setRubberBandMode(RubberBandMode::None);
-            m_rectanglePoints.clear();
-            m_waitingForSecondPoint = false;
 
             statusBar()->showMessage(QString("Rectangle created: %1 x %2")
                                          .arg(qAbs(p2.x() - p1.x()), 0, 'f', 2)
                                          .arg(qAbs(p2.y() - p1.y()), 0, 'f', 2));
         }
+    } else if (m_view->getRubberBandMode() == RubberBandMode::Polyline) {
+        // Handle polyline point acquisition
+        statusBar()->showMessage(QString("Point added: (%1, %2). Click next point or press Enter to finish...")
+                                     .arg(point.x(), 0, 'f', 2)
+                                     .arg(point.y(), 0, 'f', 2));
     }
 }
-
 void MainWindow::onGetPointCancelled() {
     m_view->setMode(CadMode::Idle);
     m_view->setRubberBandMode(RubberBandMode::None);
-    m_rectanglePoints.clear();
-    m_waitingForSecondPoint = false;
+    //m_rectanglePoints.clear();
+    //m_waitingForSecondPoint = false;
     statusBar()->showMessage("Operation cancelled.");
 }
 

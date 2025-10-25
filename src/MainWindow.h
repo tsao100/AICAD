@@ -25,7 +25,7 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QStatusBar>
-#include <QDebug>>
+#include <QDebug>
 
 #include "CadView.h"
 #include "OcafDocument.h"
@@ -125,8 +125,8 @@ private:
     TDF_Label m_pendingSketch;
     TDF_Label m_activeSketch;
 
-    QVector<QVector2D> m_rectanglePoints;
-    bool m_waitingForSecondPoint;
+//    QVector<QVector2D> m_rectanglePoints;
+//    bool m_waitingForSecondPoint;
 
     struct CommandEntry {
         QString name;

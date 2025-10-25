@@ -26,6 +26,7 @@
 
 CadView::CadView(QWidget* parent)
     : QWidget(parent)
+    , m_rubberBandObject(nullptr)
     , m_document(nullptr)
     , m_currentView(SketchView::Isometric)
     , m_mode(CadMode::Idle)
@@ -33,7 +34,6 @@ CadView::CadView(QWidget* parent)
     , m_mousePressed(false)
     , m_hasCurrentPoint(false)
     , m_viewInitialized(false)
-    , m_rubberBandObject(nullptr)
 {
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
