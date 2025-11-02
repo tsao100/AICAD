@@ -440,37 +440,9 @@ void CadView::setPendingSketch(TDF_Label sketch) {
 QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     if (m_view.IsNull()) return QVector2D(0, 0);
 
+    // Use Qt coordinates directly
     Standard_Integer xp = screenPos.x();
     Standard_Integer yp = screenPos.y();
-
-    // Get the eye position in 3D space
-    Standard_Real xEye, yEye, zEye;
-    m_view->Eye(xEye, yEye, zEye);
-    gp_Pnt eyePnt(xEye, yEye, zEye);
-
-    // Convert screen coordinates to 3D view coordinates
-    Standard_Real xv, yv, zv;
-    m_view->Convert(xp, yp, xv, yv, zv);
-
-    // Get the projection direction
-    Standard_Real vx, vy, vz;
-    m_view->Proj(vx, vy, vz);
-    gp_Dir projDir(vx, vy, vz);
-
-    // Calculate the ray from eye through the screen point
-    gp_Pnt screenPnt(xv, yv, zv);
-    gp_Vec rayVec(eyePnt, screenPnt);
-
-    // For orthographic projection, use projection direction
-    // For perspective projection, use ray from eye to screen point
-    gp_Dir rayDir;
-    if (m_view->Camera()->IsOrthographic()) {
-        rayDir = projDir;
-    } else {
-        rayDir = gp_Dir(rayVec);
-    }
-
-    gp_Lin line(screenPnt, rayDir);
 
     // Get the sketch plane
     CustomPlane plane;
@@ -498,6 +470,18 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
 
     gp_Pln gpPlane = plane.toGpPln();
 
+    // Convert screen point to 3D view coordinates and get projection direction
+    Standard_Real Xv, Yv, Zv;    // View point in 3D
+    Standard_Real Xp, Yp, Zp;    // Projection direction
+
+    m_view->Convert(xp, yp, Xv, Yv, Zv);
+    m_view->Proj(Xp, Yp, Zp);
+
+    // Create a line from the view point in the projection direction
+    gp_Pnt viewPnt(Xv, Yv, Zv);
+    gp_Dir viewDir(Xp, Yp, Zp);
+    gp_Lin line(viewPnt, viewDir);
+
     // Find intersection between ray and plane
     IntAna_IntConicQuad intersection(line, gpPlane, Precision::Angular());
 
@@ -514,8 +498,42 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
         return QVector2D(u, v);
     }
 
-    // Fallback: return screen coordinates converted to view coordinates
-    return QVector2D(xv, yv);
+    // Fallback: If no intersection, try using the eye point for perspective views
+    Standard_Real Xe, Ye, Ze;
+    m_view->Eye(Xe, Ye, Ze);
+    gp_Pnt eyePnt(Xe, Ye, Ze);
+
+    // For perspective projection, ray goes from eye through view point
+    if (!m_view->Camera()->IsOrthographic()) {
+        gp_Vec rayVec(eyePnt, viewPnt);
+        if (rayVec.Magnitude() > Precision::Confusion()) {
+            gp_Dir rayDir(rayVec);
+            gp_Lin perspLine(eyePnt, rayDir);
+
+            IntAna_IntConicQuad perspIntersection(perspLine, gpPlane, Precision::Angular());
+
+            if (perspIntersection.IsDone() && perspIntersection.NbPoints() > 0) {
+                gp_Pnt intersectPnt = perspIntersection.Point(1);
+                QVector3D worldPt(intersectPnt.X(), intersectPnt.Y(), intersectPnt.Z());
+                QVector3D localPt = worldPt - plane.origin;
+
+                float u = QVector3D::dotProduct(localPt, plane.uAxis);
+                float v = QVector3D::dotProduct(localPt, plane.vAxis);
+
+                return QVector2D(u, v);
+            }
+        }
+    }
+
+    // Last resort: project view point directly onto plane
+    gp_Pnt projPnt = gpPlane.Location();
+    QVector3D worldPt(projPnt.X(), projPnt.Y(), projPnt.Z());
+    QVector3D localPt = worldPt - plane.origin;
+
+    float u = QVector3D::dotProduct(localPt, plane.uAxis);
+    float v = QVector3D::dotProduct(localPt, plane.vAxis);
+
+    return QVector2D(u, v);
 }
 
 void CadView::paintEvent(QPaintEvent* event) {
