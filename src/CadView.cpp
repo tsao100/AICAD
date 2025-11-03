@@ -24,6 +24,23 @@
 #include <QApplication>
 #include <QPainter>
 
+namespace {
+    // Helper to get proper OCCT coordinates from Qt event
+    void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
+                  Standard_Integer& occX, Standard_Integer& occY) {
+#ifdef _WIN32
+        // On Windows, account for device pixel ratio (High DPI)
+        qreal dpr = widget->devicePixelRatio();
+        occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
+        occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
+#else
+        // On Linux/X11, Qt coordinates match OCCT coordinates directly
+        occX = qtPos.x();
+        occY = qtPos.y();
+#endif
+    }
+}
+
 CadView::CadView(QWidget* parent)
     : QWidget(parent)
     , m_rubberBandObject(nullptr)
@@ -72,6 +89,14 @@ void CadView::initializeViewer() {
     if (!window->IsMapped()) {
         window->Map();
     }
+
+#ifdef _WIN32
+    // IMPORTANT: Set proper window size accounting for device pixel ratio
+    qreal dpr = devicePixelRatio();
+    Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
+    Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
+    window->SetVirtualSize(w, h);
+#endif
 
     m_view->SetBackgroundColor(Quantity_NOC_GRAY80);
     m_view->MustBeResized();
@@ -440,9 +465,9 @@ void CadView::setPendingSketch(TDF_Label sketch) {
 QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     if (m_view.IsNull()) return QVector2D(0, 0);
 
-    // Use Qt coordinates directly
-    Standard_Integer xp = screenPos.x();
-    Standard_Integer yp = screenPos.y();
+    // Convert Qt coordinates to OCCT coordinates
+    Standard_Integer xp, yp;
+    QtToOCCT(this, screenPos, xp, yp);
 
     // Get the sketch plane
     CustomPlane plane;
@@ -470,25 +495,43 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
 
     gp_Pln gpPlane = plane.toGpPln();
 
-    // Convert screen point to 3D view coordinates and get projection direction
-    Standard_Real Xv, Yv, Zv;    // View point in 3D
-    Standard_Real Xp, Yp, Zp;    // Projection direction
+    // Get view parameters
+    Standard_Real Xv, Yv, Zv;    // View point coordinates
+    Standard_Real Xat, Yat, Zat; // Look-at point
+    Standard_Real Xup, Yup, Zup; // Up direction
 
-    m_view->Convert(xp, yp, Xv, Yv, Zv);
-    m_view->Proj(Xp, Yp, Zp);
+    m_view->Eye(Xv, Yv, Zv);
+    m_view->At(Xat, Yat, Zat);
+    m_view->Up(Xup, Yup, Zup);
 
-    // Create a line from the view point in the projection direction
-    gp_Pnt viewPnt(Xv, Yv, Zv);
-    gp_Dir viewDir(Xp, Yp, Zp);
-    gp_Lin line(viewPnt, viewDir);
+    // Get the proper 3D point from screen coordinates
+    Standard_Real X, Y, Z;
+    m_view->Convert(xp, yp, X, Y, Z);
 
-    // Find intersection between ray and plane
+    gp_Pnt screenPoint3D(X, Y, Z);
+    gp_Pnt eyePoint(Xv, Yv, Zv);
+
+    // Create ray from eye through screen point
+    gp_Vec rayVec(eyePoint, screenPoint3D);
+
+    // Handle case where eye and screen point are the same (shouldn't happen)
+    if (rayVec.Magnitude() < Precision::Confusion()) {
+        // Use projection direction instead
+        Standard_Real Xp, Yp, Zp;
+        m_view->Proj(Xp, Yp, Zp);
+        rayVec = gp_Vec(Xp, Yp, Zp);
+    }
+
+    gp_Dir rayDir(rayVec);
+    gp_Lin line(eyePoint, rayDir);
+
+    // Find intersection with plane
     IntAna_IntConicQuad intersection(line, gpPlane, Precision::Angular());
 
     if (intersection.IsDone() && intersection.NbPoints() > 0) {
         gp_Pnt intersectPnt = intersection.Point(1);
 
-        // Convert 3D intersection point to 2D plane coordinates
+        // Convert 3D world point to 2D plane coordinates
         QVector3D worldPt(intersectPnt.X(), intersectPnt.Y(), intersectPnt.Z());
         QVector3D localPt = worldPt - plane.origin;
 
@@ -498,42 +541,7 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
         return QVector2D(u, v);
     }
 
-    // Fallback: If no intersection, try using the eye point for perspective views
-    Standard_Real Xe, Ye, Ze;
-    m_view->Eye(Xe, Ye, Ze);
-    gp_Pnt eyePnt(Xe, Ye, Ze);
-
-    // For perspective projection, ray goes from eye through view point
-    if (!m_view->Camera()->IsOrthographic()) {
-        gp_Vec rayVec(eyePnt, viewPnt);
-        if (rayVec.Magnitude() > Precision::Confusion()) {
-            gp_Dir rayDir(rayVec);
-            gp_Lin perspLine(eyePnt, rayDir);
-
-            IntAna_IntConicQuad perspIntersection(perspLine, gpPlane, Precision::Angular());
-
-            if (perspIntersection.IsDone() && perspIntersection.NbPoints() > 0) {
-                gp_Pnt intersectPnt = perspIntersection.Point(1);
-                QVector3D worldPt(intersectPnt.X(), intersectPnt.Y(), intersectPnt.Z());
-                QVector3D localPt = worldPt - plane.origin;
-
-                float u = QVector3D::dotProduct(localPt, plane.uAxis);
-                float v = QVector3D::dotProduct(localPt, plane.vAxis);
-
-                return QVector2D(u, v);
-            }
-        }
-    }
-
-    // Last resort: project view point directly onto plane
-    gp_Pnt projPnt = gpPlane.Location();
-    QVector3D worldPt(projPnt.X(), projPnt.Y(), projPnt.Z());
-    QVector3D localPt = worldPt - plane.origin;
-
-    float u = QVector3D::dotProduct(localPt, plane.uAxis);
-    float v = QVector3D::dotProduct(localPt, plane.vAxis);
-
-    return QVector2D(u, v);
+    return QVector2D(0, 0);
 }
 
 void CadView::paintEvent(QPaintEvent* event) {
@@ -547,9 +555,21 @@ void CadView::resizeEvent(QResizeEvent* event) {
     Q_UNUSED(event);  // Suppress unused parameter warning
 
     if (!m_viewInitialized) {
-        return;
+        m_viewInitialized = true;
     }
+
     if (!m_view.IsNull()) {
+#ifdef _WIN32
+        // Update window size with device pixel ratio
+        Handle(Aspect_Window) window = m_view->Window();
+        if (!window.IsNull()) {
+            qreal dpr = devicePixelRatio();
+            Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
+            Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
+            window->SetVirtualSize(w, h);
+        }
+#endif
+
         m_view->MustBeResized();
         m_view->Redraw();
     }
@@ -560,10 +580,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     m_mousePressed = true;
     m_pressedButton = event->button();
 
+    // Convert to OCCT coordinates
+    Standard_Integer xp, yp;
+    QtToOCCT(this, event->pos(), xp, yp);
+
     // Update OCCT selection
     if (!m_context.IsNull() && !m_view.IsNull())
     {
-        m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
+        m_context->MoveTo(xp, yp, m_view, Standard_True);
 
         if (event->button() == Qt::LeftButton)
         {
@@ -598,13 +622,22 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             Q_EMIT pointAcquired(planePt);
         }
     }
+
+    // Store position for rotation
+    if (event->button() == Qt::RightButton && !m_view.IsNull()) {
+        m_view->StartRotation(xp, yp);
+    }
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
+    // Convert to OCCT coordinates
+    Standard_Integer xp, yp;
+    QtToOCCT(this, event->pos(), xp, yp);
+
     // Update OCCT hover detection
     if (!m_context.IsNull() && !m_view.IsNull())
     {
-        m_context->MoveTo(event->pos().x(), event->pos().y(), m_view, Standard_True);
+        m_context->MoveTo(xp, yp, m_view, Standard_True);
 
         if (m_context->HasDetected())
         {
@@ -628,10 +661,11 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     if (m_mode == CadMode::Sketching) {
         m_currentPoint = screenToPlane(event->pos());
         m_hasCurrentPoint = true;
-        updateRubberBand();  // Update rubber band preview
+        updateRubberBand();
         return;
     }
 
+    // View manipulation
     if (m_mousePressed && !m_view.IsNull()) {
         int dx = event->pos().x() - m_lastMousePos.x();
         int dy = event->pos().y() - m_lastMousePos.y();
@@ -639,7 +673,11 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         if (m_pressedButton == Qt::MiddleButton) {
             m_view->Pan(dx, -dy);
         } else if (m_pressedButton == Qt::RightButton) {
-            m_view->Rotation(event->pos().x(), event->pos().y());
+            // For rotation, need to convert current position
+            Standard_Integer xCurr, yCurr;
+            QtToOCCT(this, event->pos(), xCurr, yCurr);
+            m_view->StartRotation(xp, yp);
+            m_view->Rotation(xCurr, yCurr);
         }
 
         update();
