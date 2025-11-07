@@ -497,43 +497,42 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
 
     gp_Pln gpPlane = plane.toGpPln();
 
-    // Convert screen coordinates to 3D view line
-    // This accounts for both orthographic and perspective projections
-    Standard_Real X, Y, Z;
-    m_view->Convert(xp, yp, X, Y, Z);
-
-    // Get projection parameters
+    // Get projection direction and eye point
     Standard_Real Xeye, Yeye, Zeye;
+    Standard_Real Xproj, Yproj, Zproj;
+
     m_view->Eye(Xeye, Yeye, Zeye);
+    m_view->Proj(Xproj, Yproj, Zproj);
 
-    gp_Pnt screenPoint3D(X, Y, Z);
     gp_Pnt eyePoint(Xeye, Yeye, Zeye);
+    gp_Dir projDir(Xproj, Yproj, Zproj);
 
-    // Create line from eye point to screen point
-    // For orthographic views, this direction will be parallel to view direction
-    // For perspective views, it will converge to eye point
-    gp_Vec direction(eyePoint, screenPoint3D);
+    // Convert screen point to 3D world coordinates
+    Standard_Real Xv, Yv, Zv;
+    m_view->Convert(xp, yp, Xv, Yv, Zv);
+    gp_Pnt screenPoint3D(Xv, Yv, Zv);
 
-    // Ensure we have a valid direction
-    if (direction.Magnitude() < Precision::Confusion()) {
-        // Fallback to projection direction
-        Standard_Real Xp, Yp, Zp;
-        m_view->Proj(Xp, Yp, Zp);
-        direction = gp_Vec(Xp, Yp, Zp);
-    }
+    // Create picking ray
+    gp_Pnt rayStart;
+    gp_Dir rayDir;
 
-    gp_Dir rayDir(direction);
-
-    // Create the picking line
-    // Start from screen point (for orthographic) or eye point (for perspective)
-    gp_Pnt startPoint;
     if (m_view->Camera()->IsOrthographic()) {
-        startPoint = screenPoint3D;
+        // For orthographic projection, ray starts at the converted screen point
+        // and direction is the projection direction
+        rayStart = screenPoint3D;
+        rayDir = projDir;
     } else {
-        startPoint = eyePoint;
+        // For perspective projection, ray goes from eye through screen point
+        rayStart = eyePoint;
+        gp_Vec direction(eyePoint, screenPoint3D);
+        if (direction.Magnitude() < Precision::Confusion()) {
+            rayDir = projDir;
+        } else {
+            rayDir = gp_Dir(direction);
+        }
     }
 
-    gp_Lin pickLine(startPoint, rayDir);
+    gp_Lin pickLine(rayStart, rayDir);
 
     // Find intersection with plane
     IntAna_IntConicQuad intersection(pickLine, gpPlane, Precision::Angular());
