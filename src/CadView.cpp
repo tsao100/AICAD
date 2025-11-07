@@ -90,13 +90,13 @@ void CadView::initializeViewer() {
         window->Map();
     }
 
-#ifdef _WIN32
-    // IMPORTANT: Set proper window size accounting for device pixel ratio
-    qreal dpr = devicePixelRatio();
-    Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
-    Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
-    window->SetVirtualSize(w, h);
-#endif
+// #ifdef _WIN32
+//     // IMPORTANT: Set proper window size accounting for device pixel ratio
+//     qreal dpr = devicePixelRatio();
+//     Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
+//     Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
+//     window->SetVirtualSize(w, h);
+// #endif
 
     m_view->SetBackgroundColor(Quantity_NOC_GRAY80);
     m_view->MustBeResized();
@@ -462,6 +462,8 @@ void CadView::setPendingSketch(TDF_Label sketch) {
     m_pendingSketch = sketch;
 }
 
+// Updated screenToPlane function:
+
 QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     if (m_view.IsNull()) return QVector2D(0, 0);
 
@@ -495,38 +497,46 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
 
     gp_Pln gpPlane = plane.toGpPln();
 
-    // Get view parameters
-    Standard_Real Xv, Yv, Zv;    // View point coordinates
-    Standard_Real Xat, Yat, Zat; // Look-at point
-    Standard_Real Xup, Yup, Zup; // Up direction
-
-    m_view->Eye(Xv, Yv, Zv);
-    m_view->At(Xat, Yat, Zat);
-    m_view->Up(Xup, Yup, Zup);
-
-    // Get the proper 3D point from screen coordinates
+    // Convert screen coordinates to 3D view line
+    // This accounts for both orthographic and perspective projections
     Standard_Real X, Y, Z;
     m_view->Convert(xp, yp, X, Y, Z);
 
+    // Get projection parameters
+    Standard_Real Xeye, Yeye, Zeye;
+    m_view->Eye(Xeye, Yeye, Zeye);
+
     gp_Pnt screenPoint3D(X, Y, Z);
-    gp_Pnt eyePoint(Xv, Yv, Zv);
+    gp_Pnt eyePoint(Xeye, Yeye, Zeye);
 
-    // Create ray from eye through screen point
-    gp_Vec rayVec(eyePoint, screenPoint3D);
+    // Create line from eye point to screen point
+    // For orthographic views, this direction will be parallel to view direction
+    // For perspective views, it will converge to eye point
+    gp_Vec direction(eyePoint, screenPoint3D);
 
-    // Handle case where eye and screen point are the same (shouldn't happen)
-    if (rayVec.Magnitude() < Precision::Confusion()) {
-        // Use projection direction instead
+    // Ensure we have a valid direction
+    if (direction.Magnitude() < Precision::Confusion()) {
+        // Fallback to projection direction
         Standard_Real Xp, Yp, Zp;
         m_view->Proj(Xp, Yp, Zp);
-        rayVec = gp_Vec(Xp, Yp, Zp);
+        direction = gp_Vec(Xp, Yp, Zp);
     }
 
-    gp_Dir rayDir(rayVec);
-    gp_Lin line(eyePoint, rayDir);
+    gp_Dir rayDir(direction);
+
+    // Create the picking line
+    // Start from screen point (for orthographic) or eye point (for perspective)
+    gp_Pnt startPoint;
+    if (m_view->Camera()->IsOrthographic()) {
+        startPoint = screenPoint3D;
+    } else {
+        startPoint = eyePoint;
+    }
+
+    gp_Lin pickLine(startPoint, rayDir);
 
     // Find intersection with plane
-    IntAna_IntConicQuad intersection(line, gpPlane, Precision::Angular());
+    IntAna_IntConicQuad intersection(pickLine, gpPlane, Precision::Angular());
 
     if (intersection.IsDone() && intersection.NbPoints() > 0) {
         gp_Pnt intersectPnt = intersection.Point(1);
@@ -558,17 +568,17 @@ void CadView::resizeEvent(QResizeEvent* event) {
         m_viewInitialized = true;
     }
 
-    if (!m_view.IsNull()) {
-#ifdef _WIN32
-        // Update window size with device pixel ratio
-        Handle(Aspect_Window) window = m_view->Window();
-        if (!window.IsNull()) {
-            qreal dpr = devicePixelRatio();
-            Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
-            Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
-            window->SetVirtualSize(w, h);
-        }
-#endif
+     if (!m_view.IsNull()) {
+// #ifdef _WIN32
+//         // Update window size with device pixel ratio
+//         Handle(Aspect_Window) window = m_view->Window();
+//         if (!window.IsNull()) {
+//             qreal dpr = devicePixelRatio();
+//             Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
+//             Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
+//             window->SetVirtualSize(w, h);
+//         }
+// #endif
 
         m_view->MustBeResized();
         m_view->Redraw();
