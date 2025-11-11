@@ -277,7 +277,33 @@ void CadView::updateRubberBand() {
         return gp_Pnt(worldPt.x(), worldPt.y(), worldPt.z());
     };
 
-    if (m_rubberBandMode == RubberBandMode::Rectangle) {
+    if (m_rubberBandMode == RubberBandMode::Line) {
+        if (m_sketchPoints.isEmpty()) return;
+
+        // Create line from base point to current point
+        Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(2);
+        polyline->AddVertex(planeToWorld(m_sketchPoints[0]));
+        polyline->AddVertex(planeToWorld(m_currentPoint));
+
+        // Create presentation
+        Handle(Prs3d_Presentation) prs = new Prs3d_Presentation(m_context->MainPrsMgr()->StructureManager());
+        Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+            Quantity_NOC_WHITE,
+            Aspect_TOL_DASH,
+            2.0
+            );
+
+        Handle(Graphic3d_Group) group = prs->NewGroup();
+        group->SetGroupPrimitivesAspect(aspect->Aspect());
+        group->AddPrimitiveArray(polyline);
+
+        prs->SetZLayer(Graphic3d_ZLayerId_Top);
+        prs->SetDisplayPriority(10);
+        prs->Display();
+
+        m_rubberBandObject = prs;
+    }
+    else if (m_rubberBandMode == RubberBandMode::Rectangle) {
         // Create rectangle points
         QVector2D p1 = m_sketchPoints[0];
         QVector2D p2 = m_currentPoint;

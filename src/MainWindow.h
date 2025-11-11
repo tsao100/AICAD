@@ -66,7 +66,16 @@ private Q_SLOTS:
     void updateFeatureTree();
 
 private:
-    // Unified command system
+
+    bool m_waitingForGetPoint;
+    QVector2D m_getPointBase;
+    bool m_hasGetPointBase;
+    QString m_getPointMessage;
+
+    static cl_object lisp_getpoint(cl_narg narg, ...);
+    void startGetPoint(const QVector2D* basePoint = nullptr, const QString& message = "");
+
+// Unified command system
     struct CADCommand {
         QString name;
         QStringList aliases;
