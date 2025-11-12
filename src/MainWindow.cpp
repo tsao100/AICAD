@@ -51,6 +51,8 @@ QString eclObjectToQString(cl_object obj) {
 MainWindow::MainWindow()
     : m_waitingForGetPoint(false)
     , m_hasGetPointBase(false)
+    , m_getPointCompleted(false)
+    , m_getPointCancelled(false)
     , historyIndex(-1), consoleVisible(false)
 {
     m_document.newDocument();
@@ -90,12 +92,23 @@ cl_object MainWindow::lisp_getpoint(cl_narg narg, ...) {
     QVector2D tempBase;
     QString message = "Specify point: ";
 
-    // Parse optional arguments
-    if (narg >= 1) {
-        cl_object arg1 = va_arg(args, cl_object);
+    cl_object arg1 = Cnil;
+    cl_object arg2 = Cnil;
 
+    // Get arguments from va_list
+    if (narg >= 1) {
+        arg1 = va_arg(args, cl_object);
+    }
+    if (narg >= 2) {
+        arg2 = va_arg(args, cl_object);
+    }
+
+    va_end(args);
+
+    // Parse first argument
+    if (narg >= 1 && arg1 != Cnil) {
         // Check if first arg is a list (point coordinates)
-        if (arg1 != Cnil && ECL_LISTP(arg1)) {
+        if (ECL_LISTP(arg1)) {
             cl_object x_obj = ecl_car(arg1);
             cl_object y_obj = ecl_cadr(arg1);
 
@@ -107,7 +120,7 @@ cl_object MainWindow::lisp_getpoint(cl_narg narg, ...) {
             }
         }
         // Check if first arg is a string (message)
-        else if (arg1 != Cnil && ECL_STRINGP(arg1)) {
+        else if (ECL_STRINGP(arg1)) {
             if (ECL_BASE_STRING_P(arg1)) {
                 const char* cstr = (const char*)ecl_base_string_pointer_safe(arg1);
                 if (cstr) {
@@ -126,10 +139,8 @@ cl_object MainWindow::lisp_getpoint(cl_narg narg, ...) {
     }
 
     // Parse second argument (message if first was point)
-    if (narg >= 2 && basePoint != nullptr) {
-        cl_object arg2 = va_arg(args, cl_object);
-
-        if (arg2 != Cnil && ECL_STRINGP(arg2)) {
+    if (narg >= 2 && arg2 != Cnil && basePoint != nullptr) {
+        if (ECL_STRINGP(arg2)) {
             if (ECL_BASE_STRING_P(arg2)) {
                 const char* cstr = (const char*)ecl_base_string_pointer_safe(arg2);
                 if (cstr) {
@@ -147,34 +158,34 @@ cl_object MainWindow::lisp_getpoint(cl_narg narg, ...) {
         }
     }
 
-    va_end(args);
+    // Clear any previous result
+    mainWin->m_getPointResult = QVector2D(0, 0);
+    mainWin->m_getPointCompleted = false;
+    mainWin->m_getPointCancelled = false;
 
     // Start interactive point acquisition
     mainWin->startGetPoint(basePoint, message);
 
-    // Process events until point is acquired
-    QEventLoop loop;
-    QObject::connect(mainWin->m_view, &CadView::pointAcquired, &loop, &QEventLoop::quit);
-    QObject::connect(mainWin->m_view, &CadView::getPointCancelled, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    // Check if cancelled
-    if (!mainWin->m_waitingForGetPoint) {
-        // Get the acquired point
-        QVector<QVector2D> points = mainWin->m_view->getSketchPoints();
-        if (!points.isEmpty()) {
-            QVector2D pt = points.last();
-
-            // Return as Lisp list (x y)
-            cl_object result = cl_list(2,
-                                       ecl_make_double_float(pt.x()),
-                                       ecl_make_double_float(pt.y()));
-
-            return result;
-        }
+    // Process events until point is acquired or cancelled
+    while (mainWin->m_waitingForGetPoint) {
+        QApplication::processEvents(QEventLoop::WaitForMoreEvents);
     }
 
-    // Cancelled or no point acquired
+    // Check if cancelled
+    if (mainWin->m_getPointCancelled) {
+        return Cnil;
+    }
+
+    if (mainWin->m_getPointCompleted) {
+        // Return as Lisp list (x y)
+        cl_object result = cl_list(2,
+                                   ecl_make_double_float(mainWin->m_getPointResult.x()),
+                                   ecl_make_double_float(mainWin->m_getPointResult.y()));
+
+        return result;
+    }
+
+    // Fallback - no point acquired
     return Cnil;
 }
 
@@ -207,7 +218,7 @@ void MainWindow::startGetPoint(const QVector2D* basePoint, const QString& messag
         m_view->setRubberBandMode(RubberBandMode::None);
     }
 
-    m_view->setMode(CadMode::Sketching);
+    m_view->setMode(CadMode::GetPoint);
     m_view->setPendingSketch(m_activeSketch);
     statusBar()->showMessage(message);
 }
@@ -478,6 +489,9 @@ void MainWindow::onDrawLine() {
 void MainWindow::onPointAcquired(QVector2D point) {
     // Handle getpoint mode
     if (m_waitingForGetPoint) {
+        m_getPointResult = point;
+        m_getPointCompleted = true;
+        m_getPointCancelled = false;
         m_waitingForGetPoint = false;
         m_view->setMode(CadMode::Idle);
         m_view->setRubberBandMode(RubberBandMode::None);
@@ -528,9 +542,12 @@ void MainWindow::onPointAcquired(QVector2D point) {
                                      .arg(point.y(), 0, 'f', 2));
     }
 }
+
 void MainWindow::onGetPointCancelled() {
     if (m_waitingForGetPoint) {
         m_waitingForGetPoint = false;
+        m_getPointCompleted = false;
+        m_getPointCancelled = true;
     }
 
     m_view->setMode(CadMode::Idle);

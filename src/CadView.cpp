@@ -657,6 +657,13 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             Q_EMIT pointAcquired(planePt);
         }
     }
+    if ( m_mode == CadMode::GetPoint && event->button() == Qt::LeftButton) {
+        QVector2D planePt = screenToPlane(event->pos());
+        // For getpoint with rubber band line - emit immediately
+        Q_EMIT pointAcquired(planePt);  // <-- ADDED FOR GETPOINT
+        clearRubberBand();
+    }
+
 
     // Store position for rotation
     if (event->button() == Qt::RightButton && !m_view.IsNull()) {

@@ -71,6 +71,9 @@ private:
     QVector2D m_getPointBase;
     bool m_hasGetPointBase;
     QString m_getPointMessage;
+    QVector2D m_getPointResult;
+    bool m_getPointCompleted;
+    bool m_getPointCancelled;
 
     static cl_object lisp_getpoint(cl_narg narg, ...);
     void startGetPoint(const QVector2D* basePoint = nullptr, const QString& message = "");

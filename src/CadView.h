@@ -40,7 +40,8 @@ enum class CadMode {
     Idle,
     Sketching,
     Extruding,
-    SelectingFace
+    SelectingFace,
+    GetPoint
 };
 
 enum class RubberBandMode {
