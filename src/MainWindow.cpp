@@ -179,8 +179,8 @@ cl_object MainWindow::lisp_getpoint(cl_narg narg, ...) {
     if (mainWin->m_getPointCompleted) {
         // Return as Lisp list (x y)
         cl_object result = cl_list(2,
-                                   ecl_make_double_float(mainWin->m_getPointResult.x()),
-                                   ecl_make_double_float(mainWin->m_getPointResult.y()));
+                                   ecl_make_single_float(mainWin->m_getPointResult.x()),
+                                   ecl_make_single_float(mainWin->m_getPointResult.y()));
 
         return result;
     }
@@ -205,6 +205,9 @@ void MainWindow::startGetPoint(const QVector2D* basePoint, const QString& messag
     m_waitingForGetPoint = true;
     m_getPointMessage = message;
 
+    // Set the prompt in command input instead of status bar
+    setPrompt(message);
+
     if (basePoint) {
         m_getPointBase = *basePoint;
         m_hasGetPointBase = true;
@@ -220,7 +223,6 @@ void MainWindow::startGetPoint(const QVector2D* basePoint, const QString& messag
 
     m_view->setMode(CadMode::GetPoint);
     m_view->setPendingSketch(m_activeSketch);
-    statusBar()->showMessage(message);
 }
 
 void MainWindow::registerCADCommand(
@@ -670,28 +672,138 @@ void MainWindow::keyPressEvent(QKeyEvent *event) {
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
-#ifdef HAVE_ECL
     if (obj == commandInput && event->type() == QEvent::KeyPress) {
         QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
 
-        if (keyEvent->key() == Qt::Key_Up) {
-            if (historyIndex > 0) {
-                historyIndex--;
-                commandInput->setText(commandHistory[historyIndex]);
+        // Prevent deleting prompt text with Backspace or Delete
+        if (keyEvent->key() == Qt::Key_Backspace) {
+            if (commandInput->cursorPosition() <= promptLength) {
+                return true; // Block backspace if cursor is at or before prompt
             }
-            return true;
-        } else if (keyEvent->key() == Qt::Key_Down) {
-            if (historyIndex < commandHistory.size() - 1) {
-                historyIndex++;
-                commandInput->setText(commandHistory[historyIndex]);
+            // Check if selection includes prompt
+            if (commandInput->hasSelectedText() && commandInput->selectionStart() < promptLength) {
+                return true; // Block backspace if selection includes prompt
+            }
+        }
+
+        if (keyEvent->key() == Qt::Key_Delete) {
+            if (commandInput->cursorPosition() < promptLength) {
+                return true; // Block delete if cursor is before prompt end
+            }
+            // Check if selection includes prompt
+            if (commandInput->hasSelectedText() && commandInput->selectionStart() < promptLength) {
+                return true; // Block backspace if selection includes prompt
+            }
+        }
+
+        // Prevent cursor from moving into prompt area with Left arrow
+        if (keyEvent->key() == Qt::Key_Left) {
+            if (commandInput->cursorPosition() <= promptLength) {
+                return true; // Block left arrow at prompt boundary
+            }
+        }
+
+        // Prevent selecting or moving to beginning if it would include prompt
+        if (keyEvent->key() == Qt::Key_Home) {
+            if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                // Shift+Home: select from cursor to after prompt
+                int curPos = commandInput->cursorPosition();
+                commandInput->setSelection(promptLength, curPos - promptLength);
             } else {
-                historyIndex = commandHistory.size();
-                commandInput->clear();
+                // Home: move cursor to just after prompt
+                commandInput->setCursorPosition(promptLength);
             }
             return true;
         }
+
+        // Handle Ctrl+A (Select All) - only select user input, not prompt
+        if (keyEvent->key() == Qt::Key_A && (keyEvent->modifiers() & Qt::ControlModifier)) {
+            int textLen = commandInput->text().length();
+            if (textLen > promptLength) {
+                commandInput->setSelection(promptLength, textLen - promptLength);
+            }
+            return true;
+        }
+
+        // Handle Up Arrow - navigate backwards in history
+        if (keyEvent->key() == Qt::Key_Up) {
+            if (!commandHistory.isEmpty() && historyIndex < commandHistory.size() - 1) {
+                historyIndex++;
+                QString cmd = commandHistory[commandHistory.size() - 1 - historyIndex];
+                commandInput->setText(promptText + cmd);
+                commandInput->setCursorPosition(commandInput->text().length());
+            }
+            return true;
+        }
+
+        if (keyEvent->key() == Qt::Key_Down) {
+            if (historyIndex > 0) {
+                historyIndex--;
+                QString cmd = commandHistory[commandHistory.size() - 1 - historyIndex];
+                commandInput->setText(promptText + cmd);
+                commandInput->setCursorPosition(commandInput->text().length());
+            } else if (historyIndex == 0) {
+                historyIndex = -1;
+                commandInput->setText(promptText);
+                commandInput->setCursorPosition(commandInput->text().length());
+            }
+            return true;
+        }
+
+        if (keyEvent->key() == Qt::Key_Space && commandInput->text().isEmpty()) {
+            if (!commandHistory.isEmpty()) {
+                commandInput->setText(promptText + commandHistory.last());
+                commandInput->setCursorPosition(commandInput->text().length());
+                executeCommand();
+            }
+            return true;
+        }
+
+        // Handle text input - if there's a selection that includes prompt, adjust it
+        if (!keyEvent->text().isEmpty() && commandInput->hasSelectedText()) {
+            int selStart = commandInput->selectionStart();
+            int selLen = commandInput->selectedText().length();
+            if (selStart < promptLength) {
+                // Selection starts in prompt area - adjust to only replace user text
+                int newStart = promptLength;
+                int newLen = selLen - (promptLength - selStart);
+                if (newLen > 0) {
+                    commandInput->setSelection(newStart, newLen);
+                } else {
+                    commandInput->deselect();
+                    commandInput->setCursorPosition(promptLength);
+                }
+            }
+        }
     }
-#endif
+
+    // Handle mouse selection to prevent selecting prompt
+    if (obj == commandInput && event->type() == QEvent::MouseButtonPress) {
+        // Allow the click, but we'll fix the cursor position after
+        QTimer::singleShot(0, this, [this]() {
+            if (commandInput->cursorPosition() < promptLength) {
+                commandInput->setCursorPosition(promptLength);
+            }
+            // If selection includes prompt, adjust it
+            if (commandInput->hasSelectedText() && commandInput->selectionStart() < promptLength) {
+                int selEnd = commandInput->selectionStart() + commandInput->selectedText().length();
+                if (selEnd > promptLength) {
+                    commandInput->setSelection(promptLength, selEnd - promptLength);
+                } else {
+                    commandInput->deselect();
+                    commandInput->setCursorPosition(promptLength);
+                }
+            }
+        });
+    }
+
+    // Handle text changes to ensure prompt stays
+    if (obj == commandInput && event->type() == QEvent::FocusIn) {
+        // Ensure cursor doesn't start in prompt area
+        if (commandInput->cursorPosition() < promptLength) {
+            commandInput->setCursorPosition(promptLength);
+        }
+    }
 
     return QMainWindow::eventFilter(obj, event);
 }
@@ -771,6 +883,9 @@ void MainWindow::initECL() {
         "}"
         );
 
+    commandInput->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    // Toggle button
     toggleButton = new QPushButton("F2", central);
     toggleButton->setStyleSheet(
         "QPushButton { "
@@ -782,8 +897,17 @@ void MainWindow::initECL() {
         "border: 2px solid gray; "
         "border-radius: 3px; "
         "min-width: 50px; "
+        "} "
+        "QPushButton:hover { "
+        "background: rgba(50, 50, 50, 200); "
+        "border: 2px solid lightgray; "
+        "} "
+        "QPushButton:pressed { "
+        "background: rgba(100, 100, 100, 200); "
         "}"
         );
+    toggleButton->setToolTip("Toggle console (F2)");
+    toggleButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
     QHBoxLayout *bottomLayout = new QHBoxLayout();
     bottomLayout->addWidget(commandInput);
@@ -805,7 +929,13 @@ void MainWindow::initECL() {
     connect(toggleButton, &QPushButton::clicked, this, &MainWindow::toggleConsole);
     connect(fadeTimer, &QTimer::timeout, this, &MainWindow::fadeOutResult);
 
+    // Connect textChanged to prevent deleting the prompt
+    connect(commandInput, &QLineEdit::textChanged, this, &MainWindow::updatePrompt);
+
     commandInput->installEventFilter(this);
+
+    // Set initial prompt
+    setPrompt("Command: ");
 
     showResultTemporarily("ECL Lisp initialized. Press F2 to toggle console.");
 }
@@ -841,17 +971,42 @@ void MainWindow::fadeOutResult() {
 void MainWindow::setPrompt(const QString &prompt) {
     promptText = prompt;
     promptLength = prompt.length();
-    commandInput->setPlaceholderText(prompt);
+    commandInput->setText(prompt);
+    commandInput->setCursorPosition(promptLength);
 }
+
+void MainWindow::updatePrompt() {
+    // Ensure prompt is never deleted
+    QString currentText = commandInput->text();
+    if (!currentText.startsWith(promptText)) {
+        commandInput->setText(promptText);
+        commandInput->setCursorPosition(promptLength);
+    }
+}
+
 
 void MainWindow::executeCommand() {
     QString cmd = commandInput->text().trimmed();
+
+    // Remove prompt from command if present
+    if (cmd.startsWith(promptText)) {
+        cmd = cmd.mid(promptText.length()).trimmed();
+    }
+
     if (cmd.isEmpty()) return;
 
     commandHistory.append(cmd);
     historyIndex = commandHistory.size();
 
     consoleOutput->appendPlainText(promptText + cmd);
+
+    if (cmd.startsWith('!')) {
+        // Extract variable name after !
+        QString varName = cmd.mid(1).trimmed();
+        if (!varName.isEmpty()) {
+            cmd = QString("(print %1)").arg(varName);
+        }
+    }
 
     cl_object form = c_string_to_object(cmd.toUtf8().constData());
     if (form != Cnil) {
@@ -873,6 +1028,7 @@ void MainWindow::executeCommand() {
     }
 
     commandInput->clear();
+    setPrompt("Command: ");
 }
 #endif
 

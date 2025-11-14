@@ -715,11 +715,8 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         if (m_pressedButton == Qt::MiddleButton) {
             m_view->Pan(dx, -dy);
         } else if (m_pressedButton == Qt::RightButton) {
-            // For rotation, need to convert current position
-            Standard_Integer xCurr, yCurr;
-            QtToOCCT(this, event->pos(), xCurr, yCurr);
-            m_view->StartRotation(xp, yp);
-            m_view->Rotation(xCurr, yCurr);
+            // For rotation, just call Rotation with current position
+            m_view->Rotation(xp, yp);
         }
 
         update();

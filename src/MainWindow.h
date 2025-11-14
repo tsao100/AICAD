@@ -108,6 +108,7 @@ private:
     void toggleConsole();
     void showResultTemporarily(const QString &result);
     void setPrompt(const QString &prompt);
+    void updatePrompt();
 
     QPlainTextEdit *consoleOutput;
     QLineEdit *commandInput;
