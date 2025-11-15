@@ -433,9 +433,20 @@ void MainWindow::onCreateSketch() {
 
     if (ok && !item.isEmpty()) {
         CustomPlane plane;
-        if (item == "XY Plane") plane = CustomPlane::XY();
-        else if (item == "XZ Plane") plane = CustomPlane::XZ();
-        else if (item == "YZ Plane") plane = CustomPlane::YZ();
+        SketchView targetView = SketchView::Isometric;
+
+        if (item == "XY Plane") {
+            plane = CustomPlane::XY();
+            targetView = SketchView::Top;
+        }
+        else if (item == "XZ Plane") {
+            plane = CustomPlane::XZ();
+            targetView = SketchView::Front;
+        }
+        else if (item == "YZ Plane") {
+            plane = CustomPlane::YZ();
+            targetView = SketchView::Right;
+        }
 
         QString tempName = QString("Sketch (%1)").arg(plane.getDisplayName());
 
@@ -447,8 +458,11 @@ void MainWindow::onCreateSketch() {
 
         m_view->setPendingSketch(m_activeSketch);
 
+        // Set view to face the sketch plane
+        m_view->setSketchView(targetView);
+
         updateFeatureTree();
-        statusBar()->showMessage("Sketch created. Use sketch tools to add geometry.");
+        statusBar()->showMessage(QString("Sketch created on %1 plane. Use sketch tools to add geometry.").arg(plane.getDisplayName()));
     }
 }
 
@@ -726,20 +740,20 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
         }
 
         // Handle Up Arrow - navigate backwards in history
-        if (keyEvent->key() == Qt::Key_Up) {
+        if (keyEvent->key() == Qt::Key_Down) {
             if (!commandHistory.isEmpty() && historyIndex < commandHistory.size() - 1) {
                 historyIndex++;
-                QString cmd = commandHistory[commandHistory.size() - 1 - historyIndex];
+                QString cmd = commandHistory[historyIndex];
                 commandInput->setText(promptText + cmd);
                 commandInput->setCursorPosition(commandInput->text().length());
             }
             return true;
         }
 
-        if (keyEvent->key() == Qt::Key_Down) {
+        if (keyEvent->key() == Qt::Key_Up) {
             if (historyIndex > 0) {
                 historyIndex--;
-                QString cmd = commandHistory[commandHistory.size() - 1 - historyIndex];
+                QString cmd = commandHistory[historyIndex];
                 commandInput->setText(promptText + cmd);
                 commandInput->setCursorPosition(commandInput->text().length());
             } else if (historyIndex == 0) {
