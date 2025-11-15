@@ -62,6 +62,8 @@ CadView::CadView(QWidget* parent)
 }
 
 CadView::~CadView() {
+    clearRubberBand();
+    clearGrid();
 }
 
 void CadView::initializeViewer() {
@@ -473,6 +475,69 @@ TopoDS_Shape CadView::createExtrudeShape(TDF_Label sketchLabel, double height) {
     return TopoDS_Shape();
 }
 
+void CadView::updateGrid() {
+    clearGrid();
+
+    if (m_pendingSketch.IsNull() || !m_document) return;
+
+    CustomPlane plane = m_document->getSketchPlane(m_pendingSketch);
+
+    // Grid parameters
+    const int gridSize = 20;
+    const float gridSpacing = 10.0f;
+
+    float halfSize = gridSize * gridSpacing / 2.0f;
+
+    // Create polylines for grid (each line is a separate 2-vertex polyline)
+    Handle(Graphic3d_ArrayOfPolylines) lines =
+        new Graphic3d_ArrayOfPolylines(2 * (gridSize + 1) * 2, gridSize * 2 + 2);
+
+    // Grid lines parallel to U axis
+    for (int i = 0; i <= gridSize; ++i) {
+        float v = -halfSize + i * gridSpacing;
+        QVector3D p1 = plane.origin + plane.uAxis * (-halfSize) + plane.vAxis * v;
+        QVector3D p2 = plane.origin + plane.uAxis * halfSize + plane.vAxis * v;
+
+        lines->AddBound(2);
+        lines->AddVertex(gp_Pnt(p1.x(), p1.y(), p1.z()));
+        lines->AddVertex(gp_Pnt(p2.x(), p2.y(), p2.z()));
+    }
+
+    // Grid lines parallel to V axis
+    for (int i = 0; i <= gridSize; ++i) {
+        float u = -halfSize + i * gridSpacing;
+        QVector3D p1 = plane.origin + plane.uAxis * u + plane.vAxis * (-halfSize);
+        QVector3D p2 = plane.origin + plane.uAxis * u + plane.vAxis * halfSize;
+
+        lines->AddBound(2);
+        lines->AddVertex(gp_Pnt(p1.x(), p1.y(), p1.z()));
+        lines->AddVertex(gp_Pnt(p2.x(), p2.y(), p2.z()));
+    }
+
+    m_gridPresentation = new Prs3d_Presentation(
+        m_context->MainPrsMgr()->StructureManager());
+
+    Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+        Quantity_NOC_GRAY60, Aspect_TOL_SOLID, 1.0);
+
+    Handle(Graphic3d_Group) group = m_gridPresentation->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect->Aspect());
+    group->AddPrimitiveArray(lines);
+
+    m_gridPresentation->SetZLayer(Graphic3d_ZLayerId_Default);
+    m_gridPresentation->Display();
+
+    m_view->Redraw();
+}
+
+void CadView::clearGrid() {
+    if (!m_gridPresentation.IsNull()) {
+        m_gridPresentation->Clear();
+        m_gridPresentation->Erase();
+        m_gridPresentation.Nullify();
+    }
+}
+
 void CadView::highlightFeature(int featureId) {
     update();
 }
@@ -486,9 +551,8 @@ void CadView::setRubberBandMode(RubberBandMode mode) {
 
 void CadView::setPendingSketch(TDF_Label sketch) {
     m_pendingSketch = sketch;
+    updateGrid();
 }
-
-// Updated screenToPlane function:
 
 QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     if (m_view.IsNull()) return QVector2D(0, 0);

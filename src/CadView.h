@@ -132,6 +132,9 @@ private:
     bool m_viewInitialized;
 
     Handle(AIS_ViewCube) m_viewCube;
+    Handle(Prs3d_Presentation) m_gridPresentation;
+    void updateGrid();
+    void clearGrid();
 };
 
 #endif
