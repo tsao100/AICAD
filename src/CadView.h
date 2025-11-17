@@ -75,6 +75,8 @@ public:
     CadMode getMode() const { return m_mode; }
 
     void setRubberBandMode(RubberBandMode mode);
+    void updateRubberBand();
+    void clearRubberBand();
     void setPendingSketch(TDF_Label sketch);
 
     QVector2D screenToPlane(const QPoint& screenPos);
@@ -89,6 +91,8 @@ Q_SIGNALS:
     void pointAcquired(QVector2D point);
     void getPointCancelled();
     void getPointKeyPressed(QString key);
+    void getPointActivateInput(QString key);
+    void requestCommandInputFocus();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -104,8 +108,6 @@ protected:
 private:
     void initializeViewer();
     Handle(Prs3d_Presentation) m_rubberBandObject;
-    void updateRubberBand();
-    void clearRubberBand();
 
     TopoDS_Shape createPolylineShape(const QVector<QVector2D>& points, const CustomPlane& plane);
     TopoDS_Shape createExtrudeShape(TDF_Label sketchLabel, double height);

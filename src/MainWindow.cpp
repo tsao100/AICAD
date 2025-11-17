@@ -377,8 +377,19 @@ void MainWindow::createCentral() {
 
     connect(m_view, &CadView::pointAcquired, this, &MainWindow::onPointAcquired);
     connect(m_view, &CadView::getPointCancelled, this, &MainWindow::onGetPointCancelled);
+    connect(m_view, &CadView::getPointActivateInput, this, &MainWindow::onGetPointActivateInput);
+    connect(m_view, &CadView::requestCommandInputFocus, this, [this]() {
+        commandInput->setFocus();
+    });
 
     setCentralWidget(m_view);
+}
+
+void MainWindow::onGetPointActivateInput(QString key) {
+    // Focus on command input and insert the typed character
+    commandInput->setFocus();
+    commandInput->setText(promptText + key);
+    commandInput->setCursorPosition(commandInput->text().length());
 }
 
 void MainWindow::createFeatureBrowser() {
@@ -1008,6 +1019,36 @@ void MainWindow::executeCommand() {
     }
 
     if (cmd.isEmpty()) return;
+
+    // Check if we're in getpoint mode and user entered coordinates
+    if (m_waitingForGetPoint && cmd.contains(',')) {
+        QStringList parts = cmd.split(',');
+        if (parts.size() == 2) {
+            bool okX, okY;
+            double x = parts[0].trimmed().toDouble(&okX);
+            double y = parts[1].trimmed().toDouble(&okY);
+
+            if (okX && okY) {
+                // Simulate point acquisition from keyboard
+                QVector2D point(x, y);
+                m_getPointResult = point;
+                m_getPointCompleted = true;
+                m_getPointCancelled = false;
+                m_waitingForGetPoint = false;
+                m_view->setMode(CadMode::Idle);
+                m_view->setRubberBandMode(RubberBandMode::None);
+                m_view->clearRubberBand();
+
+                statusBar()->showMessage(QString("Point acquired: (%1, %2)")
+                                             .arg(point.x(), 0, 'f', 2)
+                                             .arg(point.y(), 0, 'f', 2));
+
+                commandInput->clear();
+                setPrompt("Command: ");
+                return;
+            }
+        }
+    }
 
     commandHistory.append(cmd);
     historyIndex = commandHistory.size();

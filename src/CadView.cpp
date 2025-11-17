@@ -494,6 +494,7 @@ void CadView::updateGrid() {
 
     // Grid lines parallel to U axis
     for (int i = 0; i <= gridSize; ++i) {
+        if (i == gridSize / 2) continue; // Skip center - will draw as axis
         float v = -halfSize + i * gridSpacing;
         QVector3D p1 = plane.origin + plane.uAxis * (-halfSize) + plane.vAxis * v;
         QVector3D p2 = plane.origin + plane.uAxis * halfSize + plane.vAxis * v;
@@ -505,6 +506,7 @@ void CadView::updateGrid() {
 
     // Grid lines parallel to V axis
     for (int i = 0; i <= gridSize; ++i) {
+        if (i == gridSize / 2) continue; // Skip center - will draw as axis
         float u = -halfSize + i * gridSpacing;
         QVector3D p1 = plane.origin + plane.uAxis * u + plane.vAxis * (-halfSize);
         QVector3D p2 = plane.origin + plane.uAxis * u + plane.vAxis * halfSize;
@@ -523,6 +525,36 @@ void CadView::updateGrid() {
     Handle(Graphic3d_Group) group = m_gridPresentation->NewGroup();
     group->SetGroupPrimitivesAspect(aspect->Aspect());
     group->AddPrimitiveArray(lines);
+
+    // Draw X axis (along U axis) in RED
+    Handle(Graphic3d_ArrayOfPolylines) xAxis = new Graphic3d_ArrayOfPolylines(2, 1);
+    QVector3D xStart = plane.origin + plane.uAxis * (-halfSize);
+    QVector3D xEnd = plane.origin + plane.uAxis * halfSize;
+    xAxis->AddBound(2);
+    xAxis->AddVertex(gp_Pnt(xStart.x(), xStart.y(), xStart.z()));
+    xAxis->AddVertex(gp_Pnt(xEnd.x(), xEnd.y(), xEnd.z()));
+
+    Handle(Prs3d_LineAspect) xAxisAspect = new Prs3d_LineAspect(
+        Quantity_NOC_RED, Aspect_TOL_SOLID, 2.0);
+
+    Handle(Graphic3d_Group) xAxisGroup = m_gridPresentation->NewGroup();
+    xAxisGroup->SetGroupPrimitivesAspect(xAxisAspect->Aspect());
+    xAxisGroup->AddPrimitiveArray(xAxis);
+
+    // Draw Y axis (along V axis) in GREEN
+    Handle(Graphic3d_ArrayOfPolylines) yAxis = new Graphic3d_ArrayOfPolylines(2, 1);
+    QVector3D yStart = plane.origin + plane.vAxis * (-halfSize);
+    QVector3D yEnd = plane.origin + plane.vAxis * halfSize;
+    yAxis->AddBound(2);
+    yAxis->AddVertex(gp_Pnt(yStart.x(), yStart.y(), yStart.z()));
+    yAxis->AddVertex(gp_Pnt(yEnd.x(), yEnd.y(), yEnd.z()));
+
+    Handle(Prs3d_LineAspect) yAxisAspect = new Prs3d_LineAspect(
+        Quantity_NOC_GREEN, Aspect_TOL_SOLID, 2.0);
+
+    Handle(Graphic3d_Group) yAxisGroup = m_gridPresentation->NewGroup();
+    yAxisGroup->SetGroupPrimitivesAspect(yAxisAspect->Aspect());
+    yAxisGroup->AddPrimitiveArray(yAxis);
 
     m_gridPresentation->SetZLayer(Graphic3d_ZLayerId_Default);
     m_gridPresentation->Display();
@@ -817,6 +849,14 @@ void CadView::keyPressEvent(QKeyEvent* event) {
                 clearRubberBand();
             }
         }
+
+    }
+
+    if (!event->text().isEmpty()|| event->key() == Qt::Key_Up|| event->key() == Qt::Key_Down) {
+        // User started typing - activate keyboard coordinate input
+        Q_EMIT requestCommandInputFocus();
+        Q_EMIT getPointActivateInput(event->text());
+        return;
     }
 
     QWidget::keyPressEvent(event);

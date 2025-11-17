@@ -64,6 +64,7 @@ private Q_SLOTS:
 
     void onFeatureSelected(QTreeWidgetItem* item, int column);
     void updateFeatureTree();
+    void onGetPointActivateInput(QString key);
 
 private:
 
