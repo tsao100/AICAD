@@ -757,6 +757,10 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
                 QString cmd = commandHistory[historyIndex];
                 commandInput->setText(promptText + cmd);
                 commandInput->setCursorPosition(commandInput->text().length());
+            } else {
+                historyIndex = -1;
+                commandInput->setText(promptText);
+                commandInput->setCursorPosition(commandInput->text().length());
             }
             return true;
         }
@@ -767,8 +771,8 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
                 QString cmd = commandHistory[historyIndex];
                 commandInput->setText(promptText + cmd);
                 commandInput->setCursorPosition(commandInput->text().length());
-            } else if (historyIndex == 0) {
-                historyIndex = -1;
+            } else {
+                historyIndex = commandHistory.size();
                 commandInput->setText(promptText);
                 commandInput->setCursorPosition(commandInput->text().length());
             }
@@ -1014,8 +1018,8 @@ void MainWindow::executeCommand() {
     QString cmd = commandInput->text().trimmed();
 
     // Remove prompt from command if present
-    if (cmd.startsWith(promptText)) {
-        cmd = cmd.mid(promptText.length()).trimmed();
+    if (cmd.startsWith(promptText.trimmed())) {
+        cmd = cmd.mid(promptText.trimmed().length()).trimmed();
     }
 
     if (cmd.isEmpty()) return;
