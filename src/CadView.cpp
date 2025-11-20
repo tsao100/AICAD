@@ -246,8 +246,8 @@ void CadView::updateRubberBand() {
     // Clear previous rubber band
     clearRubberBand();
 
-    if (m_mode != CadMode::Sketching) return;
-    if (m_sketchPoints.isEmpty() || !m_hasCurrentPoint) return;
+    if (!(m_mode == CadMode::Sketching || m_mode == CadMode::GetPoint)) return;
+    if (!(!m_sketchPoints.isEmpty() || m_hasCurrentPoint)) return;
 
     // Get the sketch plane
     CustomPlane plane;
@@ -306,6 +306,8 @@ void CadView::updateRubberBand() {
         m_rubberBandObject = prs;
     }
     else if (m_rubberBandMode == RubberBandMode::Rectangle) {
+        if (m_sketchPoints.isEmpty()) return;
+
         // Create rectangle points
         QVector2D p1 = m_sketchPoints[0];
         QVector2D p2 = m_currentPoint;
@@ -796,7 +798,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     }
 
     // Sketching mode logic
-    if (m_mode == CadMode::Sketching) {
+    if (m_mode == CadMode::Sketching || m_mode == CadMode::GetPoint) {
         m_currentPoint = screenToPlane(event->pos());
         m_hasCurrentPoint = true;
         updateRubberBand();

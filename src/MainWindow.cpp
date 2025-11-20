@@ -71,6 +71,7 @@ MainWindow::MainWindow()
     setWindowTitle("AICAD - Open CASCADE CAD System");
     resize(1280, 800);
     setStatusBar(new QStatusBar(this));
+    qApp->installEventFilter(this);
 }
 
 MainWindow::~MainWindow() {
@@ -214,8 +215,8 @@ void MainWindow::startGetPoint(const QVector2D* basePoint, const QString& messag
         m_view->setRubberBandMode(RubberBandMode::Line);
 
         // Set the base point in CadView
-        m_view->getSketchPoints().clear();
-        m_view->getSketchPoints().append(m_getPointBase);
+        m_view->getSketchPoints_()->clear();
+        m_view->getSketchPoints_()->append(m_getPointBase);
     } else {
         m_hasGetPointBase = false;
         m_view->setRubberBandMode(RubberBandMode::None);
@@ -981,10 +982,12 @@ void MainWindow::toggleConsole() {
 }
 
 void MainWindow::showResultTemporarily(const QString &result) {
-    resultLabel->setText(result);
-    resultLabel->setVisible(true);
-    resultOpacityEffect->setOpacity(1.0);
-    fadeTimer->start();
+    if (!consoleVisible){
+        resultLabel->setText(result);
+        resultLabel->setVisible(true);
+        resultOpacityEffect->setOpacity(1.0);
+        fadeTimer->start();
+    }
 }
 
 void MainWindow::fadeOutResult() {

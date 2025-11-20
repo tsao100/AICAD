@@ -84,6 +84,7 @@ public:
     SketchView getCurrentView() const { return m_currentView; }
     void fitAll();
 
+    QVector<QVector2D>* getSketchPoints_() { return &m_sketchPoints; }
     QVector<QVector2D> getSketchPoints() const { return m_sketchPoints; }
     RubberBandMode getRubberBandMode() const { return m_rubberBandMode; }
 
