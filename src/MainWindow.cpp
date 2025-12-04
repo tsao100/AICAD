@@ -190,6 +190,83 @@ cl_object MainWindow::lisp_getpoint(cl_narg narg, ...) {
     return Cnil;
 }
 
+cl_object MainWindow::lisp_command(cl_narg narg, ...) {
+    MainWindow* mainWin = qobject_cast<MainWindow*>(QApplication::activeWindow());
+    if (!mainWin) return Cnil;
+
+    if (narg < 1) return Cnil;
+
+    va_list args;
+    va_start(args, narg);
+
+    cl_object cmdObj = va_arg(args, cl_object);
+    QString cmdName = eclObjectToQString(cmdObj).toLower();
+
+    if (cmdName == "rectangle" && narg == 3) {
+        // Get two corner points
+        cl_object pt1Obj = va_arg(args, cl_object);
+        cl_object pt2Obj = va_arg(args, cl_object);
+
+        if (ECL_LISTP(pt1Obj) && ECL_LISTP(pt2Obj)) {
+            double x1 = ecl_to_double(ecl_car(pt1Obj));
+            double y1 = ecl_to_double(ecl_cadr(pt1Obj));
+            double x2 = ecl_to_double(ecl_car(pt2Obj));
+            double y2 = ecl_to_double(ecl_cadr(pt2Obj));
+
+            QStringList rectArgs;
+            rectArgs << QString::number(x1) << QString::number(y1);
+            rectArgs << QString::number(x2) << QString::number(y2);
+
+            mainWin->executeRectangleCommand(rectArgs);
+        }
+    } else if (cmdName == "rectangle") {
+        // Interactive mode
+        mainWin->executeRectangleCommand();
+    }
+
+    va_end(args);
+    return Ct;
+}
+
+void MainWindow::executeRectangleCommand(const QStringList& args) {
+    if (m_activeSketch.IsNull()) {
+        statusBar()->showMessage("No active sketch. Please create a sketch first.");
+        return;
+    }
+
+    if (m_view->getCurrentView() == SketchView::None ||
+        m_view->getCurrentView() == SketchView::Isometric) {
+        statusBar()->showMessage("Please switch to an orthographic view for sketching.");
+        return;
+    }
+
+    if (args.isEmpty()) {
+        // Interactive mode - user will click points
+        m_view->setMode(CadMode::Sketching);
+        m_view->setRubberBandMode(RubberBandMode::Rectangle);
+        m_view->setPendingSketch(m_activeSketch);
+        statusBar()->showMessage("Click first corner of rectangle...");
+    } else if (args.size() == 4) {
+        // Command mode with coordinates
+        QVector2D p1(args[0].toDouble(), args[1].toDouble());
+        QVector2D p2(args[2].toDouble(), args[3].toDouble());
+
+        QVector<QVector2D> rectPoints;
+        rectPoints.append(QVector2D(p1.x(), p1.y()));
+        rectPoints.append(QVector2D(p2.x(), p1.y()));
+        rectPoints.append(QVector2D(p2.x(), p2.y()));
+        rectPoints.append(QVector2D(p1.x(), p2.y()));
+        rectPoints.append(QVector2D(p1.x(), p1.y()));
+
+        m_document.addPolylineToSketch(m_activeSketch, rectPoints);
+        m_view->displayFeature(m_activeSketch);
+
+        statusBar()->showMessage(QString("Rectangle created: %1 x %2")
+                                     .arg(qAbs(p2.x() - p1.x()), 0, 'f', 2)
+                                     .arg(qAbs(p2.y() - p1.y()), 0, 'f', 2));
+    }
+}
+
 void MainWindow::startGetPoint(const QVector2D* basePoint, const QString& message) {
     if (m_activeSketch.IsNull()) {
         statusBar()->showMessage("No active sketch. Please create a sketch first.");
@@ -479,26 +556,7 @@ void MainWindow::onCreateSketch() {
 }
 
 void MainWindow::onDrawRectangle() {
-    if (m_activeSketch.IsNull()) {
-        QMessageBox::warning(this, "No Active Sketch",
-                             "Please create a sketch first.");
-        return;
-    }
-
-    // Check if in orthographic view
-    if (m_view->getCurrentView() == SketchView::None ||
-        m_view->getCurrentView() == SketchView::Isometric) {
-        QMessageBox::warning(this, "Invalid View",
-                             "Please switch to an orthographic view (Top/Front/Right) for sketching.");
-        return;
-    }
-
-    //m_rectanglePoints.clear();
-    //m_waitingForSecondPoint = false;
-    m_view->setMode(CadMode::Sketching);
-    m_view->setRubberBandMode(RubberBandMode::Rectangle);
-    m_view->setPendingSketch(m_activeSketch);
-    statusBar()->showMessage("Click first corner of rectangle...");
+    executeRectangleCommand();
 }
 
 void MainWindow::onDrawLine() {
@@ -862,6 +920,10 @@ void MainWindow::initECL() {
                           (cl_objectfn)lisp_getpoint,
                           0);  // 0 = no required arguments (all optional)
 
+    // Register command function for Lisp
+    ecl_def_c_function_va(ecl_make_symbol("COMMAND", "CL-USER"),
+                       (cl_objectfn)lisp_command,
+                       0);  // Variable arguments
 
     QWidget *central = centralWidget();
     QVBoxLayout *overlay = new QVBoxLayout();

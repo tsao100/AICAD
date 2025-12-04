@@ -37,6 +37,7 @@ public:
     MainWindow();
     ~MainWindow();
  //   void loadFileFromCommandLine(const QString& filename);
+    void executeRectangleCommand(const QStringList& args = QStringList());
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -77,6 +78,7 @@ private:
     bool m_getPointCancelled;
 
     static cl_object lisp_getpoint(cl_narg narg, ...);
+    static cl_object lisp_command(cl_narg narg, ...);
     void startGetPoint(const QVector2D* basePoint = nullptr, const QString& message = "");
 
 // Unified command system
