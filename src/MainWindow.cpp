@@ -459,6 +459,13 @@ void MainWindow::createCentral() {
     connect(m_view, &CadView::requestCommandInputFocus, this, [this]() {
         commandInput->setFocus();
     });
+    connect(m_view, &CadView::forwardKeyToCommandInput, this,
+            [this](Qt::Key key, Qt::KeyboardModifiers modifiers) {
+                QTimer::singleShot(0, [this, key, modifiers]() {
+                    QKeyEvent *event = new QKeyEvent(QEvent::KeyPress, key, modifiers);
+                    QApplication::postEvent(commandInput, event);
+                });
+            });
 
     setCentralWidget(m_view);
 }

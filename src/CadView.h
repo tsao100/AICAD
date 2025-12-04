@@ -94,6 +94,7 @@ Q_SIGNALS:
     void getPointKeyPressed(QString key);
     void getPointActivateInput(QString key);
     void requestCommandInputFocus();
+    void forwardKeyToCommandInput(Qt::Key key, Qt::KeyboardModifiers modifiers);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

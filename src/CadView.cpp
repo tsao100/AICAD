@@ -845,16 +845,25 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             m_hasCurrentPoint = false;
             clearRubberBand();
             update();
+            return;
         } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
             if (!m_sketchPoints.isEmpty() && m_rubberBandMode == RubberBandMode::Polyline) {
                 Q_EMIT getPointKeyPressed("ENTER");
                 clearRubberBand();
             }
+            return;
         }
 
     }
 
-    if (!event->text().isEmpty()|| event->key() == Qt::Key_Up|| event->key() == Qt::Key_Down) {
+    // For Up/Down arrows - always pass to command input
+    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) {
+        Q_EMIT requestCommandInputFocus();
+        Q_EMIT forwardKeyToCommandInput(static_cast<Qt::Key>(event->key()), event->modifiers());
+        return;
+    }
+
+    if (!event->text().isEmpty()) {
         // User started typing - activate keyboard coordinate input
         Q_EMIT requestCommandInputFocus();
         Q_EMIT getPointActivateInput(event->text());

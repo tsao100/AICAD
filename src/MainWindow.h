@@ -38,6 +38,7 @@ public:
     ~MainWindow();
  //   void loadFileFromCommandLine(const QString& filename);
     void executeRectangleCommand(const QStringList& args = QStringList());
+    QLineEdit* getCommandInput() const { return commandInput; }
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
