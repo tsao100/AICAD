@@ -1,40 +1,36 @@
-// Include ECL headers FIRST, before any Qt headers
-#include <ecl/ecl.h>
+// main.cpp 範例
 
-// Undefine slots macro to avoid conflict with ECL
-#ifdef slots
-#undef slots
-#endif
-
-// Now include application headers (which contain Qt headers)
 #include <QApplication>
-#include <QSurfaceFormat>
-#include "MainWindow.h"
+#include "core/Application.h"
+#include "ui/MainWindow.h"
+#include <QDebug>
 
-int main(int argc, char **argv) {
-#ifdef _WIN32
-    QApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
-    QSurfaceFormat fmt;
-    fmt.setRenderableType(QSurfaceFormat::OpenGL);
-    QSurfaceFormat::setDefaultFormat(fmt);
-#else
-    // Force Qt to use XCB before QApplication is created
-    const char* session = std::getenv("XDG_SESSION_TYPE");
+int main(int argc, char** argv) {
+    // 1. 建立 Qt 應用程式
+    QApplication qtApp(argc, argv);
+    // 設定應用程式資訊
+    QApplication::setOrganizationName("AICAD");
+    QApplication::setOrganizationDomain("aicad.org");
+    QApplication::setApplicationName("AICAD");
+    QApplication::setApplicationVersion(aicad::core::Application::version());
 
-    if (session && std::strcmp(session, "wayland") == 0) {
-        qDebug("Detected Wayland session → forcing xcb");
-        qputenv("QT_QPA_PLATFORM", QByteArray("xcb"));
+    // 2. 初始化 AICAD 應用程式
+    aicad::core::Application* app = aicad::core::Application::instance();
+
+    if (!app->initialize()) {
+        qCritical() << "Failed to initialize AICAD";
+        return 1;
     }
-#endif
-    QApplication app(argc, argv);
-    MainWindow w;
 
-    // Pass command line args to window
-    // if (argc > 1) {
-    //     w.loadFileFromCommandLine(QString::fromUtf8(argv[1]));
-    // }
+    // 3. 建立主視窗
+    aicad::ui::MainWindow mainWindow;
+    mainWindow.show();
 
-    w.show();
-    //w.showMaximized();
-    return app.exec();
+    // 4. 執行應用程式
+    int result = qtApp.exec();
+
+    // 5. 清理
+    app->shutdown();
+
+    return result;
 }
