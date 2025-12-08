@@ -1,134 +1,150 @@
-# AICAD.pro
+# AICAD.pro - cross-platform Qt CAD project with ECL Lisp integration
 
-CONFIG += c++17
-QT += core gui widgets opengl printsupport
+CONFIG   += moc
+CONFIG   += debug_and_release
 
-TARGET = AICAD
-TEMPLATE = app
-
-# 定義版本資訊
-DEFINES += AICAD_VERSION=\\\"1.0.0\\\"
-
-# 包含路徑
-INCLUDEPATH += src
-
-# 核心模組
-HEADERS += \
-    src/core/Application.h \
-    src/core/EventBus.h \
-    src/core/PluginManager.h
-
-SOURCES += \
-    src/core/Application.cpp \
-    src/core/EventBus.cpp \
-    src/core/PluginManager.cpp
-
-# CAD 引擎 (Ben 的工作)
-HEADERS += \
-    src/cad/DocumentManager.h \
-    src/cad/Document.h \
-    src/cad/features/Feature.h \
-    src/cad/features/Sketch.h \
-    src/cad/features/Extrude.h \
-    src/cad/geometry/CustomPlane.h
-
-SOURCES += \
-    src/cad/DocumentManager.cpp \
-    src/cad/Document.cpp \
-    src/cad/features/Feature.cpp \
-    src/cad/features/Sketch.cpp \
-    src/cad/features/Extrude.cpp \
-    src/cad/geometry/CustomPlane.cpp
-
-# 命令系統 (Kaufen 的工作)
-HEADERS += \
-    src/commands/CommandManager.h \
-    src/commands/Command.h \
-    src/commands/SketchCommands.h
-
-SOURCES += \
-    src/commands/CommandManager.cpp \
-    src/commands/Command.cpp \
-    src/commands/SketchCommands.cpp
-
-# 視圖系統 (Felicia 的工作)
-HEADERS += \
-    src/view/ViewManager.h \
-    src/view/CadView.h \
-    src/view/RubberBand.h
-
-SOURCES += \
-    src/view/ViewManager.cpp \
-    src/view/CadView.cpp \
-    src/view/RubberBand.cpp
-
-# UI 系統 (James 的工作)
-HEADERS += \
-    src/ui/MainWindow.h \
-    src/ui/FeatureBrowser.h
-
-SOURCES += \
-    src/ui/MainWindow.cpp \
-    src/ui/FeatureBrowser.cpp
-
-# 腳本系統 (Daney 的工作)
-HEADERS += \
-    src/scripting/LispEngine.h \
-    src/scripting/LispBindings.h
-
-SOURCES += \
-    src/scripting/LispEngine.cpp \
-    src/scripting/LispBindings.cpp
-
-# 主程式
-SOURCES += src/main.cpp
-
-# 平台特定設定
+# ---------- Unix / Linux (Qt5 with GCC) ----------
 unix {
-    # Linux 設定
+    QT += widgets opengl printsupport
+    CONFIG += c++17
+
+    # GCC specific options
+    QMAKE_CXXFLAGS += -Wall -Wextra
+    # --- OCCT 8.0.0 paths ---
     OCCT_DIR = /usr/local/occt
+
     INCLUDEPATH += $$OCCT_DIR/include/opencascade
     LIBS += -L$$OCCT_DIR/lib -Wl,-rpath,$$OCCT_DIR/lib
-    
-    # OCCT 函式庫
-    LIBS += -lTKernel -lTKMath -lTKG2d -lTKG3d -lTKGeomBase \
-            -lTKBRep -lTKTopAlgo -lTKPrim -lTKV3d -lTKOpenGl \
-            -lTKService -lTKLCAF -lTKCAF -lTKCDF -lTKVCAF
-    
-    # ECL
-    INCLUDEPATH += /usr/include/ecl
-    LIBS += -lecl -lgmp -lmpfr
-    
-    # X11
+
+    # Essential OCCT libraries
+    LIBS += -lTKernel \
+            -lTKMath \
+            -lTKG2d \
+            -lTKG3d \
+            -lTKGeomBase \
+            -lTKBRep \
+            -lTKTopAlgo \
+            -lTKPrim \
+            -lTKV3d \
+            -lTKOpenGl \
+            -lTKService \
+            -lTKLCAF \
+            -lTKCAF \
+            -lTKCDF \
+            -lTKVCAF \
+            -lTKMesh \
+            -lTKHLR \
+            -lTKBO \
+            -lTKBool \
+            -lTKOffset \
+            -lTKFillet \
+            -lTKXSBase \
+            -lTKXCAF \
+            -lTKBin \
+            -lTKBinL \
+            -lTKBinXCAF
+
+    # Link X11 (required for OpenGL context)
     LIBS += -lX11 -lXext
+
+    DEFINES += __linux__
+    QMAKE_CXXFLAGS += -std=c++11
+
+    # ECL headers (adjust path if needed)
+    INCLUDEPATH += /usr/include/ecl
+
+    # ECL libraries
+    LIBS += -lecl -lgmp -lmpfr
+
+    # Copy menu.txt to build directory
+    copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD
+    first.depends = $(first) copydata
+    export(first.depends)
+    export(copydata.commands)
+    QMAKE_EXTRA_TARGETS += first copydata
 }
 
+# ---------- Windows (Qt6 with MSVC) ----------
 win32 {
-    # Windows 設定
-    OCC_INC = D:/Git/OCCT/OCCT-install/inc
-    OCC_LIB = D:/Git/OCCT/OCCT-install/win64/vc14/lib
-    
-    INCLUDEPATH += $$OCC_INC
-    LIBS += -L$$OCC_LIB
-    
-    # OCCT 函式庫
-    LIBS += -lTKernel -lTKMath -lTKG2d -lTKG3d -lTKGeomBase \
-            -lTKBRep -lTKTopAlgo -lTKPrim -lTKV3d -lTKOpenGl \
-            -lTKService -lTKLCAF -lTKCAF -lTKCDF -lTKVCAF
-    
-    # ECL
-    INCLUDEPATH += D:/Git/ecl/v24.5.10/vc143-x64
-    LIBS += -LD:/Git/ecl/v24.5.10/vc143-x64 -lecl
-    
+    QT += widgets openglwidgets printsupport
+    CONFIG += c++17
     LIBS += -lopengl32
     DEFINES += _USE_MATH_DEFINES
+    DEFINES += QT_NO_OPENGL_ES_2
+    # --- OCCT 7.8.0 paths ---
+    OCC_INC = D:/Git/OCCT/OCCT-install/inc
+    OCC_LIB = D:/Git/OCCT/OCCT-install/win64/vc14/lib
+    OCC_BIN = D:/Git/OCCT/OCCT-install/win64/vc14/bin
+
+    INCLUDEPATH += $$OCC_INC
+    LIBS += -L$$OCC_LIB
+
+    # Add PATH for DLLs during execution
+    QMAKE_POST_LINK += $$quote(cmd /C "set PATH=$$OCC_BIN;%PATH% && echo Added OCCT bin to PATH")
+
+    # OCCT core libs (adjusted for 7.8.0)
+    LIBS += -lTKernel \
+            -lTKMath \
+            -lTKG2d \
+            -lTKG3d \
+            -lTKGeomBase \
+            -lTKBRep \
+            -lTKTopAlgo \
+            -lTKPrim \
+            -lTKV3d \
+            -lTKOpenGl \
+            -lTKService \
+            -lTKLCAF \
+            -lTKCAF \
+            -lTKCDF \
+            -lTKVCAF \
+            -lTKMesh \
+            -lTKHLR \
+            -lTKBO \
+            -lTKBool \
+            -lTKOffset \
+            -lTKFillet \
+            -lTKXSBase \
+            -lTKXCAF \
+            -lTKBin \
+            -lTKBinL \
+            -lTKBinXCAF
+
+    # ECL paths - ADJUST THESE TO YOUR ECL INSTALLATION
+    INCLUDEPATH += D:/Git/ecl/v24.5.10/vc143-x64
+    LIBS += -LD:/Git/ecl/v24.5.10/vc143-x64
+
+    # Link ECL libraries
+    msvc: {
+        LIBS += ecl.lib
+    }
+    mingw: {
+        LIBS += -lecl -lgmp -lmpfr
+    }
+
+    # 每次編譯完自動複製 menu.txt 到輸出資料夾
+    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/menu.txt) $$shell_path($$OUT_PWD)
 }
 
-# 測試
-test {
-    QT += testlib
-    TARGET = test_aicad
-    
-    SOURCES -= src/main.cpp
-    SOURCES += tests/unit/core/test_application.cpp
-}
+SOURCES += \
+    src/main.cpp \
+    src/MainWindow.cpp \
+    src/CadView.cpp \
+    src/OcafDocument.cpp \
+    src/core/Application.cpp \
+    src/core/EventBus.cpp \
+    src/core/DocumentManager.cpp
+
+HEADERS += \
+    src/MainWindow.h \
+    src/CadView.h \
+    src/OcafDocument.h \
+    src/core/Application.h \
+    src/core/EventBus.h \
+    src/core/DocumentManager.h
+
+RESOURCES += \
+    resources.qrc
+
+# 設定 Include 路徑
+INCLUDEPATH += $$PWD/src
