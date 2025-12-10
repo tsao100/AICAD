@@ -133,7 +133,10 @@ SOURCES += \
     src/OcafDocument.cpp \
     src/core/Application.cpp \
     src/core/EventBus.cpp \
-    src/core/DocumentManager.cpp
+    src/core/DocumentManager.cpp \
+    src/view/CoordinateConverter.cpp \
+    src/view/RubberBand.cpp \
+    src/view/GridOverlay.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -141,7 +144,14 @@ HEADERS += \
     src/OcafDocument.h \
     src/core/Application.h \
     src/core/EventBus.h \
-    src/core/DocumentManager.h
+    src/core/DocumentManager.h \
+    src/view/CoordinateConverter.h \
+    src/view/RubberBand.h \
+    src/view/GridOverlay.h \
+    src/cad/geometry/CustomPlane.h
+
+# 確保包含必要的 OCCT 函式庫
+# (已在上方 LIBS 中定義)
 
 RESOURCES += \
     resources.qrc
