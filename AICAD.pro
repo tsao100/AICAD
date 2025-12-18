@@ -136,7 +136,12 @@ SOURCES += \
     src/core/DocumentManager.cpp \
     src/view/CoordinateConverter.cpp \
     src/view/RubberBand.cpp \
-    src/view/GridOverlay.cpp
+    src/view/GridOverlay.cpp \
+    src/cad/geometry/CustomPlane.cpp \
+    src/cad/features/Feature.cpp \
+    src/cad/features/Sketch.cpp \
+    src/cad/features/Extrude.cpp \
+    src/cad/Document.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -148,7 +153,11 @@ HEADERS += \
     src/view/CoordinateConverter.h \
     src/view/RubberBand.h \
     src/view/GridOverlay.h \
-    src/cad/geometry/CustomPlane.h
+    src/cad/geometry/CustomPlane.h \
+    src/cad/features/Feature.h \
+    src/cad/features/Sketch.h \
+    src/cad/features/Extrude.h \
+    src/cad/Document.h
 
 # 確保包含必要的 OCCT 函式庫
 # (已在上方 LIBS 中定義)
