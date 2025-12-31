@@ -1,5 +1,10 @@
 #include "MainWindow.h"
 
+#include "ui/UICommandDispatcher.h"
+#include "ui/menu/MenuTxtParser.h"
+#include "ui/state/UIStateController.h"
+#include "ui/menu/MenuBuilder.h"
+
 #include <TDataStd_Name.hxx>
 
 #ifdef __unix__
@@ -53,11 +58,38 @@ MainWindow::MainWindow()
     , m_hasGetPointBase(false)
     , m_getPointCompleted(false)
     , m_getPointCancelled(false)
-    , historyIndex(-1), consoleVisible(false)
+    , historyIndex(-1)
+    , consoleVisible(false)
 {
+    // =========================
+    // Document
+    // =========================
     m_document.newDocument();
 
-    createMenusAndToolbars();
+    // =========================
+    // UI Command Dispatcher (先建立)
+    // =========================
+    auto invoker = new DummyCommandInvoker();   // UI-3 stub
+    m_dispatcher = new UICommandDispatcher(invoker, this);
+
+    // =========================
+    // Menu / Toolbar from menu.txt
+    // =========================
+    {
+        MenuTxtParser parser("menu.txt");
+        if (!parser.parse()) {
+            qWarning() << parser.errorString();
+        } else {
+            m_menuBuilder = new MenuBuilder(this, m_dispatcher);
+            m_menuBuilder->build(parser.items());
+
+            m_uiState = new UIStateController(m_menuBuilder, this);
+        }
+    }
+
+    // =========================
+    // Central UI
+    // =========================
     createCentral();
     createFeatureBrowser();
 
@@ -68,6 +100,9 @@ MainWindow::MainWindow()
     });
 #endif
 
+    // =========================
+    // Window setup
+    // =========================
     setWindowTitle("AICAD - Open CASCADE CAD System");
     resize(1280, 800);
     setStatusBar(new QStatusBar(this));
@@ -380,7 +415,8 @@ void MainWindow::loadMenuConfig(const QString& filename) {
             QString id = parts[2];
             QString label = parts[3];
             QString shortcut = parts.size() > 4 ? parts[4] : "";
-            QString callback = parts.size() > 5 ? parts[5] : "";
+            //QString callback = parts.size() > 5 ? parts[5] : "";
+            QString command = parts.size() > 5 ? parts[5] : "";
 
             if (!menus.contains(menuName)) {
                 QMenu* menu = menuBar()->addMenu(menuName);
@@ -395,9 +431,9 @@ void MainWindow::loadMenuConfig(const QString& filename) {
                 QAction* action = new QAction(label, this);
                 if (!shortcut.isEmpty()) action->setShortcut(QKeySequence(shortcut));
 
-                if (!callback.isEmpty()) {
-                    connect(action, &QAction::triggered, this, [this, callback]() {
-                        QMetaObject::invokeMethod(this, callback.toUtf8().constData());
+                if (!command.isEmpty()) {
+                    connect(action, &QAction::triggered, this, [this, command]() {
+                        m_dispatcher->execute(command);
                     });
                 }
 

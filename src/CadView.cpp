@@ -59,6 +59,9 @@ CadView::CadView(QWidget* parent)
     setBackgroundRole(QPalette::NoRole);
 
     initializeViewer();
+
+    connect(this, &CadView::featureCreated,
+            this, &CadView::onFeatureCreated);
 }
 
 CadView::~CadView() {
@@ -213,6 +216,7 @@ void CadView::displayFeature(TDF_Label label) {
                 m_context->Display(aisShape, Standard_False);
             }
         }
+        emit featureCreated("Rectangle");
     } else if (type == FeatureType::Extrude) {
         TDF_Label sketchLabel = m_document->getExtrudeSketch(label);
         double height = m_document->getExtrudeHeight(label);
@@ -675,6 +679,11 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) {
     }
 
     return QVector2D(0, 0);
+}
+
+void CadView::onFeatureCreated(const QString& type)
+{
+    qDebug() << "[CadView] Feature created:" << type;
 }
 
 void CadView::paintEvent(QPaintEvent* event) {

@@ -87,6 +87,9 @@ public:
     QVector<QVector2D>* getSketchPoints_() { return &m_sketchPoints; }
     QVector<QVector2D> getSketchPoints() const { return m_sketchPoints; }
     RubberBandMode getRubberBandMode() const { return m_rubberBandMode; }
+    
+public Q_SLOTS:
+    void onFeatureCreated(const QString& type);
 
 Q_SIGNALS:
     void pointAcquired(QVector2D point);
@@ -95,6 +98,7 @@ Q_SIGNALS:
     void getPointActivateInput(QString key);
     void requestCommandInputFocus();
     void forwardKeyToCommandInput(Qt::Key key, Qt::KeyboardModifiers modifiers);
+    void featureCreated(const QString& type);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

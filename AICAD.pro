@@ -133,7 +133,11 @@ SOURCES += \
     src/OcafDocument.cpp \
     src/core/Application.cpp \
     src/core/EventBus.cpp \
-    src/core/DocumentManager.cpp
+    src/core/DocumentManager.cpp \
+    src/ui/UICommandDispatcher.cpp \
+    src/ui/menu/MenuTxtParser.cpp \
+    src/ui/state/UIStateController.cpp \
+    src/ui/menu/MenuBuilder.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -141,7 +145,13 @@ HEADERS += \
     src/OcafDocument.h \
     src/core/Application.h \
     src/core/EventBus.h \
-    src/core/DocumentManager.h
+    src/core/DocumentManager.h \
+    src/ui/UICommandDispatcher.h \
+    src/ui/menu/UIMenuItem.h \
+    src/ui/menu/MenuTxtParser.h \
+    src/ui/menu/MenuBuilder.h \
+    src/ui/state/UIStateController.h \
+    src/commands/ICommandInvoker.h
 
 RESOURCES += \
     resources.qrc

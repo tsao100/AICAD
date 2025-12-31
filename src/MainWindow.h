@@ -30,6 +30,10 @@
 #include "CadView.h"
 #include "OcafDocument.h"
 
+class UICommandDispatcher;
+class MenuBuilder;
+class UIStateController;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -153,6 +157,10 @@ private:
     QVector<CommandEntry> commands;
     QHash<QString, QAction*> actions;
     QHash<QString, QMenu*> menus;
+
+    UICommandDispatcher* m_dispatcher;
+    MenuBuilder* m_menuBuilder;
+    UIStateController* m_uiState;
 };
 
 #endif
