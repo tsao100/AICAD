@@ -8,6 +8,8 @@
 #include "Application.h"
 #include "EventBus.h"
 #include "DocumentManager.h"
+#include "core/command/CommandManager.h"
+#include "cad/commands/RectangleCommand.h"
 
 #include <QDebug>
 #include <QMutex>
@@ -34,6 +36,7 @@ public:
     bool initialized;
     EventBus* eventBus;
     DocumentManager* documentManager;
+    CommandManager* commandManager;
     
     static const QString VERSION;
     static const QString APP_NAME;

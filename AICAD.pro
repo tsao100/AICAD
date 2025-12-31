@@ -133,7 +133,9 @@ SOURCES += \
     src/OcafDocument.cpp \
     src/core/Application.cpp \
     src/core/EventBus.cpp \
-    src/core/DocumentManager.cpp
+    src/core/DocumentManager.cpp \
+    src/core/command/CommandManager.cpp \
+    src/cad/commands/RectangleCommand.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -141,7 +143,10 @@ HEADERS += \
     src/OcafDocument.h \
     src/core/Application.h \
     src/core/EventBus.h \
-    src/core/DocumentManager.h
+    src/core/DocumentManager.h \
+    src/core/command/Command.h \
+    src/core/command/CommandManager.h \
+    src/cad/commands/RectangleCommand.h
 
 RESOURCES += \
     resources.qrc
