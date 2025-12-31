@@ -93,12 +93,30 @@ bool Application::initialize() {
             Q_EMIT errorOccurred("Failed to create DocumentManager");
             return false;
         }
-        
-        // 3. 初始化 OCCT 環境 (樁函式)
+
+        // ★ 3. CommandManager（Kaufen）
+        qDebug() << "[Application] Creating CommandManager...";
+        d->commandManager = new CommandManager(this);
+        if (!d->commandManager) {
+            Q_EMIT errorOccurred("Failed to create CommandManager");
+            return false;
+        }
+
+        // ★ 4. 註冊 Commands
+        qDebug() << "[Application] Registering commands...";
+        d->commandManager->registerCommand(
+            "rectangle",
+            { "rect", "rec" },
+            []() {
+                return new aicad::cad::RectangleCommand();
+            }
+            );
+
+        // 5. 初始化 OCCT 環境 (樁函式)
         qDebug() << "[Application] Initializing OCCT environment...";
         // TODO: 實際的 OCCT 初始化
         
-        // 4. 連接信號
+        // 6. 連接信號
         connect(d->documentManager, &DocumentManager::documentCreated,
                 this, [this](const QString& name) {
             qDebug() << "[Application] Document created:" << name;
