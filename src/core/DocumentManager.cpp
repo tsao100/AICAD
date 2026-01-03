@@ -273,4 +273,3 @@ QString DocumentManager::generateUniqueName() {
 } // namespace core
 } // namespace aicad
 
-#include "DocumentManager.moc"

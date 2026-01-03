@@ -1,6 +1,4 @@
 #include "MainWindow.h"
-#include "view/RubberBand.h"
-using aicad::view::RubberBandMode;
 
 #include <TDataStd_Name.hxx>
 
