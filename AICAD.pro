@@ -134,6 +134,7 @@ SOURCES += \
     src/core/Application.cpp \
     src/core/EventBus.cpp \
     src/core/DocumentManager.cpp \
+    src/cad/features/Sketch.cpp \
     src/cad/Document.cpp
 
 HEADERS += \
@@ -144,6 +145,7 @@ HEADERS += \
     src/core/EventBus.h \
     src/core/DocumentManager.h \
     src/cad/features/Feature.h \
+    src/cad/features/Sketch.h \
     src/cad/Document.h
 
 # 確保包含必要的 OCCT 函式庫
