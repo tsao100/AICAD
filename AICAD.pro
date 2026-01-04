@@ -134,8 +134,9 @@ SOURCES += \
     src/core/Application.cpp \
     src/core/EventBus.cpp \
     src/core/DocumentManager.cpp \
+    src/cad/Document.cpp \
     src/cad/features/Sketch.cpp \
-    src/cad/Document.cpp
+    src/cad/features/ExtrudeFeature.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -145,8 +146,8 @@ HEADERS += \
     src/core/EventBus.h \
     src/core/DocumentManager.h \
     src/cad/features/Feature.h \
-    src/cad/features/Sketch.h \
-    src/cad/Document.h
+    src/cad/Document.h \
+    src/cad/features/ExtrudeFeature.h
 
 # 確保包含必要的 OCCT 函式庫
 # (已在上方 LIBS 中定義)
