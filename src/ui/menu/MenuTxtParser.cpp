@@ -26,7 +26,7 @@ bool MenuTxtParser::parse()
     int lineNumber = 0;
 
     while (!in.atEnd()) {
-        QString line = in.readLine();
+        const QString line = in.readLine();
         ++lineNumber;
 
         parseLine(line, lineNumber);
@@ -50,44 +50,53 @@ QString MenuTxtParser::errorString() const
 
 void MenuTxtParser::parseLine(const QString& rawLine, int lineNumber)
 {
-    QString line = rawLine.trimmed();
+    const QString line = rawLine.trimmed();
 
     // Ignore empty lines and comments
-    if (line.isEmpty() || line.startsWith("#")) {
+    if (line.isEmpty() || line.startsWith('#')) {
         return;
     }
 
-    QStringList parts = line.split('|');
+    const QStringList parts = line.split('|');
+    const QString type = parts.value(0).trimmed();
 
-    // We only care about menu / toolbar
-    const QString type = parts.value(0);
-
-    if (type != "menu" && type != "toolbar") {
-        // Ignore command section or unknown types
+    // ------------------------------------------------------------
+    // UI-4 Responsibility Boundary
+    //
+    // UI system ONLY parses visual structure:
+    //   - menu
+    //   - toolbar
+    //
+    // Other sections (command / script / keymap / etc.)
+    // are owned by their corresponding subsystems.
+    // ------------------------------------------------------------
+    if (isIgnoredSection(type)) {
         return;
     }
 
-    // Expected format:
-    // TYPE|GROUP|ID|LABEL|ICON|SHORTCUT
+    // Expected UI format:
+    // TYPE | GROUP | COMMAND_ID | LABEL | ICON | SHORTCUT
     if (parts.size() < 6) {
         m_error = QString(
-            "Invalid format at line %1: expected 6 fields, got %2")
+            "Invalid UI menu format at line %1: expected 6 fields, got %2")
                       .arg(lineNumber)
                       .arg(parts.size());
         return;
     }
 
     UIMenuItem item;
-    item.type     = parts.value(0).trimmed();
+    item.type     = type;
     item.group    = parts.value(1).trimmed();
-    item.id       = parts.value(2).trimmed();
+    item.id       = parts.value(2).trimmed();   // command id
     item.label    = parts.value(3).trimmed();
     item.icon     = parts.value(4).trimmed();
     item.shortcut = parts.value(5).trimmed();
 
-    // Basic validation (UI-level only)
+    // ---------------------------
+    // UI-level validation only
+    // ---------------------------
     if (item.group.isEmpty()) {
-        m_error = QString("Empty menu/toolbar name at line %1").arg(lineNumber);
+        m_error = QString("Empty menu/toolbar group at line %1").arg(lineNumber);
         return;
     }
 
@@ -97,4 +106,23 @@ void MenuTxtParser::parseLine(const QString& rawLine, int lineNumber)
     }
 
     m_items.push_back(item);
+}
+
+bool MenuTxtParser::isIgnoredSection(const QString& type) const
+{
+    // UI system only understands menu / toolbar
+    if (type == "menu" || type == "toolbar") {
+        return false;
+    }
+
+    // Explicitly ignored sections (documented)
+    if (type == "command" ||
+        type == "script"  ||
+        type == "keymap")
+    {
+        return true;
+    }
+
+    // Unknown sections are ignored silently (forward compatibility)
+    return true;
 }

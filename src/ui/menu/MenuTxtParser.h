@@ -6,18 +6,30 @@
 #include <QString>
 #include <QVector>
 
+/**
+ * @brief Parse menu.txt into UI-only menu/toolbar layout items.
+ *
+ * Responsibility:
+ * - Parse ONLY menu / toolbar sections
+ * - Ignore command / script / keymap sections
+ * - Provide UI layout description (no behavior)
+ *
+ * NOTE:
+ * - Command definitions are owned by CommandManager
+ * - UI system only consumes command id
+ */
 class MenuTxtParser
 {
 public:
     explicit MenuTxtParser(const QString& filePath);
 
-    // 讀取並解析 menu.txt
+    // Parse menu.txt
     bool parse();
 
-    // 解析結果（UI-only）
+    // Parsed UI layout items (menu / toolbar only)
     QVector<UIMenuItem> items() const;
 
-    // 錯誤資訊（for UI debug / log）
+    // Error message for UI debug / log
     QString errorString() const;
 
 private:
@@ -26,5 +38,6 @@ private:
     QVector<UIMenuItem> m_items;
 
 private:
-    void parseLine(const QString& line, int lineNumber);
+    void parseLine(const QString& rawLine, int lineNumber);
+    bool isIgnoredSection(const QString& type) const;
 };
