@@ -1,123 +1,64 @@
 // ui/menu/MenuBuilder.cpp
 
 #include "ui/menu/MenuBuilder.h"
-#include "ui/UICommandDispatcher.h"
 
-#include <QMenuBar>
+#include <QMainWindow>
 #include <QMenu>
-#include <QToolBar>
 #include <QAction>
-#include <QIcon>
+#include <QToolBar>
 
-MenuBuilder::MenuBuilder(QMainWindow* mainWindow,
-                         UICommandDispatcher* dispatcher)
-    : m_mainWindow(mainWindow),
-      m_dispatcher(dispatcher)
+MenuBuilder::MenuBuilder(QMainWindow* mainWindow)
+    : QObject(mainWindow)
+    , m_mainWindow(mainWindow)
 {
+    Q_ASSERT(m_mainWindow);
+    m_menuBar = m_mainWindow->menuBar();
 }
 
-void MenuBuilder::build(const QVector<UIMenuItem>& items)
+void MenuBuilder::build(const QVector<UIMenuItem>& items,
+                        ActionFactory actionFactory)
 {
-    for (const auto& item : items) {
+    Q_ASSERT(actionFactory);
+
+    for (const UIMenuItem& item : items) {
+
+        QAction* action = actionFactory(item);
+        if (!action) {
+            // Action factory may decide to skip
+            continue;
+        }
+
         if (item.type == "menu") {
-            addMenuItem(item);
+            QMenu* menu = ensureMenu(item.group);
+            menu->addAction(action);
         }
         else if (item.type == "toolbar") {
-            addToolBarItem(item);
+            QToolBar* toolbar = ensureToolBar(item.group);
+            toolbar->addAction(action);
         }
     }
 }
 
-QAction* MenuBuilder::action(const QString& commandId) const
+QMenu* MenuBuilder::ensureMenu(const QString& name)
 {
-    return m_actions.value(commandId, nullptr);
+    if (m_menus.contains(name)) {
+        return m_menus.value(name);
+    }
+
+    QMenu* menu = new QMenu(name, m_mainWindow);
+    m_menuBar->addMenu(menu);
+    m_menus.insert(name, menu);
+    return menu;
 }
 
-QToolBar* MenuBuilder::toolbar(const QString& name) const
+QToolBar* MenuBuilder::ensureToolBar(const QString& name)
 {
-    return m_toolbars.value(name, nullptr);
-}
-
-// ========================
-// Menu handling
-// ========================
-
-QMenu* MenuBuilder::getOrCreateMenu(const QString& name)
-{
-    if (!m_menus.contains(name)) {
-        QMenu* menu = m_mainWindow->menuBar()->addMenu(name);
-        m_menus.insert(name, menu);
-    }
-    return m_menus.value(name);
-}
-
-void MenuBuilder::addMenuItem(const UIMenuItem& item)
-{
-    QMenu* menu = getOrCreateMenu(item.group);
-
-    if (item.id == "separator") {
-        menu->addSeparator();
-        return;
+    if (m_toolbars.contains(name)) {
+        return m_toolbars.value(name);
     }
 
-    QAction* action = getOrCreateAction(item);
-
-    menu->addAction(action);
-}
-
-// ========================
-// Toolbar handling
-// ========================
-
-QToolBar* MenuBuilder::getOrCreateToolBar(const QString& name)
-{
-    if (!m_toolbars.contains(name)) {
-        QToolBar* tb = new QToolBar(name, m_mainWindow);
-        m_mainWindow->addToolBar(tb);
-        m_toolbars.insert(name, tb);
-    }
-    return m_toolbars.value(name);
-}
-
-QAction* MenuBuilder::getOrCreateAction(const UIMenuItem& item)
-{
-    if (m_actions.contains(item.id)) {
-        return m_actions.value(item.id);
-    }
-
-    QAction* action = new QAction(item.label, m_mainWindow);
-
-    if (!item.icon.isEmpty()) {
-        action->setIcon(QIcon(item.icon));
-    }
-
-    if (!item.shortcut.isEmpty()) {
-        action->setShortcut(QKeySequence(item.shortcut));
-    }
-
-    if (m_dispatcher) {
-        QString commandId = item.id;
-        QObject::connect(action, &QAction::triggered,
-                         m_mainWindow,
-                         [this, commandId]() {
-                             m_dispatcher->execute(commandId);
-                         });
-    }
-
-    m_actions.insert(item.id, action);
-    return action;
-}
-
-void MenuBuilder::addToolBarItem(const UIMenuItem& item)
-{
-    QToolBar* tb = getOrCreateToolBar(item.group);
-
-    if (item.id == "separator") {
-        tb->addSeparator();
-        return;
-    }
-
-    QAction* action = getOrCreateAction(item);
-
-    tb->addAction(action);
+    QToolBar* toolbar = new QToolBar(name, m_mainWindow);
+    m_mainWindow->addToolBar(toolbar);
+    m_toolbars.insert(name, toolbar);
+    return toolbar;
 }

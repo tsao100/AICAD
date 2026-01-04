@@ -3,42 +3,44 @@
 
 #include "ui/menu/UIMenuItem.h"
 
-#include <QMainWindow>
-#include <QMap>
+#include <QObject>
+#include <QMenuBar>
+#include <QToolBar>
+#include <QHash>
 #include <QVector>
+#include <functional>
 
-class UICommandDispatcher;
-class QMenu;
-class QToolBar;
+class QMainWindow;
 class QAction;
 
-class MenuBuilder
+/**
+ * @brief Build menus and toolbars from UI-only layout items.
+ *
+ * UI-4 principles:
+ * - MenuBuilder does NOT create QAction
+ * - MenuBuilder does NOT know Command / Dispatcher
+ * - QAction is provided by callback factory
+ */
+class MenuBuilder : public QObject
 {
+    Q_OBJECT
 public:
-    MenuBuilder(QMainWindow* mainWindow,
-                UICommandDispatcher* dispatcher);
+    using ActionFactory = std::function<QAction*(const UIMenuItem&)>;
 
-    void build(const QVector<UIMenuItem>& items);
+    explicit MenuBuilder(QMainWindow* mainWindow);
 
-    QAction* action(const QString& commandId) const;
-    
-    QToolBar* toolbar(const QString& name) const;
-
-private:
-    QMainWindow* m_mainWindow;
-    UICommandDispatcher* m_dispatcher;
-
-    QMap<QString, QMenu*> m_menus;
-    QMap<QString, QToolBar*> m_toolbars;
-
-    QMap<QString, QAction*> m_actions;
+    // Build menus / toolbars from parsed items
+    void build(const QVector<UIMenuItem>& items,
+               ActionFactory actionFactory);
 
 private:
-    QMenu* getOrCreateMenu(const QString& name);
-    QToolBar* getOrCreateToolBar(const QString& name);
+    QMainWindow* m_mainWindow = nullptr;
 
-    QAction* getOrCreateAction(const UIMenuItem& item);
+    QMenuBar* m_menuBar = nullptr;
+    QHash<QString, QMenu*> m_menus;
+    QHash<QString, QToolBar*> m_toolbars;
 
-    void addMenuItem(const UIMenuItem& item);
-    void addToolBarItem(const UIMenuItem& item);
+private:
+    QMenu* ensureMenu(const QString& name);
+    QToolBar* ensureToolBar(const QString& name);
 };

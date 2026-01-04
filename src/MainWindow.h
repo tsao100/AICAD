@@ -29,6 +29,9 @@
 
 #include "CadView.h"
 #include "OcafDocument.h"
+#include "ui/state/DummyCommandStateSource.h"
+#include "ui/feature/FeatureBrowser.h"
+
 
 class UICommandDispatcher;
 class MenuBuilder;
@@ -43,7 +46,13 @@ public:
  //   void loadFileFromCommandLine(const QString& filename);
     void executeRectangleCommand(const QStringList& args = QStringList());
     QLineEdit* getCommandInput() const { return commandInput; }
-
+    QAction* action(const QString& id) const;
+    QAction* registerAction(const QString& id,
+                            const QString& text,
+                            const QString& icon = QString(),
+                            const QString& shortcut = QString());
+    bool triggerAction(const QString& commandId);
+                            
 protected:
     void keyPressEvent(QKeyEvent *event) override;
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -99,15 +108,8 @@ private:
 
     QHash<QString, CADCommand> cadCommands;
 
-    void registerCADCommand(const QString& name,
-                            const QStringList& aliases,
-                            int expectedArgs,
-                            const QString& description,
-                            bool interactive,
-                            const QString& qtSlot,
-                            std::function<void(const QStringList&)> handler);
-    void loadMenuConfig(const QString& filename);
-    void createMenusAndToolbars();
+    QHash<QString, QAction*> m_actions;
+
     void createCentral();
     void createFeatureBrowser();
 
@@ -161,6 +163,9 @@ private:
     UICommandDispatcher* m_dispatcher;
     MenuBuilder* m_menuBuilder;
     UIStateController* m_uiState;
+    DummyCommandStateSource* m_commandStateSource;
+    UIStateController* m_uiStateController;
+    FeatureBrowser* m_featureBrowser = nullptr;
 };
 
 #endif

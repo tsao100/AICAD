@@ -137,6 +137,8 @@ SOURCES += \
     src/ui/UICommandDispatcher.cpp \
     src/ui/menu/MenuTxtParser.cpp \
     src/ui/state/UIStateController.cpp \
+    src/ui/keymap/KeymapParser.cpp \
+    src/ui/feature/FeatureBrowser.cpp \
     src/ui/menu/MenuBuilder.cpp
 
 HEADERS += \
@@ -151,6 +153,10 @@ HEADERS += \
     src/ui/menu/MenuTxtParser.h \
     src/ui/menu/MenuBuilder.h \
     src/ui/state/UIStateController.h \
+    src/ui/state/DummyCommandStateSource.h \
+    src/ui/state/ICommandStateSource.h \
+    src/ui/keymap/KeymapParser.h \
+    src/ui/feature/FeatureBrowser.h \
     src/commands/ICommandInvoker.h
 
 RESOURCES += \

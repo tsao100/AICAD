@@ -1,28 +1,29 @@
-// ui/state/UIStateController.h
 #pragma once
 
 #include <QObject>
 #include <QString>
 
-class MenuBuilder;
 class QAction;
-class QToolBar;
+class MainWindow;
 
+/**
+ * @brief UI-5: Central place to control QAction state
+ *
+ * Phase-1:
+ * - Depends only on MainWindow
+ * - No command system required yet
+ */
 class UIStateController : public QObject
 {
     Q_OBJECT
 public:
-    explicit UIStateController(MenuBuilder* builder,
-                               QObject* parent = nullptr);
+    explicit UIStateController(MainWindow* mainWindow);
 
-    // Command-driven
-    void setCommandEnabled(const QString& commandId, bool enabled);
-    void setCommandChecked(const QString& commandId, bool checked);
-
-    // Toolbar-driven
-    void setToolbarVisible(const QString& toolbarName, bool visible);
-    void setToolbarEnabled(const QString& toolbarName, bool enabled);
+    // UI-level API (temporary)
+    void setEnabled(const QString& commandId, bool enabled);
+    void setChecked(const QString& commandId, bool checked);
+    void setVisible(const QString& commandId, bool visible);
 
 private:
-    MenuBuilder* m_builder;
+    MainWindow* m_mainWindow = nullptr;
 };

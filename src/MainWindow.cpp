@@ -4,6 +4,7 @@
 #include "ui/menu/MenuTxtParser.h"
 #include "ui/state/UIStateController.h"
 #include "ui/menu/MenuBuilder.h"
+#include "ui/keymap/KeymapParser.h"
 
 #include <TDataStd_Name.hxx>
 
@@ -25,6 +26,7 @@
 #include <QPrintDialog>
 #include <QPdfWriter>
 #include <QPageLayout>
+#include <QDockWidget>
 
 #ifdef HAVE_ECL
 QString eclObjectToQString(cl_object obj) {
@@ -73,19 +75,61 @@ MainWindow::MainWindow()
     m_dispatcher = new UICommandDispatcher(invoker, this);
 
     // =========================
-    // Menu / Toolbar from menu.txt
+    // Menu / Toolbar from menu.txt(UI-4)
     // =========================
     {
         MenuTxtParser parser("menu.txt");
         if (!parser.parse()) {
-            qWarning() << parser.errorString();
+            QMessageBox::critical(this, "Menu Error", parser.errorString());
         } else {
-            m_menuBuilder = new MenuBuilder(this, m_dispatcher);
-            m_menuBuilder->build(parser.items());
+            // MenuBuilder 只負責 UI 結構
+            m_menuBuilder = new MenuBuilder(this);
 
-            m_uiState = new UIStateController(m_menuBuilder, this);
+            // 建立 UI layout（menu / toolbar）
+            m_menuBuilder->build(parser.items(),
+                                 [this](const UIMenuItem& item) {
+
+                                     // 1️⃣ 向 MainWindow 註冊 action
+                                     QAction* act = registerAction(
+                                         item.id,
+                                         item.label,
+                                         item.icon,
+                                         item.shortcut
+                                         );
+
+                                     // 2️⃣ 綁定 Command Dispatcher（UI-4 核心）
+                                     connect(act, &QAction::triggered, this, [this, item]() {
+                                         m_dispatcher->execute(item.id);
+                                     });
+
+                                     return act;
+                                 }
+                                 );
+
+            // UI-5 才會真正用到
+            m_uiState = new UIStateController(this);
         }
     }
+
+    // after MenuBuilder / Action registry
+    m_commandStateSource = new DummyCommandStateSource(this);
+
+    m_uiStateController = new UIStateController(
+        this
+    );
+
+    KeymapParser kp("keymap.txt");
+    if (kp.parse()) {
+        for (auto it = kp.mappings().cbegin();
+             it != kp.mappings().cend(); ++it) {
+
+            if (QAction* act = action(it.key())) {
+                act->setShortcut(QKeySequence(it.value()));
+            }
+        }
+    }
+
+
 
     // =========================
     // Central UI
@@ -338,153 +382,6 @@ void MainWindow::startGetPoint(const QVector2D* basePoint, const QString& messag
     m_view->setPendingSketch(m_activeSketch);
 }
 
-void MainWindow::registerCADCommand(
-    const QString& name,
-    const QStringList& aliases,
-    int expectedArgs,
-    const QString& description,
-    bool interactive,
-    const QString& qtSlot,
-    std::function<void(const QStringList&)> handler)
-{
-    CADCommand cmd;
-    cmd.name = name;
-    cmd.aliases = aliases;
-    cmd.handler = handler;
-    cmd.expectedArgs = expectedArgs;
-    cmd.description = description;
-    cmd.interactive = interactive;
-    cmd.qtSlot = qtSlot;
-
-    cadCommands[name.toLower()] = cmd;
-
-    // Register aliases
-    for (const QString& alias : aliases) {
-        cadCommands[alias.toLower()] = cmd;
-    }
-}
-
-void MainWindow::loadMenuConfig(const QString& filename) {
-    QFile file(filename);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qWarning() << "Cannot open menu config:" << filename;
-        return;
-    }
-
-    QTextStream in(&file);
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-
-        if (line.isEmpty() || line.startsWith('#')) continue;
-
-        QStringList parts = line.split('|');
-        if (parts.size() < 3) continue;
-
-        QString type = parts[0];
-
-        if (type == "toolbar") {
-            QString id = parts[1];
-            QString label = parts[2];
-            QString icon = parts.size() > 3 ? parts[3] : "";
-            QString shortcut = parts.size() > 4 ? parts[4] : "";
-            QString callback = parts.size() > 5 ? parts[5] : "";
-
-            if (id == "separator") {
-                if (QToolBar* tb = findChild<QToolBar*>("MainToolbar")) {
-                    tb->addSeparator();
-                }
-            } else {
-                QAction* action = new QAction(label, this);
-                if (!icon.isEmpty()) action->setIcon(QIcon(icon));
-                if (!shortcut.isEmpty()) action->setShortcut(QKeySequence(shortcut));
-
-                if (!callback.isEmpty()) {
-                    connect(action, &QAction::triggered, this, [this, callback]() {
-                        QMetaObject::invokeMethod(this, callback.toUtf8().constData());
-                    });
-                }
-
-                actions[id] = action;
-                if (QToolBar* tb = findChild<QToolBar*>("MainToolbar")) {
-                    tb->addAction(action);
-                }
-            }
-        }
-        else if (type == "menu") {
-            QString menuName = parts[1];
-            QString id = parts[2];
-            QString label = parts[3];
-            QString shortcut = parts.size() > 4 ? parts[4] : "";
-            //QString callback = parts.size() > 5 ? parts[5] : "";
-            QString command = parts.size() > 5 ? parts[5] : "";
-
-            if (!menus.contains(menuName)) {
-                QMenu* menu = menuBar()->addMenu(menuName);
-                menus[menuName] = menu;
-            }
-
-            QMenu* menu = menus[menuName];
-
-            if (id == "separator") {
-                menu->addSeparator();
-            } else {
-                QAction* action = new QAction(label, this);
-                if (!shortcut.isEmpty()) action->setShortcut(QKeySequence(shortcut));
-
-                if (!command.isEmpty()) {
-                    connect(action, &QAction::triggered, this, [this, command]() {
-                        m_dispatcher->execute(command);
-                    });
-                }
-
-                menu->addAction(action);
-                actions[menuName + "_" + id] = action;
-            }
-        }
-        else if (type == "command") {
-            QString name = parts[1];
-            QString alias = parts.size() > 2 ? parts[2] : "";
-            QString expectedArgsStr = parts.size() > 3 ? parts[3] : "-1";
-            QString callback = parts.size() > 4 ? parts[4] : "";
-
-            if (!callback.isEmpty()) {
-                QStringList aliases;
-                if (!alias.isEmpty()) {
-                    aliases << alias;
-                }
-
-                int expectedArgs = expectedArgsStr.toInt();
-
-                registerCADCommand(
-                    name,
-                    aliases,
-                    expectedArgs,
-                    "", // Description
-                    expectedArgs > 0, // Interactive if expects args
-                    callback,
-                    [this, callback](const QStringList& args) {
-                        if (args.isEmpty()) {
-                            QMetaObject::invokeMethod(this, callback.toUtf8().constData());
-                        } else {
-                            // Arguments provided - let initializeCADCommands() override handle it
-                            QMetaObject::invokeMethod(this, callback.toUtf8().constData());
-                        }
-                    }
-                    );
-            }
-        }
-    }
-}
-
-void MainWindow::createMenusAndToolbars() {
-    // Create toolbar first
-    QToolBar* tb = addToolBar(tr("Main"));
-    tb->setObjectName("MainToolbar");
-
-    // Load menu/toolbar configuration
-    loadMenuConfig("menu.txt");
-}
-
 void MainWindow::createCentral() {
     m_view = new CadView(this);
     m_view->setDocument(&m_document);
@@ -513,18 +410,17 @@ void MainWindow::onGetPointActivateInput(QString key) {
     commandInput->setCursorPosition(commandInput->text().length());
 }
 
-void MainWindow::createFeatureBrowser() {
-    QDockWidget* dock = new QDockWidget("Feature Tree", this);
-    dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+void MainWindow::createFeatureBrowser()
+{
+    m_featureBrowser = new FeatureBrowser(this);
+    m_featureBrowser->setDocument(&m_document);
 
-    featureTree = new QTreeWidget(dock);
-    featureTree->setHeaderLabel("Features");
-    connect(featureTree, &QTreeWidget::itemClicked, this, &MainWindow::onFeatureSelected);
+    addDockWidget(Qt::LeftDockWidgetArea, m_featureBrowser);
 
-    dock->setWidget(featureTree);
-    addDockWidget(Qt::LeftDockWidgetArea, dock);
-
-    updateFeatureTree();
+    connect(m_featureBrowser, &FeatureBrowser::featureSelected,
+            this, [this](int featureId) {
+                m_view->highlightFeature(featureId);
+            });
 }
 
 void MainWindow::updateFeatureTree() {
@@ -786,6 +682,41 @@ void MainWindow::onViewIsometric() {
 void MainWindow::onExit() {
     close();
 }
+
+QAction* MainWindow::registerAction(const QString& id,
+                                    const QString& text,
+                                    const QString& icon,
+                                    const QString& shortcut)
+{
+    if (m_actions.contains(id))
+        return m_actions[id];
+
+    QAction* act = new QAction(text, this);
+
+    if (!icon.isEmpty())
+        act->setIcon(QIcon(icon));
+    if (!shortcut.isEmpty())
+        act->setShortcut(QKeySequence(shortcut));
+
+    m_actions[id] = act;
+    return act;
+}
+
+QAction* MainWindow::action(const QString& id) const
+{
+    return m_actions.value(id, nullptr);
+}
+
+bool MainWindow::triggerAction(const QString& commandId)
+{
+    QAction* act = action(commandId);
+    if (!act || !act->isEnabled())
+        return false;
+
+    act->trigger();
+    return true;
+}
+
 
 void MainWindow::keyPressEvent(QKeyEvent *event) {
 #ifdef HAVE_ECL
