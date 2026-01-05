@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 #include "view/RubberBand.h"
+#include "view/ViewManager.h"
+
 using aicad::view::RubberBandMode;
 
 #include <TDataStd_Name.hxx>
@@ -452,6 +454,7 @@ void MainWindow::createMenusAndToolbars() {
 }
 
 void MainWindow::createCentral() {
+    ViewManager* viewManager = new ViewManager(this);
     m_view = new CadView(this);
 //    m_view->setDocument(&m_document);
 
@@ -470,6 +473,7 @@ void MainWindow::createCentral() {
             });
 
     setCentralWidget(m_view);
+    viewManager->setActiveView(m_view);
 }
 
 void MainWindow::onGetPointActivateInput(QString key) {

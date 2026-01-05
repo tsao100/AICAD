@@ -6,6 +6,9 @@
  */
 
 #include "CadView.h"
+#include "core/Application.h"
+#include "core/EventBus.h"
+
 
 // CAD 相關 (使用樁檔案)
 #include "cad/geometry/CustomPlane.h"
@@ -16,9 +19,13 @@
 #include "view/CoordinateConverter.h"
 
 // OCCT
+#include <GC_MakeCircle.hxx>
+#include <Geom_Circle.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeEdge2d.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <Precision.hxx>
 #include <Quantity_Color.hxx>
@@ -32,6 +39,7 @@
 #include <QApplication>
 #include <QDebug>
 
+using namespace aicad::core;
 using namespace aicad::view;
 using namespace aicad::cad;
 
@@ -138,6 +146,14 @@ void CadView::initializeViewer() {
             m_view->Redraw();
         }
     });
+
+    Application* aicadApp = Application::instance();
+
+    EventBus* bus = aicadApp->eventBus();
+    bus->subscribe(Events::FEATURE_UPDATED, this,
+                   [this](const QVariant&) {
+                       updateDisplay();
+                   });
     
     qDebug() << "[CadView] Viewer initialized";
 }
@@ -318,6 +334,64 @@ void CadView::clearRubberBand() {
     }
 }
 
+void CadView::displayShape(const TopoDS_Shape& shape, bool update)
+{
+    if (m_context.IsNull())
+        return;
+
+    Handle(AIS_Shape) ais = new AIS_Shape(shape);
+    m_context->Display(ais, update ? Standard_True : Standard_False);
+}
+
+void CadView::drawLine(const gp_Pnt& p1, const gp_Pnt& p2)
+{
+    TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(p1, p2);
+    displayShape(edge);
+}
+
+void CadView::drawArc(const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3)
+{
+    GC_MakeCircle circleMaker(p1, p2, p3);
+    if (!circleMaker.IsDone())
+        return;
+
+    TopoDS_Edge arc =
+        BRepBuilderAPI_MakeEdge(circleMaker.Value(), p1, p3);
+    displayShape(arc);
+}
+
+void CadView::drawCube(const gp_Pnt& p)
+{
+    TopoDS_Shape box =
+        BRepPrimAPI_MakeBox(p, 50.0, 50.0, 50.0).Shape();
+    displayShape(box);
+}
+
+void CadView::displayPreview(const Handle(AIS_InteractiveObject)& obj)
+{
+    if (m_context.IsNull())
+        return;
+
+    m_context->Display(obj, Standard_False);
+    m_context->SetDisplayMode(obj, AIS_Shaded, Standard_False);
+    m_view->Redraw();
+}
+
+void CadView::removePreview(const Handle(AIS_InteractiveObject)& obj)
+{
+    if (m_context.IsNull() || obj.IsNull())
+        return;
+
+    m_context->Remove(obj, Standard_False);
+    m_view->Redraw();
+}
+
+void CadView::updateDisplay()
+{
+    if (!m_view.IsNull())
+        m_view->Redraw();
+}
+
 void CadView::updateGrid() {
     if (!m_gridOverlay) {
         return;
@@ -482,6 +556,11 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     // 轉換座標
     Standard_Integer xp, yp;
     CoordinateConverter::qtToOcct(this, event->pos(), xp, yp);
+
+    if (m_view.IsNull())
+        return;
+
+    emit mouseMoved(xp, yp);
 
     // 更新 OCCT 懸停檢測
     if (!m_context.IsNull() && !m_view.IsNull()) {

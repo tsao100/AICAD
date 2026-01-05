@@ -27,7 +27,7 @@
 #include <QStatusBar>
 #include <QDebug>
 
-#include "CadView.h"
+#include "view/CadView.h"
 #include "OcafDocument.h"
 
 class MainWindow : public QMainWindow {

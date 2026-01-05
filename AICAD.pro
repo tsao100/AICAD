@@ -129,18 +129,19 @@ win32 {
 SOURCES += \
     src/main.cpp \
     src/MainWindow.cpp \
-    src/CadView.cpp \
+    src/view/CadView.cpp \
     src/OcafDocument.cpp \
     src/core/Application.cpp \
     src/core/EventBus.cpp \
     src/core/DocumentManager.cpp \
     src/view/CoordinateConverter.cpp \
     src/view/RubberBand.cpp \
-    src/view/GridOverlay.cpp
+    src/view/GridOverlay.cpp \
+    src/view/ViewManager.cpp
 
 HEADERS += \
     src/MainWindow.h \
-    src/CadView.h \
+    src/view/CadView.h \
     src/OcafDocument.h \
     src/core/Application.h \
     src/core/EventBus.h \
@@ -148,6 +149,7 @@ HEADERS += \
     src/view/CoordinateConverter.h \
     src/view/RubberBand.h \
     src/view/GridOverlay.h \
+    src/view/ViewManager.h \
     src/cad/geometry/CustomPlane.h
 
 # 確保包含必要的 OCCT 函式庫

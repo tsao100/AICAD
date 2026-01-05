@@ -42,6 +42,15 @@ namespace aicad {
 class TDF_Label;
 class TopoDS_Shape;
 
+enum class CadMode {
+    Idle,
+    Sketching,
+    Extruding,
+    SelectingFace,
+    GetPoint
+};
+
+
 /**
  * @brief 視圖方向
  */
@@ -54,17 +63,6 @@ enum class SketchView {
     Right,
     Left,
     Isometric
-};
-
-/**
- * @brief CAD 互動模式
- */
-enum class CadMode {
-    Idle,           ///< 空閒模式
-    Sketching,      ///< 草圖繪製模式
-    Extruding,      ///< 擠出模式
-    SelectingFace,  ///< 選擇面模式
-    GetPoint        ///< 取點模式
 };
 
 /**
@@ -128,7 +126,7 @@ public:
      * @brief 設定互動模式
      */
     void setMode(CadMode mode);
-    
+
     /**
      * @brief 取得當前模式
      */
@@ -179,6 +177,21 @@ public:
      */
     void clearRubberBand();
 
+    // 顯示任何 TopoDS_Shape（由 Command / Feature 決定是什麼）
+    void displayShape(const TopoDS_Shape& shape, bool update = true);
+
+    // 重繪（給 EventBus 用）
+    void updateDisplay();
+
+    // ⚠️ Deprecated：僅供過渡使用，之後移到 Command
+    void drawLine(const gp_Pnt& p1, const gp_Pnt& p2);
+    void drawArc(const gp_Pnt& p1, const gp_Pnt& p2, const gp_Pnt& p3);
+    void drawCube(const gp_Pnt& p);
+
+    // preview（不進 document）
+    void displayPreview(const Handle(AIS_InteractiveObject)& obj);
+    void removePreview(const Handle(AIS_InteractiveObject)& obj);
+
 Q_SIGNALS:
     /**
      * @brief 點被取得時發出
@@ -209,6 +222,10 @@ Q_SIGNALS:
      * @brief 轉發按鍵事件到命令輸入
      */
     void forwardKeyToCommandInput(Qt::Key key, Qt::KeyboardModifiers modifiers);
+
+    void pointPicked(const gp_Pnt& point);
+
+    void mouseMoved(int xp, int yp);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
