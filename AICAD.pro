@@ -133,7 +133,10 @@ SOURCES += \
     src/OcafDocument.cpp \
     src/core/Application.cpp \
     src/core/EventBus.cpp \
-    src/core/DocumentManager.cpp
+    src/core/DocumentManager.cpp \
+    src/scripting/LispEngine.cpp \
+    src/scripting/LispBindings.cpp \
+    src/scripting/ScriptCommand.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -141,7 +144,10 @@ HEADERS += \
     src/OcafDocument.h \
     src/core/Application.h \
     src/core/EventBus.h \
-    src/core/DocumentManager.h
+    src/core/DocumentManager.h \
+    src/scripting/LispEngine.h \
+    src/scripting/LispBindings.h \
+    src/scripting/ScriptCommand.h
 
 RESOURCES += \
     resources.qrc
