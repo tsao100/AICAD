@@ -136,7 +136,11 @@ SOURCES += \
     src/core/DocumentManager.cpp \
     src/scripting/LispEngine.cpp \
     src/scripting/LispBindings.cpp \
-    src/scripting/ScriptCommand.cpp
+    src/scripting/ScriptCommand.cpp \
+    src/scripting/ScriptUtils.cpp \
+    src/scripting/MenuCommandLoader.cpp \
+    src/scripting/ScriptRecorder.cpp \
+    src/scripting/ScriptSerializer.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -147,7 +151,11 @@ HEADERS += \
     src/core/DocumentManager.h \
     src/scripting/LispEngine.h \
     src/scripting/LispBindings.h \
-    src/scripting/ScriptCommand.h
+    src/scripting/ScriptCommand.h \
+    src/scripting/ScriptUtils.h \
+    src/scripting/MenuCommandLoader.h \
+    src/scripting/ScriptRecorder.h \
+    src/scripting/ScriptSerializer.h
 
 RESOURCES += \
     resources.qrc

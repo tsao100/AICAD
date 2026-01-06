@@ -8,6 +8,7 @@
 #include "Application.h"
 #include "EventBus.h"
 #include "DocumentManager.h"
+#include "scripting/MenuCommandLoader.h"
 
 #include <QDebug>
 #include <QMutex>
@@ -104,6 +105,8 @@ bool Application::initialize() {
             qDebug() << "[Application] Document created:" << name;
             d->eventBus->publish(Events::DOCUMENT_CREATED, name);
         });
+
+        scripting::MenuCommandLoader::load("menu.txt");
         
         d->initialized = true;
         qDebug() << "[Application] Initialization completed successfully";
