@@ -25,20 +25,20 @@
 #include <QPainter>
 
 namespace {
-    // Helper to get proper OCCT coordinates from Qt event
-    void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
-                  Standard_Integer& occX, Standard_Integer& occY) {
+// Helper to get proper OCCT coordinates from Qt event
+void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
+              Standard_Integer& occX, Standard_Integer& occY) {
 #ifdef _WIN32
-        // On Windows, account for device pixel ratio (High DPI)
-        qreal dpr = widget->devicePixelRatio();
-        occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
-        occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
-#else
-        // On Linux/X11, Qt coordinates match OCCT coordinates directly
-        occX = qtPos.x();
-        occY = qtPos.y();
+    // On Windows, account for device pixel ratio (High DPI)
+    qreal dpr = widget->devicePixelRatio();
+    occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
+    occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
+#else \
+    // On Linux/X11, Qt coordinates match OCCT coordinates directly
+    occX = qtPos.x();
+    occY = qtPos.y();
 #endif
-    }
+}
 }
 
 CadView::CadView(QWidget* parent)
@@ -92,13 +92,13 @@ void CadView::initializeViewer() {
         window->Map();
     }
 
-// #ifdef _WIN32
-//     // IMPORTANT: Set proper window size accounting for device pixel ratio
-//     qreal dpr = devicePixelRatio();
-//     Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
-//     Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
-//     window->SetVirtualSize(w, h);
-// #endif
+    // #ifdef _WIN32
+    //     // IMPORTANT: Set proper window size accounting for device pixel ratio
+    //     qreal dpr = devicePixelRatio();
+    //     Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
+    //     Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
+    //     window->SetVirtualSize(w, h);
+    // #endif
 
     m_view->SetBackgroundColor(Quantity_NOC_GRAY80);
     m_view->MustBeResized();
@@ -691,17 +691,17 @@ void CadView::resizeEvent(QResizeEvent* event) {
         m_viewInitialized = true;
     }
 
-     if (!m_view.IsNull()) {
-// #ifdef _WIN32
-//         // Update window size with device pixel ratio
-//         Handle(Aspect_Window) window = m_view->Window();
-//         if (!window.IsNull()) {
-//             qreal dpr = devicePixelRatio();
-//             Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
-//             Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
-//             window->SetVirtualSize(w, h);
-//         }
-// #endif
+    if (!m_view.IsNull()) {
+        // #ifdef _WIN32
+        //         // Update window size with device pixel ratio
+        //         Handle(Aspect_Window) window = m_view->Window();
+        //         if (!window.IsNull()) {
+        //             qreal dpr = devicePixelRatio();
+        //             Standard_Integer w = static_cast<Standard_Integer>(width() * dpr);
+        //             Standard_Integer h = static_cast<Standard_Integer>(height() * dpr);
+        //             window->SetVirtualSize(w, h);
+        //         }
+        // #endif
 
         m_view->MustBeResized();
         m_view->Redraw();

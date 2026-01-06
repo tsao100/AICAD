@@ -6,6 +6,7 @@
  */
 
 #include "DocumentManager.h"
+#include "cad/Document.h"
 
 #include <QDebug>
 #include <QVector>
@@ -13,36 +14,6 @@
 #include <QFileInfo>
 
 namespace aicad {
-
-// 前向宣告的樁類別 (暫時用於編譯)
-namespace cad {
-    class Document : public QObject {
-        Q_OBJECT
-    public:
-        explicit Document(QObject* parent = nullptr) : QObject(parent) {}
-        virtual ~Document() {}
-        
-        QString fileName() const { return m_fileName; }
-        void setFileName(const QString& name) { m_fileName = name; }
-        
-        bool isModified() const { return m_modified; }
-        void setModified(bool modified) { m_modified = modified; }
-        
-        bool save(const QString& filePath) { 
-            qDebug() << "[Document] Saving to:" << filePath;
-            return true; 
-        }
-        
-        bool load(const QString& filePath) { 
-            qDebug() << "[Document] Loading from:" << filePath;
-            return true; 
-        }
-        
-    private:
-        QString m_fileName;
-        bool m_modified = false;
-    };
-}
 
 namespace core {
 
@@ -273,4 +244,3 @@ QString DocumentManager::generateUniqueName() {
 } // namespace core
 } // namespace aicad
 
-#include "DocumentManager.moc"

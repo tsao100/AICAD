@@ -451,7 +451,7 @@ void MainWindow::createMenusAndToolbars() {
 
 void MainWindow::createCentral() {
     m_view = new CadView(this);
-    m_view->setDocument(&m_document);
+//    m_view->setDocument(&m_document);
 
     connect(m_view, &CadView::pointAcquired, this, &MainWindow::onPointAcquired);
     connect(m_view, &CadView::getPointCancelled, this, &MainWindow::onGetPointCancelled);

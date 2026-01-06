@@ -135,7 +135,10 @@ SOURCES += \
     src/core/EventBus.cpp \
     src/core/DocumentManager.cpp \
     src/core/command/CommandManager.cpp \
-    src/cad/commands/RectangleCommand.cpp
+    src/cad/commands/RectangleCommand.cpp \
+    src/cad/Document.cpp \
+    src/cad/features/Sketch.cpp \
+    src/cad/features/ExtrudeFeature.cpp
 
 HEADERS += \
     src/MainWindow.h \
@@ -146,7 +149,13 @@ HEADERS += \
     src/core/DocumentManager.h \
     src/core/command/Command.h \
     src/core/command/CommandManager.h \
-    src/cad/commands/RectangleCommand.h
+    src/cad/commands/RectangleCommand.h \
+    src/cad/features/Feature.h \
+    src/cad/Document.h \
+    src/cad/features/ExtrudeFeature.h
+
+# 確保包含必要的 OCCT 函式庫
+# (已在上方 LIBS 中定義)
 
 RESOURCES += \
     resources.qrc
