@@ -1,12 +1,12 @@
 /**
- * @file Document.h
- * @brief Document 類別定義
+ * @file SketchEntity.h
+ * @brief SketchEntity 類別定義
  * @author TODO
  * @date 2026-01-07
  */
 
-#ifndef AICAD_CAD_DOCUMENT_H
-#define AICAD_CAD_DOCUMENT_H
+#ifndef AICAD_CAD_SKETCHENTITY_H
+#define AICAD_CAD_SKETCHENTITY_H
 
 #include <QObject>
 
@@ -14,16 +14,16 @@ namespace aicad {
 namespace cad {
 
 /**
- * @brief Document 類別
+ * @brief SketchEntity 類別
  * 
  * TODO: 添加類別說明
  */
-class Document : public QObject {
+class SketchEntity : public QObject {
     Q_OBJECT
     
 public:
-    explicit Document(QObject* parent = nullptr);
-    ~Document() override;
+    explicit SketchEntity(QObject* parent = nullptr);
+    ~SketchEntity() override;
     
     // TODO: 添加公開方法
     
@@ -40,4 +40,4 @@ private:
 } // namespace cad
 } // namespace aicad
 
-#endif // AICAD_CAD_DOCUMENT_H
+#endif // AICAD_CAD_SKETCHENTITY_H

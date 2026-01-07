@@ -1,17 +1,17 @@
 /**
- * @file Document.cpp
- * @brief Document 類別實作
+ * @file Feature.cpp
+ * @brief Feature 類別實作
  * @author TODO
  * @date 2026-01-07
  */
 
-#include "Document.h"
+#include "Feature.h"
 #include <QDebug>
 
 namespace aicad {
 namespace cad {
 
-class Document::Private {
+class Feature::Private {
 public:
     Private() {
         // TODO: 初始化成員
@@ -24,16 +24,16 @@ public:
     // TODO: 添加私有成員變數
 };
 
-Document::Document(QObject* parent)
+Feature::Feature(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[Document] Created";
+    qDebug() << "[Feature] Created";
     // TODO: 實作建構子
 }
 
-Document::~Document() {
-    qDebug() << "[Document] Destroyed";
+Feature::~Feature() {
+    qDebug() << "[Feature] Destroyed";
     delete d;
 }
 

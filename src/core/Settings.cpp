@@ -1,17 +1,17 @@
 /**
- * @file Document.cpp
- * @brief Document 類別實作
+ * @file Settings.cpp
+ * @brief Settings 類別實作
  * @author TODO
  * @date 2026-01-07
  */
 
-#include "Document.h"
+#include "Settings.h"
 #include <QDebug>
 
 namespace aicad {
-namespace cad {
+namespace core {
 
-class Document::Private {
+class Settings::Private {
 public:
     Private() {
         // TODO: 初始化成員
@@ -24,20 +24,20 @@ public:
     // TODO: 添加私有成員變數
 };
 
-Document::Document(QObject* parent)
+Settings::Settings(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[Document] Created";
+    qDebug() << "[Settings] Created";
     // TODO: 實作建構子
 }
 
-Document::~Document() {
-    qDebug() << "[Document] Destroyed";
+Settings::~Settings() {
+    qDebug() << "[Settings] Destroyed";
     delete d;
 }
 
 // TODO: 實作其他方法
 
-} // namespace cad
+} // namespace core
 } // namespace aicad

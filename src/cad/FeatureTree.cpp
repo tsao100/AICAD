@@ -1,17 +1,17 @@
 /**
- * @file Document.cpp
- * @brief Document 類別實作
+ * @file FeatureTree.cpp
+ * @brief FeatureTree 類別實作
  * @author TODO
  * @date 2026-01-07
  */
 
-#include "Document.h"
+#include "FeatureTree.h"
 #include <QDebug>
 
 namespace aicad {
 namespace cad {
 
-class Document::Private {
+class FeatureTree::Private {
 public:
     Private() {
         // TODO: 初始化成員
@@ -24,16 +24,16 @@ public:
     // TODO: 添加私有成員變數
 };
 
-Document::Document(QObject* parent)
+FeatureTree::FeatureTree(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[Document] Created";
+    qDebug() << "[FeatureTree] Created";
     // TODO: 實作建構子
 }
 
-Document::~Document() {
-    qDebug() << "[Document] Destroyed";
+FeatureTree::~FeatureTree() {
+    qDebug() << "[FeatureTree] Destroyed";
     delete d;
 }
 

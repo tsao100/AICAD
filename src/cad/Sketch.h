@@ -1,29 +1,29 @@
 /**
- * @file RubberBand.h
- * @brief RubberBand 類別定義
+ * @file Sketch.h
+ * @brief Sketch 類別定義
  * @author TODO
  * @date 2026-01-07
  */
 
-#ifndef AICAD_VIEW_RUBBERBAND_H
-#define AICAD_VIEW_RUBBERBAND_H
+#ifndef AICAD_CAD_SKETCH_H
+#define AICAD_CAD_SKETCH_H
 
 #include <QObject>
 
 namespace aicad {
-namespace view {
+namespace cad {
 
 /**
- * @brief RubberBand 類別
+ * @brief Sketch 類別
  * 
  * TODO: 添加類別說明
  */
-class RubberBand : public QObject {
+class Sketch : public QObject {
     Q_OBJECT
     
 public:
-    explicit RubberBand(QObject* parent = nullptr);
-    ~RubberBand() override;
+    explicit Sketch(QObject* parent = nullptr);
+    ~Sketch() override;
     
     // TODO: 添加公開方法
     
@@ -37,7 +37,7 @@ private:
     Private* d;
 };
 
-} // namespace view
+} // namespace cad
 } // namespace aicad
 
-#endif // AICAD_VIEW_RUBBERBAND_H
+#endif // AICAD_CAD_SKETCH_H

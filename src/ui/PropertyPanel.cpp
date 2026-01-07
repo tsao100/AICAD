@@ -1,17 +1,17 @@
 /**
- * @file Document.cpp
- * @brief Document 類別實作
+ * @file PropertyPanel.cpp
+ * @brief PropertyPanel 類別實作
  * @author TODO
  * @date 2026-01-07
  */
 
-#include "Document.h"
+#include "PropertyPanel.h"
 #include <QDebug>
 
 namespace aicad {
-namespace cad {
+namespace ui {
 
-class Document::Private {
+class PropertyPanel::Private {
 public:
     Private() {
         // TODO: 初始化成員
@@ -24,20 +24,20 @@ public:
     // TODO: 添加私有成員變數
 };
 
-Document::Document(QObject* parent)
+PropertyPanel::PropertyPanel(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[Document] Created";
+    qDebug() << "[PropertyPanel] Created";
     // TODO: 實作建構子
 }
 
-Document::~Document() {
-    qDebug() << "[Document] Destroyed";
+PropertyPanel::~PropertyPanel() {
+    qDebug() << "[PropertyPanel] Destroyed";
     delete d;
 }
 
 // TODO: 實作其他方法
 
-} // namespace cad
+} // namespace ui
 } // namespace aicad

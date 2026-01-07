@@ -126,22 +126,97 @@ win32 {
     QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/menu.txt) $$shell_path($$OUT_PWD)
 }
 
+# ========================================
+# 源文件和頭文件
+# ========================================
+
 SOURCES += \
     src/main.cpp \
-    src/MainWindow.cpp \
-    src/CadView.cpp \
-    src/OcafDocument.cpp \
+    \
+    # Core Module (核心系統)
     src/core/Application.cpp \
     src/core/EventBus.cpp \
-    src/core/DocumentManager.cpp
+    src/core/DocumentManager.cpp \
+    src/core/PluginManager.cpp \
+    src/core/Settings.cpp \
+    \
+    # CAD Module (Ben - CAD引擎)
+    src/cad/Document.cpp \
+    src/cad/Feature.cpp \
+    src/cad/Sketch.cpp \
+    src/cad/SketchEntity.cpp \
+    src/cad/Extrude.cpp \
+    src/cad/FeatureTree.cpp \
+    \
+    # UI Module (James - 用戶界面)
+    src/ui/MainWindow.cpp \
+    src/ui/FeatureBrowser.cpp \
+    src/ui/PropertyPanel.cpp \
+    src/ui/ToolbarManager.cpp \
+    \
+    # View Module (Felicia - 視圖系統)
+    src/view/ViewManager.cpp \
+    src/view/CadView.cpp \
+    src/view/RubberBand.cpp \
+    src/view/SelectionManager.cpp \
+    \
+    # Command Module (Kaufen - 命令系統)
+    src/command/CommandManager.cpp \
+    src/command/Command.cpp \
+    src/command/RectangleCommand.cpp \
+    src/command/LineCommand.cpp \
+    src/command/CircleCommand.cpp \
+    \
+    # Scripting Module (Daney - 腳本系統)
+    src/scripting/LispEngine.cpp \
+    src/scripting/LispBindings.cpp \
+    src/scripting/ScriptManager.cpp \
+    \
+    # Legacy files (逐步遷移中)
+    src/OcafDocument.cpp
 
 HEADERS += \
-    src/MainWindow.h \
-    src/CadView.h \
-    src/OcafDocument.h \
+    # Core Module
     src/core/Application.h \
     src/core/EventBus.h \
-    src/core/DocumentManager.h
+    src/core/DocumentManager.h \
+    src/core/PluginManager.h \
+    src/core/Settings.h \
+    \
+    # CAD Module (Ben)
+    src/cad/Document.h \
+    src/cad/Feature.h \
+    src/cad/Sketch.h \
+    src/cad/SketchEntity.h \
+    src/cad/Extrude.h \
+    src/cad/FeatureTree.h \
+    \
+    # UI Module (James)
+    src/ui/MainWindow.h \
+    src/ui/FeatureBrowser.h \
+    src/ui/PropertyPanel.h \
+    src/ui/ToolbarManager.h \
+    \
+    # View Module (Felicia)
+    src/view/ViewManager.h \
+    src/view/CadView.h \
+    src/view/RubberBand.h \
+    src/view/SelectionManager.h \
+    \
+    # Command Module (Kaufen)
+    src/command/CommandManager.h \
+    src/command/Command.h \
+    src/command/RectangleCommand.h \
+    src/command/LineCommand.h \
+    src/command/CircleCommand.h \
+    \
+    # Scripting Module (Daney)
+    src/scripting/LispEngine.h \
+    src/scripting/LispBindings.h \
+    src/scripting/ScriptManager.h \
+    \
+    # Legacy files
+    src/OcafDocument.h
 
 RESOURCES += \
     resources.qrc

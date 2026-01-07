@@ -1,17 +1,17 @@
 /**
- * @file Document.cpp
- * @brief Document 類別實作
+ * @file ScriptManager.cpp
+ * @brief ScriptManager 類別實作
  * @author TODO
  * @date 2026-01-07
  */
 
-#include "Document.h"
+#include "ScriptManager.h"
 #include <QDebug>
 
 namespace aicad {
-namespace cad {
+namespace scripting {
 
-class Document::Private {
+class ScriptManager::Private {
 public:
     Private() {
         // TODO: 初始化成員
@@ -24,20 +24,20 @@ public:
     // TODO: 添加私有成員變數
 };
 
-Document::Document(QObject* parent)
+ScriptManager::ScriptManager(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[Document] Created";
+    qDebug() << "[ScriptManager] Created";
     // TODO: 實作建構子
 }
 
-Document::~Document() {
-    qDebug() << "[Document] Destroyed";
+ScriptManager::~ScriptManager() {
+    qDebug() << "[ScriptManager] Destroyed";
     delete d;
 }
 
 // TODO: 實作其他方法
 
-} // namespace cad
+} // namespace scripting
 } // namespace aicad

@@ -1,17 +1,17 @@
 /**
- * @file Document.cpp
- * @brief Document 類別實作
+ * @file CircleCommand.cpp
+ * @brief CircleCommand 類別實作
  * @author TODO
  * @date 2026-01-07
  */
 
-#include "Document.h"
+#include "CircleCommand.h"
 #include <QDebug>
 
 namespace aicad {
-namespace cad {
+namespace command {
 
-class Document::Private {
+class CircleCommand::Private {
 public:
     Private() {
         // TODO: 初始化成員
@@ -24,20 +24,20 @@ public:
     // TODO: 添加私有成員變數
 };
 
-Document::Document(QObject* parent)
+CircleCommand::CircleCommand(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[Document] Created";
+    qDebug() << "[CircleCommand] Created";
     // TODO: 實作建構子
 }
 
-Document::~Document() {
-    qDebug() << "[Document] Destroyed";
+CircleCommand::~CircleCommand() {
+    qDebug() << "[CircleCommand] Destroyed";
     delete d;
 }
 
 // TODO: 實作其他方法
 
-} // namespace cad
+} // namespace command
 } // namespace aicad

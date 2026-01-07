@@ -1,12 +1,12 @@
 /**
- * @file RubberBand.h
- * @brief RubberBand 類別定義
+ * @file SelectionManager.h
+ * @brief SelectionManager 類別定義
  * @author TODO
  * @date 2026-01-07
  */
 
-#ifndef AICAD_VIEW_RUBBERBAND_H
-#define AICAD_VIEW_RUBBERBAND_H
+#ifndef AICAD_VIEW_SELECTIONMANAGER_H
+#define AICAD_VIEW_SELECTIONMANAGER_H
 
 #include <QObject>
 
@@ -14,16 +14,16 @@ namespace aicad {
 namespace view {
 
 /**
- * @brief RubberBand 類別
+ * @brief SelectionManager 類別
  * 
  * TODO: 添加類別說明
  */
-class RubberBand : public QObject {
+class SelectionManager : public QObject {
     Q_OBJECT
     
 public:
-    explicit RubberBand(QObject* parent = nullptr);
-    ~RubberBand() override;
+    explicit SelectionManager(QObject* parent = nullptr);
+    ~SelectionManager() override;
     
     // TODO: 添加公開方法
     
@@ -40,4 +40,4 @@ private:
 } // namespace view
 } // namespace aicad
 
-#endif // AICAD_VIEW_RUBBERBAND_H
+#endif // AICAD_VIEW_SELECTIONMANAGER_H

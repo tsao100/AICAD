@@ -1,29 +1,29 @@
 /**
- * @file RubberBand.h
- * @brief RubberBand 類別定義
+ * @file Command.h
+ * @brief Command 類別定義
  * @author TODO
  * @date 2026-01-07
  */
 
-#ifndef AICAD_VIEW_RUBBERBAND_H
-#define AICAD_VIEW_RUBBERBAND_H
+#ifndef AICAD_COMMAND_COMMAND_H
+#define AICAD_COMMAND_COMMAND_H
 
 #include <QObject>
 
 namespace aicad {
-namespace view {
+namespace command {
 
 /**
- * @brief RubberBand 類別
+ * @brief Command 類別
  * 
  * TODO: 添加類別說明
  */
-class RubberBand : public QObject {
+class Command : public QObject {
     Q_OBJECT
     
 public:
-    explicit RubberBand(QObject* parent = nullptr);
-    ~RubberBand() override;
+    explicit Command(QObject* parent = nullptr);
+    ~Command() override;
     
     // TODO: 添加公開方法
     
@@ -37,7 +37,7 @@ private:
     Private* d;
 };
 
-} // namespace view
+} // namespace command
 } // namespace aicad
 
-#endif // AICAD_VIEW_RUBBERBAND_H
+#endif // AICAD_COMMAND_COMMAND_H
