@@ -144,15 +144,16 @@ SOURCES += \
     src/cad/Document.cpp \
     src/cad/Feature.cpp \
     src/cad/Sketch.cpp \
-    src/cad/SketchEntity.cpp \
+    #src/cad/SketchEntity.cpp \
     src/cad/Extrude.cpp \
-    src/cad/FeatureTree.cpp \
+    #src/cad/FeatureTree.cpp \
     \
     # UI Module (James - 用戶界面)
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/PropertyPanel.cpp \
-    src/ui/ToolbarManager.cpp \
+    src/ui/ToolManager.cpp \
+    src/ui/UIManager.cpp \
     \
     # View Module (Felicia - 視圖系統)
     src/view/ViewManager.cpp \
@@ -187,15 +188,16 @@ HEADERS += \
     src/cad/Document.h \
     src/cad/Feature.h \
     src/cad/Sketch.h \
-    src/cad/SketchEntity.h \
+    #src/cad/SketchEntity.h \
     src/cad/Extrude.h \
-    src/cad/FeatureTree.h \
+    #src/cad/FeatureTree.h \
     \
     # UI Module (James)
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
     src/ui/PropertyPanel.h \
-    src/ui/ToolbarManager.h \
+    src/ui/ToolManager.h \
+    src/ui/UIManager.h \
     \
     # View Module (Felicia)
     src/view/ViewManager.h \

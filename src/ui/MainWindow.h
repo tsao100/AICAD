@@ -1,37 +1,62 @@
 /**
- * @file MainWindow.h
- * @brief MainWindow 類別定義
- * @author TODO
- * @date 2026-01-07
+ * @file ui/MainWindow.h
+ * @brief 簡化的主視窗（UI 系統版本）
+ * @author James
+ * @date 2025-01-07
  */
 
 #ifndef AICAD_UI_MAINWINDOW_H
 #define AICAD_UI_MAINWINDOW_H
 
-#include <QObject>
+#include <QMainWindow>
+#include <QStatusBar>
 
 namespace aicad {
 namespace ui {
 
 /**
- * @brief MainWindow 類別
+ * @brief 簡化的主視窗
  * 
- * TODO: 添加類別說明
+ * MainWindow 是應用程式的主要視窗：
+ * - 提供基本的視窗框架
+ * - 整合各個 UI 元件
+ * - 處理視窗事件
+ * 
+ * 使用範例：
+ * @code
+ * MainWindow* mainWin = new MainWindow();
+ * mainWin->show();
+ * @endcode
  */
-class MainWindow : public QObject {
+class MainWindow : public QMainWindow {
     Q_OBJECT
     
 public:
-    explicit MainWindow(QObject* parent = nullptr);
+    /**
+     * @brief 建構子
+     */
+    explicit MainWindow();
+    
+    /**
+     * @brief 解構子
+     */
     ~MainWindow() override;
     
-    // TODO: 添加公開方法
-    
 Q_SIGNALS:
-    // TODO: 添加信號
+    /**
+     * @brief 視窗即將關閉時發出
+     */
+    void aboutToClose();
+    
+protected:
+    /**
+     * @brief 關閉事件處理
+     */
+    void closeEvent(QCloseEvent* event) override;
     
 private:
-    // TODO: 添加私有成員
+    void setupUI();
+    void setupCentralWidget();
     
     class Private;
     Private* d;

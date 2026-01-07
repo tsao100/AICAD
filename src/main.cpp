@@ -58,16 +58,13 @@ int main(int argc, char **argv) {
     qDebug() << "Application Name:" << app->applicationName();
     qDebug() << "Version:" << app->version();
     
-    // 建立主視窗
-    MainWindow mainWindow;
-    
-    // Pass command line args to window (if needed)
-    // if (argc > 1) {
-    //     mainWindow.loadFileFromCommandLine(QString::fromUtf8(argv[1]));
-    // }
-    
-    mainWindow.show();
-    // mainWindow.showMaximized();
+    // 顯示主視窗
+    aicad::ui::UIManager* uiMgr = app->uiManager();
+    if (uiMgr) {
+        uiMgr->showMainWindow();
+        //uiMgr->showMaximized();
+    }
+
     
     qDebug() << "Main window shown";
     qDebug() << "Entering event loop...";

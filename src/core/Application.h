@@ -10,6 +10,7 @@
 
 #include <QObject>
 #include <QString>
+#include "ui/UIManager.h"
 
 namespace aicad {
 namespace core {
@@ -101,6 +102,12 @@ public:
      */
     QString applicationName() const;
     
+    /**
+     * @brief 取得 UI 管理器
+     * @return UIManager 指標，未初始化則為 nullptr
+     */
+    ui::UIManager* uiManager() const;
+
 Q_SIGNALS:
     /**
      * @brief 初始化完成時發出

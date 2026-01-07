@@ -8,7 +8,8 @@
 #include "Application.h"
 #include "EventBus.h"
 #include "DocumentManager.h"
-#include "CommandManager.h"
+#include "command/CommandManager.h"
+#include "ui/UIManager.h"
 
 #include <QDebug>
 #include <QMutex>
@@ -38,6 +39,7 @@ public:
     EventBus* eventBus;
     DocumentManager* documentManager;
     CommandManager* commandManager;
+    ui::UIManager* uiManager;
     
     static const QString VERSION;
     static const QString APP_NAME;
@@ -116,6 +118,21 @@ bool Application::initialize() {
             qDebug() << "[Application] Document created:" << name;
             d->eventBus->publish(Events::DOCUMENT_CREATED, name);
         });
+
+        // 6. 建立 UI 管理器
+        qDebug() << "[Application] Creating UIManager...";
+        d->uiManager = new ui::UIManager(this);
+        if (!d->uiManager) {
+            Q_EMIT errorOccurred("Failed to create UIManager");
+            return false;
+        }
+
+        // 7. 初始化 UI 系統
+        qDebug() << "[Application] Initializing UI system...";
+        if (!d->uiManager->initialize()) {
+            Q_EMIT errorOccurred("Failed to initialize UI system");
+            return false;
+        }
         
         connect(d->commandManager, &CommandManager::commandStarted,
                 this, [this](const QString& name) {
@@ -145,6 +162,10 @@ bool Application::initialize() {
         Q_EMIT errorOccurred(error);
         return false;
     }
+}
+
+ui::UIManager* Application::uiManager() const {
+    return d->uiManager;
 }
 
 void Application::shutdown() {

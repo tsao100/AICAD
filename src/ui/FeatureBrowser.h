@@ -1,37 +1,105 @@
 /**
  * @file FeatureBrowser.h
- * @brief FeatureBrowser 類別定義
- * @author TODO
- * @date 2026-01-07
+ * @brief 特徵瀏覽器，顯示文件中的所有特徵
+ * @author James
+ * @date 2025-01-07
  */
 
 #ifndef AICAD_UI_FEATUREBROWSER_H
 #define AICAD_UI_FEATUREBROWSER_H
 
-#include <QObject>
+#include <QDockWidget>
+#include <QTreeWidget>
 
 namespace aicad {
+
+namespace cad {
+    class Document;
+}
+
 namespace ui {
 
 /**
- * @brief FeatureBrowser 類別
+ * @brief 特徵瀏覽器
  * 
- * TODO: 添加類別說明
+ * FeatureBrowser 顯示當前文件的特徵樹狀結構：
+ * - 顯示所有特徵
+ * - 支援選擇和高亮
+ * - 顯示特徵類型圖示
+ * - 支援右鍵選單
+ * 
+ * 使用範例：
+ * @code
+ * FeatureBrowser* browser = new FeatureBrowser(parent);
+ * browser->setCurrentDocument(document);
+ * browser->refresh();
+ * @endcode
  */
-class FeatureBrowser : public QObject {
+class FeatureBrowser : public QDockWidget {
     Q_OBJECT
     
 public:
-    explicit FeatureBrowser(QObject* parent = nullptr);
+    /**
+     * @brief 建構子
+     * @param parent 父視窗
+     */
+    explicit FeatureBrowser(QWidget* parent = nullptr);
+    
+    /**
+     * @brief 解構子
+     */
     ~FeatureBrowser() override;
     
-    // TODO: 添加公開方法
+    /**
+     * @brief 設定當前文件
+     * @param document 文件指標
+     */
+    void setCurrentDocument(cad::Document* document);
+    
+    /**
+     * @brief 刷新特徵樹
+     */
+    void refresh();
+    
+    /**
+     * @brief 清空特徵樹
+     */
+    void clear();
+    
+    /**
+     * @brief 選擇特徵
+     * @param featureId 特徵 ID
+     */
+    void selectFeature(int featureId);
     
 Q_SIGNALS:
-    // TODO: 添加信號
+    /**
+     * @brief 特徵被選中時發出
+     * @param featureId 特徵 ID
+     */
+    void featureSelected(int featureId);
+    
+    /**
+     * @brief 特徵被雙擊時發出
+     * @param featureId 特徵 ID
+     */
+    void featureDoubleClicked(int featureId);
+    
+    /**
+     * @brief 特徵需要顯示右鍵選單時發出
+     * @param featureId 特徵 ID
+     * @param globalPos 滑鼠全域位置
+     */
+    void featureContextMenu(int featureId, const QPoint& globalPos);
+    
+private Q_SLOTS:
+    void onItemClicked(QTreeWidgetItem* item, int column);
+    void onItemDoubleClicked(QTreeWidgetItem* item, int column);
+    void onCustomContextMenu(const QPoint& pos);
     
 private:
-    // TODO: 添加私有成員
+    void setupUI();
+    void connectSignals();
     
     class Private;
     Private* d;
