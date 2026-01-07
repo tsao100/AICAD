@@ -1,27 +1,26 @@
 /**
  * @file ViewManager.cpp
  * @brief ViewManager 類別實作
- * @author TODO
- * @date 2026-01-07
+ * @author Felicia
+ * @date 2024-12-04
  */
 
 #include "ViewManager.h"
+#include "CadView.h"
+#include "core/Application.h"
+#include "core/EventBus.h"
+
 #include <QDebug>
+#include <QVector>
+#include <QPointer>
 
 namespace aicad {
 namespace view {
 
 class ViewManager::Private {
 public:
-    Private() {
-        // TODO: 初始化成員
-    }
-    
-    ~Private() {
-        // TODO: 清理資源
-    }
-    
-    // TODO: 添加私有成員變數
+    QVector<QPointer<CadView>> views;
+    QPointer<CadView> activeView;
 };
 
 ViewManager::ViewManager(QObject* parent)
@@ -29,15 +28,231 @@ ViewManager::ViewManager(QObject* parent)
     , d(new Private())
 {
     qDebug() << "[ViewManager] Created";
-    // TODO: 實作建構子
+    
+    // 訂閱相關事件
+    using namespace core;
+    EventBus* bus = Application::instance()->eventBus();
+    
+    if (bus) {
+        // 訂閱文件事件以同步視圖
+        bus->subscribe(Events::DOCUMENT_MODIFIED, this, 
+            [this](const QVariant& data) {
+                Q_UNUSED(data);
+                refreshAllViews();
+            });
+            
+        bus->subscribe(Events::FEATURE_CREATED, this,
+            [this](const QVariant& data) {
+                Q_UNUSED(data);
+                refreshAllViews();
+            });
+            
+        bus->subscribe(Events::FEATURE_UPDATED, this,
+            [this](const QVariant& data) {
+                Q_UNUSED(data);
+                refreshAllViews();
+            });
+    }
 }
 
 ViewManager::~ViewManager() {
-    qDebug() << "[ViewManager] Destroyed";
+    qDebug() << "[ViewManager] Destroying...";
+    closeAll();
     delete d;
 }
 
-// TODO: 實作其他方法
+CadView* ViewManager::createView(cad::Document* document, QWidget* parent) {
+    qDebug() << "[ViewManager] Creating view for document";
+    
+    // 建立新視圖
+    CadView* view = new CadView(parent);
+    
+    if (document) {
+        // TODO: 設定視圖的文件
+        // view->setDocument(document);
+    }
+    
+    // 加入管理列表
+    d->views.append(view);
+    
+    // 設為活動視圖
+    setActiveView(view);
+    
+    // 監聽視圖銷毀事件
+    connect(view, &QObject::destroyed, this, [this, view]() {
+        d->views.removeOne(view);
+        if (d->activeView == view) {
+            if (!d->views.isEmpty()) {
+                setActiveView(d->views.first());
+            } else {
+                setActiveView(nullptr);
+            }
+        }
+        Q_EMIT viewCountChanged(d->views.size());
+    });
+    
+    qDebug() << "[ViewManager] View created. Total views:" << d->views.size();
+    
+    Q_EMIT viewCreated(view);
+    Q_EMIT viewCountChanged(d->views.size());
+    
+    // 發布事件
+    using namespace core;
+    EventBus* bus = Application::instance()->eventBus();
+    if (bus) {
+        bus->publish(Events::VIEW_CHANGED, QVariant());
+    }
+    
+    return view;
+}
+
+bool ViewManager::closeView(CadView* view) {
+    if (!view) {
+        return false;
+    }
+    
+    qDebug() << "[ViewManager] Closing view";
+    
+    // 從列表中移除
+    d->views.removeOne(view);
+    
+    // 如果是活動視圖，切換到其他視圖
+    if (d->activeView == view) {
+        if (!d->views.isEmpty()) {
+            setActiveView(d->views.first());
+        } else {
+            setActiveView(nullptr);
+        }
+    }
+    
+    // 發出信號
+    Q_EMIT viewClosed(view);
+    Q_EMIT viewCountChanged(d->views.size());
+    
+    // 刪除視圖
+    view->deleteLater();
+    
+    qDebug() << "[ViewManager] View closed. Remaining:" << d->views.size();
+    
+    return true;
+}
+
+bool ViewManager::closeAll() {
+    qDebug() << "[ViewManager] Closing all views";
+    
+    // 複製列表，因為 closeView 會修改它
+    QVector<CadView*> viewsToClose;
+    for (const QPointer<CadView>& viewPtr : d->views) {
+        if (!viewPtr.isNull()) {
+            viewsToClose.append(viewPtr.data());
+        }
+    }
+    
+    // 關閉所有視圖
+    for (CadView* view : viewsToClose) {
+        closeView(view);
+    }
+    
+    qDebug() << "[ViewManager] All views closed";
+    return true;
+}
+
+QVector<CadView*> ViewManager::views() const {
+    QVector<CadView*> result;
+    for (const QPointer<CadView>& viewPtr : d->views) {
+        if (!viewPtr.isNull()) {
+            result.append(viewPtr.data());
+        }
+    }
+    return result;
+}
+
+int ViewManager::viewCount() const {
+    // 只計算有效的視圖
+    int count = 0;
+    for (const QPointer<CadView>& viewPtr : d->views) {
+        if (!viewPtr.isNull()) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void ViewManager::setActiveView(CadView* view) {
+    if (d->activeView == view) {
+        return;
+    }
+    
+    d->activeView = view;
+    
+    QString viewName = view ? "Valid View" : "None";
+    qDebug() << "[ViewManager] Active view changed to:" << viewName;
+    
+    Q_EMIT activeViewChanged(view);
+    
+    // 發布事件
+    using namespace core;
+    EventBus* bus = Application::instance()->eventBus();
+    if (bus) {
+        bus->publish(Events::VIEW_CHANGED, QVariant());
+    }
+}
+
+CadView* ViewManager::activeView() const {
+    return d->activeView.data();
+}
+
+QVector<CadView*> ViewManager::findViewsByDocument(cad::Document* document) const {
+    QVector<CadView*> result;
+    
+    if (!document) {
+        return result;
+    }
+    
+    for (const QPointer<CadView>& viewPtr : d->views) {
+        if (!viewPtr.isNull()) {
+            // TODO: 實作文件比對
+            // if (viewPtr->document() == document) {
+            //     result.append(viewPtr.data());
+            // }
+        }
+    }
+    
+    return result;
+}
+
+void ViewManager::refreshAllViews() {
+    qDebug() << "[ViewManager] Refreshing all views";
+    
+    for (const QPointer<CadView>& viewPtr : d->views) {
+        if (!viewPtr.isNull()) {
+            viewPtr->refreshView();
+        }
+    }
+    
+    // 發布事件
+    using namespace core;
+    EventBus* bus = Application::instance()->eventBus();
+    if (bus) {
+        bus->publish(Events::VIEW_REFRESHED, QVariant());
+    }
+}
+
+void ViewManager::syncViewsToDocument(cad::Document* document) {
+    if (!document) {
+        return;
+    }
+    
+    qDebug() << "[ViewManager] Syncing views to document";
+    
+    QVector<CadView*> docViews = findViewsByDocument(document);
+    
+    for (CadView* view : docViews) {
+        // TODO: 實作視圖同步
+        // view->displayAllFeatures();
+        view->refreshView();
+    }
+}
 
 } // namespace view
 } // namespace aicad

@@ -1,43 +1,662 @@
 /**
  * @file CadView.cpp
- * @brief CadView 類別實作
- * @author TODO
- * @date 2026-01-07
+ * @brief CadView 類別實作 (重構版)
+ * @author Felicia
+ * @date 2024-12-04
  */
 
 #include "CadView.h"
+#include "RubberBand.h"
+#include "ViewGrid.h"
+#include "core/Application.h"
+#include "core/EventBus.h"
+
 #include <QDebug>
+#include <QTimer>
+#include <QMouseEvent>
+#include <QKeyEvent>
+
+#include <Aspect_DisplayConnection.hxx>
+#include <OpenGl_GraphicDriver.hxx>
+#include <AIS_ViewCube.hxx>
+#include <Quantity_Color.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Lin.hxx>
+#include <gp_Dir.hxx>
+#include <IntAna_IntConicQuad.hxx>
+#include <Precision.hxx>
+
+#ifdef _WIN32
+#include <WNT_Window.hxx>
+#else
+#include <Xw_Window.hxx>
+#endif
 
 namespace aicad {
 namespace view {
 
+// 輔助函式：Qt 座標轉 OCCT 座標
+static void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
+                     Standard_Integer& occX, Standard_Integer& occY) {
+#ifdef _WIN32
+    qreal dpr = widget->devicePixelRatio();
+    occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
+    occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
+#else
+    occX = qtPos.x();
+    occY = qtPos.y();
+#endif
+}
+
 class CadView::Private {
 public:
-    Private() {
-        // TODO: 初始化成員
+    // OCCT 核心物件
+    Handle(V3d_Viewer) viewer;
+    Handle(V3d_View) view;
+    Handle(AIS_InteractiveContext) context;
+    Handle(AIS_ViewCube) viewCube;
+    
+    // 關聯的文件
+    cad::Document* document;
+    
+    // 輔助物件
+    RubberBand* rubberBand;
+    ViewGrid* grid;
+    
+    // 視圖狀態
+    ViewType viewType;
+    InteractionMode mode;
+    bool viewInitialized;
+    bool gridEnabled;
+    
+    // 滑鼠狀態
+    QPoint lastMousePos;
+    bool mousePressed;
+    Qt::MouseButton pressedButton;
+    
+    Private()
+        : document(nullptr)
+        , rubberBand(nullptr)
+        , grid(nullptr)
+        , viewType(ViewType::Isometric)
+        , mode(InteractionMode::Idle)
+        , viewInitialized(false)
+        , gridEnabled(false)
+        , mousePressed(false)
+        , pressedButton(Qt::NoButton)
+    {
     }
     
     ~Private() {
-        // TODO: 清理資源
+        delete rubberBand;
+        delete grid;
     }
-    
-    // TODO: 添加私有成員變數
 };
 
-CadView::CadView(QObject* parent)
-    : QObject(parent)
+CadView::CadView(QWidget* parent)
+    : QWidget(parent)
     , d(new Private())
 {
+    // 設定 Widget 屬性
+    setAttribute(Qt::WA_PaintOnScreen);
+    setAttribute(Qt::WA_NoSystemBackground);
+    setFocusPolicy(Qt::StrongFocus);
+    setMouseTracking(true);
+    setBackgroundRole(QPalette::NoRole);
+    
+    // 初始化視圖器
+    initializeViewer();
+    
     qDebug() << "[CadView] Created";
-    // TODO: 實作建構子
 }
 
 CadView::~CadView() {
-    qDebug() << "[CadView] Destroyed";
+    qDebug() << "[CadView] Destroying...";
     delete d;
 }
 
-// TODO: 實作其他方法
+void CadView::initializeViewer() {
+    qDebug() << "[CadView] Initializing OCCT viewer...";
+    
+    // 建立顯示連接
+#ifdef _WIN32
+    Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection();
+#else
+    Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection("");
+#endif
+    
+    // 建立圖形驅動
+    Handle(OpenGl_GraphicDriver) graphicDriver = new OpenGl_GraphicDriver(displayConnection);
+    
+    // 建立視圖器
+    d->viewer = new V3d_Viewer(graphicDriver);
+    d->viewer->SetDefaultLights();
+    d->viewer->SetLightOn();
+    
+    // 建立視圖
+    d->view = d->viewer->CreateView();
+    
+    // 建立視窗
+#ifdef _WIN32
+    Handle(WNT_Window) window = new WNT_Window((Aspect_Handle)winId());
+#else
+    Handle(Xw_Window) window = new Xw_Window(displayConnection, (Aspect_Drawable)winId());
+#endif
+    
+    d->view->SetWindow(window);
+    if (!window->IsMapped()) {
+        window->Map();
+    }
+    
+    // 設定背景
+    d->view->SetBackgroundColor(Quantity_NOC_GRAY80);
+    d->view->MustBeResized();
+    
+    // 建立互動上下文
+    d->context = new AIS_InteractiveContext(d->viewer);
+    d->context->SetDisplayMode(AIS_Shaded, Standard_True);
+    
+    // 建立 ViewCube
+    d->viewCube = new AIS_ViewCube();
+    d->viewCube->SetBoxColor(Quantity_NOC_GRAY75);
+    d->viewCube->SetSize(55);
+    d->viewCube->SetFontHeight(12);
+    d->viewCube->SetAxesLabels("X", "Y", "Z");
+    d->viewCube->SetTransformPersistence(
+        new Graphic3d_TransformPers(
+            Graphic3d_TMF_TriedronPers,
+            Aspect_TOTP_RIGHT_UPPER,
+            Graphic3d_Vec2i(85, 85)
+        )
+    );
+    d->context->Display(d->viewCube, Standard_False);
+    
+    // 建立輔助物件
+    d->rubberBand = new RubberBand(d->context, this);
+    d->grid = new ViewGrid(d->context, this);
+    
+    // 設定初始視角
+    setViewType(ViewType::Isometric);
+    
+    // 延遲初始化
+    QTimer::singleShot(0, this, [this]() {
+        if (!d->view.IsNull()) {
+            d->view->MustBeResized();
+            d->view->Redraw();
+            d->viewInitialized = true;
+        }
+    });
+    
+    // 訂閱事件
+    using namespace core;
+    EventBus* bus = Application::instance()->eventBus();
+    if (bus) {
+        bus->subscribe(Events::FEATURE_CREATED, this, [this](const QVariant& data) {
+            Q_UNUSED(data);
+            displayAllFeatures();
+        });
+        
+        bus->subscribe(Events::FEATURE_UPDATED, this, [this](const QVariant& data) {
+            Q_UNUSED(data);
+            refreshView();
+        });
+    }
+    
+    qDebug() << "[CadView] OCCT viewer initialized";
+}
+
+void CadView::setDocument(cad::Document* document) {
+    if (d->document == document) {
+        return;
+    }
+    
+    d->document = document;
+    
+    qDebug() << "[CadView] Document set";
+    
+    // 顯示文件內容
+    if (document) {
+        displayAllFeatures();
+    }
+}
+
+cad::Document* CadView::document() const {
+    return d->document;
+}
+
+void CadView::setViewType(ViewType type) {
+    if (d->viewType == type) {
+        return;
+    }
+    
+    d->viewType = type;
+    updateProjection();
+    
+    qDebug() << "[CadView] View type changed to:" << static_cast<int>(type);
+    
+    Q_EMIT viewTypeChanged(type);
+    
+    // 發布事件
+    using namespace core;
+    EventBus* bus = Application::instance()->eventBus();
+    if (bus) {
+        bus->publish(Events::VIEW_CHANGED, QVariant());
+    }
+}
+
+ViewType CadView::viewType() const {
+    return d->viewType;
+}
+
+void CadView::setMode(InteractionMode mode) {
+    if (d->mode == mode) {
+        return;
+    }
+    
+    d->mode = mode;
+    
+    qDebug() << "[CadView] Interaction mode changed to:" << static_cast<int>(mode);
+    
+    Q_EMIT modeChanged(mode);
+}
+
+InteractionMode CadView::mode() const {
+    return d->mode;
+}
+
+Handle(AIS_InteractiveContext) CadView::context() const {
+    return d->context;
+}
+
+Handle(V3d_View) CadView::view() const {
+    return d->view;
+}
+
+RubberBand* CadView::rubberBand() const {
+    return d->rubberBand;
+}
+
+void CadView::displayAllFeatures() {
+    if (!d->document || d->context.IsNull()) {
+        return;
+    }
+    
+    qDebug() << "[CadView] Displaying all features";
+    
+    // 清除所有顯示 (保留 ViewCube)
+    d->context->RemoveAll(Standard_False);
+    d->context->Display(d->viewCube, Standard_False);
+    
+    // TODO: 從文件取得特徵並顯示
+    // QVector<TDF_Label> features = d->document->getFeatures();
+    // for (const TDF_Label& label : features) {
+    //     displayFeature(label);
+    // }
+    
+    fitAll();
+}
+
+void CadView::refreshView() {
+    if (d->view.IsNull()) {
+        return;
+    }
+    
+    d->view->Redraw();
+    update();
+}
+
+void CadView::fitAll() {
+    if (d->view.IsNull()) {
+        return;
+    }
+    
+    d->view->FitAll();
+    d->view->ZFitAll();
+    update();
+}
+
+QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
+    if (d->view.IsNull()) {
+        return QVector2D(0, 0);
+    }
+    
+    // 轉換座標
+    Standard_Integer xp, yp;
+    qtToOCCT(screenPos, xp, yp);
+    
+    // 取得工作平面
+    CustomPlane plane;
+    switch (d->viewType) {
+    case ViewType::Top:
+    case ViewType::Bottom:
+        plane = CustomPlane::XY();
+        break;
+    case ViewType::Front:
+    case ViewType::Back:
+        plane = CustomPlane::XZ();
+        break;
+    case ViewType::Right:
+    case ViewType::Left:
+        plane = CustomPlane::YZ();
+        break;
+    default:
+        plane = CustomPlane::XY();
+        break;
+    }
+    
+    gp_Pln gpPlane(
+        gp_Pnt(plane.origin.x(), plane.origin.y(), plane.origin.z()),
+        gp_Dir(plane.normal.x(), plane.normal.y(), plane.normal.z())
+    );
+    
+    // 取得投影方向和眼睛位置
+    Standard_Real Xeye, Yeye, Zeye;
+    Standard_Real Xproj, Yproj, Zproj;
+    d->view->Eye(Xeye, Yeye, Zeye);
+    d->view->Proj(Xproj, Yproj, Zproj);
+    
+    gp_Pnt eyePoint(Xeye, Yeye, Zeye);
+    gp_Dir projDir(Xproj, Yproj, Zproj);
+    
+    // 轉換螢幕點到 3D
+    Standard_Real Xv, Yv, Zv;
+    d->view->Convert(xp, yp, Xv, Yv, Zv);
+    gp_Pnt screenPoint3D(Xv, Yv, Zv);
+    
+    // 建立拾取射線
+    gp_Pnt rayStart;
+    gp_Dir rayDir;
+    
+    if (d->view->Camera()->IsOrthographic()) {
+        rayStart = screenPoint3D;
+        rayDir = projDir;
+    } else {
+        rayStart = eyePoint;
+        gp_Vec direction(eyePoint, screenPoint3D);
+        if (direction.Magnitude() < Precision::Confusion()) {
+            rayDir = projDir;
+        } else {
+            rayDir = gp_Dir(direction);
+        }
+    }
+    
+    gp_Lin pickLine(rayStart, rayDir);
+    
+    // 找到與平面的交點
+    IntAna_IntConicQuad intersection(pickLine, gpPlane, Precision::Angular());
+    
+    if (intersection.IsDone() && intersection.NbPoints() > 0) {
+        gp_Pnt intersectPnt = intersection.Point(1);
+        
+        // 轉換 3D 世界座標到 2D 平面座標
+        QVector3D worldPt(intersectPnt.X(), intersectPnt.Y(), intersectPnt.Z());
+        QVector3D localPt = worldPt - plane.origin;
+        
+        float u = QVector3D::dotProduct(localPt, plane.uAxis);
+        float v = QVector3D::dotProduct(localPt, plane.vAxis);
+        
+        return QVector2D(u, v);
+    }
+    
+    return QVector2D(0, 0);
+}
+
+void CadView::setGridEnabled(bool enabled) {
+    d->gridEnabled = enabled;
+    
+    if (d->grid) {
+        if (enabled) {
+            d->grid->show();
+        } else {
+            d->grid->hide();
+        }
+    }
+}
+
+bool CadView::isGridEnabled() const {
+    return d->gridEnabled;
+}
+
+void CadView::setTopView() {
+    setViewType(ViewType::Top);
+}
+
+void CadView::setFrontView() {
+    setViewType(ViewType::Front);
+}
+
+void CadView::setRightView() {
+    setViewType(ViewType::Right);
+}
+
+void CadView::setIsometricView() {
+    setViewType(ViewType::Isometric);
+}
+
+void CadView::updateProjection() {
+    if (d->view.IsNull()) {
+        return;
+    }
+    
+    switch (d->viewType) {
+    case ViewType::Top:
+        d->view->SetProj(V3d_Zpos);
+        break;
+    case ViewType::Bottom:
+        d->view->SetProj(V3d_Zneg);
+        break;
+    case ViewType::Front:
+        d->view->SetProj(V3d_Yneg);
+        break;
+    case ViewType::Back:
+        d->view->SetProj(V3d_Ypos);
+        break;
+    case ViewType::Right:
+        d->view->SetProj(V3d_Xpos);
+        break;
+    case ViewType::Left:
+        d->view->SetProj(V3d_Xneg);
+        break;
+    case ViewType::Isometric:
+    case ViewType::Perspective:
+    default:
+        d->view->SetProj(V3d_XposYnegZpos);
+        break;
+    }
+    
+    fitAll();
+}
+
+void CadView::handlePointInput(const QPoint& screenPos) {
+    QVector2D planePt = screenToPlane(screenPos);
+    
+    qDebug() << "[CadView] Point acquired:" << planePt.x() << "," << planePt.y();
+    
+    Q_EMIT pointAcquired(planePt);
+}
+
+void CadView::handleObjectSelection(const QPoint& screenPos) {
+    if (d->context.IsNull() || d->view.IsNull()) {
+        return;
+    }
+    
+    Standard_Integer xp, yp;
+    qtToOCCT(screenPos, xp, yp);
+    
+    d->context->MoveTo(xp, yp, d->view, Standard_True);
+    d->context->Select(Standard_True);
+    
+    if (d->context->HasDetected()) {
+        Handle(AIS_InteractiveObject) picked = d->context->DetectedInteractive();
+        if (!picked.IsNull() && picked != d->viewCube) {
+            // TODO: 取得物件 ID 並發出信號
+            qDebug() << "[CadView] Object selected";
+            Q_EMIT objectSelected(0);
+        }
+    }
+}
+
+void CadView::qtToOCCT(const QPoint& qtPos, Standard_Integer& occX, Standard_Integer& occY) const {
+    QtToOCCT(this, qtPos, occX, occY);
+}
+
+void CadView::paintEvent(QPaintEvent* event) {
+    Q_UNUSED(event);
+    
+    if (!d->view.IsNull()) {
+        d->view->InvalidateImmediate();
+        d->view->Redraw();
+    }
+}
+
+void CadView::resizeEvent(QResizeEvent* event) {
+    Q_UNUSED(event);
+    
+    if (!d->view.IsNull()) {
+        d->view->MustBeResized();
+        d->view->Redraw();
+    }
+}
+
+void CadView::mousePressEvent(QMouseEvent* event) {
+    d->lastMousePos = event->pos();
+    d->mousePressed = true;
+    d->pressedButton = event->button();
+    
+    Standard_Integer xp, yp;
+    qtToOCCT(event->pos(), xp, yp);
+    
+    // 更新 OCCT 選擇
+    if (!d->context.IsNull() && !d->view.IsNull()) {
+        d->context->MoveTo(xp, yp, d->view, Standard_True);
+        
+        if (event->button() == Qt::LeftButton) {
+            // 檢查是否點擊 ViewCube
+            if (d->context->HasDetected()) {
+                Handle(AIS_InteractiveObject) picked = d->context->DetectedInteractive();
+                if (!picked.IsNull() && picked == d->viewCube) {
+                    return;
+                }
+            }
+            
+            // 根據模式處理
+            switch (d->mode) {
+            case InteractionMode::Sketching:
+            case InteractionMode::GetPoint:
+                handlePointInput(event->pos());
+                break;
+            case InteractionMode::Selecting:
+                d->context->Select(Standard_True);
+                handleObjectSelection(event->pos());
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    
+    // 啟動旋轉
+    if (event->button() == Qt::RightButton && !d->view.IsNull()) {
+        d->view->StartRotation(xp, yp);
+    }
+    
+    Q_EMIT viewClicked(event->pos(), event->button());
+}
+
+void CadView::mouseMoveEvent(QMouseEvent* event) {
+    Standard_Integer xp, yp;
+    qtToOCCT(event->pos(), xp, yp);
+    
+    // 更新懸停偵測
+    if (!d->context.IsNull() && !d->view.IsNull()) {
+        d->context->MoveTo(xp, yp, d->view, Standard_True);
+        
+        if (d->context->HasDetected()) {
+            Handle(AIS_InteractiveObject) detected = d->context->DetectedInteractive();
+            if (!detected.IsNull() && detected == d->viewCube) {
+                setCursor(Qt::PointingHandCursor);
+            } else {
+                unsetCursor();
+            }
+        } else {
+            unsetCursor();
+        }
+    }
+    
+    // 草圖模式：更新橡皮筋
+    if (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::GetPoint) {
+        if (d->rubberBand) {
+            QVector2D planePt = screenToPlane(event->pos());
+            d->rubberBand->setCurrentPoint(planePt);
+            d->rubberBand->update();
+        }
+        return;
+    }
+    
+    // 視圖操作
+    if (d->mousePressed && !d->view.IsNull()) {
+        int dx = event->pos().x() - d->lastMousePos.x();
+        int dy = event->pos().y() - d->lastMousePos.y();
+        
+        if (d->pressedButton == Qt::MiddleButton) {
+            d->view->Pan(dx, -dy);
+        } else if (d->pressedButton == Qt::RightButton) {
+            d->view->Rotation(xp, yp);
+        }
+        
+        update();
+    }
+    
+    d->lastMousePos = event->pos();
+}
+
+void CadView::mouseReleaseEvent(QMouseEvent* event) {
+    Q_UNUSED(event);
+    d->mousePressed = false;
+}
+
+void CadView::wheelEvent(QWheelEvent* event) {
+    if (d->view.IsNull()) {
+        return;
+    }
+    
+    Standard_Real currentScale = d->view->Scale();
+    Standard_Real delta = event->angleDelta().y() / 120.0;
+    Standard_Real newScale = currentScale * (1.0 + delta * 0.1);
+    d->view->SetScale(newScale);
+    update();
+}
+
+void CadView::keyPressEvent(QKeyEvent* event) {
+    // ESC 取消操作
+    if (event->key() == Qt::Key_Escape) {
+        if (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::GetPoint) {
+            Q_EMIT pointCancelled();
+            if (d->rubberBand) {
+                d->rubberBand->clearPoints();
+                d->rubberBand->clear();
+            }
+            setMode(InteractionMode::Idle);
+        }
+        return;
+    }
+    
+    // Enter 完成多段線
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (d->mode == InteractionMode::Sketching) {
+            // TODO: 完成當前繪圖
+        }
+        return;
+    }
+    
+    // 字元輸入 - 用於座標輸入
+    if (!event->text().isEmpty()) {
+        Q_EMIT keyInputReceived(event->text());
+        return;
+    }
+    
+    QWidget::keyPressEvent(event);
+}
 
 } // namespace view
 } // namespace aicad
