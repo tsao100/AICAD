@@ -164,8 +164,8 @@ SOURCES += \
     src/command/CommandManager.cpp \
     src/command/Command.cpp \
     src/command/RectangleCommand.cpp \
-    src/command/LineCommand.cpp \
-    src/command/CircleCommand.cpp \
+    #src/command/LineCommand.cpp \
+    #src/command/CircleCommand.cpp \
     \
     # Scripting Module (Daney - 腳本系統)
     src/scripting/LispEngine.cpp \
@@ -207,8 +207,8 @@ HEADERS += \
     src/command/CommandManager.h \
     src/command/Command.h \
     src/command/RectangleCommand.h \
-    src/command/LineCommand.h \
-    src/command/CircleCommand.h \
+    #src/command/LineCommand.h \
+    #src/command/CircleCommand.h \
     \
     # Scripting Module (Daney)
     src/scripting/LispEngine.h \

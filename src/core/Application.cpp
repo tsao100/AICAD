@@ -8,6 +8,7 @@
 #include "Application.h"
 #include "EventBus.h"
 #include "DocumentManager.h"
+#include "CommandManager.h"
 
 #include <QDebug>
 #include <QMutex>
@@ -23,10 +24,12 @@ public:
         : initialized(false)
         , eventBus(nullptr)
         , documentManager(nullptr)
+        , commandManager(nullptr)
     {
     }
     
     ~Private() {
+        delete commandManager;
         delete documentManager;
         delete eventBus;
     }
@@ -34,6 +37,7 @@ public:
     bool initialized;
     EventBus* eventBus;
     DocumentManager* documentManager;
+    CommandManager* commandManager;
     
     static const QString VERSION;
     static const QString APP_NAME;
@@ -94,15 +98,34 @@ bool Application::initialize() {
             return false;
         }
         
-        // 3. 初始化 OCCT 環境 (樁函式)
+        // 3. 建立命令管理器
+        qDebug() << "[Application] Creating CommandManager...";
+        d->commandManager = new CommandManager(this);
+        if (!d->commandManager) {
+            Q_EMIT errorOccurred("Failed to create CommandManager");
+            return false;
+        }
+        
+        // 4. 初始化 OCCT 環境 (暫略)
         qDebug() << "[Application] Initializing OCCT environment...";
         // TODO: 實際的 OCCT 初始化
         
-        // 4. 連接信號
+        // 5. 連接信號
         connect(d->documentManager, &DocumentManager::documentCreated,
                 this, [this](const QString& name) {
             qDebug() << "[Application] Document created:" << name;
             d->eventBus->publish(Events::DOCUMENT_CREATED, name);
+        });
+        
+        connect(d->commandManager, &CommandManager::commandStarted,
+                this, [this](const QString& name) {
+            qDebug() << "[Application] Command started:" << name;
+        });
+        
+        connect(d->commandManager, &CommandManager::commandFinished,
+                this, [this](const QString& name, const CommandResult& result) {
+            qDebug() << "[Application] Command finished:" << name 
+                     << "Success:" << result.success;
         });
         
         d->initialized = true;
@@ -133,13 +156,19 @@ void Application::shutdown() {
     
     Q_EMIT aboutToQuit();
     
+    // 取消當前執行的命令
+    if (d->commandManager) {
+        qDebug() << "[Application] Cancelling current command...";
+        d->commandManager->cancelCurrentCommand();
+    }
+    
     // 關閉所有文件
     if (d->documentManager) {
         qDebug() << "[Application] Closing all documents...";
         d->documentManager->closeAll();
     }
     
-    // 清理 OCCT 資源 (樁函式)
+    // 清理 OCCT 資源 (暫略)
     qDebug() << "[Application] Cleaning up OCCT resources...";
     // TODO: 實際的 OCCT 清理
     
@@ -153,6 +182,10 @@ DocumentManager* Application::documentManager() const {
 
 EventBus* Application::eventBus() const {
     return d->eventBus;
+}
+
+CommandManager* Application::commandManager() const {
+    return d->commandManager;
 }
 
 bool Application::isInitialized() const {

@@ -1,43 +1,78 @@
 /**
  * @file RectangleCommand.h
- * @brief RectangleCommand 類別定義
- * @author TODO
- * @date 2026-01-07
+ * @brief 矩形繪製命令
+ * @author Kaufen
+ * @date 2024-12-04
  */
 
-#ifndef AICAD_COMMAND_RECTANGLECOMMAND_H
-#define AICAD_COMMAND_RECTANGLECOMMAND_H
+#ifndef AICAD_COMMANDS_RECTANGLECOMMAND_H
+#define AICAD_COMMANDS_RECTANGLECOMMAND_H
 
-#include <QObject>
+#include "core/Command.h"
+#include <QVector2D>
 
 namespace aicad {
-namespace command {
+namespace commands {
 
 /**
- * @brief RectangleCommand 類別
+ * @brief 矩形繪製命令
  * 
- * TODO: 添加類別說明
+ * 用法:
+ * - rectangle           (互動模式，點擊兩個角點)
+ * - rectangle x1 y1 x2 y2  (命令列模式，提供座標)
+ * 
+ * 範例:
+ * @code
+ * rectangle 0 0 100 50
+ * @endcode
  */
-class RectangleCommand : public QObject {
+class RectangleCommand : public core::Command {
     Q_OBJECT
     
 public:
+    /**
+     * @brief 建構子
+     */
     explicit RectangleCommand(QObject* parent = nullptr);
+    
+    /**
+     * @brief 解構子
+     */
     ~RectangleCommand() override;
     
-    // TODO: 添加公開方法
+    /**
+     * @brief 執行命令
+     */
+    core::CommandResult execute(const core::CommandContext& context) override;
     
-Q_SIGNALS:
-    // TODO: 添加信號
+    /**
+     * @brief 驗證參數
+     */
+    bool validateParameters(const core::CommandContext& context) const override;
+    
+    /**
+     * @brief 取得使用說明
+     */
+    QString getUsage() const override;
     
 private:
-    // TODO: 添加私有成員
+    /**
+     * @brief 互動模式：透過點擊取得點
+     */
+    core::CommandResult executeInteractive();
     
-    class Private;
-    Private* d;
+    /**
+     * @brief 命令列模式：從參數建立矩形
+     */
+    core::CommandResult executeWithCoordinates(const QVector<double>& coords);
+    
+    /**
+     * @brief 建立矩形幾何
+     */
+    bool createRectangle(const QVector2D& corner1, const QVector2D& corner2);
 };
 
-} // namespace command
+} // namespace commands
 } // namespace aicad
 
-#endif // AICAD_COMMAND_RECTANGLECOMMAND_H
+#endif // AICAD_COMMANDS_RECTANGLECOMMAND_H

@@ -16,6 +16,7 @@ namespace core {
 
 class EventBus;
 class DocumentManager;
+class CommandManager;
 
 /**
  * @brief 應用程式單例，管理全域資源和模組生命週期
@@ -30,6 +31,7 @@ class DocumentManager;
  * Application* app = Application::instance();
  * if (app->initialize()) {
  *     DocumentManager* docMgr = app->documentManager();
+ *     CommandManager* cmdMgr = app->commandManager();
  * }
  * @endcode
  */
@@ -50,6 +52,7 @@ public:
      * 此方法執行以下初始化:
      * - 建立事件總線
      * - 建立文件管理器
+     * - 建立命令管理器
      * - 初始化 OCCT 環境
      * - 註冊預設模組
      */
@@ -76,6 +79,12 @@ public:
      * @return EventBus 指標，未初始化則為 nullptr
      */
     EventBus* eventBus() const;
+    
+    /**
+     * @brief 取得命令管理器
+     * @return CommandManager 指標，未初始化則為 nullptr
+     */
+    CommandManager* commandManager() const;
     
     /**
      * @brief 檢查應用程式是否已初始化

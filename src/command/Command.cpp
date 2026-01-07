@@ -1,43 +1,102 @@
 /**
  * @file Command.cpp
  * @brief Command 類別實作
- * @author TODO
- * @date 2026-01-07
+ * @author Kaufen
+ * @date 2024-12-04
  */
 
 #include "Command.h"
+#include "CommandManager.h"
+
 #include <QDebug>
 
 namespace aicad {
-namespace command {
+namespace core {
 
 class Command::Private {
 public:
-    Private() {
-        // TODO: 初始化成員
-    }
+    QString name;
+    QString description;
+    CommandState state;
     
-    ~Private() {
-        // TODO: 清理資源
+    Private(const QString& n, const QString& desc)
+        : name(n)
+        , description(desc)
+        , state(CommandState::Ready)
+    {
     }
-    
-    // TODO: 添加私有成員變數
 };
 
-Command::Command(QObject* parent)
+Command::Command(const QString& name,
+                const QString& description,
+                QObject* parent)
     : QObject(parent)
-    , d(new Private())
+    , d(new Private(name, description))
 {
-    qDebug() << "[Command] Created";
-    // TODO: 實作建構子
+    qDebug() << "[Command]" << name << "created";
 }
 
 Command::~Command() {
-    qDebug() << "[Command] Destroyed";
+    qDebug() << "[Command]" << d->name << "destroyed";
     delete d;
 }
 
-// TODO: 實作其他方法
+QString Command::name() const {
+    return d->name;
+}
 
-} // namespace command
+QString Command::description() const {
+    return d->description;
+}
+
+CommandState Command::state() const {
+    return d->state;
+}
+
+bool Command::initialize() {
+    qDebug() << "[Command]" << d->name << "initializing...";
+    setState(CommandState::Ready);
+    return true;
+}
+
+void Command::cleanup() {
+    qDebug() << "[Command]" << d->name << "cleaning up...";
+}
+
+void Command::cancel() {
+    qDebug() << "[Command]" << d->name << "cancelled";
+    setState(CommandState::Cancelled);
+}
+
+bool Command::canCancel() const {
+    // 預設情況下，只有正在執行的命令可以取消
+    return d->state == CommandState::Running;
+}
+
+QString Command::getUsage() const {
+    return QString("Usage: %1").arg(d->name);
+}
+
+bool Command::validateParameters(const CommandContext& context) const {
+    Q_UNUSED(context);
+    // 預設不進行參數驗證
+    return true;
+}
+
+void Command::setState(CommandState state) {
+    if (d->state != state) {
+        d->state = state;
+        Q_EMIT stateChanged(state);
+    }
+}
+
+void Command::outputMessage(const QString& message) {
+    Q_EMIT messageOutput(message);
+}
+
+void Command::updateProgress(int current, int total, const QString& message) {
+    Q_EMIT progressUpdated(current, total, message);
+}
+
+} // namespace core
 } // namespace aicad
