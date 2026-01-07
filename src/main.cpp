@@ -12,8 +12,9 @@
 #include <QDebug>
 #include <QMessageBox>
 
-#include "MainWindow.h"
 #include "core/Application.h"
+#include "scripting/LispEngine.h"
+#include "scripting/LispBindings.h"
 
 int main(int argc, char **argv) {
 #ifdef _WIN32
@@ -25,7 +26,7 @@ int main(int argc, char **argv) {
     // Force Qt to use XCB before QApplication is created
     const char* session = std::getenv("XDG_SESSION_TYPE");
 
-    if (session && std::strcmp(session, "wayland") == 0) {
+    if (session && strcmp(session, "wayland") == 0) {
         qDebug("Detected Wayland session → forcing xcb");
         qputenv("QT_QPA_PLATFORM", QByteArray("xcb"));
     }
@@ -57,14 +58,17 @@ int main(int argc, char **argv) {
     qDebug() << "AICAD Core initialized successfully";
     qDebug() << "Application Name:" << app->applicationName();
     qDebug() << "Version:" << app->version();
-    
+
+    // 取得 Lisp 引擎
+    aicad::scripting::LispEngine* lisp = app->lispEngine();
+    if (lisp) {}
+
     // 顯示主視窗
     aicad::ui::UIManager* uiMgr = app->uiManager();
     if (uiMgr) {
         uiMgr->showMainWindow();
         //uiMgr->showMaximized();
     }
-
     
     qDebug() << "Main window shown";
     qDebug() << "Entering event loop...";

@@ -10,6 +10,8 @@
 #include "DocumentManager.h"
 #include "command/CommandManager.h"
 #include "ui/UIManager.h"
+#include "scripting/LispEngine.h"
+#include "scripting/LispBindings.h"
 
 #include <QDebug>
 #include <QMutex>
@@ -40,7 +42,8 @@ public:
     DocumentManager* documentManager;
     CommandManager* commandManager;
     ui::UIManager* uiManager;
-    
+    scripting::LispEngine* lispEngine;
+
     static const QString VERSION;
     static const QString APP_NAME;
 };
@@ -167,6 +170,11 @@ bool Application::initialize() {
 ui::UIManager* Application::uiManager() const {
     return d->uiManager;
 }
+
+scripting::LispEngine* Application::lispEngine() const {
+    return d->lispEngine;
+}
+
 
 void Application::shutdown() {
     if (!d->initialized) {

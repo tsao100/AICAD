@@ -159,7 +159,8 @@ SOURCES += \
     src/view/ViewManager.cpp \
     src/view/CadView.cpp \
     src/view/RubberBand.cpp \
-    src/view/SelectionManager.cpp \
+    #src/view/SelectionManager.cpp \
+    src/view/ViewGrid.cpp \
     \
     # Command Module (Kaufen - 命令系統)
     src/command/CommandManager.cpp \
@@ -171,7 +172,7 @@ SOURCES += \
     # Scripting Module (Daney - 腳本系統)
     src/scripting/LispEngine.cpp \
     src/scripting/LispBindings.cpp \
-    src/scripting/ScriptManager.cpp \
+    #src/scripting/ScriptManager.cpp \
     \
     # Legacy files (逐步遷移中)
     src/OcafDocument.cpp
@@ -203,7 +204,8 @@ HEADERS += \
     src/view/ViewManager.h \
     src/view/CadView.h \
     src/view/RubberBand.h \
-    src/view/SelectionManager.h \
+    #src/view/SelectionManager.h \
+    src/view/ViewGrid.h \
     \
     # Command Module (Kaufen)
     src/command/CommandManager.h \
@@ -215,7 +217,7 @@ HEADERS += \
     # Scripting Module (Daney)
     src/scripting/LispEngine.h \
     src/scripting/LispBindings.h \
-    src/scripting/ScriptManager.h \
+    #src/scripting/ScriptManager.h \
     \
     # Legacy files
     src/OcafDocument.h

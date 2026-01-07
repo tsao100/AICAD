@@ -11,6 +11,8 @@
 #include <QObject>
 #include <QString>
 #include "ui/UIManager.h"
+#include "scripting/LispEngine.h"
+#include "scripting/LispBindings.h"
 
 namespace aicad {
 namespace core {
@@ -18,6 +20,7 @@ namespace core {
 class EventBus;
 class DocumentManager;
 class CommandManager;
+class LispEngine;
 
 /**
  * @brief 應用程式單例，管理全域資源和模組生命週期
@@ -107,6 +110,12 @@ public:
      * @return UIManager 指標，未初始化則為 nullptr
      */
     ui::UIManager* uiManager() const;
+
+    /**
+     * @brief 取得 lispEngine
+     * @return LispEngine 指標，未初始化則為 nullptr
+     */
+    scripting::LispEngine* lispEngine() const;
 
 Q_SIGNALS:
     /**
