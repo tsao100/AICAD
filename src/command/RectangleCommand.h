@@ -8,7 +8,7 @@
 #ifndef AICAD_COMMANDS_RECTANGLECOMMAND_H
 #define AICAD_COMMANDS_RECTANGLECOMMAND_H
 
-#include "core/Command.h"
+#include "command/Command.h"
 #include <QVector2D>
 
 namespace aicad {
@@ -53,7 +53,7 @@ public:
     /**
      * @brief 取得使用說明
      */
-    QString getUsage() const override;
+    QString getUsage() const;
     
 private:
     /**

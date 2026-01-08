@@ -13,6 +13,8 @@
 #include <QStringList>
 #include <QVector>
 #include <QHash>
+#include <QMap>      // 提供 QMap 類型
+#include <QVariant>  // 提供 QVariant 類型
 #include <functional>
 
 namespace aicad {

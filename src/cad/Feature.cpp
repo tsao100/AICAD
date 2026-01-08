@@ -1,209 +1,223 @@
 /**
  * @file Feature.cpp
- * @brief 特徵基礎類別實作
- * @author Ben
- * @date 2025-01-06
+ * @brief CAD 特徵基礎類別實作
+ * @author AICAD Team
+ * @date 2025-01-08
  */
 
 #include "Feature.h"
 #include "Document.h"
-#include "core/Application.h"
-#include "core/EventBus.h"
-
+#include <QJsonObject>
 #include <QDebug>
-
-// OCCT includes
-#include <TDataStd_Name.hxx>
-#include <TDataStd_Integer.hxx>
-#include <TNaming_NamedShape.hxx>
-#include <TNaming_Builder.hxx>
 
 namespace aicad {
 namespace cad {
 
-// Private implementation
-class Feature::Private {
-public:
-    Private(Document* doc, TDF_Label lbl)
-        : document(doc)
-        , label(lbl)
-        , visible(true)
-        , valid(true)
-    {
-    }
-    
-    Document* document;
-    TDF_Label label;
-    QString name;
-    bool visible;
-    bool valid;
-    QHash<QString, QVariant> properties;
-};
-
-Feature::Feature(Document* doc, TDF_Label label)
-    : QObject(doc)
-    , d(new Private(doc, label))
+Feature::Feature(Document* parent)
+    : QObject(parent)
+    , m_id(QUuid::createUuid())
+    , m_name("Feature")
+    , m_document(parent)
+    , m_visible(true)
+    , m_suppressed(false)
+    , m_hasError(false)
+    , m_parent(nullptr)
 {
-    qDebug() << "[Feature] Constructor called";
+    qDebug() << "[Feature]" << m_id.toString() << "created";
 }
 
 Feature::~Feature() {
-    qDebug() << "[Feature] Destructor called:" << d->name;
-    delete d;
+    qDebug() << "[Feature]" << m_id.toString() << "destroyed";
+
+    // 移除所有子特徵
+    for (Feature* child : m_children) {
+        if (child) {
+            child->m_parent = nullptr;
+        }
+    }
+    m_children.clear();
+
+    // 從父特徵移除自己
+    if (m_parent) {
+        m_parent->removeChild(this);
+    }
 }
 
-int Feature::id() const {
-    Handle(TDataStd_Integer) idAttr;
-    if (d->label.FindAttribute(TDataStd_Integer::GetID(), idAttr)) {
-        return idAttr->Get();
+QString Feature::typeString() const {
+    switch (type()) {
+    case FeatureType::Base:     return "Base";
+    case FeatureType::Sketch:   return "Sketch";
+    case FeatureType::Extrude:  return "Extrude";
+    case FeatureType::Revolve:  return "Revolve";
+    case FeatureType::Fillet:   return "Fillet";
+    case FeatureType::Chamfer:  return "Chamfer";
+    case FeatureType::Boolean:  return "Boolean";
+    case FeatureType::Pattern:  return "Pattern";
+    default:                    return "Unknown";
     }
-    return -1;
-}
-
-QString Feature::name() const {
-    if (!d->name.isEmpty()) {
-        return d->name;
-    }
-    
-    // 從 OCCT 標籤讀取
-    Handle(TDataStd_Name) nameAttr;
-    if (d->label.FindAttribute(TDataStd_Name::GetID(), nameAttr)) {
-        TCollection_ExtendedString extStr = nameAttr->Get();
-        return QString::fromUtf16(
-            reinterpret_cast<const char16_t*>(extStr.ToExtString())
-        );
-    }
-    
-    return QString("Feature_%1").arg(id());
 }
 
 void Feature::setName(const QString& name) {
-    if (d->name != name) {
-        d->name = name;
-        
-        // 儲存到 OCCT 標籤
-        TDataStd_Name::Set(d->label, 
-            TCollection_ExtendedString(name.toStdWString().c_str())
-        );
-        
-        Q_EMIT nameChanged(d->name);
-        notifyModified();
-        
-        qDebug() << "[Feature] Name changed to:" << name;
+    if (m_name != name) {
+        m_name = name;
+        qDebug() << "[Feature]" << m_id.toString() << "renamed to" << name;
+        Q_EMIT nameChanged(name);
     }
-}
-
-QString Feature::typeName() const {
-    return featureTypeToString(type());
-}
-
-bool Feature::isVisible() const {
-    return d->visible;
-}
-
-void Feature::setVisible(bool visible) {
-    if (d->visible != visible) {
-        d->visible = visible;
-        Q_EMIT visibleChanged(d->visible);
-        
-        qDebug() << "[Feature] Visibility changed:" << d->visible;
-    }
-}
-
-bool Feature::isValid() const {
-    return d->valid;
-}
-
-Document* Feature::document() const {
-    return d->document;
-}
-
-TDF_Label Feature::label() const {
-    return d->label;
-}
-
-TopoDS_Shape Feature::shape() const {
-    Handle(TNaming_NamedShape) namedShape;
-    if (d->label.FindAttribute(TNaming_NamedShape::GetID(), namedShape)) {
-        return namedShape->Get();
-    }
-    return TopoDS_Shape();
-}
-
-QVariant Feature::property(const QString& name) const {
-    return d->properties.value(name);
-}
-
-void Feature::setProperty(const QString& name, const QVariant& value) {
-    d->properties[name] = value;
-    notifyModified();
-}
-
-QStringList Feature::propertyNames() const {
-    return d->properties.keys();
 }
 
 void Feature::setShape(const TopoDS_Shape& shape) {
-    if (!d->label.IsNull() && !shape.IsNull()) {
-        TNaming_Builder builder(d->label);
-        builder.Generated(shape);
-        
-        qDebug() << "[Feature] Shape set for:" << name();
+    m_shape = shape;
+    clearError();
+    qDebug() << "[Feature]" << m_name << "shape updated";
+    Q_EMIT shapeChanged();
+}
+
+void Feature::setVisible(bool visible) {
+    if (m_visible != visible) {
+        m_visible = visible;
+        qDebug() << "[Feature]" << m_name << "visibility:" << visible;
+        Q_EMIT visibilityChanged(visible);
     }
 }
 
-void Feature::setValid(bool valid) {
-    if (d->valid != valid) {
-        d->valid = valid;
-        Q_EMIT validChanged(d->valid);
-        
-        qDebug() << "[Feature] Valid state changed:" << d->valid;
-    }
-}
+void Feature::setSuppressed(bool suppressed) {
+    if (m_suppressed != suppressed) {
+        m_suppressed = suppressed;
+        qDebug() << "[Feature]" << m_name << "suppressed:" << suppressed;
+        Q_EMIT suppressedChanged(suppressed);
 
-void Feature::notifyModified() {
-    Q_EMIT modified();
-    
-    if (d->document) {
-        d->document->setModified(true);
-        Q_EMIT d->document->featureModified(this);
-    }
-    
-    // 透過 EventBus 發布事件
-    if (auto app = core::Application::instance()) {
-        if (auto bus = app->eventBus()) {
-            bus->publish(core::Events::FEATURE_UPDATED, 
-                        QVariant::fromValue(this));
+        // 抑制狀態改變時需要重建
+        if (m_document) {
+            Q_EMIT rebuildRequested();
         }
     }
 }
 
-// Helper functions
-QString featureTypeToString(FeatureType type) {
-    switch (type) {
-        case FeatureType::Sketch:
-            return "Sketch";
-        case FeatureType::Extrude:
-            return "Extrude";
-        case FeatureType::Revolve:
-            return "Revolve";
-        case FeatureType::Fillet:
-            return "Fillet";
-        case FeatureType::Chamfer:
-            return "Chamfer";
-        default:
-            return "Unknown";
+void Feature::setError(const QString& message) {
+    setErrorState(true, message);
+}
+
+void Feature::clearError() {
+    setErrorState(false, QString());
+}
+
+void Feature::setErrorState(bool hasError, const QString& message) {
+    if (m_hasError != hasError || m_errorMessage != message) {
+        m_hasError = hasError;
+        m_errorMessage = message;
+
+        if (hasError) {
+            qWarning() << "[Feature]" << m_name << "ERROR:" << message;
+        } else {
+            qDebug() << "[Feature]" << m_name << "error cleared";
+        }
+
+        Q_EMIT errorChanged(hasError, message);
     }
 }
 
-FeatureType stringToFeatureType(const QString& str) {
-    QString lower = str.toLower();
-    if (lower == "sketch") return FeatureType::Sketch;
-    if (lower == "extrude") return FeatureType::Extrude;
-    if (lower == "revolve") return FeatureType::Revolve;
-    if (lower == "fillet") return FeatureType::Fillet;
-    if (lower == "chamfer") return FeatureType::Chamfer;
-    return FeatureType::Unknown;
+void Feature::setParent(Feature* parent) {
+    if (m_parent == parent) {
+        return;
+    }
+
+    // 從舊父特徵移除
+    if (m_parent) {
+        m_parent->removeChild(this);
+    }
+
+    m_parent = parent;
+
+    // 加入新父特徵
+    if (m_parent) {
+        m_parent->addChild(this);
+    }
+
+    qDebug() << "[Feature]" << m_name << "parent changed to"
+             << (parent ? parent->name() : "null");
+}
+
+void Feature::addChild(Feature* child) {
+    if (!child || m_children.contains(child)) {
+        return;
+    }
+
+    m_children.append(child);
+
+    if (child->parent() != this) {
+        child->setParent(this);
+    }
+
+    qDebug() << "[Feature]" << m_name << "child added:" << child->name();
+}
+
+void Feature::removeChild(Feature* child) {
+    if (!child) {
+        return;
+    }
+
+    if (m_children.removeOne(child)) {
+        if (child->parent() == this) {
+            child->m_parent = nullptr;
+        }
+        qDebug() << "[Feature]" << m_name << "child removed:" << child->name();
+    }
+}
+
+int Feature::index() const {
+    if (!m_document) {
+        return -1;
+    }
+
+    // 這裡需要 Document 類別實作 features() 方法
+    // 暫時返回 -1
+    return -1;
+}
+
+QJsonObject Feature::toJson() const {
+    QJsonObject json;
+    json["id"] = m_id.toString();
+    json["name"] = m_name;
+    json["type"] = typeString();
+    json["visible"] = m_visible;
+    json["suppressed"] = m_suppressed;
+
+    if (m_hasError) {
+        json["hasError"] = true;
+        json["errorMessage"] = m_errorMessage;
+    }
+
+    if (m_parent) {
+        json["parentId"] = m_parent->id();
+    }
+
+    return json;
+}
+
+bool Feature::fromJson(const QJsonObject& json) {
+    if (!json.contains("id") || !json.contains("name")) {
+        qWarning() << "[Feature] Invalid JSON: missing id or name";
+        return false;
+    }
+
+    m_id = QUuid::fromString(json["id"].toString());
+    setName(json["name"].toString());
+
+    if (json.contains("visible")) {
+        setVisible(json["visible"].toBool());
+    }
+
+    if (json.contains("suppressed")) {
+        setSuppressed(json["suppressed"].toBool());
+    }
+
+    if (json.contains("hasError") && json["hasError"].toBool()) {
+        setError(json["errorMessage"].toString());
+    }
+
+    // 注意：父子關係需要在所有特徵載入後再建立
+
+    return true;
 }
 
 } // namespace cad

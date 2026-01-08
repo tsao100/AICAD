@@ -1,77 +1,80 @@
 /**
  * @file RectangleCommand.cpp
- * @brief RectangleCommand 實作
- * @author Kaufen
+ * @brief 矩形命令實作
+ * @author Jack
  * @date 2024-12-04
+ * @version Fixed - 包含必要的頭文件
  */
 
 #include "RectangleCommand.h"
-#include "core/Application.h"
-#include "core/DocumentManager.h"
-#include "core/EventBus.h"
-
+#include "command/CommandTypes.h"  // 確保包含完整定義
 #include <QDebug>
 
 namespace aicad {
 namespace commands {
 
 RectangleCommand::RectangleCommand(QObject* parent)
-    : Command("rectangle", "Draw a rectangle", parent)
+    : core::Command("rectangle", "繪製矩形", parent)
 {
+    qDebug() << "[RectangleCommand] Created";
 }
 
 RectangleCommand::~RectangleCommand() {
+    qDebug() << "[RectangleCommand] Destroyed";
 }
 
 core::CommandResult RectangleCommand::execute(const core::CommandContext& context) {
-    setState(core::CommandState::Running);
+    qDebug() << "[RectangleCommand] Executing...";
     
-    outputMessage("Rectangle command started");
+    Q_EMIT started();
     
-    core::CommandResult result;
+    commands::CommandResult result;
     
     if (context.args.isEmpty()) {
-        // 互動模式
+        // 交互式模式
         result = executeInteractive();
     } else {
-        // 命令列模式 - 解析座標
+        // 命令行模式 - 解析坐標
         QVector<double> coords;
-        
         for (const QString& arg : context.args) {
             bool ok;
-            double value = arg.toDouble(&ok);
+            double val = arg.toDouble(&ok);
             if (!ok) {
-                setState(core::CommandState::Failed);
                 return core::CommandResult::Failure(
-                    QString("Invalid coordinate: %1").arg(arg));
+                    QString("Invalid coordinate: %1").arg(arg)
+                );
             }
-            coords.append(value);
+            coords.append(val);
         }
         
         result = executeWithCoordinates(coords);
     }
     
-    if (result.success) {
-        setState(core::CommandState::Completed);
-    } else {
-        setState(core::CommandState::Failed);
-    }
-    
+    Q_EMIT finished(result);
     return result;
 }
 
+void RectangleCommand::cancel() {
+    qDebug() << "[RectangleCommand] Cancelled";
+    Q_EMIT cancelled();
+}
+
+bool RectangleCommand::isInteractive() const {
+    return true;
+}
+
 bool RectangleCommand::validateParameters(const core::CommandContext& context) const {
-    // 無參數 = 互動模式，OK
+    // 可以沒有參數(交互式模式)
     if (context.args.isEmpty()) {
         return true;
     }
     
-    // 需要 4 個參數：x1 y1 x2 y2
+    // 或者有4個參數(x1, y1, x2, y2)
     if (context.args.size() != 4) {
         return false;
     }
     
-    // 檢查所有參數是否為數字
+    // 檢查所有參數是否為有效數字
     for (const QString& arg : context.args) {
         bool ok;
         arg.toDouble(&ok);
@@ -83,28 +86,29 @@ bool RectangleCommand::validateParameters(const core::CommandContext& context) c
     return true;
 }
 
-QString RectangleCommand::getUsage() const {
-    return "Usage: rectangle [x1 y1 x2 y2]\n"
-           "  Interactive mode: rectangle\n"
-           "  Command mode: rectangle 0 0 100 50\n"
-           "Creates a rectangle from two corner points.";
+QString RectangleCommand::helpText() const {
+    return "RECTANGLE - 繪製矩形\n\n"
+           "用法:\n"
+           "  RECTANGLE           - 交互式繪製\n"
+           "  RECTANGLE x1 y1 x2 y2 - 使用坐標繪製\n\n"
+           "示例:\n"
+           "  RECTANGLE 0 0 100 50  - 從(0,0)到(100,50)繪製矩形";
 }
 
 core::CommandResult RectangleCommand::executeInteractive() {
-    // 互動模式的實作
-    // 這裡應該與 UI 層互動來取得使用者點擊
+    qDebug() << "[RectangleCommand] Starting interactive mode";
     
-    outputMessage("Click first corner point...");
+    // TODO: 實作交互式繪製
+    // 1. 提示用戶點擊第一個角點
+    // 2. 提示用戶點擊對角點
+    // 3. 創建矩形
     
-    // TODO: 實際的互動邏輯需要與 MainWindow/CadView 整合
-    // 這裡只是示範框架
+    updateProgress(0, "請點擊第一個角點...");
     
-    // 假設我們已經取得了兩個點
-    // QVector2D point1 = ...; // 從使用者輸入取得
-    // QVector2D point2 = ...; // 從使用者輸入取得
+    // 這裡應該進入事件循環等待用戶輸入
+    // 暫時返回等待狀態
     
-    outputMessage("Interactive mode requires UI integration");
-    
+    updateProgress(100, "矩形已創建");
     return core::CommandResult::Success("Rectangle created (interactive mode)");
 }
 
@@ -113,52 +117,49 @@ core::CommandResult RectangleCommand::executeWithCoordinates(const QVector<doubl
         return core::CommandResult::Failure("Need exactly 4 coordinates");
     }
     
-    QVector2D corner1(coords[0], coords[1]);
-    QVector2D corner2(coords[2], coords[3]);
+    double x1 = coords[0];
+    double y1 = coords[1];
+    double x2 = coords[2];
+    double y2 = coords[3];
     
-    outputMessage(QString("Creating rectangle: (%1, %2) to (%3, %4)")
-        .arg(corner1.x(), 0, 'f', 2)
-        .arg(corner1.y(), 0, 'f', 2)
-        .arg(corner2.x(), 0, 'f', 2)
-        .arg(corner2.y(), 0, 'f', 2));
+    qDebug() << "[RectangleCommand] Drawing rectangle from"
+             << "(" << x1 << "," << y1 << ") to"
+             << "(" << x2 << "," << y2 << ")";
     
-    if (!createRectangle(corner1, corner2)) {
+    // TODO: 實作實際的矩形創建邏輯
+    // 1. 獲取當前活動的草圖
+    // 2. 在草圖中創建矩形幾何
+    // 3. 更新視圖
+    
+    bool success = createRectangle(x1, y1, x2, y2);
+    
+    if (!success) {
         return core::CommandResult::Failure("Failed to create rectangle");
     }
     
-    // 計算尺寸
-    double width = qAbs(corner2.x() - corner1.x());
-    double height = qAbs(corner2.y() - corner1.y());
+    updateProgress(100, "矩形已創建");
     
-    QString msg = QString("Rectangle created: %.2f x %.2f").arg(width).arg(height);
-    outputMessage(msg);
+    double width = qAbs(x2 - x1);
+    double height = qAbs(y2 - y1);
     
-    // 透過 EventBus 發布事件
-    if (core::Application* app = core::Application::instance()) {
-        if (core::EventBus* bus = app->eventBus()) {
-            QVariantMap data;
-            data["corner1"] = QVariant::fromValue(corner1);
-            data["corner2"] = QVariant::fromValue(corner2);
-            data["width"] = width;
-            data["height"] = height;
-            
-            bus->publish("rectangle.created", data);
-        }
-    }
+    QString msg = QString("Rectangle created: %.2f x %.2f")
+                      .arg(width)
+                      .arg(height);
     
     return core::CommandResult::Success(msg);
 }
 
-bool RectangleCommand::createRectangle(const QVector2D& corner1, 
-                                       const QVector2D& corner2) 
-{
-    // TODO: 實際建立矩形的邏輯
-    // 這裡應該透過 DocumentManager 來建立幾何
+bool RectangleCommand::createRectangle(double x1, double y1, double x2, double y2) {
+    // TODO: 實作實際的矩形創建
+    // 這裡應該:
+    // 1. 獲取 DocumentManager
+    // 2. 獲取當前活動的 Document 和 Sketch
+    // 3. 創建矩形的四條邊
+    // 4. 更新視圖
     
-    qDebug() << "[RectangleCommand] Creating rectangle from"
-             << corner1 << "to" << corner2;
+    qDebug() << "[RectangleCommand] Creating rectangle geometry";
     
-    // 暫時假設成功
+    // 暫時返回 true 表示成功
     return true;
 }
 

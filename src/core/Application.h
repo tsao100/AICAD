@@ -10,17 +10,19 @@
 
 #include <QObject>
 #include <QString>
-#include "ui/UIManager.h"
-#include "scripting/LispEngine.h"
-#include "scripting/LispBindings.h"
+
+// 前向宣告
+namespace aicad {
+namespace cad {
+class Document;
+}
+}
 
 namespace aicad {
 namespace core {
 
 class EventBus;
 class DocumentManager;
-class CommandManager;
-class LispEngine;
 
 /**
  * @brief 應用程式單例，管理全域資源和模組生命週期
@@ -85,12 +87,6 @@ public:
     EventBus* eventBus() const;
     
     /**
-     * @brief 取得命令管理器
-     * @return CommandManager 指標，未初始化則為 nullptr
-     */
-    CommandManager* commandManager() const;
-    
-    /**
      * @brief 檢查應用程式是否已初始化
      */
     bool isInitialized() const;
@@ -104,18 +100,6 @@ public:
      * @brief 取得應用程式名稱
      */
     QString applicationName() const;
-    
-    /**
-     * @brief 取得 UI 管理器
-     * @return UIManager 指標，未初始化則為 nullptr
-     */
-    ui::UIManager* uiManager() const;
-
-    /**
-     * @brief 取得 lispEngine
-     * @return LispEngine 指標，未初始化則為 nullptr
-     */
-    scripting::LispEngine* lispEngine() const;
 
 Q_SIGNALS:
     /**
@@ -151,6 +135,11 @@ private:
     // Private implementation (PIMPL idiom)
     class Private;
     Private* d;
+
+private Q_SLOTS:
+    void onDocumentCreated(const QString& name);
+
+
 };
 
 } // namespace core

@@ -5,6 +5,16 @@
  * @date 2024-12-04
  */
 
+// CRITICAL: ECL headers MUST be included BEFORE Qt headers
+// to avoid macro conflicts (especially 'slots')
+#include <ecl/ecl.h>
+
+// Undefine Qt-conflicting macros from ECL
+#ifdef slots
+#undef slots
+#endif
+
+
 #include "LispBindings.h"
 #include "LispEngine.h"
 #include "core/Application.h"
@@ -121,7 +131,7 @@ void LispBindings::registerDocumentAPI() {
             
             d->app->eventBus()->publish("scripting.feature-delete", featureId);
             
-            return Ct;
+            return true;
         }, 1, 1);
 }
 
@@ -152,7 +162,7 @@ void LispBindings::registerGeometryAPI() {
             
             d->app->eventBus()->publish("scripting.geometry-add", data);
             
-            return Ct;
+            return true;
         }, 4, 4);
     
     // (rectangle x1 y1 x2 y2)
@@ -179,7 +189,7 @@ void LispBindings::registerGeometryAPI() {
             
             d->app->eventBus()->publish("scripting.geometry-add", data);
             
-            return Ct;
+            return true;
         }, 4, 4);
     
     // (circle x y radius)
@@ -204,7 +214,7 @@ void LispBindings::registerGeometryAPI() {
             
             d->app->eventBus()->publish("scripting.geometry-add", data);
             
-            return Ct;
+            return true;
         }, 3, 3);
     
     // (arc x y radius start-angle end-angle)
@@ -233,7 +243,7 @@ void LispBindings::registerGeometryAPI() {
             
             d->app->eventBus()->publish("scripting.geometry-add", data);
             
-            return Ct;
+            return true;
         }, 5, 5);
     
     // (polyline x1 y1 x2 y2 x3 y3 ...)
@@ -260,7 +270,7 @@ void LispBindings::registerGeometryAPI() {
             
             d->app->eventBus()->publish("scripting.geometry-add", data);
             
-            return Ct;
+            return true;
         }, 4, -1);
 }
 
@@ -281,7 +291,7 @@ void LispBindings::registerViewAPI() {
             
             d->app->eventBus()->publish("scripting.view-set", viewName);
             
-            return Ct;
+            return true;
         }, 1, 1);
     
     // (view-fit)
@@ -293,7 +303,7 @@ void LispBindings::registerViewAPI() {
             
             d->app->eventBus()->publish("scripting.view-fit", QVariant());
             
-            return Ct;
+            return true;
         }, 0, 0);
     
     // (view-zoom factor)
@@ -310,7 +320,7 @@ void LispBindings::registerViewAPI() {
             
             d->app->eventBus()->publish("scripting.view-zoom", factor);
             
-            return Ct;
+            return true;
         }, 1, 1);
 }
 
@@ -407,7 +417,7 @@ void LispBindings::registerUtilityAPI() {
             
             d->app->eventBus()->publish("scripting.print-message", message);
             
-            return Ct;
+            return true;
         }, 1, 1);
     
     // (distance x1 y1 x2 y2)

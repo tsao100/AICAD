@@ -7,6 +7,7 @@
 
 #include "MainWindow.h"
 #include "core/Application.h"
+#include "core/DocumentManager.h"
 #include "core/EventBus.h"
 
 #include <QWidget>
@@ -16,6 +17,7 @@
 #include <QStatusBar>
 #include <QCloseEvent>
 #include <QMessageBox>
+#include <QLabel>
 #include <QDebug>
 
 namespace aicad {

@@ -117,28 +117,30 @@ private:
  * @brief 標準事件名稱
  */
 namespace Events {
-    // 文件事件
-    constexpr const char* DOCUMENT_CREATED = "document.created";
-    constexpr const char* DOCUMENT_CLOSED = "document.closed";
-    constexpr const char* DOCUMENT_SAVED = "document.saved";
-    constexpr const char* DOCUMENT_MODIFIED = "document.modified";
-    
-    // 特徵事件
-    constexpr const char* FEATURE_CREATED = "feature.created";
-    constexpr const char* FEATURE_UPDATED = "feature.updated";
-    constexpr const char* FEATURE_DELETED = "feature.deleted";
-    
-    // 選取事件
-    constexpr const char* SELECTION_CHANGED = "selection.changed";
-    
-    // 視圖事件
-    constexpr const char* VIEW_CHANGED = "view.changed";
-    constexpr const char* VIEW_REFRESHED = "view.refreshed";
-    
-    // 命令事件
-    constexpr const char* COMMAND_STARTED = "command.started";
-    constexpr const char* COMMAND_EXECUTED = "command.executed";
-    constexpr const char* COMMAND_CANCELLED = "command.cancelled";
+// 文件事件
+constexpr const char* DOCUMENT_CREATED = "document.created";
+constexpr const char* DOCUMENT_OPENED = "document.opened";
+constexpr const char* DOCUMENT_CLOSED = "document.closed";
+constexpr const char* DOCUMENT_SAVED = "document.saved";
+constexpr const char* DOCUMENT_MODIFIED = "document.modified";
+
+// 特徵事件
+constexpr const char* FEATURE_CREATED = "feature.created";
+constexpr const char* FEATURE_UPDATED = "feature.updated";
+constexpr const char* FEATURE_DELETED = "feature.deleted";
+constexpr const char* FEATURE_SELECTED = "feature.selected";
+
+// 選取事件
+constexpr const char* SELECTION_CHANGED = "selection.changed";
+
+// 視圖事件
+constexpr const char* VIEW_CHANGED = "view.changed";
+constexpr const char* VIEW_REFRESHED = "view.refreshed";
+
+// 命令事件
+constexpr const char* COMMAND_STARTED = "command.started";
+constexpr const char* COMMAND_EXECUTED = "command.executed";
+constexpr const char* COMMAND_CANCELLED = "command.cancelled";
 }
 
 } // namespace core

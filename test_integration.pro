@@ -1,4 +1,4 @@
-# AICAD.pro - cross-platform Qt CAD project with ECL Lisp integration
+# test_integration.pro - 階段 1 + 階段 2 整合測試
 
 CONFIG   += moc
 CONFIG   += debug_and_release
@@ -130,98 +130,30 @@ win32 {
 # 源文件和頭文件
 # ========================================
 
-SOURCES += \
-    src/main.cpp \
-    \
-    # Core Module (核心系統)
-    src/core/Application.cpp \
-    src/core/EventBus.cpp \
-    src/core/DocumentManager.cpp \
-    src/core/PluginManager.cpp \
-    src/core/Settings.cpp \
-    \
-    # CAD Module (Ben - CAD引擎)
-    src/cad/Document.cpp \
-    src/cad/Feature.cpp \
-    src/cad/Sketch.cpp \
-    #src/cad/SketchEntity.cpp \
-    src/cad/Extrude.cpp \
-    #src/cad/FeatureTree.cpp \
-    \
-    # UI Module (James - 用戶界面)
-    src/ui/MainWindow.cpp \
-    src/ui/FeatureBrowser.cpp \
-    src/ui/PropertyPanel.cpp \
-    src/ui/ToolManager.cpp \
-    src/ui/UIManager.cpp \
-    \
-    # View Module (Felicia - 視圖系統)
-    src/view/ViewManager.cpp \
-    src/view/CadView.cpp \
-    src/view/RubberBand.cpp \
-    #src/view/SelectionManager.cpp \
-    src/view/ViewGrid.cpp \
-    \
-    # Command Module (Kaufen - 命令系統)
-    src/command/CommandManager.cpp \
-    src/command/Command.cpp \
-    src/command/RectangleCommand.cpp \
-    #src/command/LineCommand.cpp \
-    #src/command/CircleCommand.cpp \
-    \
-    # Scripting Module (Daney - 腳本系統)
-    src/scripting/LispEngine.cpp \
-    src/scripting/LispBindings.cpp \
-    #src/scripting/ScriptManager.cpp \
-    \
-    # Legacy files (逐步遷移中)
-    src/OcafDocument.cpp
-
+# 階段 1: 核心系統
 HEADERS += \
-    # Core Module
     src/core/Application.h \
     src/core/EventBus.h \
-    src/core/DocumentManager.h \
-    src/core/PluginManager.h \
-    src/core/Settings.h \
-    \
-    # CAD Module (Ben)
-    src/cad/Document.h \
+    src/core/DocumentManager.h
+
+SOURCES += \
+    src/tests/test_integration.cpp \
+    src/core/Application.cpp \
+    src/core/EventBus.cpp \
+    src/core/DocumentManager.cpp
+
+# 階段 2: CAD 模組
+HEADERS += \
+    src/cad/Plane.h \
     src/cad/Feature.h \
     src/cad/Sketch.h \
-    #src/cad/SketchEntity.h \
-    src/cad/Extrude.h \
-    #src/cad/FeatureTree.h \
-    \
-    # UI Module (James)
-    src/ui/MainWindow.h \
-    src/ui/FeatureBrowser.h \
-    src/ui/PropertyPanel.h \
-    src/ui/ToolManager.h \
-    src/ui/UIManager.h \
-    \
-    # View Module (Felicia)
-    src/view/ViewManager.h \
-    src/view/CadView.h \
-    src/view/RubberBand.h \
-    #src/view/SelectionManager.h \
-    src/view/ViewGrid.h \
-    \
-    # Command Module (Kaufen)
-    src/command/CommandManager.h \
-    src/command/Command.h \
-    src/command/RectangleCommand.h \
-    src/command/CommandTypes.h \
-    #src/command/LineCommand.h \
-    #src/command/CircleCommand.h \
-    \
-    # Scripting Module (Daney)
-    src/scripting/LispEngine.h \
-    src/scripting/LispBindings.h \
-    #src/scripting/ScriptManager.h \
-    \
-    # Legacy files
-    src/OcafDocument.h
+    src/cad/Document.h
+
+SOURCES += \
+    src/cad/Plane.cpp \
+    src/cad/Feature.cpp \
+    src/cad/Sketch.cpp \
+    src/cad/Document.cpp
 
 RESOURCES += \
     resources.qrc

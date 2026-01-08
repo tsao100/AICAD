@@ -8,10 +8,7 @@
 #include "Application.h"
 #include "EventBus.h"
 #include "DocumentManager.h"
-#include "command/CommandManager.h"
-#include "ui/UIManager.h"
-#include "scripting/LispEngine.h"
-#include "scripting/LispBindings.h"
+#include "cad/Document.h"
 
 #include <QDebug>
 #include <QMutex>
@@ -27,12 +24,10 @@ public:
         : initialized(false)
         , eventBus(nullptr)
         , documentManager(nullptr)
-        , commandManager(nullptr)
     {
     }
     
     ~Private() {
-        delete commandManager;
         delete documentManager;
         delete eventBus;
     }
@@ -40,9 +35,6 @@ public:
     bool initialized;
     EventBus* eventBus;
     DocumentManager* documentManager;
-    CommandManager* commandManager;
-    ui::UIManager* uiManager;
-    scripting::LispEngine* lispEngine;
 
     static const QString VERSION;
     static const QString APP_NAME;
@@ -104,12 +96,12 @@ bool Application::initialize() {
         }
         
         // 3. 建立命令管理器
-        qDebug() << "[Application] Creating CommandManager...";
-        d->commandManager = new CommandManager(this);
-        if (!d->commandManager) {
-            Q_EMIT errorOccurred("Failed to create CommandManager");
-            return false;
-        }
+        // qDebug() << "[Application] Creating CommandManager...";
+        // d->commandManager = new CommandManager(this);
+        // if (!d->commandManager) {
+        //     Q_EMIT errorOccurred("Failed to create CommandManager");
+        //     return false;
+        // }
         
         // 4. 初始化 OCCT 環境 (暫略)
         qDebug() << "[Application] Initializing OCCT environment...";
@@ -117,36 +109,51 @@ bool Application::initialize() {
         
         // 5. 連接信號
         connect(d->documentManager, &DocumentManager::documentCreated,
-                this, [this](const QString& name) {
-            qDebug() << "[Application] Document created:" << name;
-            d->eventBus->publish(Events::DOCUMENT_CREATED, name);
-        });
+                this, [this](cad::Document* doc) {
+                    if (doc) {
+                        qDebug() << "[Application] Document created:" << doc->fileName();
+                        d->eventBus->publish(Events::DOCUMENT_CREATED, doc->fileName());
+                    }
+                });
 
+        connect(d->documentManager, &DocumentManager::documentOpened,
+                this, [this](cad::Document* doc) {
+                    if (doc) {
+                        qDebug() << "[Application] Document opened:" << doc->fileName();
+                        d->eventBus->publish(Events::DOCUMENT_OPENED, doc->fileName());
+                    }
+                });
+
+        connect(d->documentManager, &DocumentManager::documentClosed,
+                this, [this](const QString& fileName) {
+                    qDebug() << "[Application] Document closed:" << fileName;
+                    d->eventBus->publish(Events::DOCUMENT_CLOSED, fileName);
+                });
         // 6. 建立 UI 管理器
-        qDebug() << "[Application] Creating UIManager...";
-        d->uiManager = new ui::UIManager(this);
-        if (!d->uiManager) {
-            Q_EMIT errorOccurred("Failed to create UIManager");
-            return false;
-        }
+        // qDebug() << "[Application] Creating UIManager...";
+        // d->uiManager = new ui::UIManager(this);
+        // if (!d->uiManager) {
+        //     Q_EMIT errorOccurred("Failed to create UIManager");
+        //     return false;
+        // }
 
         // 7. 初始化 UI 系統
-        qDebug() << "[Application] Initializing UI system...";
-        if (!d->uiManager->initialize()) {
-            Q_EMIT errorOccurred("Failed to initialize UI system");
-            return false;
-        }
+        // qDebug() << "[Application] Initializing UI system...";
+        // if (!d->uiManager->initialize()) {
+        //     Q_EMIT errorOccurred("Failed to initialize UI system");
+        //     return false;
+        // }
         
-        connect(d->commandManager, &CommandManager::commandStarted,
-                this, [this](const QString& name) {
-            qDebug() << "[Application] Command started:" << name;
-        });
+        // connect(d->commandManager, &CommandManager::commandStarted,
+        //         this, [this](const QString& name) {
+        //     qDebug() << "[Application] Command started:" << name;
+        // });
         
-        connect(d->commandManager, &CommandManager::commandFinished,
-                this, [this](const QString& name, const CommandResult& result) {
-            qDebug() << "[Application] Command finished:" << name 
-                     << "Success:" << result.success;
-        });
+        // connect(d->commandManager, &CommandManager::commandFinished,
+        //         this, [this](const QString& name, const CommandResult& result) {
+        //     qDebug() << "[Application] Command finished:" << name
+        //              << "Success:" << result.success;
+        // });
         
         d->initialized = true;
         qDebug() << "[Application] Initialization completed successfully";
@@ -167,13 +174,21 @@ bool Application::initialize() {
     }
 }
 
-ui::UIManager* Application::uiManager() const {
-    return d->uiManager;
+// 槽函數實作
+void Application::onDocumentCreated(const QString& name) {
+    qDebug() << "[Application] Document created:" << name;
+    if (d->eventBus) {
+        d->eventBus->publish(Events::DOCUMENT_CREATED, name);
+    }
 }
 
-scripting::LispEngine* Application::lispEngine() const {
-    return d->lispEngine;
-}
+// ui::UIManager* Application::uiManager() const {
+//     return d->uiManager;
+// }
+
+// scripting::LispEngine* Application::lispEngine() const {
+//     return d->lispEngine;
+// }
 
 
 void Application::shutdown() {
@@ -186,10 +201,10 @@ void Application::shutdown() {
     Q_EMIT aboutToQuit();
     
     // 取消當前執行的命令
-    if (d->commandManager) {
-        qDebug() << "[Application] Cancelling current command...";
-        d->commandManager->cancelCurrentCommand();
-    }
+    // if (d->commandManager) {
+    //     qDebug() << "[Application] Cancelling current command...";
+    //     d->commandManager->cancelCurrentCommand();
+    // }
     
     // 關閉所有文件
     if (d->documentManager) {
@@ -213,9 +228,9 @@ EventBus* Application::eventBus() const {
     return d->eventBus;
 }
 
-CommandManager* Application::commandManager() const {
-    return d->commandManager;
-}
+// CommandManager* Application::commandManager() const {
+//     return d->commandManager;
+// }
 
 bool Application::isInitialized() const {
     return d->initialized;

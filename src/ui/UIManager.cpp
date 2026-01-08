@@ -7,9 +7,9 @@
 
 #include "UIManager.h"
 #include "MainWindow.h"
+#include "ToolManager.h"
 #include "FeatureBrowser.h"
 #include "PropertyPanel.h"
-#include "ToolManager.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"

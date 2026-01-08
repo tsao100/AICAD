@@ -1,246 +1,204 @@
 /**
  * @file Sketch.h
- * @brief 草圖特徵類別，管理 2D 幾何元素
- * @author Ben
- * @date 2025-01-06
+ * @brief 草圖特徵類別
+ * @author AICAD Team
+ * @date 2025-01-08
  */
 
 #ifndef AICAD_CAD_SKETCH_H
 #define AICAD_CAD_SKETCH_H
 
 #include "Feature.h"
+#include "Plane.h"
+#include <QVector>
 #include <QVector2D>
-#include <QVector3D>
-#include <gp_Pln.hxx>
-#include <gp_Ax2.hxx>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <TopoDS_Wire.hxx>
 
 namespace aicad {
 namespace cad {
 
 /**
- * @brief 草圖平面定義
+ * @brief 草圖幾何類型
  */
-struct SketchPlane {
-    QVector3D origin;    // 原點
-    QVector3D normal;    // 法向量
-    QVector3D xAxis;     // X 軸方向
-    QVector3D yAxis;     // Y 軸方向
-    
-    /**
-     * @brief 建立 XY 平面
-     */
-    static SketchPlane XY();
-    
-    /**
-     * @brief 建立 XZ 平面
-     */
-    static SketchPlane XZ();
-    
-    /**
-     * @brief 建立 YZ 平面
-     */
-    static SketchPlane YZ();
-    
-    /**
-     * @brief 轉換為 OCCT 平面
-     */
-    gp_Pln toGpPln() const;
-    
-    /**
-     * @brief 轉換為 OCCT 座標系
-     */
-    gp_Ax2 toGpAx2() const;
-    
-    /**
-     * @brief 2D 點轉換為 3D 世界座標
-     */
-    QVector3D toWorld(const QVector2D& point2D) const;
-    
-    /**
-     * @brief 3D 世界座標投影到 2D
-     */
-    QVector2D toLocal(const QVector3D& point3D) const;
+enum class SketchGeometryType {
+    Line,        ///< 直線
+    Arc,         ///< 圓弧
+    Circle,      ///< 圓
+    Polyline,    ///< 多段線
+    Spline       ///< 樣條曲線
 };
 
 /**
- * @brief 草圖元素類型
+ * @brief 草圖幾何元素基礎類別
  */
-enum class SketchElementType {
-    Line,
-    Arc,
-    Circle,
-    Polyline
+struct SketchGeometry {
+    SketchGeometryType type;
+    QVector<QVector2D> points;
+
+    SketchGeometry(SketchGeometryType t) : type(t) {}
+    virtual ~SketchGeometry() = default;
 };
 
 /**
- * @brief 草圖元素
+ * @brief 草圖線段
  */
-struct SketchElement {
-    SketchElementType type;
-    QVector<QVector2D> points;  // 端點或控制點
-    QVariantMap parameters;      // 額外參數 (半徑、角度等)
+struct SketchLine : public SketchGeometry {
+    SketchLine(const QVector2D& p1, const QVector2D& p2)
+        : SketchGeometry(SketchGeometryType::Line) {
+        points << p1 << p2;
+    }
+
+    QVector2D startPoint() const { return points[0]; }
+    QVector2D endPoint() const { return points[1]; }
 };
 
 /**
- * @brief 草圖特徵類別
- * 
- * Sketch 管理 2D 幾何元素:
- * - 定義草圖平面
- * - 儲存線條、圓弧等元素
- * - 提供幾何操作介面
- * - 支援約束系統 (未來擴充)
- * 
+ * @brief 草圖多段線
+ */
+struct SketchPolyline : public SketchGeometry {
+    bool closed;
+
+    SketchPolyline(const QVector<QVector2D>& pts, bool isClosed = false)
+        : SketchGeometry(SketchGeometryType::Polyline)
+        , closed(isClosed) {
+        points = pts;
+    }
+};
+
+/**
+ * @brief 草圖圓
+ */
+struct SketchCircle : public SketchGeometry {
+    QVector2D center;
+    double radius;
+
+    SketchCircle(const QVector2D& c, double r)
+        : SketchGeometry(SketchGeometryType::Circle)
+        , center(c)
+        , radius(r) {
+    }
+};
+
+/**
+ * @brief 草圖特徵
+ *
+ * 包含 2D 幾何元素的平面草圖
+ * - 定義在特定平面上
+ * - 包含多個幾何元素（線、圓、多段線等）
+ * - 可以轉換為 OCCT Wire 用於建立實體
+ *
  * 使用範例:
  * @code
- * Sketch* sketch = doc->createSketch("XY");
- * sketch->addLine(QVector2D(0, 0), QVector2D(10, 0));
- * sketch->addRectangle(QVector2D(0, 0), QVector2D(20, 15));
+ * Sketch* sketch = new Sketch(document);
+ * sketch->setPlane(Plane::xy());
+ * sketch->setName("Front Profile");
+ *
+ * // 加入矩形
+ * sketch->addLine(QVector2D(0, 0), QVector2D(100, 0));
+ * sketch->addLine(QVector2D(100, 0), QVector2D(100, 50));
+ * sketch->addLine(QVector2D(100, 50), QVector2D(0, 50));
+ * sketch->addLine(QVector2D(0, 50), QVector2D(0, 0));
+ *
  * sketch->rebuild();
  * @endcode
  */
 class Sketch : public Feature {
     Q_OBJECT
-    Q_PROPERTY(QString planeName READ planeName CONSTANT)
-    Q_PROPERTY(int elementCount READ elementCount NOTIFY elementCountChanged)
-    
+
 public:
     /**
      * @brief 建構子
-     * @param doc 父文件
-     * @param label OCCT 標籤
-     * @param plane 草圖平面
+     * @param parent 父文件
      */
-    explicit Sketch(Document* doc, TDF_Label label, const SketchPlane& plane);
-    
+    explicit Sketch(Document* parent = nullptr);
+
     /**
      * @brief 解構子
      */
     ~Sketch() override;
-    
+
     /**
      * @brief 取得特徵類型
      */
     FeatureType type() const override { return FeatureType::Sketch; }
-    
+
     /**
-     * @brief 取得草圖平面
-     */
-    SketchPlane plane() const;
-    
-    /**
-     * @brief 取得平面名稱
-     */
-    QString planeName() const;
-    
-    /**
-     * @brief 新增直線
-     * @param start 起點
-     * @param end 終點
-     * @return 元素索引
-     */
-    int addLine(const QVector2D& start, const QVector2D& end);
-    
-    /**
-     * @brief 新增矩形
-     * @param corner1 第一個角點
-     * @param corner2 對角點
-     * @return 元素索引
-     */
-    int addRectangle(const QVector2D& corner1, const QVector2D& corner2);
-    
-    /**
-     * @brief 新增圓
-     * @param center 圓心
-     * @param radius 半徑
-     * @return 元素索引
-     */
-    int addCircle(const QVector2D& center, double radius);
-    
-    /**
-     * @brief 新增圓弧
-     * @param center 圓心
-     * @param radius 半徑
-     * @param startAngle 起始角度 (度)
-     * @param endAngle 結束角度 (度)
-     * @return 元素索引
-     */
-    int addArc(const QVector2D& center, double radius, 
-               double startAngle, double endAngle);
-    
-    /**
-     * @brief 新增多段線
-     * @param points 點列表
-     * @param closed 是否閉合
-     * @return 元素索引
-     */
-    int addPolyline(const QVector<QVector2D>& points, bool closed = false);
-    
-    /**
-     * @brief 刪除元素
-     * @param index 元素索引
-     * @return 成功回傳 true
-     */
-    bool removeElement(int index);
-    
-    /**
-     * @brief 清空所有元素
-     */
-    void clear();
-    
-    /**
-     * @brief 取得元素數量
-     */
-    int elementCount() const;
-    
-    /**
-     * @brief 取得所有元素
-     */
-    QVector<SketchElement> elements() const;
-    
-    /**
-     * @brief 取得特定元素
-     */
-    SketchElement element(int index) const;
-    
-    /**
-     * @brief 重建特徵
+     * @brief 重建草圖幾何
      */
     bool rebuild() override;
-    
+
+    // 平面管理
+    Plane plane() const { return m_plane; }
+    void setPlane(const Plane& plane);
+
+    // 幾何元素管理
+    void addGeometry(SketchGeometry* geom);
+    void removeGeometry(int index);
+    void clearGeometry();
+
+    QList<SketchGeometry*> geometries() const { return m_geometries; }
+    int geometryCount() const { return m_geometries.size(); }
+
+    // 便捷方法：加入基本幾何
+    void addLine(const QVector2D& p1, const QVector2D& p2);
+    void addPolyline(const QVector<QVector2D>& points, bool closed = false);
+    void addCircle(const QVector2D& center, double radius);
+    void addRectangle(const QVector2D& corner1, const QVector2D& corner2);
+
     /**
-     * @brief 檢查草圖是否閉合
+     * @brief 取得所有的 Wire（用於擠出等操作）
      */
-    bool isClosed() const;
-    
+    QList<TopoDS_Wire> wires() const;
+
+    /**
+     * @brief 取得主要輪廓 Wire
+     * @return 第一個封閉的 Wire，如果沒有則返回第一個 Wire
+     */
+    TopoDS_Wire mainWire() const;
+
+    /**
+     * @brief 檢查草圖是否有封閉輪廓
+     */
+    bool hasClosedProfile() const;
+
+    /**
+     * @brief 序列化
+     */
+    QJsonObject toJson() const;
+
+    /**
+     * @brief 反序列化
+     */
+    bool fromJson(const QJsonObject& json);
+
 Q_SIGNALS:
     /**
-     * @brief 元素數量改變時發出
+     * @brief 平面改變時發出
      */
-    void elementCountChanged(int count);
-    
+    void planeChanged(const Plane& plane);
+
     /**
-     * @brief 元素被新增時發出
+     * @brief 幾何元素改變時發出
      */
-    void elementAdded(int index);
-    
-    /**
-     * @brief 元素被移除時發出
-     */
-    void elementRemoved(int index);
-    
+    void geometryChanged();
+
 private:
     /**
-     * @brief 從 OCCT 標籤載入元素
+     * @brief 從幾何元素建立 OCCT Wire
      */
-    void loadElements();
-    
+    TopoDS_Wire buildWire(const QList<SketchGeometry*>& geoms);
+
     /**
-     * @brief 儲存元素到 OCCT 標籤
+     * @brief 將 2D 點轉換為 3D
      */
-    void saveElements();
-    
-    class Private;
-    Private* d;
+    gp_Pnt toWorld(const QVector2D& point) const;
+
+private:
+    Plane m_plane;                        ///< 草圖平面
+    QList<SketchGeometry*> m_geometries;  ///< 幾何元素列表
+    QList<TopoDS_Wire> m_wires;           ///< 快取的 Wire 列表
 };
 
 } // namespace cad

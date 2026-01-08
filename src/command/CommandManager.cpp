@@ -5,10 +5,10 @@
  * @date 2024-12-04
  */
 
-#include "CommandManager.h"
+#include "command/CommandManager.h"
 #include "Command.h"
-#include "EventBus.h"
-#include "Application.h"
+#include "core/EventBus.h"
+#include "core/Application.h"
 
 #include <QDebug>
 #include <QHash>
