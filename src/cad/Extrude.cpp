@@ -1,271 +1,202 @@
 /**
  * @file Extrude.cpp
- * @brief 擠出特徵類別實作
- * @author Ben
- * @date 2025-01-06
+ * @brief 擠出特徵實作
+ * @author AICAD Team
+ * @date 2025-01-08
  */
 
 #include "Extrude.h"
 #include "Sketch.h"
 #include "Document.h"
+#include "geometry/GeometryBuilder.h"
 
+#include <QJsonObject>
 #include <QDebug>
-
-// OCCT includes
-#include <BRepBuilderAPI_MakeFace.hxx>
-#include <BRepPrimAPI_MakePrism.hxx>
-#include <BRepBuilderAPI_MakeWire.hxx>
-#include <BRepBuilderAPI_MakeEdge.hxx>
-#include <GProp_GProps.hxx>
-#include <BRepGProp.hxx>
-#include <TDataStd_Real.hxx>
 
 namespace aicad {
 namespace cad {
 
-// Private implementation
-class Extrude::Private {
-public:
-    Private(Sketch* sk, double dist)
-        : sketch(sk)
-        , distance(dist)
-        , direction(ExtrudeDirection::Normal)
-    {
-    }
-    
-    Sketch* sketch;
-    double distance;
-    ExtrudeDirection direction;
-};
-
-Extrude::Extrude(Document* doc, TDF_Label label, 
-                 Sketch* sketch, double distance)
-    : Feature(doc, label)
-    , d(new Private(sketch, distance))
+Extrude::Extrude(Document* parent)
+    : Feature(parent)
+    , m_sketch(nullptr)
+    , m_height(10.0)
+    , m_reversed(false)
+    , m_symmetric(false)
+    , m_draftAngle(0.0)
 {
-    qDebug() << "[Extrude] Constructor called";
-    
-    // 儲存參數到 OCCT 標籤
-    TDataStd_Real::Set(label, distance);
+    setName("Extrude");
+    qDebug() << "[Extrude] Created";
 }
 
 Extrude::~Extrude() {
-    qDebug() << "[Extrude] Destructor called";
-    delete d;
+    qDebug() << "[Extrude]" << name() << "destroyed";
 }
 
-Sketch* Extrude::sketch() const {
-    return d->sketch;
-}
-
-double Extrude::distance() const {
-    return d->distance;
-}
-
-void Extrude::setDistance(double distance) {
-    if (qAbs(d->distance - distance) > 1e-6) {
-        qDebug() << "[Extrude] Distance changed from" 
-                 << d->distance << "to" << distance;
-        
-        d->distance = distance;
-        
-        // 儲存到 OCCT 標籤
-        TDataStd_Real::Set(label(), distance);
-        
-        // 重建
-        rebuild();
-        
-        Q_EMIT distanceChanged(d->distance);
-        notifyModified();
+void Extrude::setSketch(Sketch* sketch) {
+    if (m_sketch == sketch) {
+        return;
     }
-}
-
-ExtrudeDirection Extrude::direction() const {
-    return d->direction;
-}
-
-void Extrude::setDirection(ExtrudeDirection direction) {
-    if (d->direction != direction) {
-        qDebug() << "[Extrude] Direction changed";
-        
-        d->direction = direction;
-        
-        // 重建
-        rebuild();
-        
-        Q_EMIT directionChanged(d->direction);
-        notifyModified();
+    
+    // 斷開舊草圖的連接
+    if (m_sketch) {
+        disconnect(m_sketch, nullptr, this, nullptr);
     }
+    
+    m_sketch = sketch;
+    
+    // 連接新草圖的信號
+    if (m_sketch) {
+        connect(m_sketch, &Sketch::shapeChanged,
+                this, &Extrude::rebuildRequested);
+        connect(m_sketch, &Sketch::geometryChanged,
+                this, &Extrude::rebuildRequested);
+        
+        // 設定父子關係
+        setParent(m_sketch);
+    }
+    
+    qDebug() << "[Extrude]" << name() << "sketch changed to"
+             << (sketch ? sketch->name() : "null");
+    
+    Q_EMIT sketchChanged(sketch);
+    Q_EMIT rebuildRequested();
+}
+
+void Extrude::setHeight(double height) {
+    if (qFuzzyCompare(m_height, height)) {
+        return;
+    }
+    
+    m_height = height;
+    qDebug() << "[Extrude]" << name() << "height changed to" << height;
+    
+    Q_EMIT heightChanged(height);
+    Q_EMIT rebuildRequested();
+}
+
+void Extrude::setReversed(bool reversed) {
+    if (m_reversed == reversed) {
+        return;
+    }
+    
+    m_reversed = reversed;
+    qDebug() << "[Extrude]" << name() << "reversed:" << reversed;
+    
+    Q_EMIT reversedChanged(reversed);
+    Q_EMIT rebuildRequested();
+}
+
+void Extrude::setSymmetric(bool symmetric) {
+    if (m_symmetric == symmetric) {
+        return;
+    }
+    
+    m_symmetric = symmetric;
+    qDebug() << "[Extrude]" << name() << "symmetric:" << symmetric;
+    Q_EMIT rebuildRequested();
+}
+
+void Extrude::setDraftAngle(double angle) {
+    if (qFuzzyCompare(m_draftAngle, angle)) {
+        return;
+    }
+    
+    m_draftAngle = angle;
+    qDebug() << "[Extrude]" << name() << "draft angle:" << angle;
+    Q_EMIT rebuildRequested();
 }
 
 bool Extrude::rebuild() {
-    if (!d->sketch) {
-        qWarning() << "[Extrude] Cannot rebuild: sketch is null";
-        setValid(false);
+    qDebug() << "[Extrude]" << name() << "rebuilding...";
+    
+    if (!m_sketch) {
+        QString error = "No sketch specified";
+        qWarning() << "[Extrude]" << name() << error;
+        setError(error);
         return false;
     }
     
-    qDebug() << "[Extrude] Rebuilding extrude:" << name()
-             << "distance:" << d->distance;
+    if (!m_sketch->hasValidShape()) {
+        QString error = "Sketch has no valid shape";
+        qWarning() << "[Extrude]" << name() << error;
+        setError(error);
+        return false;
+    }
     
     try {
-        // 確保草圖已重建
-        if (!d->sketch->isValid()) {
-            d->sketch->rebuild();
+        // 計算實際高度
+        double actualHeight = m_height;
+        if (m_reversed) {
+            actualHeight = -actualHeight;
         }
         
-        // 建立擠出形狀
-        TopoDS_Shape extrusionShape = createExtrusionShape();
+        // 使用 GeometryBuilder 執行擠出
+        auto result = geometry::GeometryBuilder::extrudeSketch(m_sketch, actualHeight);
         
-        if (!extrusionShape.IsNull()) {
-            setShape(extrusionShape);
-            setValid(true);
-            qDebug() << "[Extrude] Rebuild successful";
+        if (result) {
+            setShape(result.shape);
+            clearError();
+            qDebug() << "[Extrude]" << name() << "rebuilt successfully";
             return true;
         } else {
-            qWarning() << "[Extrude] Failed to create extrusion shape";
+            qWarning() << "[Extrude]" << name() << "build failed:" << result.errorMessage;
+            setError(result.errorMessage);
+            return false;
         }
-    } catch (const Standard_Failure& e) {
-        qWarning() << "[Extrude] Rebuild failed:" << e.GetMessageString();
-    } catch (...) {
-        qWarning() << "[Extrude] Rebuild failed with unknown exception";
-    }
-    
-    setValid(false);
-    return false;
-}
-
-double Extrude::volume() const {
-    TopoDS_Shape sh = shape();
-    if (sh.IsNull()) {
-        return 0.0;
-    }
-    
-    GProp_GProps props;
-    BRepGProp::VolumeProperties(sh, props);
-    return props.Mass();
-}
-
-double Extrude::surfaceArea() const {
-    TopoDS_Shape sh = shape();
-    if (sh.IsNull()) {
-        return 0.0;
-    }
-    
-    GProp_GProps props;
-    BRepGProp::SurfaceProperties(sh, props);
-    return props.Mass();
-}
-
-TopoDS_Shape Extrude::createExtrusionShape() {
-    if (!d->sketch) {
-        return TopoDS_Shape();
-    }
-    
-    // 取得草圖元素
-    QVector<SketchElement> elements = d->sketch->elements();
-    if (elements.isEmpty()) {
-        qWarning() << "[Extrude] No elements in sketch";
-        return TopoDS_Shape();
-    }
-    
-    // 取得草圖平面
-    SketchPlane plane = d->sketch->plane();
-    
-    try {
-        // 建立 wire
-        BRepBuilderAPI_MakeWire wireBuilder;
-        
-        for (const SketchElement& elem : elements) {
-            if (elem.type == SketchElementType::Polyline) {
-                // 建立多段線的所有邊
-                for (int i = 0; i < elem.points.size() - 1; ++i) {
-                    QVector3D p1 = plane.toWorld(elem.points[i]);
-                    QVector3D p2 = plane.toWorld(elem.points[i + 1]);
-                    
-                    gp_Pnt gp1(p1.x(), p1.y(), p1.z());
-                    gp_Pnt gp2(p2.x(), p2.y(), p2.z());
-                    
-                    BRepBuilderAPI_MakeEdge edgeBuilder(gp1, gp2);
-                    if (edgeBuilder.IsDone()) {
-                        wireBuilder.Add(edgeBuilder.Edge());
-                    }
-                }
-            }
-        }
-        
-        if (!wireBuilder.IsDone()) {
-            qWarning() << "[Extrude] Failed to create wire";
-            return TopoDS_Shape();
-        }
-        
-        TopoDS_Wire wire = wireBuilder.Wire();
-        
-        // 建立面
-        gp_Pln gpPlane = plane.toGpPln();
-        BRepBuilderAPI_MakeFace faceBuilder(gpPlane, wire);
-        
-        if (!faceBuilder.IsDone()) {
-            qWarning() << "[Extrude] Failed to create face";
-            return TopoDS_Shape();
-        }
-        
-        TopoDS_Face face = faceBuilder.Face();
-        
-        // 計算擠出向量
-        double actualDistance = d->distance;
-        if (d->direction == ExtrudeDirection::Reversed) {
-            actualDistance = -actualDistance;
-        } else if (d->direction == ExtrudeDirection::Symmetric) {
-            // 對稱擠出: 待實作
-            // 目前先用單向
-        }
-        
-        gp_Vec extrudeVec(
-            plane.normal.x() * actualDistance,
-            plane.normal.y() * actualDistance,
-            plane.normal.z() * actualDistance
-        );
-        
-        // 建立擠出體
-        BRepPrimAPI_MakePrism prismBuilder(face, extrudeVec);
-        
-        if (!prismBuilder.IsDone()) {
-            qWarning() << "[Extrude] Failed to create prism";
-            return TopoDS_Shape();
-        }
-        
-        return prismBuilder.Shape();
         
     } catch (const Standard_Failure& e) {
-        qWarning() << "[Extrude] Exception:" << e.GetMessageString();
+        QString error = QString("OCCT error: %1").arg(e.GetMessageString());
+        qCritical() << "[Extrude]" << name() << error;
+        setError(error);
+        return false;
     } catch (...) {
-        qWarning() << "[Extrude] Unknown exception";
+        QString error = "Unknown error during rebuild";
+        qCritical() << "[Extrude]" << name() << error;
+        setError(error);
+        return false;
+    }
+}
+
+QJsonObject Extrude::toJson() const {
+    QJsonObject json = Feature::toJson();
+    
+    json["height"] = m_height;
+    json["reversed"] = m_reversed;
+    json["symmetric"] = m_symmetric;
+    json["draftAngle"] = m_draftAngle;
+    
+    if (m_sketch) {
+        json["sketchId"] = m_sketch->id();
     }
     
-    return TopoDS_Shape();
+    return json;
 }
 
-// Helper functions
-QString extrudeDirectionToString(ExtrudeDirection direction) {
-    switch (direction) {
-        case ExtrudeDirection::Normal:
-            return "Normal";
-        case ExtrudeDirection::Reversed:
-            return "Reversed";
-        case ExtrudeDirection::Symmetric:
-            return "Symmetric";
-        default:
-            return "Unknown";
+bool Extrude::fromJson(const QJsonObject& json) {
+    if (!Feature::fromJson(json)) {
+        return false;
     }
-}
-
-ExtrudeDirection stringToExtrudeDirection(const QString& str) {
-    QString lower = str.toLower();
-    if (lower == "normal") return ExtrudeDirection::Normal;
-    if (lower == "reversed") return ExtrudeDirection::Reversed;
-    if (lower == "symmetric") return ExtrudeDirection::Symmetric;
-    return ExtrudeDirection::Normal;
+    
+    if (json.contains("height")) {
+        m_height = json["height"].toDouble();
+    }
+    
+    if (json.contains("reversed")) {
+        m_reversed = json["reversed"].toBool();
+    }
+    
+    if (json.contains("symmetric")) {
+        m_symmetric = json["symmetric"].toBool();
+    }
+    
+    if (json.contains("draftAngle")) {
+        m_draftAngle = json["draftAngle"].toDouble();
+    }
+    
+    // 注意：草圖參考需要在所有特徵載入後才能建立
+    // 這通常由 Document 處理
+    
+    return true;
 }
 
 } // namespace cad

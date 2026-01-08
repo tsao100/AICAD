@@ -147,13 +147,17 @@ HEADERS += \
     src/cad/Plane.h \
     src/cad/Feature.h \
     src/cad/Sketch.h \
-    src/cad/Document.h
+    src/cad/Document.h \
+    src/cad/Extrude.h \
+    src/geometry/GeometryBuilder.h
 
 SOURCES += \
     src/cad/Plane.cpp \
     src/cad/Feature.cpp \
     src/cad/Sketch.cpp \
-    src/cad/Document.cpp
+    src/cad/Document.cpp \
+    src/cad/Extrude.cpp \
+    src/geometry/GeometryBuilder.cpp
 
 RESOURCES += \
     resources.qrc

@@ -1,8 +1,8 @@
 /**
  * @file Extrude.h
- * @brief 擠出特徵類別，從草圖建立 3D 實體
- * @author Ben
- * @date 2025-01-06
+ * @brief 擠出特徵類別
+ * @author AICAD Team
+ * @date 2025-01-08
  */
 
 #ifndef AICAD_CAD_EXTRUDE_H
@@ -16,49 +16,34 @@ namespace cad {
 class Sketch;
 
 /**
- * @brief 擠出方向
- */
-enum class ExtrudeDirection {
-    Normal,      // 沿草圖法向
-    Reversed,    // 反向
-    Symmetric    // 對稱
-};
-
-/**
- * @brief 擠出特徵類別
+ * @brief 擠出特徵
  * 
- * Extrude 從 2D 草圖建立 3D 實體:
- * - 參考基準草圖
- * - 設定擠出距離和方向
- * - 生成 3D 幾何
- * - 支援布林運算 (未來擴充)
+ * 將 2D 草圖擠出成 3D 實體
+ * - 支援正向和反向擠出
+ * - 支援對稱擠出
+ * - 支援錐度角
  * 
  * 使用範例:
  * @code
- * Sketch* sketch = doc->createSketch("XY");
- * sketch->addRectangle(QVector2D(0, 0), QVector2D(10, 10));
+ * Sketch* sketch = doc->createSketch(Plane::xy());
+ * sketch->addRectangle(QVector2D(0, 0), QVector2D(100, 50));
  * 
- * Extrude* extrude = dynamic_cast<Extrude*>(
- *     doc->createExtrude(sketch, 5.0)
- * );
- * extrude->setDirection(ExtrudeDirection::Symmetric);
+ * Extrude* extrude = new Extrude(doc);
+ * extrude->setSketch(sketch);
+ * extrude->setHeight(25.0);
+ * extrude->rebuild();
  * @endcode
  */
 class Extrude : public Feature {
     Q_OBJECT
-    Q_PROPERTY(double distance READ distance WRITE setDistance NOTIFY distanceChanged)
-    Q_PROPERTY(ExtrudeDirection direction READ direction WRITE setDirection NOTIFY directionChanged)
+    Q_PROPERTY(double height READ height WRITE setHeight NOTIFY heightChanged)
+    Q_PROPERTY(bool reversed READ isReversed WRITE setReversed NOTIFY reversedChanged)
     
 public:
     /**
      * @brief 建構子
-     * @param doc 父文件
-     * @param label OCCT 標籤
-     * @param sketch 基準草圖
-     * @param distance 擠出距離
      */
-    explicit Extrude(Document* doc, TDF_Label label, 
-                     Sketch* sketch, double distance);
+    explicit Extrude(Document* parent = nullptr);
     
     /**
      * @brief 解構子
@@ -71,75 +56,59 @@ public:
     FeatureType type() const override { return FeatureType::Extrude; }
     
     /**
-     * @brief 取得基準草圖
-     */
-    Sketch* sketch() const;
-    
-    /**
-     * @brief 取得擠出距離
-     */
-    double distance() const;
-    
-    /**
-     * @brief 設定擠出距離
-     */
-    void setDistance(double distance);
-    
-    /**
-     * @brief 取得擠出方向
-     */
-    ExtrudeDirection direction() const;
-    
-    /**
-     * @brief 設定擠出方向
-     */
-    void setDirection(ExtrudeDirection direction);
-    
-    /**
      * @brief 重建特徵
      */
     bool rebuild() override;
     
-    /**
-     * @brief 計算擠出體積
-     */
-    double volume() const;
+    // 參數設定
+    Sketch* sketch() const { return m_sketch; }
+    void setSketch(Sketch* sketch);
+    
+    double height() const { return m_height; }
+    void setHeight(double height);
+    
+    bool isReversed() const { return m_reversed; }
+    void setReversed(bool reversed);
+    
+    bool isSymmetric() const { return m_symmetric; }
+    void setSymmetric(bool symmetric);
+    
+    double draftAngle() const { return m_draftAngle; }
+    void setDraftAngle(double angle);
     
     /**
-     * @brief 計算擠出表面積
+     * @brief 序列化
      */
-    double surfaceArea() const;
+    QJsonObject toJson() const override;
     
+    /**
+     * @brief 反序列化
+     */
+    bool fromJson(const QJsonObject& json) override;
+
 Q_SIGNALS:
     /**
-     * @brief 距離改變時發出
+     * @brief 高度改變時發出
      */
-    void distanceChanged(double distance);
+    void heightChanged(double height);
     
     /**
-     * @brief 方向改變時發出
+     * @brief 方向反轉時發出
      */
-    void directionChanged(ExtrudeDirection direction);
+    void reversedChanged(bool reversed);
     
+    /**
+     * @brief 草圖改變時發出
+     */
+    void sketchChanged(Sketch* sketch);
+
 private:
-    /**
-     * @brief 從草圖建立 3D 形狀
-     */
-    TopoDS_Shape createExtrusionShape();
-    
-    class Private;
-    Private* d;
+    Sketch* m_sketch;           ///< 參考草圖
+    double m_height;            ///< 擠出高度
+    bool m_reversed;            ///< 是否反向
+    bool m_symmetric;           ///< 是否對稱
+    double m_draftAngle;        ///< 拔模角度（未來實作）
 };
-
-/**
- * @brief 將擠出方向轉換為字串
- */
-QString extrudeDirectionToString(ExtrudeDirection direction);
-
-/**
- * @brief 將字串轉換為擠出方向
- */
-ExtrudeDirection stringToExtrudeDirection(const QString& str);
 
 } // namespace cad
 } // namespace aicad

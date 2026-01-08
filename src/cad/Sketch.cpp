@@ -6,11 +6,10 @@
  */
 
 #include "Sketch.h"
-#include <BRepBuilderAPI_MakeEdge.hxx>
-#include <BRepBuilderAPI_MakeWire.hxx>
-#include <GC_MakeSegment.hxx>
-#include <GC_MakeCircle.hxx>
-#include <Geom_TrimmedCurve.hxx>
+#include "geometry/GeometryBuilder.h"
+
+#include <TopoDS.hxx>
+#include <TopoDS_Wire.hxx>
 #include <Precision.hxx>
 #include <QJsonArray>
 #include <QDebug>
@@ -39,22 +38,45 @@ void Sketch::setPlane(const Plane& plane) {
 }
 
 bool Sketch::rebuild() {
-    qDebug() << "[Sketch]" << name() << "rebuilding with"
+    qDebug() << "[Sketch]" << name() << "rebuilding with" 
              << m_geometries.size() << "geometries";
-
+    
     try {
         m_wires.clear();
-
+        
         if (m_geometries.isEmpty()) {
             qDebug() << "[Sketch]" << name() << "no geometries to build";
             setShape(TopoDS_Shape());
             return true;
         }
-
-        // 暫時將所有幾何元素建成一個 Wire
-        // 未來可以支援多個獨立的 Wire
+        
+        // 使用 GeometryBuilder 建立 Wire
+        QVector<QVector2D> points;
+        for (const SketchGeometry* geom : m_geometries) {
+            if (geom && geom->type == SketchGeometryType::Polyline) {
+                points = geom->points;
+                break;
+            }
+        }
+        
+        if (!points.isEmpty()) {
+            auto result = geometry::GeometryBuilder::makeWire(points, m_plane, true);
+            if (result) {
+                TopoDS_Wire wire = TopoDS::Wire(result.shape);
+                m_wires.append(wire);
+                setShape(wire);
+                qDebug() << "[Sketch]" << name() << "rebuilt successfully";
+                return true;
+            } else {
+                qWarning() << "[Sketch]" << name() << "build error:" << result.errorMessage;
+                setError(result.errorMessage);
+                return false;
+            }
+        }
+        
+        // 暫時使用舊方法作為備援
         TopoDS_Wire wire = buildWire(m_geometries);
-
+        
         if (!wire.IsNull()) {
             m_wires.append(wire);
             setShape(wire);
@@ -65,7 +87,7 @@ bool Sketch::rebuild() {
             setError("Failed to build wire from geometries");
             return false;
         }
-
+        
     } catch (const Standard_Failure& e) {
         QString error = QString("OCCT error: %1").arg(e.GetMessageString());
         qCritical() << "[Sketch]" << name() << error;
@@ -84,7 +106,7 @@ void Sketch::addGeometry(SketchGeometry* geom) {
         qWarning() << "[Sketch]" << name() << "cannot add null geometry";
         return;
     }
-
+    
     m_geometries.append(geom);
     qDebug() << "[Sketch]" << name() << "geometry added, total:" << m_geometries.size();
     Q_EMIT geometryChanged();
@@ -96,7 +118,7 @@ void Sketch::removeGeometry(int index) {
         qWarning() << "[Sketch]" << name() << "invalid geometry index:" << index;
         return;
     }
-
+    
     delete m_geometries.takeAt(index);
     qDebug() << "[Sketch]" << name() << "geometry removed at" << index;
     Q_EMIT geometryChanged();
@@ -138,7 +160,7 @@ void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {
     points << QVector2D(corner2.x(), corner2.y());
     points << QVector2D(corner1.x(), corner2.y());
     points << QVector2D(corner1.x(), corner1.y()); // 封閉
-
+    
     addPolyline(points, true);
 }
 
@@ -150,7 +172,7 @@ TopoDS_Wire Sketch::mainWire() const {
     if (m_wires.isEmpty()) {
         return TopoDS_Wire();
     }
-
+    
     // TODO: 尋找封閉的 Wire
     // 目前只返回第一個
     return m_wires.first();
@@ -174,82 +196,53 @@ TopoDS_Wire Sketch::buildWire(const QList<SketchGeometry*>& geoms) {
     if (geoms.isEmpty()) {
         return TopoDS_Wire();
     }
-
+    
     try {
-        BRepBuilderAPI_MakeWire wireBuilder;
-
+        // 收集所有點並使用 GeometryBuilder
+        QVector<QVector2D> allPoints;
+        
         for (const SketchGeometry* geom : geoms) {
             if (!geom) continue;
-
+            
             switch (geom->type) {
-            case SketchGeometryType::Line: {
-                if (geom->points.size() >= 2) {
-                    gp_Pnt p1 = toWorld(geom->points[0]);
-                    gp_Pnt p2 = toWorld(geom->points[1]);
-
-                    if (p1.Distance(p2) > Precision::Confusion()) {
-                        BRepBuilderAPI_MakeEdge edgeBuilder(p1, p2);
-                        if (edgeBuilder.IsDone()) {
-                            wireBuilder.Add(edgeBuilder.Edge());
-                        }
-                    }
+            case SketchGeometryType::Line:
+            case SketchGeometryType::Polyline:
+                for (const QVector2D& pt : geom->points) {
+                    allPoints.append(pt);
                 }
                 break;
-            }
-
-            case SketchGeometryType::Polyline: {
-                for (int i = 0; i < geom->points.size() - 1; ++i) {
-                    gp_Pnt p1 = toWorld(geom->points[i]);
-                    gp_Pnt p2 = toWorld(geom->points[i + 1]);
-
-                    if (p1.Distance(p2) > Precision::Confusion()) {
-                        BRepBuilderAPI_MakeEdge edgeBuilder(p1, p2);
-                        if (edgeBuilder.IsDone()) {
-                            wireBuilder.Add(edgeBuilder.Edge());
-                        }
-                    }
-                }
+            
+            case SketchGeometryType::Circle:
+                // 圓形需要特殊處理
+                // 暫時跳過，未來改進
                 break;
-            }
-
-            case SketchGeometryType::Circle: {
-                const SketchCircle* circle = static_cast<const SketchCircle*>(geom);
-                gp_Pnt center = toWorld(circle->center);
-                gp_Ax2 ax2 = m_plane.toGpAx2();
-                ax2.SetLocation(center);
-
-                Handle(Geom_Circle) geomCircle = new Geom_Circle(ax2, circle->radius);
-                BRepBuilderAPI_MakeEdge edgeBuilder(geomCircle);
-
-                if (edgeBuilder.IsDone()) {
-                    wireBuilder.Add(edgeBuilder.Edge());
-                }
-                break;
-            }
-
+            
             default:
-                qWarning() << "[Sketch] Unsupported geometry type:"
-                           << static_cast<int>(geom->type);
+                qWarning() << "[Sketch] Unsupported geometry type:" 
+                          << static_cast<int>(geom->type);
                 break;
             }
         }
-
-        if (wireBuilder.IsDone()) {
-            return wireBuilder.Wire();
+        
+        if (!allPoints.isEmpty()) {
+            auto result = geometry::GeometryBuilder::makeWire(allPoints, m_plane, false);
+            if (result) {
+                return TopoDS::Wire(result.shape);
+            }
         }
-
+        
     } catch (const Standard_Failure& e) {
         qWarning() << "[Sketch] Failed to build wire:" << e.GetMessageString();
     } catch (...) {
         qWarning() << "[Sketch] Unknown error building wire";
     }
-
+    
     return TopoDS_Wire();
 }
 
 QJsonObject Sketch::toJson() const {
     QJsonObject json = Feature::toJson();
-
+    
     // 儲存平面資訊
     QJsonObject planeJson;
     planeJson["originX"] = m_plane.origin().x();
@@ -262,13 +255,13 @@ QJsonObject Sketch::toJson() const {
     planeJson["xAxisY"] = m_plane.xAxis().y();
     planeJson["xAxisZ"] = m_plane.xAxis().z();
     json["plane"] = planeJson;
-
+    
     // 儲存幾何元素
     QJsonArray geomsArray;
     for (const SketchGeometry* geom : m_geometries) {
         QJsonObject geomJson;
         geomJson["type"] = static_cast<int>(geom->type);
-
+        
         QJsonArray pointsArray;
         for (const QVector2D& pt : geom->points) {
             QJsonObject ptJson;
@@ -277,7 +270,7 @@ QJsonObject Sketch::toJson() const {
             pointsArray.append(ptJson);
         }
         geomJson["points"] = pointsArray;
-
+        
         // 額外屬性
         if (geom->type == SketchGeometryType::Circle) {
             const SketchCircle* circle = static_cast<const SketchCircle*>(geom);
@@ -288,11 +281,11 @@ QJsonObject Sketch::toJson() const {
             const SketchPolyline* polyline = static_cast<const SketchPolyline*>(geom);
             geomJson["closed"] = polyline->closed;
         }
-
+        
         geomsArray.append(geomJson);
     }
     json["geometries"] = geomsArray;
-
+    
     return json;
 }
 
@@ -300,7 +293,7 @@ bool Sketch::fromJson(const QJsonObject& json) {
     if (!Feature::fromJson(json)) {
         return false;
     }
-
+    
     // 載入平面
     if (json.contains("plane")) {
         QJsonObject planeJson = json["plane"].toObject();
@@ -308,20 +301,20 @@ bool Sketch::fromJson(const QJsonObject& json) {
             planeJson["originX"].toDouble(),
             planeJson["originY"].toDouble(),
             planeJson["originZ"].toDouble()
-            );
+        );
         QVector3D normal(
             planeJson["normalX"].toDouble(),
             planeJson["normalY"].toDouble(),
             planeJson["normalZ"].toDouble()
-            );
+        );
         QVector3D xAxis(
             planeJson["xAxisX"].toDouble(),
             planeJson["xAxisY"].toDouble(),
             planeJson["xAxisZ"].toDouble()
-            );
+        );
         m_plane = Plane(origin, normal, xAxis);
     }
-
+    
     // 載入幾何元素
     clearGeometry();
     if (json.contains("geometries")) {
@@ -330,8 +323,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
             QJsonObject geomJson = val.toObject();
             SketchGeometryType type = static_cast<SketchGeometryType>(
                 geomJson["type"].toInt()
-                );
-
+            );
+            
             // 載入點
             QVector<QVector2D> points;
             QJsonArray pointsArray = geomJson["points"].toArray();
@@ -340,9 +333,9 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 points.append(QVector2D(
                     ptJson["x"].toDouble(),
                     ptJson["y"].toDouble()
-                    ));
+                ));
             }
-
+            
             // 建立幾何元素
             if (type == SketchGeometryType::Line && points.size() >= 2) {
                 addLine(points[0], points[1]);
@@ -353,13 +346,13 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 QVector2D center(
                     geomJson["centerX"].toDouble(),
                     geomJson["centerY"].toDouble()
-                    );
+                );
                 double radius = geomJson["radius"].toDouble();
                 addCircle(center, radius);
             }
         }
     }
-
+    
     return true;
 }
 
