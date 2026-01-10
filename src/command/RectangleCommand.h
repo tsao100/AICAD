@@ -44,16 +44,19 @@ public:
      * @brief 執行命令
      */
     core::CommandResult execute(const core::CommandContext& context) override;
-    
+    void cancel() override;
+    bool isInteractive() const override;
+
     /**
      * @brief 驗證參數
      */
-    bool validateParameters(const core::CommandContext& context) const override;
-    
+    bool validateParameters(const core::CommandContext& context) const override;    
+    QString helpText() const override;
+
     /**
      * @brief 取得使用說明
      */
-    QString getUsage() const;
+    QString getUsage() const override;
     
 private:
     /**

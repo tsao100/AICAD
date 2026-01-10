@@ -18,7 +18,7 @@
 #include <functional>
 
 namespace aicad {
-namespace core {
+namespace command {
 
 // 前向宣告
 class Command;

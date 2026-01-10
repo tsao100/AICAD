@@ -11,7 +11,7 @@
 #include <QDebug>
 
 namespace aicad {
-namespace commands {
+namespace core {
 
 class Command::Private {
 public:

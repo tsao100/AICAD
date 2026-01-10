@@ -25,16 +25,10 @@ RectangleCommand::~RectangleCommand() {
 
 core::CommandResult RectangleCommand::execute(const core::CommandContext& context) {
     qDebug() << "[RectangleCommand] Executing...";
-    
-    Q_EMIT started();
-    
-    commands::CommandResult result;
-    
+
     if (context.args.isEmpty()) {
-        // 交互式模式
-        result = executeInteractive();
+        return executeInteractive();
     } else {
-        // 命令行模式 - 解析坐標
         QVector<double> coords;
         for (const QString& arg : context.args) {
             bool ok;
@@ -42,16 +36,13 @@ core::CommandResult RectangleCommand::execute(const core::CommandContext& contex
             if (!ok) {
                 return core::CommandResult::Failure(
                     QString("Invalid coordinate: %1").arg(arg)
-                );
+                    );
             }
             coords.append(val);
         }
-        
-        result = executeWithCoordinates(coords);
+
+        return executeWithCoordinates(coords);
     }
-    
-    Q_EMIT finished(result);
-    return result;
 }
 
 void RectangleCommand::cancel() {
@@ -131,7 +122,7 @@ core::CommandResult RectangleCommand::executeWithCoordinates(const QVector<doubl
     // 2. 在草圖中創建矩形幾何
     // 3. 更新視圖
     
-    bool success = createRectangle(x1, y1, x2, y2);
+    bool success = createRectangle(QVector2D(x1, y1), QVector2D(x2, y2));
     
     if (!success) {
         return core::CommandResult::Failure("Failed to create rectangle");
@@ -149,7 +140,7 @@ core::CommandResult RectangleCommand::executeWithCoordinates(const QVector<doubl
     return core::CommandResult::Success(msg);
 }
 
-bool RectangleCommand::createRectangle(double x1, double y1, double x2, double y2) {
+bool RectangleCommand::createRectangle(const QVector2D& corner1, const QVector2D& corner2) {
     // TODO: 實作實際的矩形創建
     // 這裡應該:
     // 1. 獲取 DocumentManager

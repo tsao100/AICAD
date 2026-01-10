@@ -19,6 +19,11 @@ namespace cad {
     class Document;
 }
 
+namespace view {
+    class CadView;
+}
+
+
 namespace ui {
 
 class MainWindow;
@@ -103,7 +108,8 @@ public:
      * @param timeout 顯示時間（毫秒），0 表示永久顯示
      */
     void setStatusMessage(const QString& message, int timeout = 0);
-    
+    view::CadView* cadView() const;
+
 Q_SIGNALS:
     /**
      * @brief UI 初始化完成時發出

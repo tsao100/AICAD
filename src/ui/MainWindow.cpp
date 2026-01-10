@@ -113,21 +113,7 @@ void MainWindow::setupUI() {
 }
 
 void MainWindow::setupCentralWidget() {
-    d->centralWidget = new QWidget(this);
-    
-    QVBoxLayout* layout = new QVBoxLayout(d->centralWidget);
-    
-    // 暫時顯示歡迎訊息
-    QLabel* welcomeLabel = new QLabel(
-        "<h1>Welcome to AICAD</h1>"
-        "<p>Advanced Interactive CAD System</p>"
-        "<p>Version 1.0.0-dev</p>",
-        d->centralWidget);
-    welcomeLabel->setAlignment(Qt::AlignCenter);
-    
-    layout->addWidget(welcomeLabel);
-    
-    setCentralWidget(d->centralWidget);
+
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
