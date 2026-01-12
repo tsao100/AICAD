@@ -10,6 +10,7 @@
 
 #include <QObject>
 #include <QVector2D>
+#include <QVector3D>
 #include <QVector>
 
 #include <Prs3d_Presentation.hxx>

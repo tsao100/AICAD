@@ -6,7 +6,7 @@
  */
 
 #include "command/CommandManager.h"
-#include "Command.h"
+#include "command/Command.h"
 #include "core/EventBus.h"
 #include "core/Application.h"
 
@@ -16,8 +16,10 @@
 #include <QVector>
 #include <algorithm>
 
+using namespace aicad::core;
+
 namespace aicad {
-namespace core {
+namespace command {
 
 /**
  * @brief 命令註冊資訊
@@ -216,9 +218,9 @@ CommandResult CommandManager::executeCommand(const QString& commandName,
     Q_EMIT commandStarted(canonicalName);
     
     // 透過 EventBus 發布事件
-    if (Application* app = Application::instance()) {
-        if (EventBus* bus = app->eventBus()) {
-            bus->publish(Events::COMMAND_STARTED, canonicalName);
+    if (core::Application* app = core::Application::instance()) {
+        if (core::EventBus* bus = app->eventBus()) {
+            bus->publish(core::Events::COMMAND_STARTED, canonicalName);
         }
     }
     
@@ -264,10 +266,10 @@ CommandResult CommandManager::executeCommand(const QString& commandName,
     Q_EMIT commandFinished(canonicalName, result);
     
     // 透過 EventBus 發布事件
-    if (Application* app = Application::instance()) {
-        if (EventBus* bus = app->eventBus()) {
+    if (core::Application* app = core::Application::instance()) {
+        if (core::EventBus* bus = app->eventBus()) {
             QString eventName = result.success ? 
-                Events::COMMAND_EXECUTED : "command.failed";
+                core::Events::COMMAND_EXECUTED : "command.failed";
             bus->publish(eventName, canonicalName);
         }
     }

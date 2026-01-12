@@ -13,6 +13,7 @@
 #include <QMessageBox>
 
 #include "core/Application.h"
+#include "ui/UIManager.h"         // ✅ Add this include
 #include "scripting/LispEngine.h"
 #include "scripting/LispBindings.h"
 

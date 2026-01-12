@@ -10,9 +10,12 @@
 #include "ToolManager.h"
 #include "FeatureBrowser.h"
 #include "PropertyPanel.h"
+#include "view/ViewManager.h"  // ✅ 添加
+#include "view/CadView.h"      // ✅ 添加
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
+#include "cad/Document.h"
 
 #include <QDebug>
 
@@ -26,6 +29,7 @@ public:
         , featureBrowser(nullptr)
         , propertyPanel(nullptr)
         , toolManager(nullptr)
+        , cadView(nullptr)           // ✅ 添加
         , initialized(false)
     {
     }
@@ -39,6 +43,7 @@ public:
     FeatureBrowser* featureBrowser;
     PropertyPanel* propertyPanel;
     ToolManager* toolManager;
+    view::CadView* cadView;          // ✅ 添加
     bool initialized;
 };
 
@@ -90,8 +95,13 @@ bool UIManager::initialize() {
         // 4. 建立工具管理器
         qDebug() << "[UIManager] Creating ToolManager...";
         d->toolManager = new ToolManager(d->mainWindow);
-        
-        // 5. 連接事件總線
+
+        // 5. 建立 CAD 視圖並設為中央 Widget  // ✅ 添加
+        qDebug() << "[UIManager] Creating CadView...";
+        d->cadView = new view::CadView(d->mainWindow);
+        d->mainWindow->setCentralWidget(d->cadView);
+
+        // 6. 連接事件總線
         qDebug() << "[UIManager] Connecting to EventBus...";
         
         // 監聽文件事件
@@ -114,12 +124,14 @@ bool UIManager::initialize() {
                 updateFeatureTree();
             });
         
-        // 6. 連接 DocumentManager 信號
+        // 7. 連接 DocumentManager 信號
         connect(docMgr, &core::DocumentManager::documentCreated,
-                this, [this](const QString& name) {
-            qDebug() << "[UIManager] DocumentManager created document:" << name;
-            setStatusMessage(QString("Document created: %1").arg(name), 3000);
-        });
+                this, [this](cad::Document* doc) {
+            if (doc) {
+                QString name = doc->fileName();
+                qDebug() << "[UIManager] DocumentManager created document:" << name;
+                setStatusMessage(QString("Document created: %1").arg(name), 3000);
+            }});
         
         connect(docMgr, &core::DocumentManager::currentDocumentChanged,
                 d->featureBrowser, &FeatureBrowser::setCurrentDocument);
@@ -184,6 +196,11 @@ void UIManager::setStatusMessage(const QString& message, int timeout) {
     }
     
     d->mainWindow->statusBar()->showMessage(message, timeout);
+}
+
+// 添加 getter
+view::CadView* UIManager::cadView() const {
+    return d->cadView;
 }
 
 } // namespace ui

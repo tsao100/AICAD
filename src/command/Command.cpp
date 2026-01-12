@@ -11,7 +11,7 @@
 #include <QDebug>
 
 namespace aicad {
-namespace commands {
+namespace command {
 
 class Command::Private {
 public:
@@ -66,6 +66,16 @@ void Command::cleanup() {
 void Command::cancel() {
     qDebug() << "[Command]" << d->name << "cancelled";
     setState(CommandState::Cancelled);
+}
+
+bool Command::isInteractive() const
+{
+    return false; // 預設：非互動
+}
+
+QString Command::helpText() const
+{
+    return QString();
 }
 
 bool Command::canCancel() const {

@@ -11,10 +11,10 @@
 #include <QDebug>
 
 namespace aicad {
-namespace commands {
+namespace command {
 
 RectangleCommand::RectangleCommand(QObject* parent)
-    : core::Command("rectangle", "繪製矩形", parent)
+    : Command("rectangle", "繪製矩形", parent)
 {
     qDebug() << "[RectangleCommand] Created";
 }
@@ -23,35 +23,26 @@ RectangleCommand::~RectangleCommand() {
     qDebug() << "[RectangleCommand] Destroyed";
 }
 
-core::CommandResult RectangleCommand::execute(const core::CommandContext& context) {
+CommandResult RectangleCommand::execute(const CommandContext& context) {
     qDebug() << "[RectangleCommand] Executing...";
-    
-    Q_EMIT started();
-    
-    commands::CommandResult result;
-    
+
     if (context.args.isEmpty()) {
-        // 交互式模式
-        result = executeInteractive();
+        return executeInteractive();
     } else {
-        // 命令行模式 - 解析坐標
         QVector<double> coords;
         for (const QString& arg : context.args) {
             bool ok;
             double val = arg.toDouble(&ok);
             if (!ok) {
-                return core::CommandResult::Failure(
+                return command::CommandResult::Failure(
                     QString("Invalid coordinate: %1").arg(arg)
-                );
+                    );
             }
             coords.append(val);
         }
-        
-        result = executeWithCoordinates(coords);
+
+        return executeWithCoordinates(coords);
     }
-    
-    Q_EMIT finished(result);
-    return result;
 }
 
 void RectangleCommand::cancel() {
@@ -63,7 +54,7 @@ bool RectangleCommand::isInteractive() const {
     return true;
 }
 
-bool RectangleCommand::validateParameters(const core::CommandContext& context) const {
+bool RectangleCommand::validateParameters(const CommandContext& context) const {
     // 可以沒有參數(交互式模式)
     if (context.args.isEmpty()) {
         return true;
@@ -95,7 +86,7 @@ QString RectangleCommand::helpText() const {
            "  RECTANGLE 0 0 100 50  - 從(0,0)到(100,50)繪製矩形";
 }
 
-core::CommandResult RectangleCommand::executeInteractive() {
+CommandResult RectangleCommand::executeInteractive() {
     qDebug() << "[RectangleCommand] Starting interactive mode";
     
     // TODO: 實作交互式繪製
@@ -103,18 +94,18 @@ core::CommandResult RectangleCommand::executeInteractive() {
     // 2. 提示用戶點擊對角點
     // 3. 創建矩形
     
-    updateProgress(0, "請點擊第一個角點...");
+    updateProgress(0, 100, "請點擊第一個角點...");
     
     // 這裡應該進入事件循環等待用戶輸入
     // 暫時返回等待狀態
     
-    updateProgress(100, "矩形已創建");
-    return core::CommandResult::Success("Rectangle created (interactive mode)");
+    updateProgress(100, 100, "矩形已創建");
+    return command::CommandResult::Success("Rectangle created (interactive mode)");
 }
 
-core::CommandResult RectangleCommand::executeWithCoordinates(const QVector<double>& coords) {
+CommandResult RectangleCommand::executeWithCoordinates(const QVector<double>& coords) {
     if (coords.size() != 4) {
-        return core::CommandResult::Failure("Need exactly 4 coordinates");
+        return command::CommandResult::Failure("Need exactly 4 coordinates");
     }
     
     double x1 = coords[0];
@@ -131,13 +122,13 @@ core::CommandResult RectangleCommand::executeWithCoordinates(const QVector<doubl
     // 2. 在草圖中創建矩形幾何
     // 3. 更新視圖
     
-    bool success = createRectangle(x1, y1, x2, y2);
+    bool success = createRectangle(QVector2D(x1, y1), QVector2D(x2, y2));
     
     if (!success) {
-        return core::CommandResult::Failure("Failed to create rectangle");
+        return command::CommandResult::Failure("Failed to create rectangle");
     }
     
-    updateProgress(100, "矩形已創建");
+    updateProgress(100, 100, "矩形已創建");
     
     double width = qAbs(x2 - x1);
     double height = qAbs(y2 - y1);
@@ -146,10 +137,10 @@ core::CommandResult RectangleCommand::executeWithCoordinates(const QVector<doubl
                       .arg(width)
                       .arg(height);
     
-    return core::CommandResult::Success(msg);
+    return CommandResult::Success(msg);
 }
 
-bool RectangleCommand::createRectangle(double x1, double y1, double x2, double y2) {
+bool RectangleCommand::createRectangle(const QVector2D& corner1, const QVector2D& corner2) {
     // TODO: 實作實際的矩形創建
     // 這裡應該:
     // 1. 獲取 DocumentManager
@@ -162,6 +153,12 @@ bool RectangleCommand::createRectangle(double x1, double y1, double x2, double y
     // 暫時返回 true 表示成功
     return true;
 }
+
+QString RectangleCommand::getUsage() const
+{
+    return "rectangle x1 y1 x2 y2";
+}
+
 
 } // namespace commands
 } // namespace aicad

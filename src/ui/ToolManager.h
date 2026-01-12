@@ -1,7 +1,7 @@
 //  src/ui/ToolbarManager.h
 /**
- * @file ToolbarManager.h
- * @brief ToolbarManager 類別定義
+ * @file ToolManager.h
+ * @brief ToolManager 類別定義
  * @author TODO
  * @date 2026-01-07
  */
@@ -19,12 +19,12 @@ namespace ui {
  * 
  * TODO: 添加類別說明
  */
-class ToolbarManager : public QObject {
+class ToolManager : public QObject {
     Q_OBJECT
     
 public:
-    explicit ToolbarManager(QObject* parent = nullptr);
-    ~ToolbarManager() override;
+    explicit ToolManager(QObject* parent = nullptr);
+    ~ToolManager() override;
     
     // TODO: 添加公開方法
     

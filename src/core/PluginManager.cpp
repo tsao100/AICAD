@@ -1,276 +1,400 @@
 /**
- * @file DocumentManager.cpp
- * @brief DocumentManager 類別實作
+ * @file PluginManager.cpp
+ * @brief 外掛管理器實作
  * @author Jack
  * @date 2024-12-04
  */
 
-#include "DocumentManager.h"
+#include "PluginManager.h"
+#include "Application.h"
+#include "EventBus.h"
 
+#include <QApplication>
 #include <QDebug>
-#include <QVector>
-#include <QPointer>
+#include <QDir>
 #include <QFileInfo>
+#include <QLibrary>
+#include <QPluginLoader>
+#include <QHash>
 
 namespace aicad {
-
-// 前向宣告的樁類別 (暫時用於編譯)
-namespace cad {
-    class Document : public QObject {
-        Q_OBJECT
-    public:
-        explicit Document(QObject* parent = nullptr) : QObject(parent) {}
-        virtual ~Document() {}
-        
-        QString fileName() const { return m_fileName; }
-        void setFileName(const QString& name) { m_fileName = name; }
-        
-        bool isModified() const { return m_modified; }
-        void setModified(bool modified) { m_modified = modified; }
-        
-        bool save(const QString& filePath) { 
-            qDebug() << "[Document] Saving to:" << filePath;
-            return true; 
-        }
-        
-        bool load(const QString& filePath) { 
-            qDebug() << "[Document] Loading from:" << filePath;
-            return true; 
-        }
-        
-    private:
-        QString m_fileName;
-        bool m_modified = false;
-    };
-}
-
 namespace core {
 
-class DocumentManager::Private {
+// Private implementation
+class PluginManager::Private {
 public:
-    QVector<QPointer<cad::Document>> documents;
-    QPointer<cad::Document> currentDocument;
-    int nextDocumentNumber = 1;
+    Private() {}
+
+    ~Private() {
+        // 清理所有外掛
+        for (auto& info : plugins.values()) {
+            if (info.instance && info.initialized) {
+                info.instance->shutdown();
+            }
+            delete info.instance;
+        }
+        plugins.clear();
+    }
+
+    // 外掛名稱 -> 外掛資訊
+    QHash<QString, PluginInfo> plugins;
+
+    // 外掛搜尋路徑
+    QStringList pluginPaths;
 };
 
-DocumentManager::DocumentManager(QObject* parent)
+PluginManager::PluginManager(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[DocumentManager] Created";
+    qDebug() << "[PluginManager] Created";
+
+    // 設定預設外掛路徑
+    d->pluginPaths << "./plugins"
+                   << "./lib/plugins"
+                   << QCoreApplication::applicationDirPath() + "/plugins";
 }
 
-DocumentManager::~DocumentManager() {
-    qDebug() << "[DocumentManager] Destroying...";
-    closeAll(true);
+PluginManager::~PluginManager() {
+    qDebug() << "[PluginManager] Destroying...";
+    shutdownAll();
     delete d;
 }
 
-cad::Document* DocumentManager::createDocument(const QString& name) {
-    QString documentName = name.isEmpty() ? generateUniqueName() : name;
-    
-    qDebug() << "[DocumentManager] Creating document:" << documentName;
-    
-    // 建立新文件 (目前使用樁類別)
-    cad::Document* doc = new cad::Document(this);
-    doc->setFileName(documentName);
-    doc->setObjectName(documentName);
-    
-    // 加入管理列表
-    d->documents.append(doc);
-    
-    // 設為當前文件
-    setCurrentDocument(doc);
-    
-    qDebug() << "[DocumentManager] Document created. Total documents:" << d->documents.size();
-    
-    Q_EMIT documentCreated(documentName);
-    Q_EMIT documentCountChanged(d->documents.size());
-    
-    return doc;
+int PluginManager::loadPluginsFromDirectory(const QString& directory) {
+    qDebug() << "[PluginManager] Loading plugins from:" << directory;
+
+    QDir dir(directory);
+    if (!dir.exists()) {
+        qWarning() << "[PluginManager] Directory does not exist:" << directory;
+        return 0;
+    }
+
+    // 設定過濾器
+    QStringList filters;
+#ifdef Q_OS_WIN
+    filters << "*.dll";
+#elif defined(Q_OS_MAC)
+    filters << "*.dylib";
+#else
+    filters << "*.so";
+#endif
+
+    dir.setNameFilters(filters);
+    dir.setFilter(QDir::Files);
+
+    QFileInfoList files = dir.entryInfoList();
+    int loadedCount = 0;
+
+    for (const QFileInfo& fileInfo : files) {
+        if (loadPlugin(fileInfo.absoluteFilePath())) {
+            loadedCount++;
+        }
+    }
+
+    qDebug() << "[PluginManager] Loaded" << loadedCount
+             << "plugins from" << directory;
+
+    return loadedCount;
 }
 
-cad::Document* DocumentManager::openDocument(const QString& filePath) {
-    if (filePath.isEmpty()) {
-        qWarning() << "[DocumentManager] Cannot open document with empty path";
-        return nullptr;
-    }
-    
+bool PluginManager::loadPlugin(const QString& filePath) {
     QFileInfo fileInfo(filePath);
     if (!fileInfo.exists()) {
-        qWarning() << "[DocumentManager] File does not exist:" << filePath;
-        return nullptr;
-    }
-    
-    qDebug() << "[DocumentManager] Opening document:" << filePath;
-    
-    // 檢查是否已開啟
-    QString fileName = fileInfo.fileName();
-    for (const QPointer<cad::Document>& docPtr : d->documents) {
-        if (!docPtr.isNull() && docPtr->fileName() == fileName) {
-            qDebug() << "[DocumentManager] Document already open:" << fileName;
-            setCurrentDocument(docPtr.data());
-            return docPtr.data();
-        }
-    }
-    
-    // 建立新文件並載入
-    cad::Document* doc = new cad::Document(this);
-    doc->setFileName(fileName);
-    doc->setObjectName(fileName);
-    
-    if (!doc->load(filePath)) {
-        qWarning() << "[DocumentManager] Failed to load document:" << filePath;
-        delete doc;
-        return nullptr;
-    }
-    
-    // 加入管理列表
-    d->documents.append(doc);
-    setCurrentDocument(doc);
-    
-    qDebug() << "[DocumentManager] Document opened. Total documents:" << d->documents.size();
-    
-    Q_EMIT documentOpened(doc);
-    Q_EMIT documentCountChanged(d->documents.size());
-    
-    return doc;
-}
-
-bool DocumentManager::closeDocument(cad::Document* document, bool force) {
-    if (!document) {
+        qWarning() << "[PluginManager] Plugin file does not exist:" << filePath;
         return false;
     }
-    
-    QString docName = document->fileName();
-    qDebug() << "[DocumentManager] Closing document:" << docName << "Force:" << force;
-    
-    // 檢查未儲存變更
-    if (!force && document->isModified()) {
-        qWarning() << "[DocumentManager] Document has unsaved changes:" << docName;
-        // TODO: 實際應用中應該彈出對話框詢問使用者
-        // 這裡暫時允許關閉
+
+    qDebug() << "[PluginManager] Loading plugin:" << fileInfo.fileName();
+
+    // 使用 QPluginLoader 載入
+    QPluginLoader loader(filePath);
+    QObject* pluginObject = loader.instance();
+
+    if (!pluginObject) {
+        QString error = loader.errorString();
+        qWarning() << "[PluginManager] Failed to load plugin:" << error;
+        Q_EMIT pluginError(fileInfo.fileName(), error);
+        return false;
     }
-    
+
+    // 轉換為 IPlugin 介面
+    IPlugin* plugin = qobject_cast<IPlugin*>(pluginObject);
+    if (!plugin) {
+        qWarning() << "[PluginManager] Plugin does not implement IPlugin interface";
+        loader.unload();
+        Q_EMIT pluginError(fileInfo.fileName(), "Invalid plugin interface");
+        return false;
+    }
+
+    // 驗證外掛
+    if (!validatePlugin(plugin)) {
+        qWarning() << "[PluginManager] Plugin validation failed";
+        loader.unload();
+        Q_EMIT pluginError(fileInfo.fileName(), "Plugin validation failed");
+        return false;
+    }
+
+    QString pluginName = plugin->name();
+
+    // 檢查是否已載入
+    if (d->plugins.contains(pluginName)) {
+        qWarning() << "[PluginManager] Plugin already loaded:" << pluginName;
+        loader.unload();
+        return false;
+    }
+
+    // 儲存外掛資訊
+    PluginInfo info;
+    info.name = pluginName;
+    info.version = plugin->version();
+    info.description = plugin->description();
+    info.author = plugin->author();
+    info.filePath = filePath;
+    info.loaded = true;
+    info.initialized = false;
+    info.instance = plugin;
+
+    d->plugins[pluginName] = info;
+
+    qDebug() << "[PluginManager] Plugin loaded:" << pluginName
+             << "Version:" << info.version;
+
+    Q_EMIT pluginLoaded(pluginName);
+    Q_EMIT pluginCountChanged(d->plugins.size());
+
+    return true;
+}
+
+bool PluginManager::unloadPlugin(const QString& name) {
+    if (!d->plugins.contains(name)) {
+        qWarning() << "[PluginManager] Plugin not found:" << name;
+        return false;
+    }
+
+    qDebug() << "[PluginManager] Unloading plugin:" << name;
+
+    PluginInfo& info = d->plugins[name];
+
+    // 先關閉外掛
+    if (info.initialized) {
+        shutdownPlugin(name);
+    }
+
+    // 刪除實例
+    delete info.instance;
+    info.instance = nullptr;
+
     // 從列表中移除
-    for (int i = 0; i < d->documents.size(); ++i) {
-        if (d->documents[i] == document) {
-            d->documents.removeAt(i);
-            break;
-        }
-    }
-    
-    // 如果關閉的是當前文件，切換到其他文件
-    if (d->currentDocument == document) {
-        if (!d->documents.isEmpty()) {
-            setCurrentDocument(d->documents.first());
-        } else {
-            setCurrentDocument(nullptr);
-        }
-    }
-    
-    // 刪除文件
-    document->deleteLater();
-    
-    qDebug() << "[DocumentManager] Document closed. Remaining:" << d->documents.size();
-    
-    Q_EMIT documentClosed(docName);
-    Q_EMIT documentCountChanged(d->documents.size());
-    
+    d->plugins.remove(name);
+
+    qDebug() << "[PluginManager] Plugin unloaded:" << name;
+
+    Q_EMIT pluginUnloaded(name);
+    Q_EMIT pluginCountChanged(d->plugins.size());
+
     return true;
 }
 
-bool DocumentManager::closeAll(bool force) {
-    qDebug() << "[DocumentManager] Closing all documents. Force:" << force;
-    
-    if (!force && hasUnsavedChanges()) {
-        qWarning() << "[DocumentManager] Some documents have unsaved changes";
-        // TODO: 彈出對話框確認
-    }
-    
-    // 複製列表，因為 closeDocument 會修改它
-    QVector<cad::Document*> docsToClose;
-    for (const QPointer<cad::Document>& docPtr : d->documents) {
-        if (!docPtr.isNull()) {
-            docsToClose.append(docPtr.data());
+int PluginManager::initializeAll() {
+    qDebug() << "[PluginManager] Initializing all plugins...";
+
+    int successCount = 0;
+
+    for (auto it = d->plugins.begin(); it != d->plugins.end(); ++it) {
+        if (initializePlugin(it.key())) {
+            successCount++;
         }
     }
-    
-    // 關閉所有文件
-    for (cad::Document* doc : docsToClose) {
-        closeDocument(doc, force);
-    }
-    
-    qDebug() << "[DocumentManager] All documents closed";
-    return true;
+
+    qDebug() << "[PluginManager] Initialized" << successCount
+             << "out of" << d->plugins.size() << "plugins";
+
+    return successCount;
 }
 
-QVector<cad::Document*> DocumentManager::documents() const {
-    QVector<cad::Document*> result;
-    for (const QPointer<cad::Document>& docPtr : d->documents) {
-        if (!docPtr.isNull()) {
-            result.append(docPtr.data());
+bool PluginManager::initializePlugin(const QString& name) {
+    if (!d->plugins.contains(name)) {
+        qWarning() << "[PluginManager] Plugin not found:" << name;
+        return false;
+    }
+
+    PluginInfo& info = d->plugins[name];
+
+    if (info.initialized) {
+        qDebug() << "[PluginManager] Plugin already initialized:" << name;
+        return true;
+    }
+
+    qDebug() << "[PluginManager] Initializing plugin:" << name;
+
+    try {
+        if (!info.instance->initialize()) {
+            qWarning() << "[PluginManager] Plugin initialization failed:" << name;
+            Q_EMIT pluginError(name, "Initialization failed");
+            return false;
         }
+
+        info.initialized = true;
+
+        qDebug() << "[PluginManager] Plugin initialized:" << name;
+
+        Q_EMIT pluginInitialized(name);
+
+        // 透過 EventBus 發布事件
+        if (auto app = Application::instance()) {
+            if (auto bus = app->eventBus()) {
+                QVariantMap data;
+                data["name"] = name;
+                data["version"] = info.version;
+                bus->publish("plugin.initialized", data);
+            }
+        }
+
+        return true;
+
+    } catch (const std::exception& e) {
+        QString error = QString("Exception during initialization: %1").arg(e.what());
+        qCritical() << "[PluginManager]" << error;
+        Q_EMIT pluginError(name, error);
+        return false;
+    } catch (...) {
+        QString error = "Unknown exception during initialization";
+        qCritical() << "[PluginManager]" << error;
+        Q_EMIT pluginError(name, error);
+        return false;
+    }
+}
+
+void PluginManager::shutdownAll() {
+    qDebug() << "[PluginManager] Shutting down all plugins...";
+
+    for (auto it = d->plugins.begin(); it != d->plugins.end(); ++it) {
+        if (it.value().initialized) {
+            shutdownPlugin(it.key());
+        }
+    }
+
+    qDebug() << "[PluginManager] All plugins shut down";
+}
+
+bool PluginManager::shutdownPlugin(const QString& name) {
+    if (!d->plugins.contains(name)) {
+        qWarning() << "[PluginManager] Plugin not found:" << name;
+        return false;
+    }
+
+    PluginInfo& info = d->plugins[name];
+
+    if (!info.initialized) {
+        qDebug() << "[PluginManager] Plugin not initialized:" << name;
+        return true;
+    }
+
+    qDebug() << "[PluginManager] Shutting down plugin:" << name;
+
+    try {
+        info.instance->shutdown();
+        info.initialized = false;
+
+        qDebug() << "[PluginManager] Plugin shut down:" << name;
+
+        Q_EMIT pluginShutdown(name);
+
+        return true;
+
+    } catch (const std::exception& e) {
+        QString error = QString("Exception during shutdown: %1").arg(e.what());
+        qCritical() << "[PluginManager]" << error;
+        Q_EMIT pluginError(name, error);
+        return false;
+    } catch (...) {
+        QString error = "Unknown exception during shutdown";
+        qCritical() << "[PluginManager]" << error;
+        Q_EMIT pluginError(name, error);
+        return false;
+    }
+}
+
+IPlugin* PluginManager::getPlugin(const QString& name) const {
+    if (!d->plugins.contains(name)) {
+        return nullptr;
+    }
+
+    return d->plugins[name].instance;
+}
+
+QVector<PluginInfo> PluginManager::getAllPlugins() const {
+    QVector<PluginInfo> result;
+    for (const PluginInfo& info : d->plugins.values()) {
+        result.append(info);
     }
     return result;
 }
 
-int DocumentManager::documentCount() const {
-    // 只計算有效的文件
-    int count = 0;
-    for (const QPointer<cad::Document>& docPtr : d->documents) {
-        if (!docPtr.isNull()) {
-            count++;
-        }
+PluginInfo PluginManager::getPluginInfo(const QString& name) const {
+    if (d->plugins.contains(name)) {
+        return d->plugins[name];
     }
-    return count;
+    return PluginInfo();
 }
 
-void DocumentManager::setCurrentDocument(cad::Document* document) {
-    if (d->currentDocument == document) {
-        return;
+int PluginManager::pluginCount() const {
+    return d->plugins.size();
+}
+
+bool PluginManager::hasPlugin(const QString& name) const {
+    return d->plugins.contains(name);
+}
+
+bool PluginManager::isPluginLoaded(const QString& name) const {
+    if (!d->plugins.contains(name)) {
+        return false;
     }
-    
-    d->currentDocument = document;
-    
-    QString docName = document ? document->fileName() : "None";
-    qDebug() << "[DocumentManager] Current document changed to:" << docName;
-    
-    Q_EMIT currentDocumentChanged(document);
+    return d->plugins[name].loaded;
 }
 
-cad::Document* DocumentManager::currentDocument() const {
-    return d->currentDocument.data();
-}
-
-cad::Document* DocumentManager::findDocument(const QString& name) const {
-    for (const QPointer<cad::Document>& docPtr : d->documents) {
-        if (!docPtr.isNull() && docPtr->fileName() == name) {
-            return docPtr.data();
-        }
+bool PluginManager::isPluginInitialized(const QString& name) const {
+    if (!d->plugins.contains(name)) {
+        return false;
     }
-    return nullptr;
+    return d->plugins[name].initialized;
 }
 
-bool DocumentManager::hasUnsavedChanges() const {
-    for (const QPointer<cad::Document>& docPtr : d->documents) {
-        if (!docPtr.isNull() && docPtr->isModified()) {
-            return true;
-        }
+void PluginManager::setPluginPaths(const QStringList& paths) {
+    d->pluginPaths = paths;
+    qDebug() << "[PluginManager] Plugin paths set:" << paths;
+}
+
+QStringList PluginManager::pluginPaths() const {
+    return d->pluginPaths;
+}
+
+void PluginManager::addPluginPath(const QString& path) {
+    if (!d->pluginPaths.contains(path)) {
+        d->pluginPaths.append(path);
+        qDebug() << "[PluginManager] Added plugin path:" << path;
     }
-    return false;
 }
 
-QString DocumentManager::generateUniqueName() {
-    QString name;
-    do {
-        name = QString("Untitled_%1").arg(d->nextDocumentNumber++);
-    } while (findDocument(name) != nullptr);
-    
-    return name;
+bool PluginManager::validatePlugin(IPlugin* plugin) const {
+    if (!plugin) {
+        return false;
+    }
+
+    // 檢查基本資訊
+    if (plugin->name().isEmpty()) {
+        qWarning() << "[PluginManager] Plugin has no name";
+        return false;
+    }
+
+    if (plugin->version().isEmpty()) {
+        qWarning() << "[PluginManager] Plugin has no version";
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace core
 } // namespace aicad
-
-#include "DocumentManager.moc"

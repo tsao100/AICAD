@@ -14,7 +14,22 @@
 #include <QString>
 
 namespace aicad {
-namespace commands {
+namespace command {
+
+// 前向聲明
+struct CommandContext;
+struct CommandResult;
+
+/**
+ * @brief 命令狀態
+ */
+enum class CommandState {
+    Ready,
+    Running,
+    Completed,
+    Failed,
+    Cancelled
+};
 
 /**
  * @brief 命令基類
@@ -65,15 +80,19 @@ public:
      * 
      * 對於交互式命令,可以實作此方法來處理取消操作
      */
+    virtual bool initialize();
+    virtual void cleanup();
     virtual void cancel();
-    
+    virtual bool canCancel() const;
+
     /**
      * @brief 驗證參數
      * @param context 命令上下文
      * @return 參數是否有效
      */
     virtual bool validateParameters(const CommandContext& context) const;
-    
+    virtual QString getUsage() const;
+
     /**
      * @brief 獲取命令名稱
      */
@@ -83,6 +102,7 @@ public:
      * @brief 獲取命令描述
      */
     QString description() const;
+    CommandState state() const;
     
     /**
      * @brief 設置命令描述
@@ -122,12 +142,20 @@ Q_SIGNALS:
      * @param message 進度消息
      */
     void progressChanged(int progress, const QString& message);
+
+    void stateChanged(CommandState state);
+    void messageOutput(const QString& message);
+    void progressUpdated(int current, int total, const QString& message);
+
     
 protected:
+    void setState(CommandState state);
+    void outputMessage(const QString& message);
+
     /**
      * @brief 發出進度更新信號
      */
-    void updateProgress(int progress, const QString& message = QString());
+    void updateProgress(int current, int total, const QString& message);
     
 private:
     class Private;

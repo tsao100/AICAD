@@ -144,9 +144,13 @@ SOURCES += \
     src/cad/Document.cpp \
     src/cad/Feature.cpp \
     src/cad/Sketch.cpp \
-    #src/cad/SketchEntity.cpp \
+    src/cad/SketchEntity.cpp \
     src/cad/Extrude.cpp \
-    #src/cad/FeatureTree.cpp \
+    src/cad/FeatureTree.cpp \
+    src/cad/Plane.cpp \
+    \
+    # Geometry Module                # ✅ 添加整個 geometry 模組
+    src/geometry/GeometryBuilder.cpp \
     \
     # UI Module (James - 用戶界面)
     src/ui/MainWindow.cpp \
@@ -166,16 +170,13 @@ SOURCES += \
     src/command/CommandManager.cpp \
     src/command/Command.cpp \
     src/command/RectangleCommand.cpp \
-    #src/command/LineCommand.cpp \
-    #src/command/CircleCommand.cpp \
+    src/command/LineCommand.cpp \
+    src/command/CircleCommand.cpp \
     \
     # Scripting Module (Daney - 腳本系統)
     src/scripting/LispEngine.cpp \
     src/scripting/LispBindings.cpp \
-    #src/scripting/ScriptManager.cpp \
-    \
-    # Legacy files (逐步遷移中)
-    src/OcafDocument.cpp
+    src/scripting/ScriptManager.cpp
 
 HEADERS += \
     # Core Module
@@ -189,9 +190,13 @@ HEADERS += \
     src/cad/Document.h \
     src/cad/Feature.h \
     src/cad/Sketch.h \
-    #src/cad/SketchEntity.h \
+    src/cad/SketchEntity.h \
     src/cad/Extrude.h \
-    #src/cad/FeatureTree.h \
+    src/cad/FeatureTree.h \
+    src/cad/Plane.h \                # ✅ 添加
+    \
+    # Geometry Module                # ✅ 添加
+    src/geometry/GeometryBuilder.h \
     \
     # UI Module (James)
     src/ui/MainWindow.h \
@@ -212,16 +217,13 @@ HEADERS += \
     src/command/Command.h \
     src/command/RectangleCommand.h \
     src/command/CommandTypes.h \
-    #src/command/LineCommand.h \
-    #src/command/CircleCommand.h \
+    src/command/LineCommand.h \
+    src/command/CircleCommand.h \
     \
     # Scripting Module (Daney)
     src/scripting/LispEngine.h \
     src/scripting/LispBindings.h \
-    #src/scripting/ScriptManager.h \
-    \
-    # Legacy files
-    src/OcafDocument.h
+    src/scripting/ScriptManager.h
 
 RESOURCES += \
     resources.qrc

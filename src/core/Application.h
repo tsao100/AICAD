@@ -16,6 +16,21 @@ namespace aicad {
 namespace cad {
 class Document;
 }
+namespace ui {
+class UIManager;
+}
+
+namespace view {
+class ViewManager;
+}
+
+namespace scripting {
+class LispEngine;
+}
+
+namespace command {
+class CommandManager;
+}
 }
 
 namespace aicad {
@@ -63,7 +78,10 @@ public:
      * - 註冊預設模組
      */
     bool initialize();
-    
+
+    void connectDocumentManagerSignals();
+    void registerDefaultCommands();
+
     /**
      * @brief 關閉應用程式並釋放資源
      * 
@@ -79,6 +97,11 @@ public:
      * @return DocumentManager 指標，未初始化則為 nullptr
      */
     DocumentManager* documentManager() const;
+
+    ui::UIManager* uiManager() const;
+    view::ViewManager* viewManager() const;
+    scripting::LispEngine* lispEngine() const;
+    command::CommandManager* commandManager() const;
     
     /**
      * @brief 取得事件總線
