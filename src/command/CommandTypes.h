@@ -14,7 +14,7 @@
 #include <QMap>
 
 namespace aicad {
-namespace core {
+namespace command {
 
 /**
  * @brief 命令參數結構

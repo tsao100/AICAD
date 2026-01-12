@@ -14,7 +14,7 @@
 #include <QString>
 
 namespace aicad {
-namespace core {
+namespace command {
 
 // 前向聲明
 struct CommandContext;
@@ -80,6 +80,8 @@ public:
      * 
      * 對於交互式命令,可以實作此方法來處理取消操作
      */
+    virtual bool initialize();
+    virtual void cleanup();
     virtual void cancel();
     virtual bool canCancel() const;
 
@@ -153,7 +155,7 @@ protected:
     /**
      * @brief 發出進度更新信號
      */
-    void updateProgress(int progress, const QString& message = QString());
+    void updateProgress(int current, int total, const QString& message);
     
 private:
     class Private;

@@ -15,6 +15,7 @@
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
+#include "cad/Document.h"
 
 #include <QDebug>
 
@@ -123,12 +124,14 @@ bool UIManager::initialize() {
                 updateFeatureTree();
             });
         
-        // 6. 連接 DocumentManager 信號
+        // 7. 連接 DocumentManager 信號
         connect(docMgr, &core::DocumentManager::documentCreated,
-                this, [this](const QString& name) {
-            qDebug() << "[UIManager] DocumentManager created document:" << name;
-            setStatusMessage(QString("Document created: %1").arg(name), 3000);
-        });
+                this, [this](cad::Document* doc) {
+            if (doc) {
+                QString name = doc->fileName();
+                qDebug() << "[UIManager] DocumentManager created document:" << name;
+                setStatusMessage(QString("Document created: %1").arg(name), 3000);
+            }});
         
         connect(docMgr, &core::DocumentManager::currentDocumentChanged,
                 d->featureBrowser, &FeatureBrowser::setCurrentDocument);

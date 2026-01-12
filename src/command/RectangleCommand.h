@@ -12,7 +12,7 @@
 #include <QVector2D>
 
 namespace aicad {
-namespace commands {
+namespace command {
 
 /**
  * @brief 矩形繪製命令
@@ -26,7 +26,7 @@ namespace commands {
  * rectangle 0 0 100 50
  * @endcode
  */
-class RectangleCommand : public core::Command {
+class RectangleCommand : public Command {
     Q_OBJECT
     
 public:
@@ -43,14 +43,14 @@ public:
     /**
      * @brief 執行命令
      */
-    core::CommandResult execute(const core::CommandContext& context) override;
+    CommandResult execute(const command::CommandContext& context) override;
     void cancel() override;
     bool isInteractive() const override;
 
     /**
      * @brief 驗證參數
      */
-    bool validateParameters(const core::CommandContext& context) const override;    
+    bool validateParameters(const command::CommandContext& context) const override;
     QString helpText() const override;
 
     /**
@@ -62,12 +62,12 @@ private:
     /**
      * @brief 互動模式：透過點擊取得點
      */
-    core::CommandResult executeInteractive();
+    CommandResult executeInteractive();
     
     /**
      * @brief 命令列模式：從參數建立矩形
      */
-    core::CommandResult executeWithCoordinates(const QVector<double>& coords);
+    CommandResult executeWithCoordinates(const QVector<double>& coords);
     
     /**
      * @brief 建立矩形幾何

@@ -11,7 +11,7 @@
 namespace aicad {
 namespace ui {
 
-class ToolbarManager::Private {
+class ToolManager::Private {
 public:
     Private() {
         // TODO: 初始化成員
@@ -24,16 +24,16 @@ public:
     // TODO: 添加私有成員變數
 };
 
-ToolbarManager::ToolbarManager(QObject* parent)
+ToolManager::ToolManager(QObject* parent)
     : QObject(parent)
     , d(new Private())
 {
-    qDebug() << "[ToolbarManager] Created";
+    qDebug() << "[ToolManager] Created";
     // TODO: 實作建構子
 }
 
-ToolbarManager::~ToolbarManager() {
-    qDebug() << "[ToolbarManager] Destroyed";
+ToolManager::~ToolManager() {
+    qDebug() << "[ToolManager] Destroyed";
     delete d;
 }
 

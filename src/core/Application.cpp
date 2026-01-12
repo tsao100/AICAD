@@ -10,9 +10,11 @@
 #include "DocumentManager.h"
 #include "cad/Document.h"
 #include "command/CommandManager.h"
+#include "command/RectangleCommand.h"
 #include "ui/UIManager.h"
 #include "view/ViewManager.h"
 #include "scripting/LispEngine.h"
+#include "scripting/LispBindings.h"
 
 #include <QDebug>
 #include <QMutex>
@@ -219,7 +221,7 @@ void Application::registerDefaultCommands() {
 
     // 註冊矩形命令
     d->commandManager->registerCommand("rectangle", {"rect"},
-                                       []() { return new commands::RectangleCommand(); });
+                                       []() { return new command::RectangleCommand(); });
 
     // 註冊直線命令 (待實作)
     // d->commandManager->registerCommand("line", {"l"},

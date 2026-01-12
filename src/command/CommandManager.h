@@ -17,46 +17,13 @@
 #include <QVariant>  // 提供 QVariant 類型
 #include <functional>
 
+#include "CommandTypes.h"
+
 namespace aicad {
 namespace command {
 
 // 前向宣告
 class Command;
-
-/**
- * @brief 命令參數結構
- */
-struct CommandContext {
-    QStringList args;           // 命令參數
-    QObject* sender;            // 命令發送者
-    QVariantMap data;           // 額外數據
-    bool interactive;           // 是否為互動模式
-    
-    CommandContext() 
-        : sender(nullptr)
-        , interactive(false) 
-    {}
-};
-
-/**
- * @brief 命令執行結果
- */
-struct CommandResult {
-    bool success;
-    QString message;
-    QVariant data;
-    
-    CommandResult(bool s = true, const QString& msg = QString())
-        : success(s), message(msg) {}
-    
-    static CommandResult Success(const QString& msg = QString()) {
-        return CommandResult(true, msg);
-    }
-    
-    static CommandResult Failure(const QString& msg) {
-        return CommandResult(false, msg);
-    }
-};
 
 /**
  * @brief 命令管理器

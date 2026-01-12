@@ -18,6 +18,7 @@
 #include <GC_MakeArcOfCircle.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <ElCLib.hxx>
 
 namespace aicad {
 namespace view {
@@ -305,7 +306,7 @@ void RubberBand::updateCircle() {
     
     for (int i = 0; i <= numSegments; ++i) {
         double angle = 2.0 * M_PI * i / numSegments;
-        gp_Pnt pt = circle.Value(angle);
+        gp_Pnt pt = ElCLib::Value(angle, circle);
         polyline->AddVertex(pt);
     }
     
