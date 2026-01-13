@@ -19,6 +19,7 @@
 #include <Geom_TrimmedCurve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <ElCLib.hxx>
+#include <Graphic3d_DisplayPriority.hxx>
 
 namespace aicad {
 namespace view {
@@ -203,7 +204,7 @@ void RubberBand::updateLine() {
     group->AddPrimitiveArray(polyline);
     
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
-    d->presentation->SetDisplayPriority(10);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
 }
 
@@ -242,7 +243,7 @@ void RubberBand::updateRectangle() {
     group->AddPrimitiveArray(polyline);
     
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
-    d->presentation->SetDisplayPriority(10);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
 }
 
@@ -277,7 +278,7 @@ void RubberBand::updatePolyline() {
     group->AddPrimitiveArray(polyline);
     
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
-    d->presentation->SetDisplayPriority(10);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
 }
 
@@ -324,7 +325,7 @@ void RubberBand::updateCircle() {
     group->AddPrimitiveArray(polyline);
     
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
-    d->presentation->SetDisplayPriority(10);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
 }
 
@@ -374,7 +375,7 @@ void RubberBand::updateArc() {
             group->AddPrimitiveArray(polyline);
             
             d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
-            d->presentation->SetDisplayPriority(10);
+            d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
             d->presentation->Display();
         }
     } catch (...) {

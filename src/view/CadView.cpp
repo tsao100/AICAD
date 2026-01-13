@@ -25,6 +25,7 @@
 #include <gp_Dir.hxx>
 #include <IntAna_IntConicQuad.hxx>
 #include <Precision.hxx>
+#include <AIS_SelectionScheme.hxx>
 
 #ifdef _WIN32
 #include <WNT_Window.hxx>
@@ -484,7 +485,7 @@ void CadView::handleObjectSelection(const QPoint& screenPos) {
     qtToOCCT(screenPos, xp, yp);
     
     d->context->MoveTo(xp, yp, d->view, Standard_True);
-    d->context->Select(Standard_True);
+    d->context->SelectDetected(AIS_SelectionScheme_Replace);
     
     if (d->context->HasDetected()) {
         Handle(AIS_InteractiveObject) picked = d->context->DetectedInteractive();
@@ -546,7 +547,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 handlePointInput(event->pos());
                 break;
             case InteractionMode::Selecting:
-                d->context->Select(Standard_True);
+                d->context->SelectDetected(AIS_SelectionScheme_Replace);
                 handleObjectSelection(event->pos());
                 break;
             default:
