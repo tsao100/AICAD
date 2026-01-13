@@ -23,6 +23,11 @@ namespace view {
     class CadView;
 }
 
+namespace core {
+    class MenuParser;
+}
+
+
 
 namespace ui {
 
@@ -66,7 +71,7 @@ public:
      * @brief 初始化 UI 系統
      * @return 成功回傳 true
      */
-    bool initialize();
+    bool initialize(core::MenuParser* menuParser);
     
     /**
      * @brief 顯示主視窗
@@ -109,6 +114,14 @@ public:
      */
     void setStatusMessage(const QString& message, int timeout = 0);
     view::CadView* cadView() const;
+
+    void setupMenusFromParser();
+    void setupToolbarsFromParser();
+    void executeCommand(const QString& commandId);
+    void setupDefaultUI();
+    void onNewDocument();
+    void onOpenDocument();
+    void onSaveDocument();
 
 Q_SIGNALS:
     /**

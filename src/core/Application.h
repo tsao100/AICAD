@@ -38,6 +38,8 @@ namespace core {
 
 class EventBus;
 class DocumentManager;
+class MenuParser;
+
 
 /**
  * @brief 應用程式單例，管理全域資源和模組生命週期
@@ -108,6 +110,8 @@ public:
      * @return EventBus 指標，未初始化則為 nullptr
      */
     EventBus* eventBus() const;
+
+    MenuParser* menuParser() const;
     
     /**
      * @brief 檢查應用程式是否已初始化
@@ -123,6 +127,8 @@ public:
      * @brief 取得應用程式名稱
      */
     QString applicationName() const;
+
+    void registerCommandsFromMenu();
 
 Q_SIGNALS:
     /**

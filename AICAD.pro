@@ -139,6 +139,7 @@ SOURCES += \
     src/core/DocumentManager.cpp \
     src/core/PluginManager.cpp \
     src/core/Settings.cpp \
+    src/core/MenuParser.cpp \
     \
     # CAD Module (Ben - CAD引擎)
     src/cad/Document.cpp \
@@ -172,6 +173,7 @@ SOURCES += \
     src/command/RectangleCommand.cpp \
     src/command/LineCommand.cpp \
     src/command/CircleCommand.cpp \
+    src/command/BasicCommands.cpp \
     \
     # Scripting Module (Daney - 腳本系統)
     src/scripting/LispEngine.cpp \
@@ -185,6 +187,7 @@ HEADERS += \
     src/core/DocumentManager.h \
     src/core/PluginManager.h \
     src/core/Settings.h \
+    src/core/MenuParser.h \
     \
     # CAD Module (Ben)
     src/cad/Document.h \
@@ -219,6 +222,7 @@ HEADERS += \
     src/command/CommandTypes.h \
     src/command/LineCommand.h \
     src/command/CircleCommand.h \
+    src/command/CommandFactory.h \
     \
     # Scripting Module (Daney)
     src/scripting/LispEngine.h \

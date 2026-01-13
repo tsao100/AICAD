@@ -8,14 +8,18 @@
 #include "Application.h"
 #include "EventBus.h"
 #include "DocumentManager.h"
+#include "MenuParser.h"
 #include "cad/Document.h"
 #include "command/CommandManager.h"
 #include "command/RectangleCommand.h"
+#include "command/CommandFactory.h"
 #include "ui/UIManager.h"
 #include "view/ViewManager.h"
 #include "scripting/LispEngine.h"
 #include "scripting/LispBindings.h"
 
+#include <QApplication>
+#include <QFile>
 #include <QDebug>
 #include <QMutex>
 #include <QMutexLocker>
@@ -34,6 +38,7 @@ public:
         , uiManager(nullptr)
         , viewManager(nullptr)
         , lispEngine(nullptr)
+        , menuParser(nullptr)
     {
     }
     
@@ -43,6 +48,7 @@ public:
         delete uiManager;
         delete commandManager;
         delete documentManager;
+        delete menuParser;
         delete eventBus;
     }
     
@@ -53,6 +59,7 @@ public:
     ui::UIManager* uiManager;
     view::ViewManager* viewManager;
     scripting::LispEngine* lispEngine;
+    MenuParser* menuParser;
 
     static const QString VERSION;
     static const QString APP_NAME;
@@ -105,6 +112,34 @@ bool Application::initialize() {
             return false;
         }
 
+        // 2. 建立 MenuParser (早期載入)
+        qDebug() << "[Application] Creating MenuParser...";
+        d->menuParser = new MenuParser(this);
+
+        // 嘗試載入 menu.txt (從多個可能的位置)
+        QStringList searchPaths = {
+            "menu.txt",              // 當前目錄
+            "../menu.txt",           // 上層目錄
+            "../../menu.txt",        // 原始碼目錄
+            QCoreApplication::applicationDirPath() + "/menu.txt"
+        };
+
+        bool menuLoaded = false;
+        for (const QString& path : searchPaths) {
+            if (QFile::exists(path)) {
+                qDebug() << "[Application] Found menu.txt at:" << path;
+                if (d->menuParser->load(path)) {
+                    menuLoaded = true;
+                    break;
+                }
+            }
+        }
+
+        if (!menuLoaded) {
+            qWarning() << "[Application] menu.txt not found or failed to load";
+            // 非致命錯誤,繼續初始化
+        }
+
         // 2. 建立文件管理器
         qDebug() << "[Application] Creating DocumentManager...";
         d->documentManager = new DocumentManager(this);
@@ -138,8 +173,14 @@ bool Application::initialize() {
         }
 
         // 6. 初始化 UI 系統
-        qDebug() << "[Application] Initializing UI system...";
-        if (!d->uiManager->initialize()) {
+        // qDebug() << "[Application] Initializing UI system...";
+        // if (!d->uiManager->initialize()) {
+        //     Q_EMIT errorOccurred("Failed to initialize UI system");
+        //     return false;
+        // }
+
+        // 傳遞 MenuParser 給 UIManager
+        if (!d->uiManager->initialize(d->menuParser)) {
             Q_EMIT errorOccurred("Failed to initialize UI system");
             return false;
         }
@@ -168,8 +209,13 @@ bool Application::initialize() {
         // 10. 連接文件管理器信號
         connectDocumentManagerSignals();
 
-        // 11. 註冊預設命令
-        registerDefaultCommands();
+        // 10. 從 menu.txt 註冊命令
+        if (menuLoaded) {
+            registerCommandsFromMenu();
+        } else {
+            // 回退到註冊預設命令
+            registerDefaultCommands();
+        }
 
         d->initialized = true;
         qDebug() << "[Application] Initialization completed successfully";
@@ -319,6 +365,39 @@ QString Application::version() const {
 
 QString Application::applicationName() const {
     return d->APP_NAME;
+}
+
+// 新增方法:
+void Application::registerCommandsFromMenu() {
+    if (!d->menuParser || !d->menuParser->isLoaded()) {
+        return;
+    }
+
+    qDebug() << "[Application] Registering commands from menu.txt...";
+
+    auto commands = d->menuParser->getAllCommands();
+
+    for (const CommandDef& cmdDef : commands) {
+        // 根據命令 ID 建立對應的 Command 物件
+        // 這裡需要一個工廠函式來映射 ID 到實際的 Command 類別
+
+        d->commandManager->registerCommand(
+            cmdDef.id,
+            cmdDef.aliases,
+            [cmdDef]() -> command::Command* {
+                // 根據 ID 建立對應的命令
+                // TODO: 實作命令工廠
+                return command::CommandFactory::create(cmdDef.id);
+            }
+            );
+    }
+
+    qDebug() << "[Application] Registered" << commands.size() << "commands";
+}
+
+// 新增 getter:
+MenuParser* Application::menuParser() const {
+    return d->menuParser;
 }
 
 } // namespace core
