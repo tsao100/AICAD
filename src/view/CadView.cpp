@@ -74,7 +74,7 @@ public:
     QPoint lastMousePos;
     bool mousePressed;
     Qt::MouseButton pressedButton;
-    
+
     Private()
         : document(nullptr)
         , rubberBand(nullptr)
@@ -184,7 +184,12 @@ void CadView::initializeViewer() {
         if (!d->view.IsNull()) {
             d->view->MustBeResized();
             d->view->Redraw();
+
+            // ✅ 設定視圖已初始化並發出信號
             d->viewInitialized = true;
+            qDebug() << "[CadView] View initialized, emitting signal";
+            // 發出視圖就緒信號
+            Q_EMIT viewInitialized();
         }
     });
     
@@ -204,6 +209,11 @@ void CadView::initializeViewer() {
     }
     
     qDebug() << "[CadView] OCCT viewer initialized";
+}
+
+// ✅ 新增：檢查視圖是否已初始化的方法
+bool CadView::isViewInitialized() const {
+    return d->viewInitialized;
 }
 
 void CadView::setDocument(cad::Document* document) {

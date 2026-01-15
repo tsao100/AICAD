@@ -167,6 +167,13 @@ public:
      * @brief 檢查網格是否啟用
      */
     bool isGridEnabled() const;
+
+    // ✅ 新增：檢查視圖是否已初始化
+    /**
+     * @brief 檢查視圖是否已完成初始化
+     * @return 已初始化回傳 true
+     */
+    bool isViewInitialized() const;
     
 public Q_SLOTS:
     /**
@@ -231,6 +238,15 @@ Q_SIGNALS:
      * @param button 滑鼠按鈕
      */
     void viewClicked(QPoint screenPos, Qt::MouseButton button);
+
+    // ✅ 新增：視圖初始化完成信號
+    /**
+     * @brief 視圖初始化完成時發出
+     *
+     * 當 OCCT 視圖完全準備好可以顯示內容時發出此信號。
+     * UIManager 可以監聽此信號來初始化參考幾何。
+     */
+    void viewInitialized();
     
 protected:
     /**

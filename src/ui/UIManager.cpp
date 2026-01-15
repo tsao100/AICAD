@@ -23,6 +23,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QToolBar>
+#include <QTimer>
 #include <QDebug>
 
 namespace aicad {
@@ -120,6 +121,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->cadView = new view::CadView(d->mainWindow);
         d->mainWindow->setCentralWidget(d->cadView);
 
+        // ✅ 6. 連接視圖就緒信號，延遲初始化參考幾何
+        connect(d->cadView, &view::CadView::viewInitialized,
+                this, &UIManager::onViewReady);
+
         // 6. 連接事件總線
         qDebug() << "[UIManager] Connecting to EventBus...";
         
@@ -128,6 +133,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             [this](const QVariant& data) {
                 qDebug() << "[UIManager] Document created:" << data.toString();
                 updateFeatureTree();
+                // ✅ 新文件建立時也初始化參考幾何
+                onDocumentCreated();
             });
         
         bus->subscribe(core::Events::DOCUMENT_CLOSED, this,
@@ -366,6 +373,107 @@ void UIManager::onOpenDocument() {
 
 void UIManager::onSaveDocument() {
     executeCommand("save");
+}
+
+// ✅ 新增：視圖就緒時的處理
+void UIManager::onViewReady() {
+    qDebug() << "[UIManager] CadView is ready, initializing reference geometry...";
+
+    // 視圖已經就緒，現在可以初始化參考幾何了
+    core::Application* app = core::Application::instance();
+    core::DocumentManager* docMgr = app->documentManager();
+    cad::Document* doc = docMgr->currentDocument();
+
+    if (doc) {
+        initializeReferenceGeometry();
+
+        // 設定初始視圖
+        if (d->cadView) {
+            d->cadView->setViewType(view::ViewType::Isometric);
+
+            // 延遲一下再執行 fitAll，確保幾何已經顯示
+            QTimer::singleShot(100, [this]() {
+                if (d->cadView) {
+                    d->cadView->fitAll();
+                    qDebug() << "[UIManager] Initial view set to Isometric and fitted";
+                }
+            });
+        }
+    } else {
+        qWarning() << "[UIManager] No document available for reference geometry initialization";
+    }
+}
+
+// ✅ 新增：初始化參考幾何的方法
+void UIManager::initializeReferenceGeometry() {
+    if (!d->cadView) {
+        qWarning() << "[UIManager] Cannot initialize reference geometry: no CadView";
+        return;
+    }
+
+    // 取得 AIS 上下文
+    Handle(AIS_InteractiveContext) context = d->cadView->context();
+    if (context.IsNull()) {
+        qWarning() << "[UIManager] Cannot initialize reference geometry: no AIS context";
+        return;
+    }
+
+    // 取得當前文件
+    core::Application* app = core::Application::instance();
+    core::DocumentManager* docMgr = app->documentManager();
+    cad::Document* doc = docMgr->currentDocument();
+
+    if (!doc) {
+        qDebug() << "[UIManager] No current document, skipping reference geometry";
+        return;
+    }
+
+    // 初始化文件的參考幾何
+    doc->initializeReferenceGeometry(context);
+
+    // 刷新視圖
+    d->cadView->refreshView();
+
+    qDebug() << "[UIManager] Reference geometry initialized for document:"
+             << doc->fileName();
+}
+
+// ✅ 新增：文件建立時的處理
+void UIManager::onDocumentCreated() {
+    qDebug() << "[UIManager] Handling document creation...";
+
+    // 如果視圖已經就緒，立即初始化參考幾何
+    if (d->cadView && d->cadView->isViewInitialized()) {
+        initializeReferenceGeometry();
+
+        // 設定視圖
+        if (d->cadView) {
+            d->cadView->setViewType(view::ViewType::Isometric);
+            QTimer::singleShot(100, [this]() {
+                if (d->cadView) {
+                    d->cadView->fitAll();
+                }
+            });
+        }
+    }
+    // 否則等待 viewInitialized 信號
+}
+
+// ✅ 當前文件改變時的處理
+void UIManager::onCurrentDocumentChanged(cad::Document* doc) {
+    qDebug() << "[UIManager] Current document changed:"
+             << (doc ? doc->fileName() : "null");
+
+    if (doc && d->cadView && d->cadView->isViewInitialized()) {
+        // 為新的當前文件初始化參考幾何（如果還沒有）
+        if (doc->referenceGeometries().isEmpty()) {
+            initializeReferenceGeometry();
+        }
+
+        // 刷新視圖
+        d->cadView->refreshView();
+        d->cadView->fitAll();
+    }
 }
 
 } // namespace ui

@@ -12,6 +12,7 @@
 #include <QString>
 #include <QList>
 #include <TDocStd_Document.hxx>
+#include <AIS_InteractiveObject.hxx>
 
 namespace aicad {
 namespace cad {
@@ -19,6 +20,36 @@ namespace cad {
 class Feature;
 class Sketch;
 class Extrude;
+
+/**
+ * @brief 參考幾何類型
+ */
+enum class ReferenceGeometryType {
+    Origin,         ///< 原點
+    XAxis,          ///< X 軸
+    YAxis,          ///< Y 軸
+    ZAxis,          ///< Z 軸
+    XYPlane,        ///< XY 平面
+    XZPlane,        ///< XZ 平面
+    YZPlane         ///< YZ 平面
+};
+
+/**
+ * @brief 參考幾何資訊
+ */
+struct ReferenceGeometry {
+    ReferenceGeometryType type;
+    QString name;
+    Handle(AIS_InteractiveObject) aisObject;
+    bool visible;
+    bool selectable;
+
+    ReferenceGeometry()
+        : type(ReferenceGeometryType::Origin)
+        , visible(true)
+        , selectable(true)
+    {}
+};
 
 /**
  * @brief CAD 文件
@@ -157,7 +188,49 @@ public:
      * @brief 將資料同步到 OCAF 文件
      */
     void syncToOCAF();
-    
+
+    // ✅ 新增：參考幾何管理
+    /**
+     * @brief 初始化參考幾何（原點、軸、平面）
+     * @param context AIS 上下文（用於顯示）
+     */
+    void initializeReferenceGeometry(const Handle(AIS_InteractiveContext)& context);
+
+    /**
+     * @brief 取得參考幾何列表
+     */
+    QList<ReferenceGeometry> referenceGeometries() const { return m_referenceGeometries; }
+
+    /**
+     * @brief 取得特定類型的參考幾何
+     */
+    ReferenceGeometry* getReferenceGeometry(ReferenceGeometryType type);
+
+    /**
+     * @brief 設定參考幾何的可見性
+     */
+    void setReferenceGeometryVisible(ReferenceGeometryType type, bool visible);
+
+    /**
+     * @brief 設定參考幾何的可選擇性
+     */
+    void setReferenceGeometrySelectable(ReferenceGeometryType type, bool selectable);
+
+    /**
+     * @brief 顯示所有參考幾何
+     */
+    void showAllReferenceGeometry();
+
+    /**
+     * @brief 隱藏所有參考幾何
+     */
+    void hideAllReferenceGeometry();
+
+    /**
+     * @brief 取得 AIS 上下文
+     */
+    Handle(AIS_InteractiveContext) aisContext() const { return m_aisContext; }
+
     // 復原/重做（未來實作）
     // bool canUndo() const;
     // bool canRedo() const;
@@ -210,6 +283,10 @@ Q_SIGNALS:
      */
     void rebuildFinished(bool success);
 
+    // ✅ 新增：參考幾何信號
+    void referenceGeometryInitialized();
+    void referenceGeometryVisibilityChanged(ReferenceGeometryType type, bool visible);
+
 private Q_SLOTS:
     /**
      * @brief 處理特徵重建請求
@@ -232,6 +309,11 @@ private:
      */
     void clearFeatures();
 
+    // ✅ 新增：建立參考幾何的內部方法
+    void createOriginPoint();
+    void createAxes();
+    void createReferencePlanes();
+
 private:
     QString m_fileName;                      ///< 檔案名稱
     bool m_modified;                         ///< 修改標記
@@ -241,6 +323,11 @@ private:
     Handle(TDocStd_Document) m_ocafDoc;      ///< OCAF 文件
     
     int m_nextFeatureNumber;                 ///< 下一個特徵編號（用於自動命名）
+
+    // ✅ 新增：參考幾何和 AIS 上下文
+    QList<ReferenceGeometry> m_referenceGeometries;
+    Handle(AIS_InteractiveContext) m_aisContext;
+
     
     Q_DISABLE_COPY(Document)
 };

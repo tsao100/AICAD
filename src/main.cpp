@@ -60,10 +60,6 @@ int main(int argc, char **argv) {
     qDebug() << "Application Name:" << app->applicationName();
     qDebug() << "Version:" << app->version();
 
-    // 取得 Lisp 引擎
-    aicad::scripting::LispEngine* lisp = app->lispEngine();
-    if (lisp) {}
-
     // 顯示主視窗
     aicad::ui::UIManager* uiMgr = app->uiManager();
     if (uiMgr) {

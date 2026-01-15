@@ -6,6 +6,8 @@
  */
 
 #include "DocumentManager.h"
+#include "core/Application.h"
+#include "core/EventBus.h"
 #include "cad/Document.h"
 
 #include <QDebug>
@@ -52,6 +54,20 @@ cad::Document* DocumentManager::createDocument(const QString& name) {
     connect(doc, &cad::Document::fileNameChanged,
             this, &DocumentManager::onDocumentFileNameChanged);
 
+    // ✅ 連接參考幾何初始化完成信號
+    connect(doc, &cad::Document::referenceGeometryInitialized,
+            this, [this, doc]() {
+                qDebug() << "[DocumentManager] Reference geometry initialized for:"
+                         << doc->fileName();
+
+                // 發布事件通知 UI
+                core::Application* app = core::Application::instance();
+                if (app && app->eventBus()) {
+                    app->eventBus()->publish("document.reference-geometry-ready",
+                                             doc->fileName());
+                }
+            });
+
     // 加入管理列表
     d->documents.append(doc);
 
@@ -62,6 +78,9 @@ cad::Document* DocumentManager::createDocument(const QString& name) {
 
     Q_EMIT documentCreated(doc);
     Q_EMIT documentCountChanged(d->documents.size());
+
+    // ✅ 注意：實際的參考幾何初始化會在 UIManager 中進行
+    // 因為需要 AIS 上下文（來自 CadView）
 
     return doc;
 }

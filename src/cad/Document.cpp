@@ -11,6 +11,31 @@
 #include "Extrude.h"
 #include "Plane.h"
 
+#include <AIS_Point.hxx>
+#include <AIS_Axis.hxx>
+#include <AIS_Shape.hxx>  // ✅ 改用 AIS_Shape
+#include <AIS_InteractiveContext.hxx>
+#include <Geom_CartesianPoint.hxx>
+#include <Geom_Axis1Placement.hxx>
+#include <Geom_Plane.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>  // ✅ 用來建立平面 Face
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Wire.hxx>
+#include <TopoDS_Face.hxx>
+
+#include <gp_Pnt.hxx>
+#include <gp_Ax1.hxx>
+#include <gp_Ax2.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <Prs3d_PointAspect.hxx>
+#include <Aspect_TypeOfLine.hxx>
+#include <Aspect_TypeOfMarker.hxx>
+#include <Quantity_NameOfColor.hxx>
+
 #include <XCAFApp_Application.hxx>
 #include <TDataStd_Name.hxx>
 #include <BinDrivers.hxx>
@@ -231,7 +256,10 @@ void Document::newDocument() {
     setModified(false);
     m_nextFeatureNumber = 1;
     
-    qDebug() << "[Document] New document created";
+    // ✅ 清除舊的參考幾何
+    m_referenceGeometries.clear();
+
+    qDebug() << "[Document] New document created (reference geometry will be initialized by UIManager)";
 }
 
 void Document::addFeature(Feature* feature) {
@@ -425,6 +453,377 @@ void Document::onFeatureRebuildRequested() {
 
 void Document::onFeatureChanged() {
     setModified(true);
+}
+
+// ✅ 初始化參考幾何
+void Document::initializeReferenceGeometry(const Handle(AIS_InteractiveContext)& context) {
+    if (context.IsNull()) {
+        qWarning() << "[Document] Cannot initialize reference geometry: context is null";
+        return;
+    }
+
+    m_aisContext = context;
+    m_referenceGeometries.clear();
+
+    qDebug() << "[Document] Initializing reference geometry...";
+
+    // 建立原點
+    createOriginPoint();
+
+    // 建立三個軸
+    createAxes();
+
+    // 建立三個平面
+    createReferencePlanes();
+
+    qDebug() << "[Document] Reference geometry initialized:"
+             << m_referenceGeometries.size() << "objects";
+
+    Q_EMIT referenceGeometryInitialized();
+}
+
+// ✅ 建立原點
+void Document::createOriginPoint() {
+    qDebug() << "[Document] Creating origin point...";
+
+    try {
+        // 建立幾何點
+        Handle(Geom_CartesianPoint) geomPoint = new Geom_CartesianPoint(0, 0, 0);
+
+        // 建立 AIS 點
+        Handle(AIS_Point) aisPoint = new AIS_Point(geomPoint);
+
+        // 設定點的外觀
+        Handle(Prs3d_Drawer) drawer = aisPoint->Attributes();
+        Handle(Prs3d_PointAspect) pointAspect = new Prs3d_PointAspect(
+            Aspect_TOM_BALL,                    // 球形標記
+            Quantity_NOC_YELLOW,                 // 黃色
+            5.0                                  // 大小
+            );
+        drawer->SetPointAspect(pointAspect);
+        aisPoint->SetAttributes(drawer);
+
+        // 設定選擇模式
+        //aisPoint->SetSelectable(Standard_True);
+
+        // 顯示點
+        m_aisContext->Display(aisPoint, Standard_False);
+
+        // 儲存到參考幾何列表
+        ReferenceGeometry refGeom;
+        refGeom.type = ReferenceGeometryType::Origin;
+        refGeom.name = "Origin";
+        refGeom.aisObject = aisPoint;
+        refGeom.visible = true;
+        refGeom.selectable = true;
+
+        m_referenceGeometries.append(refGeom);
+
+        qDebug() << "[Document] Origin point created";
+
+    } catch (const Standard_Failure& e) {
+        qCritical() << "[Document] Failed to create origin:" << e.GetMessageString();
+    }
+}
+
+// ✅ 建立三個軸
+void Document::createAxes() {
+    qDebug() << "[Document] Creating axes...";
+
+    try {
+        // X 軸（紅色）
+        {
+            gp_Pnt origin(0, 0, 0);
+            gp_Dir xDir(1, 0, 0);
+            gp_Ax1 xAxis(origin, xDir);
+
+            Handle(Geom_Axis1Placement) geomXAxis = new Geom_Axis1Placement(xAxis);
+            Handle(AIS_Axis) aisXAxis = new AIS_Axis(geomXAxis);
+
+            // 設定 X 軸外觀（紅色）
+            Handle(Prs3d_Drawer) drawer = aisXAxis->Attributes();
+            Handle(Prs3d_LineAspect) lineAspect = new Prs3d_LineAspect(
+                Quantity_NOC_RED,
+                Aspect_TOL_SOLID,
+                2.0
+                );
+            drawer->SetLineAspect(lineAspect);
+            aisXAxis->SetAttributes(drawer);
+
+            m_aisContext->Display(aisXAxis, Standard_False);
+
+            ReferenceGeometry refGeom;
+            refGeom.type = ReferenceGeometryType::XAxis;
+            refGeom.name = "X Axis";
+            refGeom.aisObject = aisXAxis;
+            refGeom.visible = true;
+            refGeom.selectable = false;  // 軸通常不可選擇
+
+            m_referenceGeometries.append(refGeom);
+        }
+
+        // Y 軸（綠色）
+        {
+            gp_Pnt origin(0, 0, 0);
+            gp_Dir yDir(0, 1, 0);
+            gp_Ax1 yAxis(origin, yDir);
+
+            Handle(Geom_Axis1Placement) geomYAxis = new Geom_Axis1Placement(yAxis);
+            Handle(AIS_Axis) aisYAxis = new AIS_Axis(geomYAxis);
+
+            Handle(Prs3d_Drawer) drawer = aisYAxis->Attributes();
+            Handle(Prs3d_LineAspect) lineAspect = new Prs3d_LineAspect(
+                Quantity_NOC_GREEN,
+                Aspect_TOL_SOLID,
+                2.0
+                );
+            drawer->SetLineAspect(lineAspect);
+            aisYAxis->SetAttributes(drawer);
+
+            m_aisContext->Display(aisYAxis, Standard_False);
+
+            ReferenceGeometry refGeom;
+            refGeom.type = ReferenceGeometryType::YAxis;
+            refGeom.name = "Y Axis";
+            refGeom.aisObject = aisYAxis;
+            refGeom.visible = true;
+            refGeom.selectable = false;
+
+            m_referenceGeometries.append(refGeom);
+        }
+
+        // Z 軸（藍色）
+        {
+            gp_Pnt origin(0, 0, 0);
+            gp_Dir zDir(0, 0, 1);
+            gp_Ax1 zAxis(origin, zDir);
+
+            Handle(Geom_Axis1Placement) geomZAxis = new Geom_Axis1Placement(zAxis);
+            Handle(AIS_Axis) aisZAxis = new AIS_Axis(geomZAxis);
+
+            Handle(Prs3d_Drawer) drawer = aisZAxis->Attributes();
+            Handle(Prs3d_LineAspect) lineAspect = new Prs3d_LineAspect(
+                Quantity_NOC_BLUE,
+                Aspect_TOL_SOLID,
+                2.0
+                );
+            drawer->SetLineAspect(lineAspect);
+            aisZAxis->SetAttributes(drawer);
+
+            m_aisContext->Display(aisZAxis, Standard_False);
+
+            ReferenceGeometry refGeom;
+            refGeom.type = ReferenceGeometryType::ZAxis;
+            refGeom.name = "Z Axis";
+            refGeom.aisObject = aisZAxis;
+            refGeom.visible = true;
+            refGeom.selectable = false;
+
+            m_referenceGeometries.append(refGeom);
+        }
+
+        qDebug() << "[Document] Axes created";
+
+    } catch (const Standard_Failure& e) {
+        qCritical() << "[Document] Failed to create axes:" << e.GetMessageString();
+    }
+}
+
+// ✅ 建立三個參考平面
+void Document::createReferencePlanes() {
+    qDebug() << "[Document] Creating reference planes (alternative method)...";
+
+    try {
+        const double planeSize = 100.0;
+
+        // XY 平面
+        {
+            // 建立四個角點
+            std::vector<gp_Pnt> corners;
+            corners.push_back(gp_Pnt(-planeSize/2, -planeSize/2, 0));
+            corners.push_back(gp_Pnt( planeSize/2, -planeSize/2, 0));
+            corners.push_back(gp_Pnt( planeSize/2,  planeSize/2, 0));
+            corners.push_back(gp_Pnt(-planeSize/2,  planeSize/2, 0));
+
+            // 建立邊
+            TopoDS_Edge e1 = BRepBuilderAPI_MakeEdge(corners[0], corners[1]);
+            TopoDS_Edge e2 = BRepBuilderAPI_MakeEdge(corners[1], corners[2]);
+            TopoDS_Edge e3 = BRepBuilderAPI_MakeEdge(corners[2], corners[3]);
+            TopoDS_Edge e4 = BRepBuilderAPI_MakeEdge(corners[3], corners[0]);
+
+            // 建立 Wire
+            TopoDS_Wire wire = BRepBuilderAPI_MakeWire(e1, e2, e3, e4);
+
+            // 建立 Face
+            TopoDS_Face face = BRepBuilderAPI_MakeFace(wire);
+
+            // 建立 AIS_Shape
+            Handle(AIS_Shape) aisPlane = new AIS_Shape(face);
+            aisPlane->SetColor(Quantity_NOC_LIGHTBLUE);
+            aisPlane->SetTransparency(0.7);
+            aisPlane->SetDisplayMode(AIS_Shaded);
+
+            m_aisContext->Display(aisPlane, Standard_False);
+
+            ReferenceGeometry refGeom;
+            refGeom.type = ReferenceGeometryType::XYPlane;
+            refGeom.name = "XY Plane";
+            refGeom.aisObject = aisPlane;
+            refGeom.visible = true;
+            refGeom.selectable = true;
+
+            m_referenceGeometries.append(refGeom);
+        }
+
+        // XZ 平面
+        {
+            std::vector<gp_Pnt> corners;
+            corners.push_back(gp_Pnt(-planeSize/2, 0, -planeSize/2));
+            corners.push_back(gp_Pnt( planeSize/2, 0, -planeSize/2));
+            corners.push_back(gp_Pnt( planeSize/2, 0,  planeSize/2));
+            corners.push_back(gp_Pnt(-planeSize/2, 0,  planeSize/2));
+
+            TopoDS_Edge e1 = BRepBuilderAPI_MakeEdge(corners[0], corners[1]);
+            TopoDS_Edge e2 = BRepBuilderAPI_MakeEdge(corners[1], corners[2]);
+            TopoDS_Edge e3 = BRepBuilderAPI_MakeEdge(corners[2], corners[3]);
+            TopoDS_Edge e4 = BRepBuilderAPI_MakeEdge(corners[3], corners[0]);
+
+            TopoDS_Wire wire = BRepBuilderAPI_MakeWire(e1, e2, e3, e4);
+            TopoDS_Face face = BRepBuilderAPI_MakeFace(wire);
+
+            Handle(AIS_Shape) aisPlane = new AIS_Shape(face);
+            aisPlane->SetColor(Quantity_NOC_LIMEGREEN);
+            aisPlane->SetTransparency(0.7);
+            aisPlane->SetDisplayMode(AIS_Shaded);
+
+            m_aisContext->Display(aisPlane, Standard_False);
+
+            ReferenceGeometry refGeom;
+            refGeom.type = ReferenceGeometryType::XZPlane;
+            refGeom.name = "XZ Plane";
+            refGeom.aisObject = aisPlane;
+            refGeom.visible = true;
+            refGeom.selectable = true;
+
+            m_referenceGeometries.append(refGeom);
+        }
+
+        // YZ 平面
+        {
+            std::vector<gp_Pnt> corners;
+            corners.push_back(gp_Pnt(0, -planeSize/2, -planeSize/2));
+            corners.push_back(gp_Pnt(0,  planeSize/2, -planeSize/2));
+            corners.push_back(gp_Pnt(0,  planeSize/2,  planeSize/2));
+            corners.push_back(gp_Pnt(0, -planeSize/2,  planeSize/2));
+
+            TopoDS_Edge e1 = BRepBuilderAPI_MakeEdge(corners[0], corners[1]);
+            TopoDS_Edge e2 = BRepBuilderAPI_MakeEdge(corners[1], corners[2]);
+            TopoDS_Edge e3 = BRepBuilderAPI_MakeEdge(corners[2], corners[3]);
+            TopoDS_Edge e4 = BRepBuilderAPI_MakeEdge(corners[3], corners[0]);
+
+            TopoDS_Wire wire = BRepBuilderAPI_MakeWire(e1, e2, e3, e4);
+            TopoDS_Face face = BRepBuilderAPI_MakeFace(wire);
+
+            Handle(AIS_Shape) aisPlane = new AIS_Shape(face);
+            aisPlane->SetColor(Quantity_NOC_LIGHTPINK);
+            aisPlane->SetTransparency(0.7);
+            aisPlane->SetDisplayMode(AIS_Shaded);
+
+            m_aisContext->Display(aisPlane, Standard_False);
+
+            ReferenceGeometry refGeom;
+            refGeom.type = ReferenceGeometryType::YZPlane;
+            refGeom.name = "YZ Plane";
+            refGeom.aisObject = aisPlane;
+            refGeom.visible = true;
+            refGeom.selectable = true;
+
+            m_referenceGeometries.append(refGeom);
+        }
+
+        qDebug() << "[Document] Reference planes created (alternative method)";
+
+    } catch (const Standard_Failure& e) {
+        qCritical() << "[Document] Failed to create planes:" << e.GetMessageString();
+    } catch (...) {
+        qCritical() << "[Document] Failed to create planes (unknown exception)";
+    }
+}
+
+// ✅ 取得特定類型的參考幾何
+ReferenceGeometry* Document::getReferenceGeometry(ReferenceGeometryType type) {
+    for (int i = 0; i < m_referenceGeometries.size(); ++i) {
+        if (m_referenceGeometries[i].type == type) {
+            return &m_referenceGeometries[i];
+        }
+    }
+    return nullptr;
+}
+
+// ✅ 設定參考幾何的可見性
+void Document::setReferenceGeometryVisible(ReferenceGeometryType type, bool visible) {
+    ReferenceGeometry* refGeom = getReferenceGeometry(type);
+    if (!refGeom || refGeom->aisObject.IsNull()) {
+        return;
+    }
+
+    refGeom->visible = visible;
+
+    if (visible) {
+        m_aisContext->Display(refGeom->aisObject, Standard_False);
+    } else {
+        m_aisContext->Erase(refGeom->aisObject, Standard_False);
+    }
+
+    m_aisContext->UpdateCurrentViewer();
+
+    qDebug() << "[Document]" << refGeom->name << "visibility:" << visible;
+
+    Q_EMIT referenceGeometryVisibilityChanged(type, visible);
+}
+
+// ✅ 設定參考幾何的可選擇性
+void Document::setReferenceGeometrySelectable(ReferenceGeometryType type, bool selectable) {
+    ReferenceGeometry* refGeom = getReferenceGeometry(type);
+    if (!refGeom || refGeom->aisObject.IsNull()) {
+        return;
+    }
+
+    refGeom->selectable = selectable;
+
+    if (m_aisContext->IsDisplayed(refGeom->aisObject)) {
+        if (selectable) {
+            m_aisContext->Activate(refGeom->aisObject);
+        } else {
+            m_aisContext->Deactivate(refGeom->aisObject);
+        }
+    }
+
+    qDebug() << "[Document]" << refGeom->name << "selectable:" << selectable;
+}
+
+// ✅ 顯示所有參考幾何
+void Document::showAllReferenceGeometry() {
+    for (const ReferenceGeometry& refGeom : m_referenceGeometries) {
+        if (!refGeom.aisObject.IsNull()) {
+            m_aisContext->Display(refGeom.aisObject, Standard_False);
+        }
+    }
+    m_aisContext->UpdateCurrentViewer();
+
+    qDebug() << "[Document] All reference geometry shown";
+}
+
+// ✅ 隱藏所有參考幾何
+void Document::hideAllReferenceGeometry() {
+    for (const ReferenceGeometry& refGeom : m_referenceGeometries) {
+        if (!refGeom.aisObject.IsNull()) {
+            m_aisContext->Erase(refGeom.aisObject, Standard_False);
+        }
+    }
+    m_aisContext->UpdateCurrentViewer();
+
+    qDebug() << "[Document] All reference geometry hidden";
 }
 
 } // namespace cad

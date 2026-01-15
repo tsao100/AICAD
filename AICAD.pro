@@ -171,8 +171,6 @@ SOURCES += \
     src/command/CommandManager.cpp \
     src/command/Command.cpp \
     src/command/RectangleCommand.cpp \
-    src/command/LineCommand.cpp \
-    src/command/CircleCommand.cpp \
     src/command/BasicCommands.cpp \
     \
     # Scripting Module (Daney - 腳本系統)
@@ -220,8 +218,6 @@ HEADERS += \
     src/command/Command.h \
     src/command/RectangleCommand.h \
     src/command/CommandTypes.h \
-    src/command/LineCommand.h \
-    src/command/CircleCommand.h \
     src/command/CommandFactory.h \
     \
     # Scripting Module (Daney)

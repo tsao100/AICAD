@@ -130,6 +130,16 @@ public:
 
     void registerCommandsFromMenu();
 
+    // ✅ 新增：建立預設文件的私有方法
+    /**
+     * @brief 建立預設文件
+     * @return 成功回傳 true
+     *
+     * 在應用程式初始化完成後自動建立一個預設的空白文件，
+     * 包含參考幾何（原點、軸、平面），使應用程式立即可用。
+     */
+    bool createDefaultDocument();
+
 Q_SIGNALS:
     /**
      * @brief 初始化完成時發出

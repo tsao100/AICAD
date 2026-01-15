@@ -185,6 +185,13 @@ bool Application::initialize() {
             return false;
         }
 
+        // ✅ 7. 建立預設文件（在 UI 初始化之後）
+        qDebug() << "[Application] Creating default document...";
+        if (!createDefaultDocument()) {
+            qWarning() << "[Application] Failed to create default document (non-critical)";
+            // 不是致命錯誤，繼續
+        }
+
         // 7. 建立 Lisp 引擎
         qDebug() << "[Application] Creating LispEngine...";
         d->lispEngine = new scripting::LispEngine(this);
@@ -398,6 +405,41 @@ void Application::registerCommandsFromMenu() {
 // 新增 getter:
 MenuParser* Application::menuParser() const {
     return d->menuParser;
+}
+
+// ✅ 新增：建立預設文件的方法
+bool Application::createDefaultDocument() {
+    qDebug() << "[Application] Creating default document...";
+
+    try {
+        // 建立預設文件
+        cad::Document* defaultDoc = d->documentManager->createDocument("Untitled");
+
+        if (!defaultDoc) {
+            qWarning() << "[Application] Failed to create default document";
+            return false;
+        }
+
+        qDebug() << "[Application] Default document created:" << defaultDoc->fileName();
+
+        // 發布事件
+        d->eventBus->publish(Events::DOCUMENT_CREATED,
+                             QVariant::fromValue(defaultDoc));
+
+        // 設定狀態訊息
+        if (d->uiManager) {
+            d->uiManager->setStatusMessage("Ready - New document created", 3000);
+        }
+
+        return true;
+
+    } catch (const std::exception& e) {
+        qWarning() << "[Application] Exception creating default document:" << e.what();
+        return false;
+    } catch (...) {
+        qWarning() << "[Application] Unknown exception creating default document";
+        return false;
+    }
 }
 
 } // namespace core

@@ -123,6 +123,8 @@ public:
     void onOpenDocument();
     void onSaveDocument();
 
+    void onViewReady();
+
 Q_SIGNALS:
     /**
      * @brief UI 初始化完成時發出
@@ -135,6 +137,11 @@ Q_SIGNALS:
     void mainWindowClosed();
     
 private:
+
+    void initializeReferenceGeometry();
+    void onDocumentCreated();
+    void onCurrentDocumentChanged(cad::Document* doc);
+
     class Private;
     Private* d;
 };
