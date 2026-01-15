@@ -31,7 +31,10 @@ enum class ReferenceGeometryType {
     ZAxis,          ///< Z 軸
     XYPlane,        ///< XY 平面
     XZPlane,        ///< XZ 平面
-    YZPlane         ///< YZ 平面
+    YZPlane,         ///< YZ 平面
+    LabelXY,
+    LabelXZ,
+    LabelYZ
 };
 
 /**

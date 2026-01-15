@@ -17,6 +17,8 @@
 #include <AIS_InteractiveContext.hxx>
 #include <Geom_CartesianPoint.hxx>
 #include <Geom_Axis1Placement.hxx>
+#include <AIS_TextLabel.hxx>
+#include <Graphic3d_ZLayerId.hxx>
 #include <Geom_Plane.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>  // ✅ 用來建立平面 Face
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -665,6 +667,28 @@ void Document::createReferencePlanes() {
 
             m_aisContext->Display(aisPlane, Standard_False);
 
+            // Add text label for XY plane
+            Handle(AIS_TextLabel) textLabel = new AIS_TextLabel();
+            textLabel->SetText("XY");
+
+            // Position label at top-right corner of the plane
+            gp_Pnt labelPos(planeSize * 0.4, planeSize * 0.4, planeSize * 0.05);
+            textLabel->SetPosition(labelPos);
+
+            // Set label properties
+            textLabel->SetColor(Quantity_NOC_RED);
+            textLabel->SetHeight(planeSize * 0.2);  // 8% of plane size
+            textLabel->SetTransparency(0.0);
+            textLabel->SetZLayer(Graphic3d_ZLayerId_Top);  // Always on top
+
+            // 設定文字方向，讓它平躺在 XY 平面上
+            gp_Ax2 textAxis(
+                gp_Pnt(planeSize * 0.35, planeSize * 0.35, 0.0),  // 位置
+                gp_Dir(0, 0, -1),   // 法向量 (Y軸)
+                gp_Dir(1, 0, 0)    // X軸方向
+                );
+            textLabel->SetOrientation3D(textAxis);
+
             ReferenceGeometry refGeom;
             refGeom.type = ReferenceGeometryType::XYPlane;
             refGeom.name = "XY Plane";
@@ -673,6 +697,15 @@ void Document::createReferencePlanes() {
             refGeom.selectable = true;
 
             m_referenceGeometries.append(refGeom);
+
+            // Optionally store label separately if you want to control it independently
+            ReferenceGeometry labelGeom;
+            labelGeom.type = ReferenceGeometryType::LabelXY;
+            labelGeom.name = "XY Label";
+            labelGeom.aisObject = textLabel;
+            labelGeom.visible = true;
+            labelGeom.selectable = false;  // Labels usually not selectable
+            m_referenceGeometries.append(labelGeom);
         }
 
         // XZ 平面
@@ -697,7 +730,32 @@ void Document::createReferencePlanes() {
             aisPlane->SetDisplayMode(AIS_Shaded);
 
             m_aisContext->Display(aisPlane, Standard_False);
+            // Add text label for XZ plane
+            Handle(AIS_TextLabel) textLabel = new AIS_TextLabel();
+            textLabel->SetText("XZ");
 
+            // Position label at top-right corner of the plane
+            gp_Pnt labelPos(planeSize * 0.4, planeSize * 0.05, planeSize * 0.4);
+            textLabel->SetPosition(labelPos);
+
+            // Set label properties
+            textLabel->SetColor(Quantity_NOC_RED);
+            textLabel->SetHeight(planeSize * 0.2);  // 8% of plane size
+            textLabel->SetTransparency(0.0);
+            textLabel->SetZLayer(Graphic3d_ZLayerId_Top);  // Always on top
+
+            // 設定文字方向，讓它平躺在 XZ 平面上
+            gp_Ax2 textAxis(
+                gp_Pnt(planeSize * 0.35, 0, planeSize * 0.35),  // 位置
+                gp_Dir(0, -1, 0),   // 法向量 (Y軸)
+                gp_Dir(1, 0, 0)    // X軸方向
+                );
+            textLabel->SetOrientation3D(textAxis);
+
+            // Display the label
+            m_aisContext->Display(textLabel, Standard_False);
+
+            // Store plane
             ReferenceGeometry refGeom;
             refGeom.type = ReferenceGeometryType::XZPlane;
             refGeom.name = "XZ Plane";
@@ -706,6 +764,15 @@ void Document::createReferencePlanes() {
             refGeom.selectable = true;
 
             m_referenceGeometries.append(refGeom);
+
+            // Optionally store label separately if you want to control it independently
+            ReferenceGeometry labelGeom;
+            labelGeom.type = ReferenceGeometryType::LabelXZ;
+            labelGeom.name = "XZ Label";
+            labelGeom.aisObject = textLabel;
+            labelGeom.visible = true;
+            labelGeom.selectable = false;  // Labels usually not selectable
+            m_referenceGeometries.append(labelGeom);
         }
 
         // YZ 平面
@@ -731,6 +798,33 @@ void Document::createReferencePlanes() {
 
             m_aisContext->Display(aisPlane, Standard_False);
 
+            // Add text label for YZ plane
+            Handle(AIS_TextLabel) textLabel = new AIS_TextLabel();
+            textLabel->SetText("YZ");
+
+            // Position label at top-right corner of the plane
+            gp_Pnt labelPos(planeSize * 0.05, planeSize * 0.4, planeSize * 0.4);
+            textLabel->SetPosition(labelPos);
+
+            // Set label properties
+            textLabel->SetColor(Quantity_NOC_RED);
+            textLabel->SetHeight(planeSize * 0.2);  // 8% of plane size
+            textLabel->SetTransparency(0.0);
+            textLabel->SetZLayer(Graphic3d_ZLayerId_Top);  // Always on top
+
+            // 設定文字方向，讓它平躺在 YZ 平面上
+            gp_Ax2 textAxis(
+                gp_Pnt(0.0, planeSize * 0.35, planeSize * 0.35),  // 位置
+                gp_Dir(1, 0, 0),   // 法向量 (Y軸)
+                gp_Dir(0, 1, 0)    // X軸方向
+                );
+            textLabel->SetOrientation3D(textAxis);
+
+            // Display the label
+            m_aisContext->Display(textLabel, Standard_False);
+
+            // Store plane
+
             ReferenceGeometry refGeom;
             refGeom.type = ReferenceGeometryType::YZPlane;
             refGeom.name = "YZ Plane";
@@ -739,6 +833,15 @@ void Document::createReferencePlanes() {
             refGeom.selectable = true;
 
             m_referenceGeometries.append(refGeom);
+
+            // Optionally store label separately if you want to control it independently
+            ReferenceGeometry labelGeom;
+            labelGeom.type = ReferenceGeometryType::LabelYZ;
+            labelGeom.name = "YZ Label";
+            labelGeom.aisObject = textLabel;
+            labelGeom.visible = true;
+            labelGeom.selectable = false;  // Labels usually not selectable
+            m_referenceGeometries.append(labelGeom);
         }
 
         qDebug() << "[Document] Reference planes created (alternative method)";
