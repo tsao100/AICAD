@@ -8,6 +8,8 @@
 #ifndef AICAD_CAD_DOCUMENT_H
 #define AICAD_CAD_DOCUMENT_H
 
+#include "ui/FeatureTreeItem.h"
+
 #include <QObject>
 #include <QString>
 #include <QList>
@@ -234,6 +236,17 @@ public:
      */
     Handle(AIS_InteractiveContext) aisContext() const { return m_aisContext; }
 
+    /**
+     * @brief 取得 Feature Tree 結構
+     */
+    QVector<ui::FeatureTreeItem> getFeatureTreeItems() const;
+
+    /**
+     * @brief 初始化原點幾何（包含 tree 結構）
+     */
+    void initializeOrigin(const Handle(AIS_InteractiveContext)& context);
+
+
     // 復原/重做（未來實作）
     // bool canUndo() const;
     // bool canRedo() const;
@@ -290,6 +303,11 @@ Q_SIGNALS:
     void referenceGeometryInitialized();
     void referenceGeometryVisibilityChanged(ReferenceGeometryType type, bool visible);
 
+    /**
+     * @brief Feature Tree 結構改變
+     */
+    void treeStructureChanged();
+
 private Q_SLOTS:
     /**
      * @brief 處理特徵重建請求
@@ -317,7 +335,6 @@ private:
     void createAxes();
     void createReferencePlanes();
 
-private:
     QString m_fileName;                      ///< 檔案名稱
     bool m_modified;                         ///< 修改標記
     
@@ -330,6 +347,13 @@ private:
     // ✅ 新增：參考幾何和 AIS 上下文
     QList<ReferenceGeometry> m_referenceGeometries;
     Handle(AIS_InteractiveContext) m_aisContext;
+
+    /**
+     * @brief 建立原點資料夾項目
+     */
+    void createOriginFolderItems();
+
+    QVector<ui::FeatureTreeItem> m_treeItems;  ///< Tree 項目列表
 
     
     Q_DISABLE_COPY(Document)

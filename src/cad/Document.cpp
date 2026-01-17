@@ -10,6 +10,7 @@
 #include "Sketch.h"
 #include "Extrude.h"
 #include "Plane.h"
+#include "ui/FeatureTreeItem.h"
 
 #include <AIS_Point.hxx>
 #include <AIS_Axis.hxx>
@@ -371,7 +372,21 @@ Sketch* Document::createSketch(const Plane& plane, const QString& name) {
     sketch->setName(sketchName);
     
     addFeature(sketch);
-    
+
+    // ✅ 加入到 tree
+    ui::FeatureTreeItem sketchItem;
+    sketchItem.type = ui::ItemType::Sketch;
+    sketchItem.id = sketch->id();
+    sketchItem.name = sketch->name();
+    sketchItem.parentId = "";  // 頂層項目
+    sketchItem.visible = sketch->isVisible();
+    sketchItem.selectable = true;
+    sketchItem.data = QVariant::fromValue(sketch);
+
+    m_treeItems.append(sketchItem);
+
+    Q_EMIT treeStructureChanged();
+
     qDebug() << "[Document] Sketch created:" << sketchName;
     return sketch;
 }
@@ -394,7 +409,20 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     extrude->setName(extrudeName);
     
     addFeature(extrude);
-    
+    // ✅ 加入到 tree
+    ui::FeatureTreeItem extrudeItem;
+    extrudeItem.type = ui::ItemType::Extrude;
+    extrudeItem.id = extrude->id();
+    extrudeItem.name = extrude->name();
+    extrudeItem.parentId = "";  // 頂層項目
+    extrudeItem.visible = extrude->isVisible();
+    extrudeItem.selectable = true;
+    extrudeItem.data = QVariant::fromValue(extrude);
+
+    m_treeItems.append(extrudeItem);
+
+    Q_EMIT treeStructureChanged();
+
     qDebug() << "[Document] Extrude created:" << extrudeName;
     return extrude;
 }
@@ -928,6 +956,80 @@ void Document::hideAllReferenceGeometry() {
 
     qDebug() << "[Document] All reference geometry hidden";
 }
+
+
+void Document::initializeOrigin(const Handle(AIS_InteractiveContext)& context) {
+    qDebug() << "[Document] Initializing origin";
+
+    // 建立原點幾何
+    initializeReferenceGeometry(context);
+
+    // ✅ 建立原點資料夾的 tree 項目
+    createOriginFolderItems();
+
+    Q_EMIT treeStructureChanged();
+}
+
+void Document::createOriginFolderItems() {
+    m_treeItems.clear();
+
+    // ✅ 1. 原點資料夾
+    ui::FeatureTreeItem originFolder;
+    originFolder.type = ui::ItemType::Folder;
+    originFolder.id = "origin_folder";
+    originFolder.name = "Origin";
+    originFolder.parentId = "";  // 頂層項目
+    originFolder.visible = true;
+    originFolder.selectable = false;
+    m_treeItems.append(originFolder);
+
+    // ✅ 2. 三個平面
+    QStringList planeNames = {"XY Plane", "XZ Plane", "YZ Plane"};
+    QStringList planeIds = {"plane_xy", "plane_xz", "plane_yz"};
+
+    for (int i = 0; i < 3; ++i) {
+        ui::FeatureTreeItem planeItem;
+        planeItem.type = ui::ItemType::Plane;
+        planeItem.id = planeIds[i];
+        planeItem.name = planeNames[i];
+        planeItem.parentId = "origin_folder";
+        planeItem.visible = true;
+        planeItem.selectable = true;
+        m_treeItems.append(planeItem);
+    }
+
+    // ✅ 3. 三個軸
+    QStringList axisNames = {"X Axis", "Y Axis", "Z Axis"};
+    QStringList axisIds = {"axis_x", "axis_y", "axis_z"};
+
+    for (int i = 0; i < 3; ++i) {
+        ui::FeatureTreeItem axisItem;
+        axisItem.type = ui::ItemType::Axis;
+        axisItem.id = axisIds[i];
+        axisItem.name = axisNames[i];
+        axisItem.parentId = "origin_folder";
+        axisItem.visible = true;
+        axisItem.selectable = true;
+        m_treeItems.append(axisItem);
+    }
+
+    // ✅ 4. 原點
+    ui::FeatureTreeItem originPoint;
+    originPoint.type = ui::ItemType::Point;
+    originPoint.id = "origin_point";
+    originPoint.name = "Origin Point";
+    originPoint.parentId = "origin_folder";
+    originPoint.visible = true;
+    originPoint.selectable = true;
+    m_treeItems.append(originPoint);
+
+    qDebug() << "[Document] Created origin folder with" << m_treeItems.size() << "items";
+}
+
+QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
+    return m_treeItems;
+}
+
 
 } // namespace cad
 } // namespace aicad

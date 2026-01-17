@@ -8,6 +8,8 @@
 #ifndef AICAD_UI_FEATUREBROWSER_H
 #define AICAD_UI_FEATUREBROWSER_H
 
+#include <ui/FeatureTreeItem.h>
+
 #include <QDockWidget>
 #include <QTreeWidget>
 
@@ -96,11 +98,39 @@ private Q_SLOTS:
     void onItemClicked(QTreeWidgetItem* item, int column);
     void onItemDoubleClicked(QTreeWidgetItem* item, int column);
     void onCustomContextMenu(const QPoint& pos);
-    
+
+    /**
+     * @brief 處理 tree 結構改變
+     */
+    void onTreeStructureChanged();
+
+    /**
+     * @brief 處理項目可見性切換
+     */
+    void onItemVisibilityToggled(QTreeWidgetItem* item, int column);
+
 private:
     void setupUI();
     void connectSignals();
-    
+
+    /**
+     * @brief 根據資料建立 tree items
+     */
+    void buildTreeFromData(const QVector<FeatureTreeItem>& items);
+
+    /**
+     * @brief 建立單個 tree widget item
+     */
+    QTreeWidgetItem* createTreeWidgetItem(const FeatureTreeItem& itemData);
+
+    /**
+     * @brief 取得項目圖示
+     */
+    QIcon getIconForType(ItemType type);
+
+    // 儲存 item 到 ID 的映射
+    QHash<QString, QTreeWidgetItem*> m_itemMap;
+
     class Private;
     Private* d;
 };

@@ -77,6 +77,28 @@ ViewManager::ViewManager(QObject* parent)
                 view->setMode(InteractionMode::Idle);
             }
         });
+
+        // ✅ 監聽可見性變更
+        bus->subscribe("feature.visibility-changed", this,
+                       [this](const QVariant& data) {
+                           onFeatureVisibilityChanged(data);
+                       });
+    }
+}
+
+void ViewManager::onFeatureVisibilityChanged(const QVariant& data) {
+    QVariantMap visData = data.toMap();
+    QString itemId = visData["itemId"].toString();
+    bool visible = visData["visible"].toBool();
+
+    qDebug() << "[ViewManager] Feature visibility changed:" << itemId << visible;
+
+    // ✅ 在視圖中顯示/隱藏對應的物件
+    // TODO: 根據 itemId 找到對應的 AIS_Shape 並設定可見性
+
+    CadView* view = activeView();
+    if (view) {
+        view->refreshView();
     }
 }
 

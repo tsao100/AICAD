@@ -119,6 +119,7 @@ public:
      */
     void syncViewsToDocument(cad::Document* document);
 
+    void onFeatureVisibilityChanged(const QVariant& data);
     void onPlaneSelectionRequested(const QVariant& data);
     void onSketchCreated(const QVariant& data);
 
