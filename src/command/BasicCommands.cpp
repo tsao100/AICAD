@@ -10,8 +10,10 @@
 #include "command/CommandTypes.h"
 #include "cad/Document.h"
 #include "cad/Plane.h"
+#include "cad/Sketch.h"
 #include "core/Application.h"
 #include "core/DocumentManager.h"
+#include "core/EventBus.h"
 #include "ui/UIManager.h"
 #include "view/CadView.h"
 #include <QFileDialog>
@@ -25,31 +27,138 @@ using namespace command;
 // ===========================================
 // Sketch 命令
 // ===========================================
+
 class SketchCommand : public Command {
 public:
-    SketchCommand() : Command("sketch", "Create Sketch") {}
-    
+    SketchCommand()
+        : Command("sketch", "Create Sketch")
+        , m_waitingForPlane(false)
+        , m_selectedPlane(cad::Plane::xy())
+    {}
+
     CommandResult execute(const CommandContext& context) override {
-        Application* app = Application::instance();
-        DocumentManager* docMgr = app->documentManager();
-        
+        core::Application* app = core::Application::instance();
+        core::DocumentManager* docMgr = app->documentManager();
+        core::EventBus* bus = app->eventBus();
+
         cad::Document* doc = docMgr->currentDocument();
         if (!doc) {
+            if (bus) bus->publish("command.error", "No active document");
             return CommandResult::Failure("No active document");
         }
-        
-        // 建立草圖在 XY 平面
-        cad::Sketch* sketch = doc->createSketch(cad::Plane::xy(), "Sketch");
+
+        // 如果有參數，直接使用
+        if (!context.args.isEmpty()) {
+            QString planeStr = context.args[0].toUpper();
+
+            if (planeStr == "XY") {
+                m_selectedPlane = cad::Plane::xy();
+            } else if (planeStr == "XZ") {
+                m_selectedPlane = cad::Plane::xz();
+            } else if (planeStr == "YZ") {
+                m_selectedPlane = cad::Plane::yz();
+            } else {
+                if (bus) bus->publish("command.error", "Invalid plane. Use XY, XZ, or YZ.");
+                return CommandResult::Failure("Invalid plane");
+            }
+
+            return createSketchOnPlane(doc, bus);
+        }
+
+        // ✅ 互動模式：請求在視圖中選取平面
+        m_waitingForPlane = true;
+
+        if (bus) {
+            QVariantMap requestData;
+            requestData["commandId"] = "sketch";
+            requestData["selectionMode"] = "plane";  // 指定選取模式
+
+            // 發布請求事件
+            bus->publish("command.request-plane-selection", requestData);
+
+            // ✅ 訂閱回應事件（一次性訂閱）
+            bus->subscribe("plane.selected", this,
+                           [this, doc, bus](const QVariant& data) {
+                               if (!m_waitingForPlane) return;
+
+                               onPlaneSelected(data, doc, bus);
+
+                               // 取消訂閱
+                               bus->unsubscribe("plane.selected", this);
+                           });
+        }
+
+        return CommandResult::Success("Click on a plane to select...");
+    }
+
+private:
+    void onPlaneSelected(const QVariant& data, cad::Document* doc, core::EventBus* bus) {
+        m_waitingForPlane = false;
+
+        QVariantMap planeData = data.toMap();
+
+        // 檢查是否取消
+        if (planeData["cancelled"].toBool()) {
+            if (bus) bus->publish("command.message", "Sketch creation cancelled");
+            return;
+        }
+
+        QString planeName = planeData["plane"].toString().toUpper();
+
+        qDebug() << "[SketchCommand] Plane selected:" << planeName;
+
+        if (planeName == "XY") {
+            m_selectedPlane = cad::Plane::xy();
+        } else if (planeName == "XZ") {
+            m_selectedPlane = cad::Plane::xz();
+        } else if (planeName == "YZ") {
+            m_selectedPlane = cad::Plane::yz();
+        } else {
+            if (bus) bus->publish("command.error", "Invalid plane selected");
+            return;
+        }
+
+        createSketchOnPlane(doc, bus);
+    }
+
+    CommandResult createSketchOnPlane(cad::Document* doc, core::EventBus* bus) {
+        QString name = QString("Sketch %1").arg(doc->featureCount() + 1);
+        cad::Sketch* sketch = doc->createSketch(m_selectedPlane, name);
+
         if (!sketch) {
+            if (bus) bus->publish("command.error", "Failed to create sketch");
             return CommandResult::Failure("Failed to create sketch");
         }
-        
-        return CommandResult::Success("Sketch created");
+
+        qDebug() << "[SketchCommand] Sketch created:" << name
+                 << "on" << m_selectedPlane.displayName();
+
+        // 發布事件通知其他模組
+        if (bus) {
+            bus->publish(core::Events::FEATURE_CREATED, sketch->name());
+
+            QVariantMap sketchData;
+            sketchData["plane"] = m_selectedPlane.displayName();
+            sketchData["sketchId"] = sketch->id();
+            sketchData["sketchName"] = name;
+            bus->publish("sketch.created", sketchData);
+
+            bus->publish("command.message",
+                         QString("Sketch '%1' created on %2 plane")
+                             .arg(name).arg(m_selectedPlane.displayName()));
+        }
+
+        return CommandResult::Success(
+            QString("Sketch '%1' created").arg(name));
     }
-    
+
     QString getUsage() const override {
-        return "Usage: sketch";
+        return "Usage: SKETCH [XY|XZ|YZ]";
     }
+
+private:
+    bool m_waitingForPlane;
+    cad::Plane m_selectedPlane;
 };
 
 REGISTER_COMMAND("sketch", SketchCommand);

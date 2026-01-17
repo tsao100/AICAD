@@ -118,7 +118,10 @@ public:
      * @param document 文件指標
      */
     void syncViewsToDocument(cad::Document* document);
-    
+
+    void onPlaneSelectionRequested(const QVariant& data);
+    void onSketchCreated(const QVariant& data);
+
 Q_SIGNALS:
     /**
      * @brief 視圖被建立時發出

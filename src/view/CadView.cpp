@@ -26,6 +26,11 @@
 #include <IntAna_IntConicQuad.hxx>
 #include <Precision.hxx>
 #include <AIS_SelectionScheme.hxx>
+#include <BRep_Tool.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <Geom_Surface.hxx>
+#include <Geom_Plane.hxx>
 
 #ifdef _WIN32
 #include <WNT_Window.hxx>
@@ -107,7 +112,9 @@ CadView::CadView(QWidget* parent)
     
     // 初始化視圖器
     initializeViewer();
-    
+
+    m_selectionFilter = "all";
+
     qDebug() << "[CadView] Created";
 }
 
@@ -214,6 +221,100 @@ void CadView::initializeViewer() {
 // ✅ 新增：檢查視圖是否已初始化的方法
 bool CadView::isViewInitialized() const {
     return d->viewInitialized;
+}
+
+void CadView::setSelectionFilter(const QString& filter) {
+    m_selectionFilter = filter;
+    qDebug() << "[CadView] Selection filter set to:" << filter;
+}
+
+void CadView::highlightSelectablePlanes(bool highlight) {
+    if (!d->context) return;
+
+    qDebug() << "[CadView] Highlight selectable planes:" << highlight;
+
+    // ✅ 遍歷場景中的所有物件，找出參考平面
+    AIS_ListOfInteractive allObjects;
+    d->context->DisplayedObjects(allObjects);
+
+    for (AIS_ListOfInteractive::Iterator it(allObjects); it.More(); it.Next()) {
+        Handle(AIS_InteractiveObject) obj = it.Value();
+        Handle(AIS_Shape) shape = Handle(AIS_Shape)::DownCast(obj);
+
+        if (shape.IsNull()) continue;
+
+        // 檢查是否為參考平面（根據名稱或屬性判斷）
+        if (isReferencePlane(shape)) {
+            if (highlight) {
+                // 高亮顯示
+                d->context->SetColor(shape, Quantity_NOC_YELLOW, Standard_False);
+                d->context->SetTransparency(shape, 0.7, Standard_False);
+            } else {
+                // 恢復原始顯示
+                d->context->SetColor(shape, Quantity_NOC_GRAY80, Standard_False);
+                d->context->SetTransparency(shape, 0.9, Standard_False);
+            }
+        }
+    }
+
+    d->context->UpdateCurrentViewer();
+}
+
+bool CadView::isReferencePlane(const Handle(AIS_Shape)& shape) {
+    // ✅ 判斷是否為參考平面
+    // 可以根據物件名稱、屬性或其他特徵判斷
+
+    // 方法 1: 檢查是否在參考平面列表中
+    for (const Handle(AIS_Shape)& plane : m_referencePlanes) {
+        if (shape == plane) return true;
+    }
+
+    // 方法 2: 檢查 TopoDS_Shape 類型
+    TopoDS_Shape topoShape = shape->Shape();
+    if (topoShape.ShapeType() == TopAbs_FACE) {
+        // 進一步檢查是否為平面
+        // ...
+        return true;
+    }
+
+    return false;
+}
+
+QString CadView::identifyPlane(const Handle(AIS_Shape)& shape) {
+    // ✅ 識別平面類型
+    TopoDS_Shape topoShape = shape->Shape();
+
+    if (topoShape.ShapeType() != TopAbs_FACE) {
+        return "UNKNOWN";
+    }
+
+    TopoDS_Face face = TopoDS::Face(topoShape);
+    Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+    Handle(Geom_Plane) plane = Handle(Geom_Plane)::DownCast(surface);
+
+    if (plane.IsNull()) {
+        return "UNKNOWN";
+    }
+
+    // 取得平面法向量
+    gp_Pln gpPlane = plane->Pln();
+    gp_Dir normal = gpPlane.Axis().Direction();
+
+    const double tolerance = 0.1;
+
+    // 判斷是哪個標準平面
+    if (std::abs(normal.Z() - 1.0) < tolerance ||
+        std::abs(normal.Z() + 1.0) < tolerance) {
+        return "XY";
+    } else if (std::abs(normal.Y() - 1.0) < tolerance ||
+               std::abs(normal.Y() + 1.0) < tolerance) {
+        return "XZ";
+    } else if (std::abs(normal.X() - 1.0) < tolerance ||
+               std::abs(normal.X() + 1.0) < tolerance) {
+        return "YZ";
+    }
+
+    return "UNKNOWN";
 }
 
 void CadView::setDocument(cad::Document* document) {
@@ -536,10 +637,40 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
-    
+    d->context->MoveTo(xp, yp, d->view, Standard_True);
+
+    // ✅ 如果是平面選取模式
+    if (m_selectionFilter == "plane" && event->button() == Qt::LeftButton) {
+        if (d->context->HasDetected()) {
+            Handle(AIS_InteractiveObject) picked = d->context->DetectedInteractive();
+            Handle(AIS_Shape) pickedShape = Handle(AIS_Shape)::DownCast(picked);
+
+            if (!pickedShape.IsNull() && isReferencePlane(pickedShape)) {
+                // ✅ 判斷選中的是哪個平面
+                QString planeName = identifyPlane(pickedShape);
+
+                qDebug() << "[CadView] Plane clicked:" << planeName;
+
+                // ✅ 發布選取結果
+                core::EventBus* bus = core::Application::instance()->eventBus();
+
+                QVariantMap planeData;
+                planeData["plane"] = planeName;
+                planeData["cancelled"] = false;
+
+                bus->publish("plane.selected", planeData);
+
+                // 恢復正常模式
+                setMode(InteractionMode::Idle);
+                highlightSelectablePlanes(false);
+
+                return;
+            }
+        }
+    }
+
     // 更新 OCCT 選擇
     if (!d->context.IsNull() && !d->view.IsNull()) {
-        d->context->MoveTo(xp, yp, d->view, Standard_True);
         
         if (event->button() == Qt::LeftButton) {
             // 檢查是否點擊 ViewCube
@@ -565,7 +696,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             }
         }
     }
-    
+           
     // 啟動旋轉
     if (event->button() == Qt::RightButton && !d->view.IsNull()) {
         d->view->StartRotation(xp, yp);
@@ -641,6 +772,21 @@ void CadView::wheelEvent(QWheelEvent* event) {
 void CadView::keyPressEvent(QKeyEvent* event) {
     // ESC 取消操作
     if (event->key() == Qt::Key_Escape) {
+        if (m_selectionFilter == "plane") {
+            qDebug() << "[CadView] Plane selection cancelled";
+
+            core::EventBus* bus = core::Application::instance()->eventBus();
+
+            QVariantMap planeData;
+            planeData["cancelled"] = true;
+
+            bus->publish("plane.selected", planeData);
+
+            setMode(InteractionMode::Idle);
+            highlightSelectablePlanes(false);
+
+            return;
+        }
         if (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::GetPoint) {
             Q_EMIT pointCancelled();
             if (d->rubberBand) {

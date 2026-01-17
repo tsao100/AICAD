@@ -52,7 +52,85 @@ ViewManager::ViewManager(QObject* parent)
                 Q_UNUSED(data);
                 refreshAllViews();
             });
+        // ✅ 訂閱平面選取請求
+        bus->subscribe("command.request-plane-selection", this,
+                       [this](const QVariant& data) {
+                           onPlaneSelectionRequested(data);
+                       });
+
+        // ✅ 監聽 sketch 建立事件並切換視圖
+        bus->subscribe("sketch.created", this,
+                       [this](const QVariant& data) {
+                           onSketchCreated(data);
+                       });
+
+        bus->subscribe("command.enter-sketch-mode", this, [this](const QVariant& data) {
+            CadView* view = activeView();
+            if (view) {
+                view->setMode(InteractionMode::Sketching);
+            }
+        });
+
+        bus->subscribe("command.cancelled", this, [this](const QVariant& data) {
+            CadView* view = activeView();
+            if (view) {
+                view->setMode(InteractionMode::Idle);
+            }
+        });
     }
+}
+
+void ViewManager::onPlaneSelectionRequested(const QVariant& data) {
+    QVariantMap requestData = data.toMap();
+
+    qDebug() << "[ViewManager] Plane selection requested";
+
+    CadView* view = activeView();
+    if (!view) {
+        qWarning() << "[ViewManager] No active view";
+        return;
+    }
+
+    // ✅ 啟用平面選取模式
+    view->setMode(InteractionMode::Selecting);
+
+    // ✅ 設定選取過濾器（只能選取平面）
+    view->setSelectionFilter("plane");
+
+    // ✅ 高亮顯示可選取的平面
+    view->highlightSelectablePlanes(true);
+
+    qDebug() << "[ViewManager] Plane selection mode enabled";
+}
+
+void ViewManager::onSketchCreated(const QVariant& data) {
+    QVariantMap sketchData = data.toMap();
+    QString planeName = sketchData["plane"].toString();
+
+    qDebug() << "[ViewManager] Sketch created on" << planeName << "plane";
+
+    CadView* view = activeView();
+    if (!view) return;
+
+    // ✅ 關閉平面高亮
+    view->highlightSelectablePlanes(false);
+
+    // ✅ 根據平面切換視圖
+    if (planeName == "XY") {
+        view->setTopView();
+    } else if (planeName == "XZ") {
+        view->setFrontView();
+    } else if (planeName == "YZ") {
+        view->setRightView();
+    }
+
+    // ✅ 進入草圖模式
+    view->setMode(InteractionMode::Sketching);
+
+    // ✅ 啟用網格
+    view->setGridEnabled(true);
+
+    view->fitAll();
 }
 
 ViewManager::~ViewManager() {

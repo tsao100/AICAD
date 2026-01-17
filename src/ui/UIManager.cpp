@@ -120,6 +120,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         qDebug() << "[UIManager] Creating CadView...";
         d->cadView = new view::CadView(d->mainWindow);
         d->mainWindow->setCentralWidget(d->cadView);
+        app->viewManager()->setActiveView(d->cadView);
 
         // ✅ 6. 連接視圖就緒信號，延遲初始化參考幾何
         connect(d->cadView, &view::CadView::viewInitialized,
@@ -165,7 +166,40 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // 7. 連接主視窗關閉信號
         connect(d->mainWindow, &MainWindow::aboutToClose,
                 this, &UIManager::mainWindowClosed);
-        
+
+        // ✅ 監聽平面選取請求（顯示提示）
+        bus->subscribe("command.request-plane-selection", this,
+                       [this](const QVariant& data) {
+                           setStatusMessage("Click on a plane (XY, XZ, or YZ) to select...", 0);
+                       });
+
+        // ✅ 監聽平面選取結果
+        bus->subscribe("plane.selected", this,
+                       [this](const QVariant& data) {
+                           QVariantMap planeData = data.toMap();
+
+                           if (planeData["cancelled"].toBool()) {
+                               setStatusMessage("Plane selection cancelled", 2000);
+                           } else {
+                               QString planeName = planeData["plane"].toString();
+                               setStatusMessage(
+                                   QString("Plane %1 selected").arg(planeName), 2000);
+                           }
+                       });
+
+        // ✅ 監聽命令事件並更新 UI
+        bus->subscribe("command.message", this, [this](const QVariant& data) {
+            setStatusMessage(data.toString(), 3000);
+        });
+
+        bus->subscribe("command.error", this, [this](const QVariant& data) {
+            setStatusMessage("Error: " + data.toString(), 5000);
+        });
+
+        bus->subscribe(core::Events::FEATURE_CREATED, this, [this](const QVariant& data) {
+            updateFeatureTree();
+        });
+
         d->initialized = true;
         qDebug() << "[UIManager] Initialization completed";
         

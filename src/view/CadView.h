@@ -12,6 +12,7 @@
 #include <QVector2D>
 
 #include <AIS_InteractiveContext.hxx>
+#include <AIS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 
@@ -174,6 +175,21 @@ public:
      * @return 已初始化回傳 true
      */
     bool isViewInitialized() const;
+
+    /**
+     * @brief 設定選取過濾器
+     * @param filter "plane", "edge", "face", "all"
+     */
+    void setSelectionFilter(const QString& filter);
+
+    /**
+     * @brief 高亮顯示可選取的平面
+     */
+    void highlightSelectablePlanes(bool highlight);
+
+    bool isReferencePlane(const Handle(AIS_Shape)& shape);
+
+    QString identifyPlane(const Handle(AIS_Shape)& shape);
     
 public Q_SLOTS:
     /**
@@ -247,6 +263,11 @@ Q_SIGNALS:
      * UIManager 可以監聽此信號來初始化參考幾何。
      */
     void viewInitialized();
+
+    /**
+     * @brief 平面被選取時發出
+     */
+    void planeSelected(const QString& planeName);
     
 protected:
     /**
@@ -314,7 +335,10 @@ private:
      * @brief 將 Qt 座標轉換為 OCCT 座標
      */
     void qtToOCCT(const QPoint& qtPos, Standard_Integer& occX, Standard_Integer& occY) const;
-    
+
+    QString m_selectionFilter;
+    QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面
+
     class Private;
     Private* d;
 };
