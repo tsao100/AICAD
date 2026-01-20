@@ -118,6 +118,33 @@ public:
      * @brief 獲取命令的幫助文本
      */
     virtual QString helpText() const;
+
+    /**
+     * @brief Mark command as waiting for async operation
+     *
+     * Call this in execute() if the command needs to wait
+     * for user input or other async operation.
+     *
+     * The command will stay alive until finished() is emitted.
+     */
+    void setWaitingForInput() {
+        setState(CommandState::Running);
+    }
+
+    /**
+     * @brief Complete the command with result
+     *
+     * Call this when async operation completes
+     */
+    void complete(const CommandResult& result) {
+        if (result.success) {
+            setState(CommandState::Completed);
+        } else {
+            setState(CommandState::Failed);
+        }
+        Q_EMIT finished(result);
+    }
+
     
 Q_SIGNALS:
     /**

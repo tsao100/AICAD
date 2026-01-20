@@ -463,7 +463,6 @@ void UIManager::initializeReferenceGeometry() {
     }
 
     // 初始化文件的參考幾何
-    doc->initializeReferenceGeometry(context);
     doc->initializeOrigin(context);
 
     // 刷新視圖

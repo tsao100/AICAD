@@ -188,14 +188,16 @@ CommandResult CommandManager::executeCommand(const QString& commandName,
         return CommandResult::Failure(msg);
     }
     
-    // 檢查是否有命令正在執行
+    // ✅ NEW: Cancel previous command if running
     if (d->currentCommand) {
-        QString msg = QString("Command '%1' is already running. Cancel it first.")
-            .arg(d->currentCommand->name());
-        qWarning() << "[CommandManager]" << msg;
-        return CommandResult::Failure(msg);
+        qDebug() << "[CommandManager] Cancelling previous command:"
+                 << d->currentCommand->name();
+        d->currentCommand->cancel();
+        d->currentCommand->cleanup();
+        d->currentCommand->deleteLater();
+        d->currentCommand = nullptr;
     }
-    
+
     // 取得命令資訊
     const CommandInfo& info = d->commands[canonicalName];
     
@@ -213,10 +215,40 @@ CommandResult CommandManager::executeCommand(const QString& commandName,
     // 連接命令信號
     connect(d->currentCommand, &Command::messageOutput,
             this, &CommandManager::commandMessage);
-    
+
+    // ✅ NEW: Connect finished signal to cleanup
+    connect(d->currentCommand, &Command::finished,
+            this, [this, canonicalName](const CommandResult& result) {
+        qDebug() << "[CommandManager] Command finished:" << canonicalName
+                 << "Success:" << result.success;
+        // Emit signals
+        Q_EMIT commandFinished(canonicalName, result);
+
+        // Publish to EventBus
+        if (Application* app = Application::instance()) {
+            if (EventBus* bus = app->eventBus()) {
+                QString eventName = result.success ?
+                                        Events::COMMAND_EXECUTED : "command.failed";
+                bus->publish(eventName, canonicalName);
+            }
+        }
+
+        // Add to history
+        if (result.success) {
+            addToHistory(canonicalName, QStringList());
+        }
+
+        // ✅ Cleanup command AFTER it finishes
+        if (d->currentCommand) {
+            d->currentCommand->cleanup();
+            d->currentCommand->deleteLater();
+            d->currentCommand = nullptr;
+        }
+    });
+
     // 發出命令開始事件
     Q_EMIT commandStarted(canonicalName);
-    
+
     // 透過 EventBus 發布事件
     if (core::Application* app = core::Application::instance()) {
         if (core::EventBus* bus = app->eventBus()) {
@@ -240,9 +272,16 @@ CommandResult CommandManager::executeCommand(const QString& commandName,
             }
         }
         
-        // 清理命令
-        d->currentCommand->cleanup();
-        
+        // ✅ NEW: Check if command is async (waiting for user input)
+        if (d->currentCommand->state() == CommandState::Running) {
+            qDebug() << "[CommandManager] Command is async, keeping alive";
+            // Don't cleanup yet - command will emit finished() later
+            return result;
+        }
+
+        // ✅ For synchronous commands, emit finished immediately
+        Q_EMIT d->currentCommand->finished(result);
+
     } catch (const std::exception& e) {
         QString msg = QString("Command execution failed: %1").arg(e.what());
         qCritical() << "[CommandManager]" << msg;

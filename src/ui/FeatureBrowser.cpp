@@ -57,19 +57,7 @@ void FeatureBrowser::setupUI() {
     d->treeWidget->setAlternatingRowColors(true);
     
     // ✅ 設定三欄：名稱、類型、可見性
-    d->treeWidget->setColumnCount(3);
-    QStringList headers;
-    headers << "Name" << "Type" << "Visible";
-    d->treeWidget->setHeaderLabels(headers);
-
-    // 設定欄位寬度
-    d->treeWidget->setColumnWidth(0, 150);
-    d->treeWidget->setColumnWidth(1, 80);
-    d->treeWidget->setColumnWidth(2, 50);
-
-    // ✅ 啟用項目點擊檢測
-    d->treeWidget->setItemsExpandable(true);
-    d->treeWidget->setExpandsOnDoubleClick(false);
+    d->treeWidget->setColumnCount(1);
 
     setWidget(d->treeWidget);
 }

@@ -37,9 +37,16 @@ public:
     {}
 
     CommandResult execute(const CommandContext& context) override {
+        qDebug() << "[SketchCommand] Executing...";
+        setState(CommandState::Running);
+
         core::Application* app = core::Application::instance();
         core::DocumentManager* docMgr = app->documentManager();
         core::EventBus* bus = app->eventBus();
+
+        if (!bus) {
+            return CommandResult::Failure("EventBus not available");
+        }
 
         cad::Document* doc = docMgr->currentDocument();
         if (!doc) {
