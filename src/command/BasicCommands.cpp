@@ -75,6 +75,8 @@ public:
         // ✅ 互動模式：請求在視圖中選取平面
         m_waitingForPlane = true;
 
+        doc->showAllReferenceGeometry();
+
         if (bus) {
             QVariantMap requestData;
             requestData["commandId"] = "sketch";
@@ -124,6 +126,8 @@ private:
             if (bus) bus->publish("command.error", "Invalid plane selected");
             return;
         }
+
+        doc->hideAllReferenceGeometry();
 
         createSketchOnPlane(doc, bus);
     }

@@ -109,7 +109,32 @@ CadView::CadView(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setBackgroundRole(QPalette::NoRole);
-    
+
+    // Create finish sketch button
+    m_finishSketchButton = new QPushButton("Finish Sketch", this);
+    m_finishSketchButton->setGeometry(width() - 120, 10, 110, 30);
+    m_finishSketchButton->hide();
+
+    m_finishSketchButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #4CAF50;"
+        "  color: white;"
+        "  border: none;"
+        "  border-radius: 4px;"
+        "  padding: 5px 10px;"
+        "  font-weight: bold;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #45a049;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #3d8b40;"
+        "}"
+        );
+
+    connect(m_finishSketchButton, &QPushButton::clicked,
+            this, &CadView::onFinishSketchClicked);
+
     // 初始化視圖器
     initializeViewer();
 
@@ -366,6 +391,13 @@ void CadView::setMode(InteractionMode mode) {
     }
     
     d->mode = mode;
+
+    // Show/hide finish button based on mode
+    if (mode == InteractionMode::Sketching) {
+        showFinishSketchButton();
+    } else {
+        hideFinishSketchButton();
+    }
     
     qDebug() << "[CadView] Interaction mode changed to:" << static_cast<int>(mode);
     
@@ -545,6 +577,27 @@ void CadView::setIsometricView() {
     setViewType(ViewType::Isometric);
 }
 
+void CadView::showFinishSketchButton() {
+    m_finishSketchButton->show();
+    m_finishSketchButton->raise();
+}
+
+void CadView::hideFinishSketchButton() {
+    m_finishSketchButton->hide();
+}
+
+void CadView::onFinishSketchClicked() {
+    if (d->rubberBand) {
+        d->rubberBand->clearPoints();
+        d->rubberBand->clear();
+    }
+
+    setMode(InteractionMode::Idle);
+    hideFinishSketchButton();
+
+    Q_EMIT sketchFinished();
+}
+
 void CadView::updateProjection() {
     if (d->view.IsNull()) {
         return;
@@ -628,6 +681,11 @@ void CadView::resizeEvent(QResizeEvent* event) {
         d->view->MustBeResized();
         d->view->Redraw();
     }
+
+    // Reposition finish button
+    if (m_finishSketchButton) {
+        m_finishSketchButton->setGeometry(width() - 120, 10, 110, 30);
+    }
 }
 
 void CadView::mousePressEvent(QMouseEvent* event) {
@@ -661,7 +719,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 bus->publish("plane.selected", planeData);
 
                 // 恢復正常模式
-                setMode(InteractionMode::Idle);
+                //setMode(InteractionMode::Idle);
                 highlightSelectablePlanes(false);
 
                 return;

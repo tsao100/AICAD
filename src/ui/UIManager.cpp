@@ -149,6 +149,14 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             [this](const QVariant& data) {
                 qDebug() << "[UIManager] Feature created:" << data.toString();
                 updateFeatureTree();
+
+                // Keep sketching mode if it's a sketch
+                QString featureName = data.toString();
+                if (featureName.contains("Sketch", Qt::CaseInsensitive)) {
+                    if (d->cadView) {
+                        d->cadView->setMode(view::InteractionMode::Sketching);
+                    }
+                }
             });
         
         // 7. 連接 DocumentManager 信號

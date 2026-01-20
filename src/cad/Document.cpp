@@ -509,6 +509,8 @@ void Document::initializeReferenceGeometry(const Handle(AIS_InteractiveContext)&
     qDebug() << "[Document] Reference geometry initialized:"
              << m_referenceGeometries.size() << "objects";
 
+    hideAllReferenceGeometry();
+
     Q_EMIT referenceGeometryInitialized();
 }
 
@@ -712,7 +714,7 @@ void Document::createReferencePlanes() {
             // 設定文字方向，讓它平躺在 XY 平面上
             gp_Ax2 textAxis(
                 gp_Pnt(planeSize * 0.35, planeSize * 0.35, 0.0),  // 位置
-                gp_Dir(0, 0, -1),   // 法向量 (Y軸)
+                gp_Dir(0, 0, 1),   // 法向量 (Y軸)
                 gp_Dir(1, 0, 0)    // X軸方向
                 );
             textLabel->SetOrientation3D(textAxis);

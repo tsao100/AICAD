@@ -10,6 +10,7 @@
 
 #include <QWidget>
 #include <QVector2D>
+#include <QPushButton>
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
@@ -211,6 +212,8 @@ public Q_SLOTS:
      * @brief 設定視圖為等角視圖
      */
     void setIsometricView();
+
+    void onFinishSketchClicked();
     
 Q_SIGNALS:
     /**
@@ -268,6 +271,11 @@ Q_SIGNALS:
      * @brief 平面被選取時發出
      */
     void planeSelected(const QString& planeName);
+
+    /**
+     * @brief Sketch editing finished
+     */
+    void sketchFinished();
     
 protected:
     /**
@@ -338,6 +346,11 @@ private:
 
     QString m_selectionFilter;
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面
+
+    QPushButton* m_finishSketchButton;
+
+    void showFinishSketchButton();
+    void hideFinishSketchButton();
 
     class Private;
     Private* d;
