@@ -53,7 +53,7 @@ bool Sketch::rebuild() {
         // 使用 GeometryBuilder 建立 Wire
         QVector<QVector2D> points;
         for (const SketchGeometry* geom : m_geometries) {
-            if (geom && geom->type == SketchGeometryType::Polyline) {
+            if (geom && geom->type == SketchGeometryType::Line) {
                 points = geom->points;
                 break;
             }

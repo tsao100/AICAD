@@ -16,6 +16,7 @@
 #include "core/EventBus.h"
 #include "ui/UIManager.h"
 #include "view/CadView.h"
+#include "view/RubberBand.h"
 #include <QFileDialog>
 
 namespace aicad {
@@ -23,6 +24,7 @@ namespace command {
 
 using namespace core;
 using namespace command;
+using namespace view;
 
 // ===========================================
 // Sketch 命令
@@ -76,6 +78,11 @@ public:
         m_waitingForPlane = true;
 
         doc->showAllReferenceGeometry();
+        ui::UIManager* uiMgr = app->uiManager();
+        view::CadView* cadView = uiMgr->cadView();
+
+        // ✅ Step 1: FitAll first
+        cadView->fitAll();
 
         if (bus) {
             QVariantMap requestData;
@@ -141,6 +148,9 @@ private:
             return CommandResult::Failure("Failed to create sketch");
         }
 
+        Application* app = Application::instance();
+        app->setActiveSketch(sketch);
+
         qDebug() << "[SketchCommand] Sketch created:" << name
                  << "on" << m_selectedPlane.displayName();
 
@@ -173,45 +183,6 @@ private:
 };
 
 REGISTER_COMMAND("sketch", SketchCommand);
-
-// ===========================================
-// Line 命令
-// ===========================================
-class LineCommand : public Command {
-public:
-    LineCommand() : Command("line", "Draw Line") {}
-    
-    CommandResult execute(const CommandContext& context) override {
-        if (context.args.size() < 4) {
-            return CommandResult::Failure("Need 4 arguments: x1 y1 x2 y2");
-        }
-        
-        bool ok;
-        double x1 = context.args[0].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid x1");
-        
-        double y1 = context.args[1].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid y1");
-        
-        double x2 = context.args[2].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid x2");
-        
-        double y2 = context.args[3].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid y2");
-        
-        // TODO: 實際繪製直線
-        outputMessage(QString("Drawing line from (%1,%2) to (%3,%4)")
-                     .arg(x1).arg(y1).arg(x2).arg(y2));
-        
-        return CommandResult::Success("Line created");
-    }
-    
-    QString getUsage() const override {
-        return "Usage: line x1 y1 x2 y2";
-    }
-};
-
-REGISTER_COMMAND("line", LineCommand);
 
 // ===========================================
 // Rectangle 命令

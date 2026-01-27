@@ -208,6 +208,25 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             updateFeatureTree();
         });
 
+        // ✅ Monitor user interactions for debugging/logging
+        bus->subscribe(core::Events::POINT_ACQUIRED, this,
+                       [](const QVariant& data) {
+                           QVariantMap map = data.toMap();
+                           QVector2D point = map["point"].value<QVector2D>();
+                           qDebug() << "[UIManager] User clicked point:" << point.x() << point.y();
+                           // Could update coordinate display here
+                       });
+
+        // ✅ Connect view refresh when features update
+        connect(bus, &core::EventBus::eventPublished, this,
+                [this](const QString& eventName) {
+                    if (eventName == core::Events::FEATURE_UPDATED) {
+                        if (d->cadView) {
+                            d->cadView->refreshView();
+                        }
+                    }
+                });
+
         d->initialized = true;
         qDebug() << "[UIManager] Initialization completed";
         

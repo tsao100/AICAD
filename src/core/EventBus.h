@@ -140,7 +140,13 @@ constexpr const char* VIEW_REFRESHED = "view.refreshed";
 // 命令事件
 constexpr const char* COMMAND_STARTED = "command.started";
 constexpr const char* COMMAND_EXECUTED = "command.executed";
+constexpr const char* COMMAND_FAILED = "command.failed";
 constexpr const char* COMMAND_CANCELLED = "command.cancelled";
+
+// ✅ Add interaction events
+constexpr const char* POINT_ACQUIRED = "interaction.point_acquired";
+constexpr const char* POINT_CANCELLED = "interaction.point_cancelled";
+constexpr const char* RUBBER_BAND_UPDATE = "interaction.rubber_update";
 }
 
 } // namespace core

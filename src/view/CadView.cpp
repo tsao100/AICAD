@@ -38,6 +38,8 @@
 #include <Xw_Window.hxx>
 #endif
 
+using namespace aicad::core;
+
 namespace aicad {
 namespace view {
 
@@ -727,6 +729,26 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         }
     }
 
+    if (event->button() == Qt::LeftButton) {
+        // ✅ In sketching mode, emit point
+        if (d->mode == InteractionMode::Sketching) {
+            QVector2D planePt = screenToPlane(event->pos());
+
+            // ✅ Publish to EventBus instead of direct signal
+            EventBus* bus = Application::instance()->eventBus();
+
+            QVariantMap data;
+            data["point"] = QVariant::fromValue(planePt);
+            data["screenPos"] = event->pos();
+
+            bus->publish(Events::POINT_ACQUIRED, data);
+
+            // ✅ Still emit signal for backward compatibility
+            Q_EMIT pointAcquired(planePt);  // ✅ LineCommand receives this
+            return;
+        }
+    }
+
     // 更新 OCCT 選擇
     if (!d->context.IsNull() && !d->view.IsNull()) {
         
@@ -784,15 +806,14 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     }
     
     // 草圖模式：更新橡皮筋
-    if (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::GetPoint) {
+    if (d->mode == InteractionMode::Sketching) {
         if (d->rubberBand) {
             QVector2D planePt = screenToPlane(event->pos());
             d->rubberBand->setCurrentPoint(planePt);
             d->rubberBand->update();
         }
-        return;
     }
-    
+
     // 視圖操作
     if (d->mousePressed && !d->view.IsNull()) {
         int dx = event->pos().x() - d->lastMousePos.x();
@@ -853,6 +874,14 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             }
             setMode(InteractionMode::Idle);
         }
+        if (d->mode == InteractionMode::GetPoint) {
+            // ✅ Publish to EventBus
+            EventBus* bus = Application::instance()->eventBus();
+            bus->publish(Events::POINT_CANCELLED, QVariant());
+
+            Q_EMIT pointCancelled();
+        }
+
         return;
     }
     

@@ -177,148 +177,100 @@ void CommandManager::unregisterCommand(const QString& name) {
     Q_EMIT commandCountChanged(d->commands.size());
 }
 
-CommandResult CommandManager::executeCommand(const QString& commandName,
-                                            const CommandContext& context)
+CommandResult CommandManager::executeCommand(
+    const QString& commandName,
+    const CommandContext& context)
 {
     QString canonicalName = getCanonicalName(commandName);
-    
     if (canonicalName.isEmpty()) {
-        QString msg = QString("Unknown command: %1").arg(commandName);
-        qWarning() << "[CommandManager]" << msg;
-        return CommandResult::Failure(msg);
+        return CommandResult::Failure(
+            QString("Unknown command: %1").arg(commandName));
     }
-    
-    // ✅ NEW: Cancel previous command if running
+
+    // Cancel previous command
     if (d->currentCommand) {
-        qDebug() << "[CommandManager] Cancelling previous command:"
-                 << d->currentCommand->name();
         d->currentCommand->cancel();
         d->currentCommand->cleanup();
         d->currentCommand->deleteLater();
         d->currentCommand = nullptr;
     }
 
-    // 取得命令資訊
     const CommandInfo& info = d->commands[canonicalName];
-    
-    // 建立命令實例
-    d->currentCommand = info.factory();
-    if (!d->currentCommand) {
-        QString msg = QString("Failed to create command: %1").arg(canonicalName);
-        qCritical() << "[CommandManager]" << msg;
-        return CommandResult::Failure(msg);
+    Command* cmd = info.factory();
+    if (!cmd) {
+        return CommandResult::Failure(
+            QString("Failed to create command: %1").arg(canonicalName));
     }
-    
-    qDebug() << "[CommandManager] Executing command:" << canonicalName 
-             << "Args:" << context.args;
-    
-    // 連接命令信號
-    connect(d->currentCommand, &Command::messageOutput,
-            this, &CommandManager::commandMessage);
 
-    // ✅ NEW: Connect finished signal to cleanup
-    connect(d->currentCommand, &Command::finished,
-            this, [this, canonicalName](const CommandResult& result) {
-        qDebug() << "[CommandManager] Command finished:" << canonicalName
-                 << "Success:" << result.success;
-        // Emit signals
-        Q_EMIT commandFinished(canonicalName, result);
+    d->currentCommand = cmd;
 
-        // Publish to EventBus
-        if (Application* app = Application::instance()) {
-            if (EventBus* bus = app->eventBus()) {
-                QString eventName = result.success ?
-                                        Events::COMMAND_EXECUTED : "command.failed";
-                bus->publish(eventName, canonicalName);
-            }
-        }
+    // 🔑 統一 finished 處理點（唯一）
+    connect(cmd, &Command::finished,
+            this, &CommandManager::onCommandFinished,
+            Qt::UniqueConnection);
 
-        // Add to history
-        if (result.success) {
-            addToHistory(canonicalName, QStringList());
-        }
-
-        // ✅ Cleanup command AFTER it finishes
-        if (d->currentCommand) {
-            d->currentCommand->cleanup();
-            d->currentCommand->deleteLater();
-            d->currentCommand = nullptr;
-        }
-    });
-
-    // 發出命令開始事件
     Q_EMIT commandStarted(canonicalName);
 
-    // 透過 EventBus 發布事件
-    if (core::Application* app = core::Application::instance()) {
-        if (core::EventBus* bus = app->eventBus()) {
-            bus->publish(core::Events::COMMAND_STARTED, canonicalName);
-        }
+    if (auto* bus = core::Application::instance()->eventBus()) {
+        bus->publish(core::Events::COMMAND_STARTED, canonicalName);
     }
-    
+
+    // ---- 執行 ----
     CommandResult result;
-    
+
     try {
-        // 初始化命令
-        if (!d->currentCommand->initialize()) {
-            result = CommandResult::Failure("Command initialization failed");
-        } else {
-            // 驗證參數
-            if (!d->currentCommand->validateParameters(context)) {
-                result = CommandResult::Failure("Invalid command parameters");
-            } else {
-                // 執行命令
-                result = d->currentCommand->execute(context);
-            }
-        }
-        
-        // ✅ NEW: Check if command is async (waiting for user input)
-        if (d->currentCommand->state() == CommandState::Running) {
-            qDebug() << "[CommandManager] Command is async, keeping alive";
-            // Don't cleanup yet - command will emit finished() later
-            return result;
-        }
+        if (!cmd->initialize())
+            result = CommandResult::Failure("Initialization failed");
+        else if (!cmd->validateParameters(context))
+            result = CommandResult::Failure("Invalid parameters");
+        else
+            result = cmd->execute(context);
+    }
+    catch (const std::exception& e) {
+        result = CommandResult::Failure(e.what());
+    }
+    catch (...) {
+        result = CommandResult::Failure("Unknown exception");
+    }
 
-        // ✅ For synchronous commands, emit finished immediately
-        Q_EMIT d->currentCommand->finished(result);
+    // 🔑 同步命令：主動結束（走同一條 finished 流）
+    if (cmd->state() != CommandState::Running) {
+        Q_EMIT cmd->finished(result);
+    }
 
-    } catch (const std::exception& e) {
-        QString msg = QString("Command execution failed: %1").arg(e.what());
-        qCritical() << "[CommandManager]" << msg;
-        result = CommandResult::Failure(msg);
-    } catch (...) {
-        QString msg = "Command execution failed: Unknown exception";
-        qCritical() << "[CommandManager]" << msg;
-        result = CommandResult::Failure(msg);
-    }
-    
-    // 刪除命令實例
-    delete d->currentCommand;
-    d->currentCommand = nullptr;
-    
-    // 添加到歷史記錄
-    if (result.success) {
-        addToHistory(canonicalName, context.args);
-    }
-    
-    // 發出命令完成事件
-    Q_EMIT commandFinished(canonicalName, result);
-    
-    // 透過 EventBus 發布事件
-    if (core::Application* app = core::Application::instance()) {
-        if (core::EventBus* bus = app->eventBus()) {
-            QString eventName = result.success ? 
-                core::Events::COMMAND_EXECUTED : "command.failed";
-            bus->publish(eventName, canonicalName);
-        }
-    }
-    
-    qDebug() << "[CommandManager] Command" << canonicalName 
-             << (result.success ? "completed successfully" : "failed")
-             << "Message:" << result.message;
-    
     return result;
 }
+
+void CommandManager::onCommandFinished(const CommandResult& result)
+{
+    Command* cmd = qobject_cast<Command*>(sender());
+    if (!cmd || cmd != d->currentCommand)
+        return;
+
+    QString name = cmd->name();
+
+    Q_EMIT commandFinished(name, result);
+
+    if (auto* bus = core::Application::instance()->eventBus()) {
+        bus->publish(
+            result.success ? core::Events::COMMAND_EXECUTED
+                           : core::Events::COMMAND_FAILED,
+            name
+            );
+    }
+
+    if (result.success) {
+        addToHistory(name, QStringList());
+    }
+
+    cmd->cleanup();
+    cmd->deleteLater();
+    d->currentCommand = nullptr;
+
+    qDebug() << "[CommandManager] Command finished:"
+             << name << "success:" << result.success;
+}
+
 
 CommandResult CommandManager::executeCommand(const QString& commandName,
                                             const QStringList& args)

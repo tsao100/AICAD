@@ -1,41 +1,42 @@
-/**
- * @file LineCommand.h
- * @brief LineCommand 類別定義
- * @author TODO
- * @date 2026-01-07
- */
-
 #ifndef AICAD_COMMAND_LINECOMMAND_H
 #define AICAD_COMMAND_LINECOMMAND_H
 
-#include <QObject>
+#include "Command.h"
+#include "command/CommandFactory.h"
+#include "view/CadView.h"
+#include "cad/Plane.h"
+#include "view/RubberBand.h"
+#include <QVector2D>
 
 namespace aicad {
 namespace command {
 
-/**
- * @brief LineCommand 類別
- * 
- * TODO: 添加類別說明
- */
-class LineCommand : public QObject {
-    Q_OBJECT
+class LineCommand : public Command {
+    Q_OBJECT  // ✅ MOC will process this header
     
 public:
     explicit LineCommand(QObject* parent = nullptr);
     ~LineCommand() override;
     
-    // TODO: 添加公開方法
-    
-Q_SIGNALS:
-    // TODO: 添加信號
-    
+    CommandResult execute(const CommandContext& context) override;
+    bool isInteractive() const override { return true; }
+    QString getUsage() const override;
+    void cleanup(view::CadView* cadView, view::RubberBand* rubber);
+
 private:
-    // TODO: 添加私有成員
-    
-    class Private;
-    Private* d;
+    // ✅ Renamed methods (not slots - using EventBus)
+    void handlePointAcquired(QVector2D point);
+    void handleCancelled();
+    void cleanup() override;
+    CommandResult createLine(double x1, double y1, double x2, double y2);
+
+    view::CustomPlane convertPlane(const cad::Plane& plane);
+
+    QVector2D m_startPoint;
+    bool m_hasStartPoint;
 };
+
+REGISTER_COMMAND("line", LineCommand);
 
 } // namespace command
 } // namespace aicad

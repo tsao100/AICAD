@@ -99,6 +99,7 @@ public:
     CommandResult executeCommand(const QString& commandName,
                                 const CommandContext& context = CommandContext());
     
+    void onCommandFinished(const CommandResult& result);
     /**
      * @brief 簡化的執行命令
      * @param commandName 命令名稱

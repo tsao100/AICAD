@@ -10,6 +10,7 @@
 #include "DocumentManager.h"
 #include "MenuParser.h"
 #include "cad/Document.h"
+#include "cad/Sketch.h"
 #include "command/CommandManager.h"
 #include "command/RectangleCommand.h"
 #include "command/CommandFactory.h"
@@ -39,6 +40,7 @@ public:
         , viewManager(nullptr)
         , lispEngine(nullptr)
         , menuParser(nullptr)
+        , activeSketch(nullptr)
     {
     }
     
@@ -60,6 +62,7 @@ public:
     view::ViewManager* viewManager;
     scripting::LispEngine* lispEngine;
     MenuParser* menuParser;
+    cad::Sketch* activeSketch;
 
     static const QString VERSION;
     static const QString APP_NAME;
@@ -440,6 +443,16 @@ bool Application::createDefaultDocument() {
         qWarning() << "[Application] Unknown exception creating default document";
         return false;
     }
+}
+
+cad::Sketch* Application::activeSketch() const {
+    return d->activeSketch;
+}
+
+void Application::setActiveSketch(cad::Sketch* sketch) {
+    d->activeSketch = sketch;
+    qDebug() << "[Application] Active sketch set to:"
+             << (sketch ? sketch->name() : "null");
 }
 
 } // namespace core

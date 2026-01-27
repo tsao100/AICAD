@@ -15,6 +15,7 @@
 namespace aicad {
 namespace cad {
 class Document;
+class Sketch;
 }
 namespace ui {
 class UIManager;
@@ -139,6 +140,12 @@ public:
      * 包含參考幾何（原點、軸、平面），使應用程式立即可用。
      */
     bool createDefaultDocument();
+
+    /**
+     * @brief Get/Set active sketch for drawing operations
+     */
+    cad::Sketch* activeSketch() const;
+    void setActiveSketch(cad::Sketch* sketch);
 
 Q_SIGNALS:
     /**

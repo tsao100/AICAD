@@ -172,6 +172,7 @@ SOURCES += \
     src/command/Command.cpp \
     src/command/RectangleCommand.cpp \
     src/command/BasicCommands.cpp \
+    src/command/LineCommand.cpp \
     \
     # Scripting Module (Daney - 腳本系統)
     src/scripting/LispEngine.cpp \
@@ -219,6 +220,7 @@ HEADERS += \
     src/command/RectangleCommand.h \
     src/command/CommandTypes.h \
     src/command/CommandFactory.h \
+    src/command/LineCommand.h \
     \
     # Scripting Module (Daney)
     src/scripting/LispEngine.h \

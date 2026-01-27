@@ -173,29 +173,32 @@ void EventBus::unsubscribeAll(QObject* receiver) {
     int totalRemoved = 0;
     
     // 遍歷所有事件
-    auto it = d->subscriptions.begin();
-    while (it != d->subscriptions.end()) {
-        QVector<Subscription>& subs = it.value();
-        
+    // ✅ Make a copy of event names first
+    QStringList eventNames = d->subscriptions.keys();
+
+    for (const QString& eventName : eventNames) {
+        if (!d->subscriptions.contains(eventName)) {
+            continue;
+        }
+
+        QVector<Subscription>& subs = d->subscriptions[eventName];
+
         int beforeSize = subs.size();
         subs.erase(
             std::remove_if(subs.begin(), subs.end(),
-                [receiver](const Subscription& sub) {
-                    return sub.receiver == receiver;
-                }),
+                           [receiver](const Subscription& sub) {
+                               return sub.receiver == receiver;
+                           }),
             subs.end()
-        );
-        
+            );
+
         totalRemoved += (beforeSize - subs.size());
-        
-        // 如果沒有訂閱者，移除此事件
+
         if (subs.isEmpty()) {
-            it = d->subscriptions.erase(it);
-        } else {
-            ++it;
+            d->subscriptions.remove(eventName);
         }
     }
-    
+
     if (totalRemoved > 0) {
         qDebug() << "[EventBus] Unsubscribed all for receiver:"
                  << receiver->objectName()

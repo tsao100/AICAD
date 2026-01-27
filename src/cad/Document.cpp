@@ -361,7 +361,7 @@ int Document::indexOf(Feature* feature) const {
 Sketch* Document::createSketch(const Plane& plane, const QString& name) {
     Sketch* sketch = new Sketch(this);
     sketch->setPlane(plane);
-    
+
     // 自動命名
     QString sketchName = name;
     if (sketchName.isEmpty()) {
