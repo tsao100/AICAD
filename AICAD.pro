@@ -154,11 +154,16 @@ SOURCES += \
     src/geometry/GeometryBuilder.cpp \
     \
     # UI Module (James - 用戶界面)
+    src/ui/CommandOverlayWidget.cpp \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/PropertyPanel.cpp \
     src/ui/ToolManager.cpp \
     src/ui/UIManager.cpp \
+    src/ui/CommandInput.cpp \
+    src/ui/ResultPopup.cpp \
+    src/ui/CommandPromptLabel.cpp \
+    src/ui/CommandHistoryDockWidget.cpp \
     \
     # View Module (Felicia - 視圖系統)
     src/view/ViewManager.cpp \
@@ -201,11 +206,16 @@ HEADERS += \
     src/geometry/GeometryBuilder.h \
     \
     # UI Module (James)
+    src/ui/CommandOverlayWidget.h \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
     src/ui/PropertyPanel.h \
     src/ui/ToolManager.h \
     src/ui/UIManager.h \
+    src/ui/CommandInput.h \
+    src/ui/ResultPopup.h \
+    src/ui/CommandPromptLabel.h \
+    src/ui/CommandHistoryDockWidget.h \
     \
     # View Module (Felicia)
     src/view/ViewManager.h \

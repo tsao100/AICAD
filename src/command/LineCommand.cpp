@@ -77,6 +77,10 @@ CommandResult LineCommand::execute(const CommandContext& context) {
     // ✅ Subscribe to EventBus instead of direct signal connection
     EventBus* bus = app->eventBus();
 
+    bus->publish(Events::COMMAND_PROMPT,"Specify first point:");
+    bus->publish(Events::COMMAND_LOG,"Specify first point:");
+
+
     // ✅ Subscribe with Qt::QueuedConnection for safety
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
@@ -103,43 +107,56 @@ CommandResult LineCommand::execute(const CommandContext& context) {
 }
 
 // ✅ Renamed from onPointAcquired
-void LineCommand::handlePointAcquired(QVector2D point) {
-    qDebug() << "[LineCommand] Point acquired:" << point.x() << "," << point.y();
+void LineCommand::handlePointAcquired(QVector2D point)
+{
+    qDebug() << "[LineCommand] Point acquired:"
+             << point.x() << "," << point.y();
 
     Application* app = Application::instance();
     view::CadView* cadView = app->uiManager()->cadView();
     view::RubberBand* rubber = cadView->rubberBand();
+    EventBus* bus = app->eventBus();
 
     if (!m_hasStartPoint) {
-        // First point
+        // === First point ===
         m_startPoint = point;
         m_hasStartPoint = true;
+
+        rubber->clear();
         rubber->addPoint(point);
-        outputMessage(QString("First point: (%1,%2). Specify second point:")
-                          .arg(point.x()).arg(point.y()));
-    } else {
-        // Second point - create line
-        cad::Sketch* sketch = app->activeSketch();
-        if (sketch) {
-            sketch->addLine(m_startPoint, point);
-            sketch->rebuild();
 
-            EventBus* bus = app->eventBus();
-            bus->publish(Events::FEATURE_UPDATED,
-                         QVariant::fromValue(sketch->name()));
-            cleanup();
-        }
-
-        outputMessage(QString("Line created from (%1,%2) to (%3,%4)")
-                          .arg(m_startPoint.x()).arg(m_startPoint.y())
+        outputMessage(QString("First point: (%1, %2). Specify next point:")
                           .arg(point.x()).arg(point.y()));
 
-        // ✅ DON'T call cleanup() here - let CommandManager do it
-        // cleanup();  // ❌ Remove this line
-
-        // ✅ Just emit finished
-        Q_EMIT finished(CommandResult::Success("Line created"));
+        bus->publish(Events::COMMAND_PROMPT, "Specify next point or press ESC to finish");
+        return;
     }
+
+    // === Subsequent points ===
+    cad::Sketch* sketch = app->activeSketch();
+    if (!sketch)
+        return;
+
+    // Create line from previous point to current
+    sketch->addLine(m_startPoint, point);
+    sketch->rebuild();
+
+    bus->publish(Events::FEATURE_UPDATED,
+                 QVariant::fromValue(sketch->name()));
+
+    outputMessage(QString("Line created from (%1,%2) to (%3,%4)")
+                      .arg(m_startPoint.x()).arg(m_startPoint.y())
+                      .arg(point.x()).arg(point.y()));
+
+    // Update rubber band
+    rubber->clearPoints();
+    rubber->addPoint(point);
+
+    // Chain: current point becomes next start point
+    m_startPoint = point;
+
+    // Stay in command, DO NOT finish
+    bus->publish(Events::COMMAND_PROMPT, "Specify next point or press ESC to finish");
 }
 
 // ✅ Renamed from onCancelled

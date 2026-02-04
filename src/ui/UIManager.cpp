@@ -12,6 +12,9 @@
 #include "PropertyPanel.h"
 #include "view/ViewManager.h"  // ✅ 添加
 #include "view/CadView.h"      // ✅ 添加
+#include <QShortcut>
+#include "ui/CommandOverlayWidget.h"
+#include "ui/CommandHistoryDockWidget.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
@@ -121,6 +124,26 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->cadView = new view::CadView(d->mainWindow);
         d->mainWindow->setCentralWidget(d->cadView);
         app->viewManager()->setActiveView(d->cadView);
+
+        auto* cmdOverlay =
+            new aicad::ui::CommandOverlayWidget(d->cadView);
+        // 初始位置
+        cmdOverlay->raise();
+        cmdOverlay->show();
+
+        auto* historyDock = new aicad::ui::CommandHistoryDockWidget(d->mainWindow);
+        d->mainWindow->addDockWidget(Qt::BottomDockWidgetArea, historyDock);
+        historyDock->hide();
+
+        // F2 toggle
+        QWidget* owner = d->mainWindow;  // 一定是 QWidget*
+
+        auto* shortcut = new QShortcut(QKeySequence(Qt::Key_F2), owner);
+        connect(shortcut, &QShortcut::activated, owner, [historyDock]() {
+            historyDock->setVisible(!historyDock->isVisible());
+            if (historyDock->isVisible())
+                historyDock->raise();
+        });
 
         // ✅ 6. 連接視圖就緒信號，延遲初始化參考幾何
         connect(d->cadView, &view::CadView::viewInitialized,

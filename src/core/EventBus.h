@@ -139,9 +139,13 @@ constexpr const char* VIEW_REFRESHED = "view.refreshed";
 
 // 命令事件
 constexpr const char* COMMAND_STARTED = "command.started";
+constexpr const char* COMMAND_EXECUTE_REQUEST = "command.execute.request";
 constexpr const char* COMMAND_EXECUTED = "command.executed";
 constexpr const char* COMMAND_FAILED = "command.failed";
+constexpr const char* COMMAND_FINISHED = "command.finished";
 constexpr const char* COMMAND_CANCELLED = "command.cancelled";
+constexpr const char* COMMAND_PROMPT = "command.prompt";
+constexpr const char* COMMAND_LOG = "command.log";
 
 // ✅ Add interaction events
 constexpr const char* POINT_ACQUIRED = "interaction.point_acquired";

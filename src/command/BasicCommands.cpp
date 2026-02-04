@@ -16,7 +16,6 @@
 #include "core/EventBus.h"
 #include "ui/UIManager.h"
 #include "view/CadView.h"
-#include "view/RubberBand.h"
 #include <QFileDialog>
 
 namespace aicad {
@@ -154,6 +153,10 @@ private:
         qDebug() << "[SketchCommand] Sketch created:" << name
                  << "on" << m_selectedPlane.displayName();
 
+        bus->publish(Events::COMMAND_PROMPT, "");
+        bus->publish(Events::COMMAND_LOG,"Sketch created on " +
+                                              m_selectedPlane.displayName());
+
         // 發布事件通知其他模組
         if (bus) {
             bus->publish(core::Events::FEATURE_CREATED, sketch->name());
@@ -168,6 +171,10 @@ private:
                          QString("Sketch '%1' created on %2 plane")
                              .arg(name).arg(m_selectedPlane.displayName()));
         }
+
+        // ✅ Just emit finished
+        Q_EMIT finished(CommandResult::Success(
+            QString("Sketch '%1' created").arg(name)));
 
         return CommandResult::Success(
             QString("Sketch '%1' created").arg(name));
