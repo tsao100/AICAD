@@ -206,6 +206,7 @@ void RubberBand::updateLine() {
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
     d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
+    d->context->UpdateCurrentViewer();
 }
 
 void RubberBand::updateRectangle() {
@@ -245,6 +246,7 @@ void RubberBand::updateRectangle() {
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
     d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
+    d->context->UpdateCurrentViewer();
 }
 
 void RubberBand::updatePolyline() {
@@ -280,6 +282,7 @@ void RubberBand::updatePolyline() {
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
     d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
+    d->context->UpdateCurrentViewer();
 }
 
 void RubberBand::updateCircle() {
@@ -327,6 +330,7 @@ void RubberBand::updateCircle() {
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
     d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();
+    d->context->UpdateCurrentViewer();
 }
 
 void RubberBand::updateArc() {
@@ -377,6 +381,7 @@ void RubberBand::updateArc() {
             d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
             d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
             d->presentation->Display();
+            d->context->UpdateCurrentViewer();
         }
     } catch (...) {
         qWarning() << "[RubberBand] Failed to create arc";

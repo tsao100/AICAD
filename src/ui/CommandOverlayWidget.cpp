@@ -139,7 +139,7 @@ void CommandOverlayWidget::adjustOverlayHeight()
         top = qMin(top, lbl->y());
 
     int bottom = m_input->y() + m_input->height();
-    int newHeight = bottom - top + 8;   // 上下 padding
+    int newHeight = bottom - top + 2;   // 上下 padding
 
     setFixedHeight(newHeight);
     reposition();
@@ -147,7 +147,7 @@ void CommandOverlayWidget::adjustOverlayHeight()
 
 void CommandOverlayWidget::repositionPrompts()
 {
-    int y = m_input->y() - promptSpacing - 40;
+    int y = m_input->y() - promptSpacing ;
 
     // 從最舊 → 最新
     for (int i = m_promptLabels.size()-1; i >=0 ; --i) {
@@ -166,7 +166,7 @@ void CommandOverlayWidget::appendPromptLine(const QString& text)
     if (text.isEmpty())
         return;
 
-    if (m_promptLabels.size() >= MaxPromptLines) {
+    while (m_promptLabels.size() > MaxPromptLines - 2) {
         QLabel* oldest = m_promptLabels.takeFirst();
         oldest->deleteLater();
     }

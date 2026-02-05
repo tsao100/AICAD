@@ -19,6 +19,7 @@ namespace command {
 LineCommand::LineCommand(QObject* parent)
     : Command("line", "Draw Line", parent)
     , m_hasStartPoint(false)
+    , m_isFinishing(false)
 {
 }
 
@@ -109,6 +110,8 @@ CommandResult LineCommand::execute(const CommandContext& context) {
 // ✅ Renamed from onPointAcquired
 void LineCommand::handlePointAcquired(QVector2D point)
 {
+    if (m_isFinishing) return;
+
     qDebug() << "[LineCommand] Point acquired:"
              << point.x() << "," << point.y();
 
@@ -163,11 +166,10 @@ void LineCommand::handlePointAcquired(QVector2D point)
 void LineCommand::handleCancelled() {
     qDebug() << "[LineCommand] Cancelled via EventBus";
 
-    // ✅ DON'T call cleanup() here either
-    // cleanup();  // ❌ Remove this line
+    m_isFinishing = true;  // ✅ Set flag to prevent further point handling
 
-    // ✅ Just emit cancelled
-    Q_EMIT cancelled();
+    // ✅ Just emit finished with current state
+    Q_EMIT finished(CommandResult::Success("Line command completed"));
 }
 
 void LineCommand::cleanup() {
@@ -193,6 +195,7 @@ void LineCommand::cleanup() {
     }
 
     m_hasStartPoint = false;
+    m_isFinishing = false;
     qDebug() << "[LineCommand] Cleanup completed";
 }
 

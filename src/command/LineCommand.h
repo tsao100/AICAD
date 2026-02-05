@@ -34,6 +34,7 @@ private:
 
     QVector2D m_startPoint;
     bool m_hasStartPoint;
+    bool m_isFinishing;
 };
 
 REGISTER_COMMAND("line", LineCommand);

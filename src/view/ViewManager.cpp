@@ -7,6 +7,8 @@
 
 #include "ViewManager.h"
 #include "CadView.h"
+#include "RubberBand.h"
+#include "ViewGrid.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 
@@ -137,13 +139,22 @@ void ViewManager::onSketchCreated(const QVariant& data) {
     // ✅ 關閉平面高亮
     view->highlightSelectablePlanes(false);
 
-    // ✅ 根據平面切換視圖
+    // ✅ Update grid plane to match sketch plane
+    CustomPlane gridPlane;
     if (planeName == "XY") {
+        gridPlane = CustomPlane::XY();
         view->setTopView();
     } else if (planeName == "XZ") {
+        gridPlane = CustomPlane::XZ();
         view->setFrontView();
     } else if (planeName == "YZ") {
+        gridPlane = CustomPlane::YZ();
         view->setRightView();
+    }
+
+    ViewGrid* grid = view->grid();  // Need to add getter method
+    if (grid) {
+        grid->setPlane(gridPlane);
     }
 
     // ✅ 進入草圖模式

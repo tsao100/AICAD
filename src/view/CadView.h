@@ -191,6 +191,8 @@ public:
     bool isReferencePlane(const Handle(AIS_Shape)& shape);
 
     QString identifyPlane(const Handle(AIS_Shape)& shape);
+
+    ViewGrid* grid() const;  // Add this public method declaration
     
 public Q_SLOTS:
     /**

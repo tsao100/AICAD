@@ -46,9 +46,9 @@ public:
         , style(GridStyle::Lines)
         , showAxesFlag(true)
         , visible(false)
-        , gridColorR(0.6f)
-        , gridColorG(0.6f)
-        , gridColorB(0.6f)
+        , gridColorR(0.4f)
+        , gridColorG(0.4f)
+        , gridColorB(0.5f)
     {
     }
 };

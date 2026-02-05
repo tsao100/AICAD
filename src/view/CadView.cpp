@@ -344,6 +344,10 @@ QString CadView::identifyPlane(const Handle(AIS_Shape)& shape) {
     return "UNKNOWN";
 }
 
+ViewGrid* CadView::grid() const {
+    return d->grid;
+}
+
 void CadView::setDocument(cad::Document* document) {
     if (d->document == document) {
         return;
@@ -729,6 +733,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         }
     }
 
+    // ✅ Add this after plane selection handling, before sketching mode check:
+    if (event->button() == Qt::RightButton && d->mode == InteractionMode::Sketching) {
+        qDebug() << "[CadView] RMB clicked - finishing command";
+        EventBus* bus = Application::instance()->eventBus();
+        bus->publish(Events::POINT_CANCELLED, QVariant());
+        return;
+    }
+
     if (event->button() == Qt::LeftButton) {
         // ✅ In sketching mode, emit point
         if (d->mode == InteractionMode::Sketching) {
@@ -861,7 +873,6 @@ void CadView::keyPressEvent(QKeyEvent* event) {
 
             bus->publish("plane.selected", planeData);
 
-            setMode(InteractionMode::Idle);
             highlightSelectablePlanes(false);
 
             return;
@@ -872,7 +883,6 @@ void CadView::keyPressEvent(QKeyEvent* event) {
                 d->rubberBand->clearPoints();
                 d->rubberBand->clear();
             }
-            setMode(InteractionMode::Idle);
         }
         if (d->mode == InteractionMode::GetPoint) {
             // ✅ Publish to EventBus
@@ -892,7 +902,17 @@ void CadView::keyPressEvent(QKeyEvent* event) {
         }
         return;
     }
-    
+
+    // ✅ Add spacebar handling:
+    if (event->key() == Qt::Key_Space) {
+        if (d->mode == InteractionMode::Sketching) {
+            qDebug() << "[CadView] Spacebar pressed - finishing command";
+            EventBus* bus = Application::instance()->eventBus();
+            bus->publish(Events::POINT_CANCELLED, QVariant());
+            return;
+        }
+    }
+
     // 字元輸入 - 用於座標輸入
     if (!event->text().isEmpty()) {
         Q_EMIT keyInputReceived(event->text());
