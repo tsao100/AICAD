@@ -151,6 +151,8 @@ Q_SIGNALS:
 private:
     class Private;
     Private* d;
+
+//    view::CustomPlane convertToCustomPlane(const cad::Plane& plane);
 };
 
 } // namespace view

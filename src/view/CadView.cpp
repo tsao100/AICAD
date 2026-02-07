@@ -8,8 +8,12 @@
 #include "CadView.h"
 #include "RubberBand.h"
 #include "ViewGrid.h"
+#include "cad/Feature.h"
+#include "cad/Sketch.h"
+#include "cad/Document.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
+#include "core/DocumentManager.h"
 
 #include <QDebug>
 #include <QTimer>
@@ -39,6 +43,7 @@
 #endif
 
 using namespace aicad::core;
+using namespace aicad::cad;
 
 namespace aicad {
 namespace view {
@@ -238,7 +243,11 @@ void CadView::initializeViewer() {
         
         bus->subscribe(Events::FEATURE_UPDATED, this, [this](const QVariant& data) {
             Q_UNUSED(data);
-            refreshView();
+            // ✅ CHANGE: Force immediate viewer update
+            if (!d->context.IsNull()) {
+                d->context->UpdateCurrentViewer();
+            }
+            displayAllFeatures();
         });
     }
     
@@ -430,19 +439,33 @@ void CadView::displayAllFeatures() {
     if (!d->document || d->context.IsNull()) {
         return;
     }
-    
+
     qDebug() << "[CadView] Displaying all features";
-    
+
     // 清除所有顯示 (保留 ViewCube)
     d->context->RemoveAll(Standard_False);
     d->context->Display(d->viewCube, Standard_False);
-    
-    // TODO: 從文件取得特徵並顯示
-    // QVector<TDF_Label> features = d->document->getFeatures();
-    // for (const TDF_Label& label : features) {
-    //     displayFeature(label);
-    // }
-    
+
+    // ✅ 顯示所有 Feature
+    QList<Feature*> features = d->document->features();
+
+    for (Feature* feature : features) {
+        if (!feature || !feature->isVisible()) {
+            continue;
+        }
+
+        // ✅ Sketch 使用特殊顯示方法
+        if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
+            sketch->displayInContext(d->context);
+        }
+        // ✅ 其他 Feature 使用傳統方法
+        else if (!feature->shape().IsNull()) {
+            Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
+            aisShape->SetColor(Quantity_NOC_YELLOW);
+            d->context->Display(aisShape, Standard_False);
+        }
+    }
+
     fitAll();
 }
 
@@ -650,19 +673,27 @@ void CadView::handleObjectSelection(const QPoint& screenPos) {
     if (d->context.IsNull() || d->view.IsNull()) {
         return;
     }
-    
+
     Standard_Integer xp, yp;
     qtToOCCT(screenPos, xp, yp);
-    
+
     d->context->MoveTo(xp, yp, d->view, Standard_True);
-    d->context->SelectDetected(AIS_SelectionScheme_Replace);
-    
+
+    // ✅ 檢測是否有物件
     if (d->context->HasDetected()) {
         Handle(AIS_InteractiveObject) picked = d->context->DetectedInteractive();
+
         if (!picked.IsNull() && picked != d->viewCube) {
-            // TODO: 取得物件 ID 並發出信號
-            qDebug() << "[CadView] Object selected";
-            Q_EMIT objectSelected(0);
+            // ✅ 選取單一物件
+            d->context->SetSelected(picked, Standard_True);
+
+            qDebug() << "[CadView] Selected individual wire/edge";
+
+            // ✅ 發布選取事件
+            EventBus* bus = Application::instance()->eventBus();
+            QVariantMap selectionData;
+            selectionData["aisObject"] = QVariant::fromValue((void*)picked.get());
+            bus->publish("geometry.selected", selectionData);
         }
     }
 }

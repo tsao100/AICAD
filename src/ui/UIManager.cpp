@@ -20,6 +20,7 @@
 #include "core/DocumentManager.h"
 #include "core/MenuParser.h"
 #include "cad/Document.h"
+#include "cad/Sketch.h"
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
 
@@ -28,6 +29,9 @@
 #include <QToolBar>
 #include <QTimer>
 #include <QDebug>
+
+using namespace aicad::core;
+using namespace aicad::cad;
 
 namespace aicad {
 namespace ui {
@@ -160,7 +164,24 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 // ✅ 新文件建立時也初始化參考幾何
                 onDocumentCreated();
             });
-        
+
+        // ✅ Add this to set current document
+        bus->subscribe(core::Events::DOCUMENT_CREATED, this,
+                       [this](const QVariant& data) {
+                           cad::Document* doc = qvariant_cast<cad::Document*>(data);
+                           if (doc && d->cadView) {
+                               d->cadView->setDocument(doc);
+                           }
+                       });
+
+        bus->subscribe(core::Events::DOCUMENT_OPENED, this,
+                       [this](const QVariant& data) {
+                           cad::Document* doc = qvariant_cast<cad::Document*>(data);
+                           if (doc && d->cadView) {
+                               d->cadView->setDocument(doc);
+                           }
+                       });
+
         bus->subscribe(core::Events::DOCUMENT_CLOSED, this,
             [this](const QVariant& data) {
                 qDebug() << "[UIManager] Document closed:" << data.toString();
@@ -193,7 +214,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         
         connect(docMgr, &core::DocumentManager::currentDocumentChanged,
                 d->featureBrowser, &FeatureBrowser::setCurrentDocument);
-        
+
         // 7. 連接主視窗關閉信號
         connect(d->mainWindow, &MainWindow::aboutToClose,
                 this, &UIManager::mainWindowClosed);
@@ -239,6 +260,162 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            qDebug() << "[UIManager] User clicked point:" << point.x() << point.y();
                            // Could update coordinate display here
                        });
+
+        // ✅ Handle sketch line creation requests
+        bus->subscribe("command.create-sketch-line", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap lineData = data.toMap();
+
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               qWarning() << "[UIManager] No active sketch for line creation";
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           QVector2D startPoint = lineData["startPoint"].value<QVector2D>();
+                           QVector2D endPoint = lineData["endPoint"].value<QVector2D>();
+
+                           // Create the line in the sketch
+                           sketch->addLine(startPoint, endPoint);
+                           sketch->rebuild();
+
+                           // Notify feature update
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+
+                           QString msg = QString("Line created from (%1,%2) to (%3,%4)")
+                                             .arg(startPoint.x()).arg(startPoint.y())
+                                             .arg(endPoint.x()).arg(endPoint.y());
+
+                           setStatusMessage(msg, 3000);
+
+                           qDebug() << "[UIManager]" << msg;
+                       });
+
+        // ✅ Handle non-interactive sketch line requests (with coordinates)
+        bus->subscribe("command.request-sketch-line", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap request = data.toMap();
+                           QStringList args = request["args"].toStringList();
+
+                           if (args.size() < 4) {
+                               bus->publish(Events::COMMAND_FAILED, "Need 4 coordinates");
+                               return;
+                           }
+
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           bool ok;
+                           double x1 = args[0].toDouble(&ok);
+                           if (!ok) {
+                               bus->publish(Events::COMMAND_FAILED, "Invalid x1");
+                               return;
+                           }
+
+                           double y1 = args[1].toDouble(&ok);
+                           if (!ok) {
+                               bus->publish(Events::COMMAND_FAILED, "Invalid y1");
+                               return;
+                           }
+
+                           double x2 = args[2].toDouble(&ok);
+                           if (!ok) {
+                               bus->publish(Events::COMMAND_FAILED, "Invalid x2");
+                               return;
+                           }
+
+                           double y2 = args[3].toDouble(&ok);
+                           if (!ok) {
+                               bus->publish(Events::COMMAND_FAILED, "Invalid y2");
+                               return;
+                           }
+
+                           // Create the line
+                           sketch->addLine(QVector2D(x1, y1), QVector2D(x2, y2));
+                           sketch->rebuild();
+
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+                           bus->publish(Events::COMMAND_EXECUTED, "Line created");
+
+                           setStatusMessage("Line created", 3000);
+                           qDebug() << "[UIManager] Line created from coordinates";
+                       });
+
+        // ✅ Handle rectangle creation (similar pattern)
+        bus->subscribe("command.create-sketch-rectangle", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap rectData = data.toMap();
+
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           QVector2D corner1 = rectData["corner1"].value<QVector2D>();
+                           QVector2D corner2 = rectData["corner2"].value<QVector2D>();
+
+                           sketch->addRectangle(corner1, corner2);
+                           sketch->rebuild();
+
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+                           setStatusMessage("Rectangle created", 3000);
+
+                           qDebug() << "[UIManager] Rectangle created";
+                       });
+
+        // ✅ Handle circle creation
+        bus->subscribe("command.create-sketch-circle", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap circleData = data.toMap();
+
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           QVector2D center = circleData["center"].value<QVector2D>();
+                           double radius = circleData["radius"].toDouble();
+
+                           if (radius <= 0) {
+                               bus->publish(Events::COMMAND_FAILED, "Invalid radius");
+                               return;
+                           }
+
+                           sketch->addCircle(center, radius);
+                           sketch->rebuild();
+
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+                           setStatusMessage(QString("Circle created (r=%1)").arg(radius), 3000);
+
+                           qDebug() << "[UIManager] Circle created";
+                       });
+
+        // ✅ Handle view refresh after geometry changes
+        bus->subscribe(Events::FEATURE_UPDATED, this,
+                       [this](const QVariant& data) {
+                           Q_UNUSED(data);
+
+                           // Refresh the active view
+                           if (d->cadView) {
+                               d->cadView->refreshView();
+                           }
+                       });
+
+
 
         // ✅ Connect view refresh when features update
         connect(bus, &core::EventBus::eventPublished, this,

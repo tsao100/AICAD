@@ -11,7 +11,8 @@
 #include "ViewGrid.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
-
+#include "cad/Plane.h"
+#include "cad/Sketch.h"
 #include <QDebug>
 #include <QVector>
 #include <QPointer>
@@ -53,6 +54,11 @@ ViewManager::ViewManager(QObject* parent)
             [this](const QVariant& data) {
                 Q_UNUSED(data);
                 refreshAllViews();
+                // ✅ ADD: Force immediate display update
+                CadView* view = activeView();
+                if (view && view->context()) {
+                    view->context()->UpdateCurrentViewer();
+                }
             });
         // ✅ 訂閱平面選取請求
         bus->subscribe("command.request-plane-selection", this,
@@ -85,6 +91,120 @@ ViewManager::ViewManager(QObject* parent)
                        [this](const QVariant& data) {
                            onFeatureVisibilityChanged(data);
                        });
+
+        bus->subscribe("command.request-view-setup", this,
+            [this](const QVariant& data) {
+                QVariantMap setup = data.toMap();
+                CadView* view = activeView();
+                if (!view) return;
+
+                // Set interaction mode
+                QString mode = setup["mode"].toString();
+                if (mode == "sketching") {
+                    view->setMode(InteractionMode::Sketching);
+                } else if (mode == "selecting") {
+                    view->setMode(InteractionMode::Selecting);
+                } else if (mode == "idle") {
+                    view->setMode(InteractionMode::Idle);
+                }
+
+                // Setup rubber band if requested
+                if (setup.contains("rubberBandMode")) {
+                    QString rbMode = setup["rubberBandMode"].toString();
+                    view::RubberBand* rubber = view->rubberBand();
+
+                    if (rbMode == "line") {
+                        rubber->setMode(view::RubberBandMode::Line);
+                    } else if (rbMode == "rectangle") {
+                        rubber->setMode(view::RubberBandMode::Rectangle);
+                    } else if (rbMode == "circle") {
+                        rubber->setMode(view::RubberBandMode::Circle);
+                    } else if (rbMode == "arc") {
+                        rubber->setMode(view::RubberBandMode::Arc);
+                    } else if (rbMode == "polyline") {
+                        rubber->setMode(view::RubberBandMode::Polyline);
+                    }
+
+                    // Set rubber band plane to match active sketch
+                    Application* app = Application::instance();
+                    cad::Sketch* sketch = app->activeSketch();
+                    if (sketch) {
+                        cad::Plane sketchPlane = sketch->plane();
+                        view::CustomPlane customPlane;
+                        customPlane.origin = sketchPlane.origin();
+                        customPlane.normal = sketchPlane.normal();
+                        customPlane.uAxis = sketchPlane.xAxis();
+                        customPlane.vAxis = sketchPlane.yAxis();
+                        rubber->setPlane(customPlane);
+                    }
+                }
+
+                qDebug() << "[ViewManager] View setup completed:" << mode;
+            });
+
+        // ✅ Handle rubber band updates
+        bus->subscribe("command.update-rubber-band", this,
+            [this](const QVariant& data) {
+                QVariantMap update = data.toMap();
+                CadView* view = activeView();
+                if (!view) return;
+
+                view::RubberBand* rubber = view->rubberBand();
+                if (!rubber) return;
+
+                QString action = update["action"].toString();
+
+                if (action == "clearAndAdd") {
+                    rubber->clearPoints();
+                    rubber->clear();
+
+                    if (update.contains("point")) {
+                        QVector2D point = update["point"].value<QVector2D>();
+                        rubber->addPoint(point);
+                    }
+                } else if (action == "addPoint") {
+                    if (update.contains("point")) {
+                        QVector2D point = update["point"].value<QVector2D>();
+                        rubber->addPoint(point);
+                    }
+                } else if (action == "clear") {
+                    rubber->clearPoints();
+                    rubber->clear();
+                } else if (action == "update") {
+                    rubber->update();
+                }
+
+                qDebug() << "[ViewManager] Rubber band updated:" << action;
+            });
+
+        // ✅ Handle cleanup requests
+        bus->subscribe("command.request-cleanup", this,
+                       [this](const QVariant& data) {
+                           QVariantMap cleanup = data.toMap();
+                           CadView* view = activeView();
+                           if (!view) return;
+
+                           if (cleanup["clearRubberBand"].toBool()) {
+                               view::RubberBand* rubber = view->rubberBand();
+                               if (rubber) {
+                                   rubber->clearPoints();
+                                   rubber->clear();
+                               }
+                           }
+
+                           // Reset to idle mode unless specified otherwise
+                           if (!cleanup.contains("keepMode") || !cleanup["keepMode"].toBool()) {
+                               view->setMode(InteractionMode::Idle);
+                           }
+
+                           // Hide grid if requested
+                           if (cleanup.contains("hideGrid") && cleanup["hideGrid"].toBool()) {
+                               view->setGridEnabled(false);
+                           }
+
+                           qDebug() << "[ViewManager] Cleanup completed";
+                       });
+
     }
 }
 

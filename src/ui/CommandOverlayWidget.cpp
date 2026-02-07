@@ -147,17 +147,28 @@ void CommandOverlayWidget::adjustOverlayHeight()
 
 void CommandOverlayWidget::repositionPrompts()
 {
-    int y = m_input->y() - promptSpacing ;
+    if (!parentWidget())
+        return;
+
+    // ① 先取得「CommandInput 左上角的 global 座標」
+    QPoint OverlayTopLeftGlobal = mapToGlobal(QPoint(0, 0));
+
+    // ⭐ 轉成「parentWidget 座標」
+    int x = OverlayTopLeftGlobal.x();
+    int y = OverlayTopLeftGlobal.y() - promptSpacing;
+
+
+    // int x = this->x() + 365;
+    // int y = this->y() - marginBottom - promptSpacing+175;
 
     // 從最舊 → 最新
     for (int i = m_promptLabels.size()-1; i >=0 ; --i) {
         QLabel* lbl = m_promptLabels[i];
         y -= lbl->height();
-        lbl->move(0, y);
+        lbl->move(x, y);
         y -= promptSpacing;
     }
 
-    adjustOverlayHeight();
     update();
 }
 
@@ -171,9 +182,27 @@ void CommandOverlayWidget::appendPromptLine(const QString& text)
         oldest->deleteLater();
     }
 
+    // QWidget* host = parentWidget();   // CadView
+    // if (!host)
+    //     host = window();
+
+
     // 2️⃣ 新 label
     QLabel* label = new QLabel(text, this);
-    label->setWordWrap(true);
+
+    // ⭐ 關鍵：根據文字算寬度
+    QFontMetrics fm(label->font());
+
+    QRect textRect = fm.boundingRect(
+        QRect(0, 0, PromptMaxWidth, 1000),
+        Qt::TextSingleLine,
+        text
+        );
+
+    int contentWidth = textRect.width() + PromptHPadding;
+    int finalWidth = qBound(PromptMinWidth, contentWidth, PromptMaxWidth);
+
+    //label->setWordWrap(true);
     label->setStyleSheet(R"(
         background-color:
         rgb(235,235,235);
@@ -181,9 +210,9 @@ void CommandOverlayWidget::appendPromptLine(const QString& text)
         border-radius: 4px;
         padding: 4px 6px; )");
     label->setAttribute(Qt::WA_StyledBackground, true);
-    label->setAutoFillBackground(true);
     label->setAttribute(Qt::WA_OpaquePaintEvent, true);
-    label->setFixedWidth(width() - 16); // 扣左右 margin
+    label->setWindowFlags(Qt::FramelessWindowHint | Qt::ToolTip);
+    label->setFixedWidth(finalWidth); // 扣左右 margin
     label->adjustSize();
     label->show();
     label->raise();

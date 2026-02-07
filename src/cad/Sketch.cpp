@@ -6,11 +6,20 @@
  */
 
 #include "Sketch.h"
+#include "Document.h"
 #include "geometry/GeometryBuilder.h"
 
 #include <TopoDS.hxx>
 #include <TopoDS_Wire.hxx>
+#include <TopoDS_Compound.hxx>
 #include <Precision.hxx>
+#include <AIS_InteractiveContext.hxx>
+#include <AIS_Shape.hxx>
+#include <BRep_Builder.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <AIS_Shape.hxx>
+#include <gp_Circ.hxx>
 #include <QJsonArray>
 #include <QDebug>
 
@@ -26,6 +35,13 @@ Sketch::Sketch(Document* parent)
 }
 
 Sketch::~Sketch() {
+    // ✅ ADD: Remove from context
+    if (document()) {
+        Handle(AIS_InteractiveContext) context = document()->aisContext();
+        if (!context.IsNull()) {
+            eraseFromContext(context);
+        }
+    }
     clearGeometry();
     qDebug() << "[Sketch]" << name() << "destroyed";
 }
@@ -38,63 +54,114 @@ void Sketch::setPlane(const Plane& plane) {
 }
 
 bool Sketch::rebuild() {
-    qDebug() << "[Sketch]" << name() << "rebuilding with" 
+    qDebug() << "[Sketch]" << name() << "rebuilding with"
              << m_geometries.size() << "geometries";
-    
+
     try {
         m_wires.clear();
-        
+        m_aisShapes.clear();  // ✅ 清除 QList
+
         if (m_geometries.isEmpty()) {
-            qDebug() << "[Sketch]" << name() << "no geometries to build";
             setShape(TopoDS_Shape());
             return true;
         }
-        
-        // 使用 GeometryBuilder 建立 Wire
-        QVector<QVector2D> points;
+
+        TopoDS_Compound compound;
+        BRep_Builder builder;
+        builder.MakeCompound(compound);
+
         for (const SketchGeometry* geom : m_geometries) {
-            if (geom && geom->type == SketchGeometryType::Line) {
-                points = geom->points;
-                break;
+            if (!geom) continue;
+
+            TopoDS_Wire wire;
+            bool wireCreated = false;
+
+            // ✅ 處理 Line
+            if (geom->type == SketchGeometryType::Line && geom->points.size() >= 2) {
+                QVector3D p1 = m_plane.toWorld(geom->points[0].x(), geom->points[0].y());
+                QVector3D p2 = m_plane.toWorld(geom->points[1].x(), geom->points[1].y());
+
+                gp_Pnt gp1(p1.x(), p1.y(), p1.z());
+                gp_Pnt gp2(p2.x(), p2.y(), p2.z());
+
+                BRepBuilderAPI_MakeEdge edgeBuilder(gp1, gp2);
+                if (edgeBuilder.IsDone()) {
+                    BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
+                    if (wireBuilder.IsDone()) {
+                        wire = wireBuilder.Wire();
+                        wireCreated = true;
+                    }
+                }
             }
-        }
-        
-        if (!points.isEmpty()) {
-            auto result = geometry::GeometryBuilder::makeWire(points, m_plane, true);
-            if (result) {
-                TopoDS_Wire wire = TopoDS::Wire(result.shape);
+
+            // ✅ 處理 Polyline
+            else if (geom->type == SketchGeometryType::Polyline) {
+                BRepBuilderAPI_MakeWire wireBuilder;
+
+                for (int i = 0; i < geom->points.size() - 1; ++i) {
+                    QVector3D p1 = m_plane.toWorld(geom->points[i].x(), geom->points[i].y());
+                    QVector3D p2 = m_plane.toWorld(geom->points[i+1].x(), geom->points[i+1].y());
+
+                    gp_Pnt gp1(p1.x(), p1.y(), p1.z());
+                    gp_Pnt gp2(p2.x(), p2.y(), p2.z());
+
+                    BRepBuilderAPI_MakeEdge edgeBuilder(gp1, gp2);
+                    if (edgeBuilder.IsDone()) {
+                        wireBuilder.Add(edgeBuilder.Edge());
+                    }
+                }
+
+                if (wireBuilder.IsDone()) {
+                    wire = wireBuilder.Wire();
+                    wireCreated = true;
+                }
+            }
+
+            // ✅ 處理 Circle
+            else if (geom->type == SketchGeometryType::Circle) {
+                const SketchCircle* circle = static_cast<const SketchCircle*>(geom);
+                QVector3D center3d = m_plane.toWorld(circle->center.x(), circle->center.y());
+
+                gp_Pnt centerPnt(center3d.x(), center3d.y(), center3d.z());
+                gp_Dir normal(m_plane.normal().x(), m_plane.normal().y(), m_plane.normal().z());
+                gp_Ax2 ax2(centerPnt, normal);
+
+                gp_Circ gpCircle(ax2, circle->radius);
+                BRepBuilderAPI_MakeEdge edgeBuilder(gpCircle);
+
+                if (edgeBuilder.IsDone()) {
+                    BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
+                    if (wireBuilder.IsDone()) {
+                        wire = wireBuilder.Wire();
+                        wireCreated = true;
+                    }
+                }
+            }
+
+            // ✅ 創建 Wire 和對應的 AIS_Shape
+            if (wireCreated) {
                 m_wires.append(wire);
-                setShape(wire);
-                qDebug() << "[Sketch]" << name() << "rebuilt successfully";
-                return true;
-            } else {
-                qWarning() << "[Sketch]" << name() << "build error:" << result.errorMessage;
-                setError(result.errorMessage);
-                return false;
+                builder.Add(compound, wire);
+
+                // ✅ 為每條線創建獨立的 AIS_Shape
+                Handle(AIS_Shape) aisShape = new AIS_Shape(wire);
+                aisShape->SetColor(Quantity_NOC_WHITE);
+                aisShape->SetWidth(2.0);
+                aisShape->SetDisplayMode(AIS_WireFrame);
+
+                m_aisShapes.append(aisShape);  // ✅ 加入 QList
             }
         }
-        
-        // 暫時使用舊方法作為備援
-        TopoDS_Wire wire = buildWire(m_geometries);
-        
-        if (!wire.IsNull()) {
-            m_wires.append(wire);
-            setShape(wire);
-            qDebug() << "[Sketch]" << name() << "rebuilt successfully";
-            return true;
-        } else {
-            qWarning() << "[Sketch]" << name() << "failed to build wire";
-            setError("Failed to build wire from geometries");
-            return false;
-        }
-        
+
+        setShape(compound);
+
+        qDebug() << "[Sketch]" << name() << "rebuilt with"
+                 << m_wires.size() << "wires and"
+                 << m_aisShapes.size() << "AIS shapes";
+        return true;
+
     } catch (const Standard_Failure& e) {
         QString error = QString("OCCT error: %1").arg(e.GetMessageString());
-        qCritical() << "[Sketch]" << name() << error;
-        setError(error);
-        return false;
-    } catch (...) {
-        QString error = "Unknown error during rebuild";
         qCritical() << "[Sketch]" << name() << error;
         setError(error);
         return false;
@@ -108,7 +175,17 @@ void Sketch::addGeometry(SketchGeometry* geom) {
     }
     
     m_geometries.append(geom);
+
+    // ✅ Debug: 列出所有幾何
     qDebug() << "[Sketch]" << name() << "geometry added, total:" << m_geometries.size();
+    for (int i = 0; i < m_geometries.size(); ++i) {
+        const SketchGeometry* g = m_geometries[i];
+        if (g->type == SketchGeometryType::Line) {
+            qDebug() << "  [" << i << "] Line:"
+                     << g->points[0] << "→" << g->points[1];
+        }
+    }
+
     Q_EMIT geometryChanged();
     Q_EMIT rebuildRequested();
 }
@@ -135,6 +212,11 @@ void Sketch::clearGeometry() {
 
 void Sketch::addLine(const QVector2D& p1, const QVector2D& p2) {
     addGeometry(new SketchLine(p1, p2));
+
+    // ✅ Debug: 顯示當前有多少個幾何
+    qDebug() << "[Sketch]" << name() << "addLine:"
+             << p1 << "to" << p2
+             << "| Total geometries:" << m_geometries.size();
 }
 
 void Sketch::addPolyline(const QVector<QVector2D>& points, bool closed) {
@@ -166,6 +248,44 @@ void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {
 
 QList<TopoDS_Wire> Sketch::wires() const {
     return m_wires;
+}
+
+QList<Handle(AIS_Shape)> Sketch::aisShapes() const {
+    return m_aisShapes;
+}
+
+void Sketch::displayInContext(const Handle(AIS_InteractiveContext)& context) {
+    if (context.IsNull()) {
+        qWarning() << "[Sketch]" << name() << "Cannot display: context is null";
+        return;
+    }
+
+    // ✅ 顯示每條獨立的線
+    for (const Handle(AIS_Shape)& aisShape : m_aisShapes) {
+        if (!aisShape.IsNull()) {
+            context->Display(aisShape, Standard_False);
+        }
+    }
+
+    context->UpdateCurrentViewer();
+
+    qDebug() << "[Sketch]" << name() << "displayed"
+             << m_aisShapes.size() << "shapes";
+}
+
+void Sketch::eraseFromContext(const Handle(AIS_InteractiveContext)& context) {
+    if (context.IsNull()) {
+        return;
+    }
+
+    // ✅ 移除每條線
+    for (const Handle(AIS_Shape)& aisShape : m_aisShapes) {
+        if (!aisShape.IsNull()) {
+            context->Erase(aisShape, Standard_False);
+        }
+    }
+
+    context->UpdateCurrentViewer();
 }
 
 TopoDS_Wire Sketch::mainWire() const {

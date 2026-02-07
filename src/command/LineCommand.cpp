@@ -1,14 +1,8 @@
 #include "command/LineCommand.h"
 #include "command/Command.h"
 #include "command/CommandTypes.h"
-#include "cad/Document.h"
-#include "cad/Plane.h"
-#include "cad/Sketch.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
-#include "ui/UIManager.h"
-#include "view/CadView.h"
-#include "view/RubberBand.h"
 #include <QFileDialog>
 
 using namespace aicad::core;
@@ -28,58 +22,30 @@ LineCommand::~LineCommand() {
 
 CommandResult LineCommand::execute(const CommandContext& context) {
     Application* app = Application::instance();
+    EventBus* bus = app->eventBus();
 
     // Non-interactive mode (with coordinates)
     if (context.args.size() >= 4) {
-        // ... existing coordinate parsing code ...
-        cad::Sketch* sketch = app->activeSketch();
-        if (!sketch) return CommandResult::Failure("No active sketch");
-
-        bool ok;
-        double x1 = context.args[0].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid x1");
-
-        double y1 = context.args[1].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid y1");
-
-        double x2 = context.args[2].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid x2");
-
-        double y2 = context.args[3].toDouble(&ok);
-        if (!ok) return CommandResult::Failure("Invalid y2");
-
-        return createLine(x1, y1, x2, y2);
+        // ✅ Use EventBus to request sketch state
+        QVariantMap request;
+        request["commandId"] = "line";
+        request["args"] = QVariant::fromValue(context.args);
+        bus->publish("command.request-sketch-line", request);
+        return CommandResult::Success("Line creation requested");
     }
-
-    m_hasStartPoint=false;
 
     // Interactive mode
-    ui::UIManager* uiMgr = app->uiManager();
-    view::CadView* cadView = uiMgr->cadView();
+    m_hasStartPoint = false;
+    m_isFinishing = false;
 
-    if (!cadView) {
-        return CommandResult::Failure("No active view");
-    }
+    // ✅ Request view setup via EventBus
+    QVariantMap viewSetup;
+    viewSetup["mode"] = "sketching";
+    viewSetup["rubberBandMode"] = "line";
+    bus->publish("command.request-view-setup", viewSetup);
 
-
-    cad::Sketch* sketch = app->activeSketch();
-    if (!sketch) {
-        return CommandResult::Failure("No active sketch");
-    }
-
-    // Setup view mode
-    cadView->setMode(view::InteractionMode::Sketching);
-
-    // Setup rubber band
-    view::RubberBand* rubber = cadView->rubberBand();
-    rubber->setMode(view::RubberBandMode::Line);
-    rubber->setPlane(convertPlane(sketch->plane())); // ✅ Use sketch's plane
-
-    // ✅ Subscribe to EventBus instead of direct signal connection
-    EventBus* bus = app->eventBus();
-
-    bus->publish(Events::COMMAND_PROMPT,"Specify first point:");
-    bus->publish(Events::COMMAND_LOG,"Specify first point:");
+    bus->publish(Events::COMMAND_PROMPT, "Specify first point:");
+    bus->publish(Events::COMMAND_LOG, "Specify first point:");
 
 
     // ✅ Subscribe with Qt::QueuedConnection for safety
@@ -116,8 +82,6 @@ void LineCommand::handlePointAcquired(QVector2D point)
              << point.x() << "," << point.y();
 
     Application* app = Application::instance();
-    view::CadView* cadView = app->uiManager()->cadView();
-    view::RubberBand* rubber = cadView->rubberBand();
     EventBus* bus = app->eventBus();
 
     if (!m_hasStartPoint) {
@@ -125,8 +89,11 @@ void LineCommand::handlePointAcquired(QVector2D point)
         m_startPoint = point;
         m_hasStartPoint = true;
 
-        rubber->clear();
-        rubber->addPoint(point);
+        // ✅ Request rubber band update via EventBus
+        QVariantMap rubberUpdate;
+        rubberUpdate["action"] = "clearAndAdd";
+        rubberUpdate["point"] = QVariant::fromValue(point);
+        bus->publish("command.update-rubber-band", rubberUpdate);
 
         outputMessage(QString("First point: (%1, %2). Specify next point:")
                           .arg(point.x()).arg(point.y()));
@@ -135,31 +102,25 @@ void LineCommand::handlePointAcquired(QVector2D point)
         return;
     }
 
-    // === Subsequent points ===
-    cad::Sketch* sketch = app->activeSketch();
-    if (!sketch)
-        return;
-
-    // Create line from previous point to current
-    sketch->addLine(m_startPoint, point);
-    sketch->rebuild();
-
-    bus->publish(Events::FEATURE_UPDATED,
-                 QVariant::fromValue(sketch->name()));
+    // ✅ Request line creation via EventBus
+    QVariantMap lineData;
+    lineData["startPoint"] = QVariant::fromValue(m_startPoint);
+    lineData["endPoint"] = QVariant::fromValue(point);
+    bus->publish("command.create-sketch-line", lineData);
 
     outputMessage(QString("Line created from (%1,%2) to (%3,%4)")
                       .arg(m_startPoint.x()).arg(m_startPoint.y())
                       .arg(point.x()).arg(point.y()));
 
     // Update rubber band
-    rubber->clearPoints();
-    rubber->addPoint(point);
+    QVariantMap rubberUpdate;
+    rubberUpdate["action"] = "clearAndAdd";
+    rubberUpdate["point"] = QVariant::fromValue(point);
+    bus->publish("command.update-rubber-band", rubberUpdate);
 
-    // Chain: current point becomes next start point
     m_startPoint = point;
-
-    // Stay in command, DO NOT finish
     bus->publish(Events::COMMAND_PROMPT, "Specify next point or press ESC to finish");
+
 }
 
 // ✅ Renamed from onCancelled
@@ -182,58 +143,14 @@ void LineCommand::cleanup() {
     bus->unsubscribeAll(this);
     qDebug() << "[LineCommand] Unsubscribed from EventBus";
 
-    // ✅ Then cleanup view
-    view::CadView* cadView = app->uiManager()->cadView();
-    if (cadView) {
-        view::RubberBand* rubber = cadView->rubberBand();
-        if (rubber) {
-            rubber->clearPoints();
-            rubber->clear();
-        }
-        //cadView->setMode(view::InteractionMode::Idle);
-        //qDebug() << "[LineCommand] View mode reset to Idle";
-    }
+    // ✅ Request cleanup via EventBus
+    QVariantMap cleanupRequest;
+    cleanupRequest["clearRubberBand"] = true;
+    bus->publish("command.request-cleanup", cleanupRequest);
 
     m_hasStartPoint = false;
     m_isFinishing = false;
     qDebug() << "[LineCommand] Cleanup completed";
-}
-
-// ✅ Helper method
-CommandResult LineCommand::createLine(double x1, double y1, double x2, double y2) {
-    Application* app = Application::instance();
-    cad::Sketch* sketch = app->activeSketch();
-
-    if (!sketch) {
-        return CommandResult::Failure("No active sketch");
-    }
-
-    sketch->addLine(QVector2D(x1, y1), QVector2D(x2, y2));
-    sketch->rebuild();
-
-    EventBus* bus = app->eventBus();
-    bus->publish(Events::FEATURE_UPDATED,
-                 QVariant::fromValue(sketch->name()));
-
-    return CommandResult::Success("Line created");
-}
-
-
-// ✅ Helper to convert plane
-view::CustomPlane LineCommand::convertPlane(const cad::Plane& plane) {
-    view::CustomPlane customPlane;
-    customPlane.origin = plane.origin();
-    customPlane.normal = plane.normal();
-    customPlane.uAxis = plane.xAxis();
-    customPlane.vAxis = plane.yAxis();
-    return customPlane;
-}
-
-void LineCommand::cleanup(view::CadView* cadView, view::RubberBand* rubber) {
-    rubber->clearPoints();
-    rubber->clear();
-    cadView->setMode(view::InteractionMode::Idle);
-    disconnect(cadView, nullptr, this, nullptr);  // ✅ Disconnect all
 }
 
 QString LineCommand::getUsage() const {

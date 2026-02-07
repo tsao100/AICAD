@@ -221,6 +221,9 @@ public:
      */
     void setReferenceGeometrySelectable(ReferenceGeometryType type, bool selectable);
 
+    void displayFeature(Feature* feature,
+                                  const Handle(AIS_InteractiveContext)& context);
+
     /**
      * @brief 顯示所有參考幾何
      */

@@ -935,6 +935,28 @@ void Document::setReferenceGeometrySelectable(ReferenceGeometryType type, bool s
     qDebug() << "[Document]" << refGeom->name << "selectable:" << selectable;
 }
 
+// Document.cpp - 需要新增方法來顯示 Feature
+void Document::displayFeature(Feature* feature,
+                              const Handle(AIS_InteractiveContext)& context) {
+    if (!feature || context.IsNull()) {
+        return;
+    }
+
+    // ✅ 特殊處理 Sketch
+    if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
+        sketch->displayInContext(context);
+        return;
+    }
+
+    // ✅ 其他 Feature 使用傳統方法
+    if (!feature->shape().IsNull()) {
+        Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
+        context->Display(aisShape, Standard_False);
+
+        // TODO: 儲存 aisShape 以便後續管理
+    }
+}
+
 // ✅ 顯示所有參考幾何
 void Document::showAllReferenceGeometry() {
     for (const ReferenceGeometry& refGeom : m_referenceGeometries) {

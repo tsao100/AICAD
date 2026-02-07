@@ -17,6 +17,10 @@ class CommandOverlayWidget : public QWidget {
 public:
     explicit CommandOverlayWidget(QWidget* parent);
 
+    static constexpr int PromptMinWidth = 60;
+    static constexpr int PromptMaxWidth = 600;
+    static constexpr int PromptHPadding = 16;   // 左右 padding 總和
+
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
 

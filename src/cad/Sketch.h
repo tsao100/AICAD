@@ -15,6 +15,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <TopoDS_Wire.hxx>
+#include <AIS_Shape.hxx>
 
 namespace aicad {
 namespace cad {
@@ -45,15 +46,17 @@ struct SketchGeometry {
  * @brief 草圖線段
  */
 struct SketchLine : public SketchGeometry {
+    QVector2D start;
+    QVector2D end;
+
     SketchLine(const QVector2D& p1, const QVector2D& p2)
-        : SketchGeometry(SketchGeometryType::Line) {
-        points << p1 << p2;
+        : start(p1), end(p2), SketchGeometry(SketchGeometryType::Line)
+    {
+        points.clear();
+        points.append(p1);  // ✅ points[0] = 起點
+        points.append(p2);  // ✅ points[1] = 終點
     }
-
-    QVector2D startPoint() const { return points[0]; }
-    QVector2D endPoint() const { return points[1]; }
 };
-
 /**
  * @brief 草圖多段線
  */
@@ -152,6 +155,13 @@ public:
      */
     QList<TopoDS_Wire> wires() const;
 
+    // ✅ 新增：取得對應的 AIS 物件
+    QList<Handle(AIS_Shape)> aisShapes() const;
+
+    // ✅ 新增：顯示到 AIS Context
+    void displayInContext(const Handle(AIS_InteractiveContext)& context);
+    void eraseFromContext(const Handle(AIS_InteractiveContext)& context);
+
     /**
      * @brief 取得主要輪廓 Wire
      * @return 第一個封閉的 Wire，如果沒有則返回第一個 Wire
@@ -199,6 +209,7 @@ private:
     Plane m_plane;                        ///< 草圖平面
     QList<SketchGeometry*> m_geometries;  ///< 幾何元素列表
     QList<TopoDS_Wire> m_wires;           ///< 快取的 Wire 列表
+    QList<Handle(AIS_Shape)> m_aisShapes;
 };
 
 } // namespace cad
