@@ -192,8 +192,8 @@ ViewManager::ViewManager(QObject* parent)
                                }
                            }
 
-                           // Reset to idle mode unless specified otherwise
-                           if (!cleanup.contains("keepMode") || !cleanup["keepMode"].toBool()) {
+                           // Only reset if explicitly requested
+                           if (cleanup.contains("setIdleMode") && cleanup["setIdleMode"].toBool()) {
                                view->setMode(InteractionMode::Idle);
                            }
 

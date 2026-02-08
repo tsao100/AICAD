@@ -410,7 +410,7 @@ void CadView::setMode(InteractionMode mode) {
     // Show/hide finish button based on mode
     if (mode == InteractionMode::Sketching) {
         showFinishSketchButton();
-    } else {
+    } else if (mode == InteractionMode::Idle || mode == InteractionMode::Selecting){
         hideFinishSketchButton();
     }
     

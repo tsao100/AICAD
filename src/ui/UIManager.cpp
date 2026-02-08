@@ -420,7 +420,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // ✅ Connect view refresh when features update
         connect(bus, &core::EventBus::eventPublished, this,
                 [this](const QString& eventName) {
-                    if (eventName == core::Events::FEATURE_UPDATED) {
+                    if (eventName == core::Events::COMMAND_EXECUTED) {
                         if (d->cadView) {
                             d->cadView->refreshView();
                         }

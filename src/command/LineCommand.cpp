@@ -146,6 +146,7 @@ void LineCommand::cleanup() {
     // ✅ Request cleanup via EventBus
     QVariantMap cleanupRequest;
     cleanupRequest["clearRubberBand"] = true;
+    cleanupRequest["setIdleMode"] = false;  // ✅ ADDED: Stay in sketch mode
     bus->publish("command.request-cleanup", cleanupRequest);
 
     m_hasStartPoint = false;

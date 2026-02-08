@@ -39,7 +39,7 @@ CustomPlane CustomPlane::XZ() {
     p.origin = QVector3D(0, 0, 0);
     p.normal = QVector3D(0, 1, 0);
     p.uAxis = QVector3D(1, 0, 0);
-    p.vAxis = QVector3D(0, 0, 1);
+    p.vAxis = QVector3D(0, 0, -1);
     return p;
 }
 
@@ -168,7 +168,7 @@ void RubberBand::clear() {
         d->presentation->Erase();
         d->presentation.Nullify();
     }
-    
+
     Q_EMIT cleared();
 }
 
