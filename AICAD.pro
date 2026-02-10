@@ -131,6 +131,7 @@ win32 {
 # ========================================
 
 SOURCES += \
+    src/command/PointInputCommand.cpp \
     src/main.cpp \
     \
     # Core Module (核心系統)
@@ -186,6 +187,7 @@ SOURCES += \
 
 HEADERS += \
     # Core Module
+    src/command/PointInputCommand.h \
     src/core/Application.h \
     src/core/EventBus.h \
     src/core/DocumentManager.h \

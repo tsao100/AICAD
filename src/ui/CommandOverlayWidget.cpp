@@ -18,7 +18,7 @@ CommandOverlayWidget::CommandOverlayWidget(QWidget* parent)
     : QWidget(parent)
 {
     setWindowFlags(Qt::FramelessWindowHint);
-    setAttribute(Qt::WA_StyledBackground, true);
+    //setAttribute(Qt::WA_StyledBackground, true);
 
     resize(360, 27);                 // 初始寬度
     setMinimumWidth(220);
@@ -31,7 +31,7 @@ CommandOverlayWidget::CommandOverlayWidget(QWidget* parent)
     // setAttribute(Qt::WA_OpaquePaintEvent, true);
 
     auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(4, 0, 4, 0);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
 
     // spacer 把 input 推到底
