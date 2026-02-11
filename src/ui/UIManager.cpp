@@ -350,7 +350,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                        });
 
         // ✅ Handle rectangle creation (similar pattern)
-        bus->subscribe("command.create-sketch-rectangle", this,
+        bus->subscribe("command.create-sketch-rect", this,
                        [this, bus](const QVariant& data) {
                            QVariantMap rectData = data.toMap();
 
@@ -362,13 +362,14 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                return;
                            }
 
-                           QVector2D corner1 = rectData["corner1"].value<QVector2D>();
-                           QVector2D corner2 = rectData["corner2"].value<QVector2D>();
+                           QVector2D corner1 = rectData["Corner1"].value<QVector2D>();
+                           QVector2D corner2 = rectData["Corner2"].value<QVector2D>();
 
                            sketch->addRectangle(corner1, corner2);
                            sketch->rebuild();
 
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
+                           bus->publish(Events::COMMAND_EXECUTED, "Rectangle created");
                            setStatusMessage("Rectangle created", 3000);
 
                            qDebug() << "[UIManager] Rectangle created";

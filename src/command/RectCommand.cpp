@@ -3,7 +3,6 @@
 #include "command/CommandTypes.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
-#include <QFileDialog>
 
 using namespace aicad::core;
 
@@ -11,8 +10,8 @@ namespace aicad {
 namespace command {
 
 RectCommand::RectCommand(QObject* parent)
-    : Command("Rect", "Draw Rect", parent)
-    , m_hasStartPoint(false)
+    : Command("rect", "Draw Rectangle", parent)
+    , m_hasFirstCorner(false)
     , m_isFinishing(false)
 {
 }
@@ -24,42 +23,40 @@ CommandResult RectCommand::execute(const CommandContext& context) {
     Application* app = Application::instance();
     EventBus* bus = app->eventBus();
 
-    // Non-interactive mode (with coordinates)
+    // Non-interactive mode: rect x1 y1 x2 y2
     if (context.args.size() >= 4) {
-        // ✅ Use EventBus to request sketch state
         QVariantMap request;
-        request["commandId"] = "Rect";
+        request["commandId"] = "rect";
         request["args"] = QVariant::fromValue(context.args);
-        bus->publish("command.request-sketch-Rect", request);
-        return CommandResult::Success("Rect creation requested");
+        bus->publish("command.request-sketch-rect", request);
+        return CommandResult::Success("Rectangle creation requested");
     }
 
     // Interactive mode
-    m_hasStartPoint = false;
+    m_hasFirstCorner = false;
     m_isFinishing = false;
 
-    // ✅ Request view setup via EventBus
+    // 設定 view 為 sketching 模式，rubber band 顯示矩形預覽
     QVariantMap viewSetup;
     viewSetup["mode"] = "sketching";
-    viewSetup["rubberBandMode"] = "Rect";
+    viewSetup["rubberBandMode"] = "rect";
     bus->publish("command.request-view-setup", viewSetup);
 
-    bus->publish(Events::COMMAND_PROMPT, "Specify first point:");
-    bus->publish(Events::COMMAND_LOG, "Specify first point:");
+    bus->publish(Events::COMMAND_PROMPT, "Specify first corner:");
+    bus->publish(Events::COMMAND_LOG,   "Specify first corner:");
 
-
-    // ✅ Subscribe with Qt::QueuedConnection for safety
+    // 訂閱點輸入事件
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map = data.toMap();
                        QVector2D point = map["point"].value<QVector2D>();
 
-                       // ✅ Use QMetaObject::invokeMethod for thread safety
                        QMetaObject::invokeMethod(this, [this, point]() {
                            this->handlePointAcquired(point);
                        }, Qt::QueuedConnection);
                    });
 
+    // 訂閱取消事件
     bus->subscribe(Events::POINT_CANCELLED, this,
                    [this](const QVariant&) {
                        QMetaObject::invokeMethod(this, [this]() {
@@ -67,13 +64,12 @@ CommandResult RectCommand::execute(const CommandContext& context) {
                        }, Qt::QueuedConnection);
                    });
 
-    setState(CommandState::Running);  // 關鍵一行
+    setState(CommandState::Running);
 
-    outputMessage("Specify first point:");
+    outputMessage("Specify first corner:");
     return CommandResult::Success("Waiting for input");
 }
 
-// ✅ Renamed from onPointAcquired
 void RectCommand::handlePointAcquired(QVector2D point)
 {
     if (m_isFinishing) return;
@@ -84,53 +80,52 @@ void RectCommand::handlePointAcquired(QVector2D point)
     Application* app = Application::instance();
     EventBus* bus = app->eventBus();
 
-    if (!m_hasStartPoint) {
-        // === First point ===
-        m_startPoint = point;
-        m_hasStartPoint = true;
+    if (!m_hasFirstCorner) {
+        // === 第一個角點 ===
+        m_firstCorner = point;
+        m_hasFirstCorner = true;
 
-        // ✅ Request rubber band update via EventBus
+        // 通知 view 更新 rubber band 起始點
         QVariantMap rubberUpdate;
         rubberUpdate["action"] = "clearAndAdd";
         rubberUpdate["point"] = QVariant::fromValue(point);
         bus->publish("command.update-rubber-band", rubberUpdate);
 
-        outputMessage(QString("First point: (%1, %2). Specify next point:")
+        outputMessage(QString("First corner: (%1, %2). Specify opposite corner:")
                           .arg(point.x()).arg(point.y()));
 
-        bus->publish(Events::COMMAND_PROMPT, "Specify next point or press ESC to finish");
+        bus->publish(Events::COMMAND_PROMPT, "Specify opposite corner or press ESC to cancel:");
         return;
     }
 
-    // ✅ Request Rect creation via EventBus
-    QVariantMap RectData;
-    RectData["startPoint"] = QVariant::fromValue(m_startPoint);
-    RectData["endPoint"] = QVariant::fromValue(point);
-    bus->publish("command.create-sketch-Rect", RectData);
+    // === 第二個角點：建立矩形 ===
+    QVariantMap rectData;
+    rectData["Corner1"]    = QVariant::fromValue(m_firstCorner);
+    rectData["Corner2"] = QVariant::fromValue(point);
+    bus->publish("command.create-sketch-rect", rectData);
 
-    outputMessage(QString("Rect created from (%1,%2) to (%3,%4)")
-                      .arg(m_startPoint.x()).arg(m_startPoint.y())
+    outputMessage(QString("Rectangle created: (%1,%2) to (%3,%4)")
+                      .arg(m_firstCorner.x()).arg(m_firstCorner.y())
                       .arg(point.x()).arg(point.y()));
 
-    // Update rubber band
-    QVariantMap rubberUpdate;
-    rubberUpdate["action"] = "clearAndAdd";
-    rubberUpdate["point"] = QVariant::fromValue(point);
-    bus->publish("command.update-rubber-band", rubberUpdate);
+    // 矩形完成後，重置狀態以便連續繪製（如需單次繪製可改為直接 finish）
+    m_hasFirstCorner = false;
 
-    m_startPoint = point;
-    bus->publish(Events::COMMAND_PROMPT, "Specify next point or press ESC to finish");
+    // 清除 rubber band，等待下一次輸入
+    QVariantMap rubberClear;
+    rubberClear["action"] = "clear";
+    bus->publish("command.update-rubber-band", rubberClear);
 
+    bus->publish(Events::COMMAND_PROMPT, "Specify first corner or press ESC to finish:");
+    outputMessage("Specify first corner or press ESC to finish:");
 }
 
-// ✅ Renamed from onCancelled
 void RectCommand::handleCancelled() {
     qDebug() << "[RectCommand] Cancelled via EventBus";
 
-    m_isFinishing = true;  // ✅ Set flag to prevent further point handling
+    m_isFinishing = true;
 
-    // ✅ Just emit finished with current state
-    Q_EMIT finished(CommandResult::Success("Rect command completed"));
+    Q_EMIT finished(CommandResult::Success("Rectangle command completed"));
 }
 
 void RectCommand::cleanup() {
@@ -139,22 +134,21 @@ void RectCommand::cleanup() {
     Application* app = Application::instance();
     EventBus* bus = app->eventBus();
 
-    // ✅ Unsubscribe FIRST, before changing view mode
+    // 先取消訂閱，再清理 view
     bus->unsubscribeAll(this);
     qDebug() << "[RectCommand] Unsubscribed from EventBus";
 
-    // ✅ Request cleanup via EventBus
     QVariantMap cleanupRequest;
     cleanupRequest["clearRubberBand"] = true;
     bus->publish("command.request-cleanup", cleanupRequest);
 
-    m_hasStartPoint = false;
+    m_hasFirstCorner = false;
     m_isFinishing = false;
     qDebug() << "[RectCommand] Cleanup completed";
 }
 
 QString RectCommand::getUsage() const {
-    return "Usage: Rect [x1 y1 x2 y2]";
+    return "Usage: rect [x1 y1 x2 y2]";
 }
 
 } // namespace command
