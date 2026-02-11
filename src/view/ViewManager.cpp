@@ -115,7 +115,7 @@ ViewManager::ViewManager(QObject* parent)
 
                     if (rbMode == "line") {
                         rubber->setMode(view::RubberBandMode::Line);
-                    } else if (rbMode == "rectangle") {
+                    } else if (rbMode == "rect") {
                         rubber->setMode(view::RubberBandMode::Rectangle);
                     } else if (rbMode == "circle") {
                         rubber->setMode(view::RubberBandMode::Circle);

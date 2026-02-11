@@ -22,13 +22,22 @@ PointInputCommand::PointInputCommand(const QString& name,
                                      QObject* parent)
     : Command(name, description, parent)
 {
-    // 其餘成員變數已在宣告處初始化（m_requiredPoints = -1, m_isFinishing = false）
+    // 成員變數已在宣告處初始化（m_requiredPoints = -1, m_isFinishing = false）
 }
 
 PointInputCommand::~PointInputCommand()
 {
     // 析構時確保退訂，避免 EventBus 持有懸空指標
     unsubscribePointEvents();
+}
+
+// -----------------------------------------------------------------------
+// 預設虛函數實作
+// -----------------------------------------------------------------------
+
+void PointInputCommand::onCommandFinishing(FinishReason /*reason*/)
+{
+    // 預設空實作，子類視需求 override
 }
 
 // -----------------------------------------------------------------------
@@ -40,16 +49,12 @@ void PointInputCommand::subscribePointEvents()
     Application* app = Application::instance();
     EventBus*    bus = app->eventBus();
 
-    // 訂閱「點已取得」事件
-    // 使用 lambda 包裝，並透過 QMetaObject::invokeMethod + QueuedConnection
-    // 確保 handlePointAcquired 在 Qt 主執行緒（GUI thread）中執行，
+    // ── 左鍵點擊取得座標 ──────────────────────────────────────────────
+    // 透過 QueuedConnection 確保 handler 在 Qt 主執行緒（GUI thread）執行，
     // 避免跨執行緒存取 UI / OpenGL 資源造成競態條件。
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
-                       // 從事件資料中取出 QVector2D 座標
                        QVector2D pt = data.toMap()["point"].value<QVector2D>();
-
-                       // 排入主執行緒佇列執行
                        QMetaObject::invokeMethod(
                            this,
                            [this, pt]() { handlePointAcquired(pt); },
@@ -57,7 +62,17 @@ void PointInputCommand::subscribePointEvents()
                            );
                    });
 
-    // 訂閱「點輸入取消」事件（使用者按下 ESC 或右鍵取消）
+    // ── RMB / Space：主動完成，保留已建立的幾何 ─────────────────────
+    bus->subscribe(Events::COMMAND_FINISHED, this,
+                   [this](const QVariant&) {
+                       QMetaObject::invokeMethod(
+                           this,
+                           [this]() { handleFinishRequested(); },
+                           Qt::QueuedConnection
+                           );
+                   });
+
+    // ── ESC：取消命令 ────────────────────────────────────────────────
     bus->subscribe(Events::POINT_CANCELLED, this,
                    [this](const QVariant&) {
                        QMetaObject::invokeMethod(
@@ -70,8 +85,8 @@ void PointInputCommand::subscribePointEvents()
 
 void PointInputCommand::unsubscribePointEvents()
 {
-    // unsubscribeAll 會移除此 subscriber 對所有事件的訂閱，
-    // 防止命令結束後仍收到殘留事件
+    // 一次退訂此 subscriber 的所有事件，
+    // 防止命令結束後仍收到殘留的 POINT_ACQUIRED / COMMAND_FINISH / POINT_CANCELLED
     Application::instance()->eventBus()->unsubscribeAll(this);
 }
 
@@ -81,46 +96,50 @@ void PointInputCommand::unsubscribePointEvents()
 
 void PointInputCommand::handlePointAcquired(QVector2D point)
 {
-    // 若命令已進入結束流程，丟棄後續事件（防止重入）
-    if (m_isFinishing)
-        return;
+    if (m_isFinishing) return;  // 防止重入
 
-    // 將新點加入序列
     m_points.push_back(point);
 
-    // 通知子類有新點加入（可用於即時預覽、更新橡皮筋等）
+    // 通知子類：新點已加入（可用於即時預覽、橡皮筋更新等）
     onPointAdded(m_points);
 
-    // 判斷是否已達所需點數（-1 表示無限制，永遠不滿足此條件）
-    if (m_requiredPoints > 0 &&
-        m_points.size() >= m_requiredPoints)
-    {
+    // 定點數模式：達到要求後自動結束
+    if (m_requiredPoints > 0 && m_points.size() >= m_requiredPoints) {
         m_isFinishing = true;
-
-        // 通知子類執行最終建立幾何的邏輯
         onFinished(m_points);
-
-        // 發出 finished() 信號，通知 CommandManager 命令已完成
         Q_EMIT finished(CommandResult::Success("Done"));
         return;
     }
 
-    // 尚未達到所需點數，輸出下一個點的提示
-    // m_points.size() 此時即為「下一個點」的 0-based 索引
+    // 尚未結束：輸出下一個點的提示（m_points.size() = 下一個點的 0-based 索引）
     outputMessage(promptForNextPoint(m_points.size()));
+}
+
+void PointInputCommand::handleFinishRequested()
+{
+    // RMB 或 Space：使用者主動完成連續輸入
+    doFinish(FinishReason::UserFinished);
 }
 
 void PointInputCommand::handleCancelled()
 {
-    // 防止重入（例如 ESC 事件連發）
-    if (m_isFinishing)
-        return;
+    // ESC：使用者取消命令
+    doFinish(FinishReason::UserCancelled);
+}
 
+void PointInputCommand::doFinish(FinishReason reason)
+{
+    if (m_isFinishing) return;  // 防止 ESC 連發等重入情形
     m_isFinishing = true;
 
-    // 使用者主動取消，以成功結果發出 finished() 信號
-    // （命令本身執行正常，只是使用者選擇結束輸入）
-    Q_EMIT finished(CommandResult::Success("Command cancelled"));
+    // 讓子類處理收尾邏輯（例如輸出統計、視需求撤銷幾何）
+    onCommandFinishing(reason);
+
+    // 通知 CommandManager 命令已完成
+    const QString msg = (reason == FinishReason::UserFinished)
+                            ? "Line command finished"
+                            : "Line command cancelled";
+    Q_EMIT finished(CommandResult::Success(msg));
 }
 
 } // namespace command

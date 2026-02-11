@@ -12,7 +12,7 @@
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "command/CommandManager.h"
-#include "command/RectangleCommand.h"
+#include "command/RectCommand.h"
 #include "command/CommandFactory.h"
 #include "ui/UIManager.h"
 #include "view/ViewManager.h"
@@ -276,8 +276,8 @@ void Application::registerDefaultCommands() {
     using namespace command;
 
     // 註冊矩形命令
-    d->commandManager->registerCommand("rectangle", {"rect"},
-                                       []() { return new command::RectangleCommand(); });
+    //d->commandManager->registerCommand("rectangle", {"rect"},
+    //                                   []() { return new command::RectCommand(); });
 
     // 註冊直線命令 (待實作)
     // d->commandManager->registerCommand("line", {"l"},

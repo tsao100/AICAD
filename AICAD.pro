@@ -132,6 +132,7 @@ win32 {
 
 SOURCES += \
     src/command/PointInputCommand.cpp \
+    src/command/RectCommand.cpp \
     src/main.cpp \
     \
     # Core Module (核心系統)
@@ -176,7 +177,6 @@ SOURCES += \
     # Command Module (Kaufen - 命令系統)
     src/command/CommandManager.cpp \
     src/command/Command.cpp \
-    src/command/RectangleCommand.cpp \
     src/command/BasicCommands.cpp \
     src/command/LineCommand.cpp \
     \
@@ -188,6 +188,7 @@ SOURCES += \
 HEADERS += \
     # Core Module
     src/command/PointInputCommand.h \
+    src/command/RectCommand.h \
     src/core/Application.h \
     src/core/EventBus.h \
     src/core/DocumentManager.h \
@@ -229,7 +230,6 @@ HEADERS += \
     # Command Module (Kaufen)
     src/command/CommandManager.h \
     src/command/Command.h \
-    src/command/RectangleCommand.h \
     src/command/CommandTypes.h \
     src/command/CommandFactory.h \
     src/command/LineCommand.h \
