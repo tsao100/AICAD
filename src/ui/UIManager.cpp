@@ -407,6 +407,57 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            qDebug() << "[UIManager] Circle created";
                        });
 
+        // ── 訂閱建立弧線請求 ─────────────────────────────────────────────────
+        // ✅ Handle arc creation
+        bus->subscribe("command.create-sketch-arc", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap arcData = data.toMap();
+
+                           Application* app    = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           // ── 取出三個原始點（供 Sketch 記錄幾何意圖）──────────────
+                           QVector2D startPoint = arcData["startPoint"].value<QVector2D>();
+                           QVector2D midPoint   = arcData["midPoint"].value<QVector2D>();
+                           QVector2D endPoint   = arcData["endPoint"].value<QVector2D>();
+
+                           // ── 取出預算好的圓心 / 半徑 / 角度 ───────────────────────
+                           QVector2D center     = arcData["center"].value<QVector2D>();
+                           double    radius     = arcData["radius"].toDouble();
+                           double    startAngle = arcData["startAngle"].toDouble();
+                           double    endAngle   = arcData["endAngle"].toDouble();
+
+                           if (radius <= 0) {
+                               bus->publish(Events::COMMAND_FAILED, "Invalid arc radius");
+                               return;
+                           }
+
+                           // ── 寫入 Sketch ──────────────────────────────────────────
+                            sketch->addArc(startPoint, midPoint, endPoint);
+                            sketch->rebuild();
+
+                           // ── 廣播更新 ─────────────────────────────────────────────
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+
+                           QString msg = QString("Arc created (r=%1, %2°→%3°)")
+                                             .arg(radius, 0, 'f', 3)
+                                             .arg(startAngle, 0, 'f', 1)
+                                             .arg(endAngle,   0, 'f', 1);
+
+                           bus->publish(Events::COMMAND_EXECUTED, msg);
+                           setStatusMessage(msg, 3000);
+
+                           qDebug() << "[UIManager] Arc created:"
+                                    << "center(" << center.x() << "," << center.y() << ")"
+                                    << "r=" << radius
+                                    << "angles:" << startAngle << "->" << endAngle;
+                       });
+
         // ✅ Handle view refresh after geometry changes
         bus->subscribe(Events::FEATURE_UPDATED, this,
                        [this](const QVariant& data) {

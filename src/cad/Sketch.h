@@ -57,6 +57,23 @@ struct SketchLine : public SketchGeometry {
         points.append(p2);  // ✅ points[1] = 終點
     }
 };
+
+/**
+ * @brief 草圖三點弧
+ */
+struct SketchArc : public SketchGeometry {
+    QVector2D center;
+    double radius;
+    double startAngle;
+    double endAngle;
+
+    SketchArc(const QVector2D& c, double r, double s, double e)
+        : SketchGeometry(SketchGeometryType::Arc), center(c), radius(r)
+        , startAngle(s), endAngle(e)
+    {
+    }
+};
+
 /**
  * @brief 草圖多段線
  */
@@ -149,6 +166,7 @@ public:
     void addPolyline(const QVector<QVector2D>& points, bool closed = false);
     void addCircle(const QVector2D& center, double radius);
     void addRectangle(const QVector2D& corner1, const QVector2D& corner2);
+    void addArc(const QVector2D& startPoint, const QVector2D& midPoint, const QVector2D& endPoint);
 
     /**
      * @brief 取得所有的 Wire（用於擠出等操作）

@@ -21,6 +21,7 @@
 #include <AIS_Shape.hxx>
 #include <gp_Circ.hxx>
 #include <QJsonArray>
+#include <QtMath>
 #include <QDebug>
 
 namespace aicad {
@@ -138,6 +139,50 @@ bool Sketch::rebuild() {
                 }
             }
 
+            // ✅ 處理 Arc
+            else if (geom->type == SketchGeometryType::Arc) {
+                const SketchArc* arc = static_cast<const SketchArc*>(geom);
+
+                // ── 將 2D 圓心映射到世界座標 ─────────────────────────────────────────
+                QVector3D center3d = m_plane.toWorld(arc->center.x(), arc->center.y());
+                gp_Pnt centerPnt(center3d.x(), center3d.y(), center3d.z());
+                gp_Dir normal(m_plane.normal().x(), m_plane.normal().y(), m_plane.normal().z());
+                gp_Ax2 ax2(centerPnt, normal);
+
+                // ── 建立 OCC 完整圓（弧是圓的一段）──────────────────────────────────
+                gp_Circ gpCircle(ax2, arc->radius);
+
+                // ── 將角度（度數）轉為弧度，並映射到平面上的 3D 點 ──────────────────
+                double startRad = qDegreesToRadians(arc->startAngle);
+                double endRad   = qDegreesToRadians(arc->endAngle);
+
+                // OCC 以 ax2 的 X 軸方向為 0°，在平面上計算起、終點
+                QVector3D startPt3d = m_plane.toWorld(
+                    arc->center.x() + arc->radius * std::cos(startRad),
+                    arc->center.y() + arc->radius * std::sin(startRad));
+                QVector3D endPt3d   = m_plane.toWorld(
+                    arc->center.x() + arc->radius * std::cos(endRad),
+                    arc->center.y() + arc->radius * std::sin(endRad));
+
+                gp_Pnt startPnt(startPt3d.x(), startPt3d.y(), startPt3d.z());
+                gp_Pnt endPnt  (endPt3d.x(),   endPt3d.y(),   endPt3d.z());
+
+                // ── 建立弧形 Edge（從 startPnt 逆時針到 endPnt）─────────────────────
+                BRepBuilderAPI_MakeEdge edgeBuilder(gpCircle, startRad, endRad);
+                if (!edgeBuilder.IsDone()) {
+                    qWarning() << "[Sketch] Arc edge build failed:"
+                               << edgeBuilder.Error();
+                } else {
+                    BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
+                    if (wireBuilder.IsDone()) {
+                        wire        = wireBuilder.Wire();
+                        wireCreated = true;
+                    } else {
+                        qWarning() << "[Sketch] Arc wire build failed";
+                    }
+                }
+            }
+
             // ✅ 創建 Wire 和對應的 AIS_Shape
             if (wireCreated) {
                 m_wires.append(wire);
@@ -244,6 +289,81 @@ void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {
     points << QVector2D(corner1.x(), corner1.y()); // 封閉
     
     addPolyline(points, true);
+}
+
+void Sketch::addArc(const QVector2D& startPoint,
+                    const QVector2D& midPoint,
+                    const QVector2D& endPoint)
+{
+    // ── 驗證三點不共線（行列式 = 0 → 無法構成弧）─────────────────────────
+    const float ax  = midPoint.x()  - startPoint.x();
+    const float ay  = midPoint.y()  - startPoint.y();
+    const float bx  = endPoint.x()  - startPoint.x();
+    const float by  = endPoint.y()  - startPoint.y();
+    const float det = ax * by - ay * bx;
+
+    if (qAbs(det) < 1e-6f) {
+        qWarning() << "[Sketch]" << name()
+                   << "addArc: the three points are collinear, cannot form an arc";
+        return;
+    }
+
+    // ── 三點求圓心（垂直平分線交點）───────────────────────────────────────
+    const float ux = (by * (ax * ax + ay * ay) - ay * (bx * bx + by * by))
+                     / (2.f * det);
+    const float uy = (ax * (bx * bx + by * by) - bx * (ax * ax + ay * ay))
+                     / (2.f * det);
+
+    const QVector2D center(startPoint.x() + ux, startPoint.y() + uy);
+    const double    radius = static_cast<double>(
+        QVector2D(center - startPoint).length());
+
+    if (radius <= 0) {
+        qWarning() << "[Sketch]" << name()
+                   << "addArc: computed radius is zero";
+        return;
+    }
+
+    // ── 計算起、終角度（度數，以圓心為基準）──────────────────────────────
+    double startAngle = qRadiansToDegrees(
+        qAtan2(startPoint.y() - center.y(),
+               startPoint.x() - center.x()));
+    double endAngle   = qRadiansToDegrees(
+        qAtan2(endPoint.y() - center.y(),
+               endPoint.x() - center.x()));
+
+    // ── 確認弧的掃掠方向（中點必須落在 start → end 的掃掠範圍內）──────────
+    // 將中點角度也算出來，再比對方向
+    double midAngle = qRadiansToDegrees(
+        qAtan2(midPoint.y() - center.y(),
+               midPoint.x() - center.x()));
+
+    // 將三個角度統一正規化到 [0, 360)
+    auto normalize360 = [](double a) -> double {
+        a = std::fmod(a, 360.0);
+        return a < 0 ? a + 360.0 : a;
+    };
+
+    double a0 = normalize360(startAngle);
+    double am = normalize360(midAngle);
+    double a1 = normalize360(endAngle);
+
+    // 判斷 midAngle 是否落在逆時針 a0 → a1 區間
+    // 若不在 → 改用順時針（即 endAngle 與 startAngle 對調掃掠）
+    bool midInCCW = (a0 <= a1) ? (am >= a0 && am <= a1)
+                               : (am >= a0 || am <= a1);
+    if (!midInCCW) {
+        // 順時針：交換 start / end 使 SketchArc 內部統一以逆時針儲存
+        std::swap(startAngle, endAngle);
+    }
+
+    // ── 建立幾何物件並加入 Sketch ─────────────────────────────────────────
+    addGeometry(new SketchArc(center, radius, startAngle, endAngle));
+
+    qDebug() << "[Sketch]" << name()
+             << "Arc added: center(" << center.x() << "," << center.y() << ")"
+             << "r=" << radius
+             << "angles:" << startAngle << "->" << endAngle;
 }
 
 QList<TopoDS_Wire> Sketch::wires() const {
