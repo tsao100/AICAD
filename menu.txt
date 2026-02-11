@@ -25,6 +25,7 @@ toolbar|main|separator|||
 
 toolbar|main|line|Draw Line|:/icons/line.png|L
 toolbar|main|arc|Draw Arc|:/icons/arc.png|A
+toolbar|main|polyline|Draw Polyline|:/icons/polyline.png|PL
 toolbar|main|rect|Draw Rectangle|:/icons/rect.png|R
 toolbar|main|circle|Draw Circle|:/icons/circle.png|C
 
@@ -66,6 +67,7 @@ menu|File|exit|Exit||Ctrl+Q
 
 menu|Sketch|sketch|Create Sketch||
 menu|Sketch|line|Draw Line||
+menu|Sketch|polyline|Draw Polyline||
 menu|Sketch|arc|Draw Arc||
 menu|Sketch|rect|Draw Rectangle||
 menu|Sketch|circle|Draw Circle||
@@ -95,6 +97,7 @@ menu|View|view_iso|Isometric|I|
 
 command|sketch||0
 command|line|l|2
+command|polyline|pl|2
 command|arc||3
 command|rect|r|2
 command|circle|c|2

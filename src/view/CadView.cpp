@@ -792,13 +792,6 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             Q_EMIT pointAcquired(planePt);  // ✅ LineCommand receives this
             return;
         }
-
-        d->mousePressed = true;
-        d->lastMousePos = event->pos();
-
-        // Move the mouse point to OCCT context
-        d->view->StartRotation(event->pos().x(), event->pos().y());
-
     }
 
     // 更新 OCCT 選擇
@@ -865,22 +858,6 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
             d->rubberBand->update();
         }
     }
-
-    // 視圖操作
-    if (d->mousePressed && !d->view.IsNull()) {
-        int dx = event->pos().x() - d->lastMousePos.x();
-        int dy = event->pos().y() - d->lastMousePos.y();
-        
-        if (d->pressedButton == Qt::MiddleButton) {
-            d->view->Pan(dx, -dy);
-        } else if (d->pressedButton == Qt::RightButton) {
-            d->view->Rotation(xp, yp);
-        }
-        
-        update();
-    }
-    
-    d->lastMousePos = event->pos();
 }
 
 void CadView::handleViewCubeClick(const QPoint& pos)

@@ -294,6 +294,48 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            qDebug() << "[UIManager]" << msg;
                        });
 
+        // ✅ Handle sketch polyline creation requests
+        bus->subscribe("command.create-sketch-polyline", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap polylineData = data.toMap();
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+                           if (!sketch) {
+                               qWarning() << "[UIManager] No active sketch for polyline creation";
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           // Unpack ordered vertex list
+                           QVector<QVector2D> vertices = polylineData["points"].value<QVector<QVector2D>>();
+                           if (vertices.size() < 2) {
+                               qWarning() << "[UIManager] Polyline requires at least 2 points";
+                               bus->publish(Events::COMMAND_FAILED, "Polyline requires at least 2 points");
+                               return;
+                           }
+
+                           // Create each segment as a line in the sketch
+                           // int segmentCount = 0;
+                           // for (int i = 0; i < vertices.size() - 1; ++i) {
+                           //     QVector2D startPoint = vertices[i].value<QVector2D>();
+                           //     QVector2D endPoint   = vertices[i + 1].value<QVector2D>();
+                           //     sketch->addLine(startPoint, endPoint);
+                           //     ++segmentCount;
+                           // }
+
+                           sketch->addPolyline(vertices, vertices.size());
+                           sketch->rebuild();
+
+                           // Notify feature update
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+
+                           QString msg = QString("Polyline created with %1 points (%2 segments)")
+                                             .arg(vertices.size())
+                                             .arg(vertices.size()-1);
+                           setStatusMessage(msg, 3000);
+                           qDebug() << "[UIManager]" << msg;
+                       });
+
         // ✅ Handle non-interactive sketch line requests (with coordinates)
         bus->subscribe("command.request-sketch-line", this,
                        [this, bus](const QVariant& data) {
