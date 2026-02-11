@@ -53,6 +53,10 @@ CommandState Command::state() const {
     return d->state;
 }
 
+void Command::setDescription(const QString& desc) {
+    d->description = desc;
+}
+
 bool Command::initialize() {
     qDebug() << "[Command]" << d->name << "initializing...";
     setState(CommandState::Ready);
