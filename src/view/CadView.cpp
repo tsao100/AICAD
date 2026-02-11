@@ -23,6 +23,7 @@
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_ViewCube.hxx>
+#include <AIS_AnimationCamera.hxx>
 #include <Quantity_Color.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Lin.hxx>
@@ -68,6 +69,7 @@ public:
     Handle(V3d_View) view;
     Handle(AIS_InteractiveContext) context;
     Handle(AIS_ViewCube) viewCube;
+    QTimer* viewCubeTimer;
     
     // 關聯的文件
     cad::Document* document;
@@ -790,6 +792,13 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             Q_EMIT pointAcquired(planePt);  // ✅ LineCommand receives this
             return;
         }
+
+        d->mousePressed = true;
+        d->lastMousePos = event->pos();
+
+        // Move the mouse point to OCCT context
+        d->view->StartRotation(event->pos().x(), event->pos().y());
+
     }
 
     // 更新 OCCT 選擇
@@ -874,9 +883,56 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     d->lastMousePos = event->pos();
 }
 
+void CadView::handleViewCubeClick(const QPoint& pos)
+{
+    d->context->MoveTo(pos.x(), pos.y(), d->view, Standard_True);
+
+    if (d->context->HasDetected()) {
+        Handle(AIS_InteractiveObject) detected = d->context->DetectedInteractive();
+
+        if (detected == d->viewCube) {
+            d->context->Select(Standard_True);
+
+            if (!d->viewCube->HasAnimation()) return;
+
+            // ✅ Correct method name
+            Handle(AIS_AnimationCamera) anim = d->viewCube->ViewAnimation();
+            anim->StartTimer(0.0, 1.0, Standard_True);
+
+            startViewCubeAnimation();
+        }
+    }
+}
+
+void CadView::startViewCubeAnimation()
+{
+    if (!d->viewCubeTimer) {
+        d->viewCubeTimer = new QTimer(this);
+        connect(d->viewCubeTimer, &QTimer::timeout, this, [this]() {
+            Handle(AIS_AnimationCamera) anim = d->viewCube->ViewAnimation();
+            Standard_Real pts = 0.0;
+            const Standard_Boolean isDone = anim->Update(pts);
+            d->view->Invalidate();
+            d->view->Redraw();
+            if (isDone) {
+                d->viewCubeTimer->stop();
+            }
+        });
+    }
+    d->viewCubeTimer->start(16);
+}
+
 void CadView::mouseReleaseEvent(QMouseEvent* event) {
-    Q_UNUSED(event);
-    d->mousePressed = false;
+    if (event->button() == Qt::LeftButton && d->mousePressed) {
+        const QPoint delta = event->pos() - d->lastMousePos;
+
+        // Only treat as a click if mouse didn't move much (not a drag)
+        if (delta.manhattanLength() < 4) {
+            handleViewCubeClick(event->pos());
+        }
+
+        d->mousePressed = false;
+    }
 }
 
 void CadView::wheelEvent(QWheelEvent* event) {

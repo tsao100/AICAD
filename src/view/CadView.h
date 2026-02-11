@@ -304,6 +304,9 @@ protected:
      * @brief 滑鼠釋放事件
      */
     void mouseReleaseEvent(QMouseEvent* event) override;
+
+    void handleViewCubeClick(const QPoint& pos);
+    void startViewCubeAnimation();
     
     /**
      * @brief 滾輪事件

@@ -388,7 +388,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                return;
                            }
 
-                           QVector2D center = circleData["center"].value<QVector2D>();
+                           QVector2D center = circleData["centerPoint"].value<QVector2D>();
                            double radius = circleData["radius"].toDouble();
 
                            if (radius <= 0) {
@@ -400,6 +400,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            sketch->rebuild();
 
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
+                           bus->publish(Events::COMMAND_EXECUTED,
+                                        QString("Circle created (r=%1)").arg(radius));
                            setStatusMessage(QString("Circle created (r=%1)").arg(radius), 3000);
 
                            qDebug() << "[UIManager] Circle created";

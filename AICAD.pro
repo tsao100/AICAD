@@ -131,6 +131,7 @@ win32 {
 # ========================================
 
 SOURCES += \
+    src/command/CircleCommand.cpp \
     src/command/RectCommand.cpp \
     src/main.cpp \
     \
@@ -186,6 +187,7 @@ SOURCES += \
 
 HEADERS += \
     # Core Module
+    src/command/CircleCommand.h \
     src/command/RectCommand.h \
     src/core/Application.h \
     src/core/EventBus.h \

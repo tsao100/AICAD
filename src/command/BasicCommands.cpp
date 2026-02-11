@@ -286,7 +286,7 @@ public:
         }
         
         QString fileName = doc->fileName();
-        if (fileName.isEmpty()) {
+        if (fileName.isEmpty()|| fileName == "Untitled") {
             // 沒有檔名，需要使用者選擇
             fileName = QFileDialog::getSaveFileName(
                 nullptr,
