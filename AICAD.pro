@@ -89,6 +89,7 @@ win32 {
             -lTKG2d \
             -lTKG3d \
             -lTKGeomBase \
+            -lTKGeomAlgo \
             -lTKBRep \
             -lTKTopAlgo \
             -lTKPrim \
