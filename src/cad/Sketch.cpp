@@ -18,8 +18,13 @@
 #include <BRep_Builder.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <GeomAPI_Interpolate.hxx>
+#include <TColgp_HArray1OfPnt.hxx>
+#include <Standard_Failure.hxx>
 #include <AIS_Shape.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Elips.hxx>
 #include <QJsonArray>
 #include <QtMath>
 #include <QDebug>
@@ -97,11 +102,20 @@ bool Sketch::rebuild() {
 
             // ✅ 處理 Polyline
             else if (geom->type == SketchGeometryType::Polyline) {
+                const SketchPolyline* pline = static_cast<const SketchPolyline*>(geom);
                 BRepBuilderAPI_MakeWire wireBuilder;
 
-                for (int i = 0; i < geom->points.size() - 1; ++i) {
+                // ✅ Determine number of segments based on closed status
+                // Open: N-1 segments (connect consecutive points)
+                // Closed: N segments (last point connects back to first)
+                int numSegments = pline->closed ? geom->points.size() : geom->points.size() - 1;
+
+                for (int i = 0; i < numSegments; ++i) {
                     QVector3D p1 = m_plane.toWorld(geom->points[i].x(), geom->points[i].y());
-                    QVector3D p2 = m_plane.toWorld(geom->points[i+1].x(), geom->points[i+1].y());
+
+                    // ✅ For closed polyline, wrap around to first point
+                    int nextIdx = (i + 1) % geom->points.size();
+                    QVector3D p2 = m_plane.toWorld(geom->points[nextIdx].x(), geom->points[nextIdx].y());
 
                     gp_Pnt gp1(p1.x(), p1.y(), p1.z());
                     gp_Pnt gp2(p2.x(), p2.y(), p2.z());
@@ -117,6 +131,7 @@ bool Sketch::rebuild() {
                     wireCreated = true;
                 }
             }
+
 
             // ✅ 處理 Circle
             else if (geom->type == SketchGeometryType::Circle) {
@@ -138,7 +153,64 @@ bool Sketch::rebuild() {
                     }
                 }
             }
+            // ✅ 處理 Spline
+            else if (geom->type == SketchGeometryType::Spline) {
+                // 檢查至少有 3 個控制點
+                if (geom->points.size() < 3) {
+                    qWarning() << "[Sketch] Spline requires at least 3 points, got:"
+                               << geom->points.size();
+                    continue;
+                }
 
+                try {
+                    // 1. 收集控制點並轉換為 3D 世界座標
+                    int numPoints = geom->points.size();
+                    Handle(TColgp_HArray1OfPnt) controlPoints =
+                        new TColgp_HArray1OfPnt(1, numPoints);
+
+                    for (int i = 0; i < numPoints; ++i) {
+                        QVector3D p = m_plane.toWorld(geom->points[i].x(), geom->points[i].y());
+                        controlPoints->SetValue(i + 1, gp_Pnt(p.x(), p.y(), p.z()));
+                    }
+
+                    // 2. 創建插值樣條曲線
+                    GeomAPI_Interpolate interpolator(
+                        controlPoints,     // 控制點
+                        Standard_False,    // 不閉合
+                        1.0e-6            // 容差
+                        );
+                    interpolator.Perform();
+
+                    if (!interpolator.IsDone()) {
+                        qWarning() << "[Sketch] Failed to interpolate spline";
+                        continue;
+                    }
+
+                    Handle(Geom_BSplineCurve) splineCurve = interpolator.Curve();
+
+                    // 3. 從樣條曲線創建 Edge
+                    BRepBuilderAPI_MakeEdge edgeBuilder(splineCurve);
+
+                    if (!edgeBuilder.IsDone()) {
+                        qWarning() << "[Sketch] Failed to create edge from spline curve";
+                        continue;
+                    }
+
+                    // 4. 創建 Wire
+                    BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
+
+                    if (wireBuilder.IsDone()) {
+                        wire = wireBuilder.Wire();
+                        wireCreated = true;
+                    } else {
+                        qWarning() << "[Sketch] Failed to create wire from spline edge";
+                    }
+
+                } catch (Standard_Failure& e) {
+                    qWarning() << "[Sketch] Exception in spline creation:"
+                               << e.GetMessageString();
+                }
+            }
             // ✅ 處理 Arc
             else if (geom->type == SketchGeometryType::Arc) {
                 const SketchArc* arc = static_cast<const SketchArc*>(geom);
@@ -179,6 +251,48 @@ bool Sketch::rebuild() {
                         wireCreated = true;
                     } else {
                         qWarning() << "[Sketch] Arc wire build failed";
+                    }
+                }
+            }
+            else if (geom->type == SketchGeometryType::Ellipse) {
+                const SketchEllipse* ellipse = static_cast<const SketchEllipse*>(geom);
+
+                // Transform center from 2D sketch plane to 3D world coordinates
+                QVector3D center3d = m_plane.toWorld(ellipse->center.x(), ellipse->center.y());
+                gp_Pnt centerPnt(center3d.x(), center3d.y(), center3d.z());
+
+                // Get sketch plane normal (Z direction)
+                gp_Dir normal(m_plane.normal().x(), m_plane.normal().y(), m_plane.normal().z());
+
+                // Calculate major axis direction in world coordinates
+                // The ellipse angle is in the sketch plane, so we need to rotate in that plane
+                double cosAngle = qCos(ellipse->angle);
+                double sinAngle = qSin(ellipse->angle);
+
+                // Major axis direction in sketch plane coordinates
+                QVector2D majorAxisDir2D(cosAngle, sinAngle);
+
+                // Transform major axis direction to 3D world coordinates
+                QVector3D majorAxisEnd3D = m_plane.toWorld(
+                    ellipse->center.x() + majorAxisDir2D.x(),
+                    ellipse->center.y() + majorAxisDir2D.y()
+                    );
+                QVector3D majorAxisDir3D = (majorAxisEnd3D - center3d).normalized();
+                gp_Dir xDir(majorAxisDir3D.x(), majorAxisDir3D.y(), majorAxisDir3D.z());
+
+                // Create coordinate system for ellipse
+                gp_Ax2 ax2(centerPnt, normal, xDir);
+
+                // Create ellipse (major radius, minor radius)
+                gp_Elips gpEllipse(ax2, ellipse->majorRadius, ellipse->minorRadius);
+
+                // Build edge and wire
+                BRepBuilderAPI_MakeEdge edgeBuilder(gpEllipse);
+                if (edgeBuilder.IsDone()) {
+                    BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
+                    if (wireBuilder.IsDone()) {
+                        wire = wireBuilder.Wire();
+                        wireCreated = true;
                     }
                 }
             }
@@ -272,12 +386,35 @@ void Sketch::addPolyline(const QVector<QVector2D>& points, bool closed) {
     addGeometry(new SketchPolyline(points, closed));
 }
 
+void Sketch::addSpline(const QVector<QVector2D>& points) {
+    if (points.size() < 3) {
+        qWarning() << "[Sketch]" << name() << "spline needs at least 3 points";
+        return;
+    }
+    addGeometry(new SketchSpline(points));
+}
+
+
 void Sketch::addCircle(const QVector2D& center, double radius) {
     if (radius <= 0) {
         qWarning() << "[Sketch]" << name() << "circle radius must be positive";
         return;
     }
     addGeometry(new SketchCircle(center, radius));
+}
+
+void Sketch::addEllipse(const QVector2D& center, double majorRadius, double minorRadius, double angle) {
+    if (majorRadius <= 0 || minorRadius <= 0) {
+        qWarning() << "[Sketch]" << name() << "ellipse radii must be positive";
+        return;
+    }
+
+    if (majorRadius < minorRadius) {
+        qWarning() << "[Sketch]" << name() << "major radius must be >= minor radius";
+        return;
+    }
+
+    addGeometry(new SketchEllipse(center, majorRadius, minorRadius, angle));
 }
 
 void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {

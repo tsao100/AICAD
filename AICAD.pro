@@ -22,6 +22,7 @@ unix {
             -lTKG2d \
             -lTKG3d \
             -lTKGeomBase \
+            -lTKGeomAlgo \
             -lTKBRep \
             -lTKTopAlgo \
             -lTKPrim \
@@ -133,8 +134,11 @@ win32 {
 SOURCES += \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
+    src/command/EllipseCommand.cpp \
+    src/command/PolygonCommand.cpp \
     src/command/PolylineCommand.cpp \
     src/command/RectCommand.cpp \
+    src/command/SplineCommand.cpp \
     src/main.cpp \
     \
     # Core Module (核心系統)
@@ -191,8 +195,11 @@ HEADERS += \
     # Core Module
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
+    src/command/EllipseCommand.h \
+    src/command/PolygonCommand.h \
     src/command/PolylineCommand.h \
     src/command/RectCommand.h \
+    src/command/SplineCommand.h \
     src/core/Application.h \
     src/core/EventBus.h \
     src/core/DocumentManager.h \

@@ -28,6 +28,7 @@
 #include <QMenuBar>
 #include <QToolBar>
 #include <QTimer>
+#include <QtMath>
 #include <QDebug>
 
 using namespace aicad::core;
@@ -323,7 +324,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            //     ++segmentCount;
                            // }
 
-                           sketch->addPolyline(vertices, vertices.size());
+                           sketch->addPolyline(vertices, false);
                            sketch->rebuild();
 
                            // Notify feature update
@@ -449,6 +450,44 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            qDebug() << "[UIManager] Circle created";
                        });
 
+        // ✅ Handle sketch ellipse creation requests
+        bus->subscribe("command.create-sketch-ellipse", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap ellipseData = data.toMap();
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               qWarning() << "[UIManager] No active sketch for ellipse creation";
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           QVector2D center = ellipseData["center"].value<QVector2D>();
+                           QVector2D majorAxisEnd = ellipseData["majorAxisEnd"].value<QVector2D>();
+                           float minorRadius = ellipseData["minorRadius"].toFloat();
+                           float majorRadius = ellipseData["majorRadius"].toFloat();
+
+                           // Calculate major axis angle
+                           QVector2D majorVector = majorAxisEnd - center;
+                           float angle = qAtan2(majorVector.y(), majorVector.x());
+
+                           // Create the ellipse in the sketch
+                           sketch->addEllipse(center, majorRadius, minorRadius, angle);
+                           sketch->rebuild();
+
+                           // Notify feature update
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+
+                           QString msg = QString("Ellipse created: center (%1,%2), major radius %3, minor radius %4, angle %5°")
+                                             .arg(center.x()).arg(center.y())
+                                             .arg(majorRadius).arg(minorRadius)
+                                             .arg(qRadiansToDegrees(angle), 0, 'f', 1);
+
+                           setStatusMessage(msg, 3000);
+                           qDebug() << "[UIManager]" << msg;
+                       });
+
         // ── 訂閱建立弧線請求 ─────────────────────────────────────────────────
         // ✅ Handle arc creation
         bus->subscribe("command.create-sketch-arc", this,
@@ -498,6 +537,158 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                     << "center(" << center.x() << "," << center.y() << ")"
                                     << "r=" << radius
                                     << "angles:" << startAngle << "->" << endAngle;
+                       });
+
+
+
+        // ✅ Handle sketch polygon creation requests
+        bus->subscribe("command.create-sketch-polygon", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap polygonData = data.toMap();
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               qWarning() << "[UIManager] No active sketch for polygon creation";
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           // Extract polygon parameters
+                           QVector2D center = polygonData["center"].value<QVector2D>();
+                           double radius = polygonData["radius"].toDouble();
+                           int sides = polygonData["sides"].toInt();
+
+                           // Extract vertices
+                           QVariantList verticesList = polygonData["vertices"].toList();
+                           QVector<QVector2D> vertices;
+                           for (const QVariant& v : verticesList) {
+                               vertices.append(v.value<QVector2D>());
+                           }
+
+                           // Validate parameters
+                           if (sides < 3 || radius <= 0 || vertices.isEmpty()) {
+                               qWarning() << "[UIManager] Invalid polygon parameters";
+                               bus->publish(Events::COMMAND_FAILED, "Invalid polygon parameters");
+                               return;
+                           }
+
+                           // Create the polygon in the sketch
+                           // Option 1: If sketch has addPolygon method
+                           sketch->addPolyline(vertices, true);
+
+                           // Option 2: If sketch needs individual lines for polygon
+                           // for (int i = 0; i < vertices.size(); ++i) {
+                           //     int nextIndex = (i + 1) % vertices.size();
+                           //     sketch->addLine(vertices[i], vertices[nextIndex]);
+                           // }
+
+                           sketch->rebuild();
+
+                           // Notify feature update
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+
+                           QString msg = QString("Polygon created: %1 sides, center (%2,%3), radius %4")
+                                             .arg(sides)
+                                             .arg(center.x(), 0, 'f', 2)
+                                             .arg(center.y(), 0, 'f', 2)
+                                             .arg(radius, 0, 'f', 2);
+
+                           setStatusMessage(msg, 3000);
+                           qDebug() << "[UIManager]" << msg;
+                       });
+
+        // ✅ Handle sketch spline creation requests (interactive mode)
+        bus->subscribe("command.create-sketch-spline", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap splineData = data.toMap();
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               qWarning() << "[UIManager] No active sketch for spline creation";
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           QVector<QVector2D> controlPoints =
+                               splineData["controlPoints"].value<QVector<QVector2D>>();
+
+                           // Validate minimum points
+                           if (controlPoints.size() < 3) {
+                               qWarning() << "[UIManager] Not enough control points for spline:"
+                                          << controlPoints.size();
+                               bus->publish(Events::COMMAND_FAILED,
+                                            "Need at least 3 points for spline");
+                               return;
+                           }
+
+                           // Create the spline in the sketch
+                           sketch->addSpline(controlPoints);
+                           sketch->rebuild();
+
+                           // Notify feature update
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+
+                           QString msg = QString("Spline created with %1 control points")
+                                             .arg(controlPoints.size());
+                           setStatusMessage(msg, 3000);
+                           qDebug() << "[UIManager]" << msg;
+                       });
+
+        // ✅ Handle sketch spline creation requests (non-interactive mode)
+        bus->subscribe("command.request-sketch-spline", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap request = data.toMap();
+                           Application* app = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               qWarning() << "[UIManager] No active sketch for spline creation";
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           QStringList args = request["args"].toStringList();
+
+                           // Parse coordinates: x1 y1 x2 y2 x3 y3 ...
+                           // Need at least 6 values (3 points)
+                           if (args.size() < 6 || args.size() % 2 != 0) {
+                               qWarning() << "[UIManager] Invalid spline arguments:"
+                                          << "Need at least 6 coordinates (x1 y1 x2 y2 x3 y3 ...)";
+                               bus->publish(Events::COMMAND_FAILED,
+                                            "Invalid arguments: Need at least 6 coordinates");
+                               return;
+                           }
+
+                           // Convert string coordinates to QVector2D points
+                           QVector<QVector2D> controlPoints;
+                           for (int i = 0; i < args.size(); i += 2) {
+                               bool okX, okY;
+                               float x = args[i].toFloat(&okX);
+                               float y = args[i + 1].toFloat(&okY);
+
+                               if (!okX || !okY) {
+                                   qWarning() << "[UIManager] Invalid coordinate values at index" << i;
+                                   bus->publish(Events::COMMAND_FAILED,
+                                                QString("Invalid coordinate at index %1").arg(i));
+                                   return;
+                               }
+
+                               controlPoints.append(QVector2D(x, y));
+                           }
+
+                           // Create the spline in the sketch
+                           sketch->addSpline(controlPoints);
+                           sketch->rebuild();
+
+                           // Notify feature update
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+
+                           QString msg = QString("Spline created with %1 control points from command line")
+                                             .arg(controlPoints.size());
+                           setStatusMessage(msg, 3000);
+                           qDebug() << "[UIManager]" << msg;
                        });
 
         // ✅ Handle view refresh after geometry changes

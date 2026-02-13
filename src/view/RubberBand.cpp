@@ -15,11 +15,20 @@
 #include <Aspect_TypeOfLine.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Elips.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <ElCLib.hxx>
 #include <Graphic3d_DisplayPriority.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <GeomAPI_Interpolate.hxx>
+#include <GeomAdaptor_Curve.hxx>
+#include <GCPnts_UniformAbscissa.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <TColgp_HArray1OfPnt.hxx>
+#include <gp_Pnt.hxx>
+#include <Standard_Failure.hxx>
 
 namespace aicad {
 namespace view {
@@ -148,8 +157,17 @@ void RubberBand::update() {
     case RubberBandMode::Polyline:
         updatePolyline();
         break;
+    case RubberBandMode::Polygon:
+        updatePolygon();
+        break;
     case RubberBandMode::Circle:
         updateCircle();
+        break;
+    case RubberBandMode::Spline:
+        updateSpline();
+        break;
+    case RubberBandMode::Ellipse:
+        updateEllipse();
         break;
     case RubberBandMode::Arc:
         updateArc();
@@ -285,6 +303,184 @@ void RubberBand::updatePolyline() {
     d->context->UpdateCurrentViewer();
 }
 
+void RubberBand::updateSpline() {
+    if (d->points.size() < 2 || !d->hasCurrentPoint) {
+        return;
+    }
+
+    try {
+        // 準備控制點（包括當前鼠標位置）
+        int numControlPoints = d->points.size() + 1;
+        Handle(TColgp_HArray1OfPnt) hControlPoints =
+            new TColgp_HArray1OfPnt(1, numControlPoints);
+
+        int index = 1;
+        for (const QVector2D& pt : d->points) {
+            QVector3D p = planeToWorld(pt);
+            hControlPoints->SetValue(index++, gp_Pnt(p.x(), p.y(), p.z()));
+        }
+
+        QVector3D currentP = planeToWorld(d->currentPoint);
+        hControlPoints->SetValue(index, gp_Pnt(currentP.x(), currentP.y(), currentP.z()));
+
+        // 特殊處理：2點時顯示直線
+        if (numControlPoints == 2) {
+            Handle(Graphic3d_ArrayOfPolylines) polyline =
+                new Graphic3d_ArrayOfPolylines(2);
+            polyline->AddVertex(hControlPoints->Value(1));
+            polyline->AddVertex(hControlPoints->Value(2));
+            createAndDisplayPresentation(polyline);
+            return;
+        }
+
+        // 3點或以上：創建插值樣條
+        GeomAPI_Interpolate interpolator(hControlPoints, Standard_False, 1.0e-6);
+        interpolator.Perform();
+
+        if (!interpolator.IsDone()) {
+            qWarning() << "[RubberBand] Failed to interpolate spline";
+            return;
+        }
+
+        Handle(Geom_BSplineCurve) splineCurve = interpolator.Curve();
+
+        // 自適應採樣並顯示
+        GeomAdaptor_Curve adaptor(splineCurve);
+        Standard_Real length = GCPnts_AbscissaPoint::Length(adaptor);
+
+        // 根據曲線長度自適應調整採樣密度
+        // 短曲線使用較少點，長曲線使用較多點
+        int numSamples = qMax(20, qMin(100, static_cast<int>(length / 2.0)));
+
+        GCPnts_UniformAbscissa uniformPoints(adaptor, numSamples);
+
+        if (!uniformPoints.IsDone()) {
+            qWarning() << "[RubberBand] Failed to sample spline curve";
+            return;
+        }
+
+        int numPoints = uniformPoints.NbPoints();
+        Handle(Graphic3d_ArrayOfPolylines) polyline =
+            new Graphic3d_ArrayOfPolylines(numPoints);
+
+        for (int i = 1; i <= numPoints; i++) {
+            gp_Pnt pt;
+            adaptor.D0(uniformPoints.Parameter(i), pt);
+            polyline->AddVertex(pt);
+        }
+
+        createAndDisplayPresentation(polyline);
+
+    } catch (Standard_Failure& e) {
+        qWarning() << "[RubberBand] Exception in updateSpline:" << e.GetMessageString();
+    }
+}
+
+// ============================================================
+// 公共輔助方法實作
+// ============================================================
+
+void RubberBand::createAndDisplayPresentation(
+    const Handle(Graphic3d_ArrayOfPolylines)& polyline)
+{
+    // 清除舊的 presentation
+    if (!d->presentation.IsNull()) {
+        d->presentation->Clear();
+        d->presentation->Erase();
+    }
+
+    // 創建新的 presentation
+    d->presentation = new Prs3d_Presentation(
+        d->context->MainPrsMgr()->StructureManager()
+        );
+
+    // 設置線條樣式
+    Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+        Quantity_NOC_WHITE,      // 白色
+        Aspect_TOL_DASH,         // 虛線
+        2.0                      // 寬度
+        );
+
+    // 創建圖形組並添加幾何
+    Handle(Graphic3d_Group) group = d->presentation->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect->Aspect());
+    group->AddPrimitiveArray(polyline);
+
+    // 設置顯示層級（確保在最上層）
+    d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+
+    // 顯示並更新視圖
+    d->presentation->Display();
+    d->context->UpdateCurrentViewer();
+}
+
+
+void RubberBand::updatePolygon() {
+    // 需要中心點和當前點來計算半徑
+    if (!d->hasCurrentPoint || d->points.size() < 1) {
+        return;
+    }
+
+    // 第一個點是中心點
+    QVector2D center = d->points[0];
+
+    // 從當前點計算半徑
+    QVector2D delta = d->currentPoint - center;
+    double radius = delta.length();
+
+    if (radius < 0.001) {
+        return;  // 半徑太小，不顯示
+    }
+
+    // 邊數（可以從成員變數讀取，預設為 6）
+    //int sides = d->polygonSides > 0 ? d->polygonSides : 6;
+    int sides = 6;
+
+    // 計算多邊形頂點（閉合，所以需要 sides + 1 個點）
+    int numPoints = sides + 1;
+    Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(numPoints);
+
+    double angleStep = 2.0 * M_PI / sides;
+    double startAngle = -M_PI / 2.0;  // 從頂部（12點鐘方向）開始
+
+    QVector<QVector2D> vertices;
+    for (int i = 0; i < sides; ++i) {
+        double angle = startAngle + i * angleStep;
+        double x = center.x() + radius * std::cos(angle);
+        double y = center.y() + radius * std::sin(angle);
+        vertices.append(QVector2D(x, y));
+    }
+
+    // 添加所有頂點到 polyline
+    for (const QVector2D& pt : vertices) {
+        QVector3D p = planeToWorld(pt);
+        polyline->AddVertex(gp_Pnt(p.x(), p.y(), p.z()));
+    }
+
+    // 閉合多邊形：添加第一個頂點以形成閉合形狀
+    QVector3D firstP = planeToWorld(vertices.first());
+    polyline->AddVertex(gp_Pnt(firstP.x(), firstP.y(), firstP.z()));
+
+    // 創建呈現
+    d->presentation = new Prs3d_Presentation(d->context->MainPrsMgr()->StructureManager());
+
+    Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+        Quantity_NOC_WHITE,
+        Aspect_TOL_DASH,
+        2.0
+        );
+
+    Handle(Graphic3d_Group) group = d->presentation->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect->Aspect());
+    group->AddPrimitiveArray(polyline);
+
+    d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+    d->presentation->Display();
+    d->context->UpdateCurrentViewer();
+}
+
 void RubberBand::updateCircle() {
     if (d->points.isEmpty() || !d->hasCurrentPoint) {
         return;
@@ -327,6 +523,112 @@ void RubberBand::updateCircle() {
     group->SetGroupPrimitivesAspect(aspect->Aspect());
     group->AddPrimitiveArray(polyline);
     
+    d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+    d->presentation->Display();
+    d->context->UpdateCurrentViewer();
+}
+
+void RubberBand::updateEllipse() {
+    if (d->points.isEmpty() || !d->hasCurrentPoint) {
+        return;
+    }
+
+    QVector2D center = d->points[0];
+
+    // === Case 1: Only have center, show line to current point (major axis direction) ===
+    if (d->points.size() == 1) {
+        QVector3D centerWorld = planeToWorld(center);
+        QVector3D currentWorld = planeToWorld(d->currentPoint);
+
+        Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(2);
+        polyline->AddVertex(gp_Pnt(centerWorld.x(), centerWorld.y(), centerWorld.z()));
+        polyline->AddVertex(gp_Pnt(currentWorld.x(), currentWorld.y(), currentWorld.z()));
+
+        // Create presentation
+        d->presentation = new Prs3d_Presentation(d->context->MainPrsMgr()->StructureManager());
+
+        Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+            Quantity_NOC_WHITE,
+            Aspect_TOL_DASH,
+            2.0
+            );
+
+        Handle(Graphic3d_Group) group = d->presentation->NewGroup();
+        group->SetGroupPrimitivesAspect(aspect->Aspect());
+        group->AddPrimitiveArray(polyline);
+
+        d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
+        d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+        d->presentation->Display();
+        d->context->UpdateCurrentViewer();
+        return;
+    }
+
+    // === Case 2: Have center and major axis endpoint, show preview ellipse ===
+    QVector2D majorAxisEnd = d->points[1];
+    QVector2D majorVector = majorAxisEnd - center;
+    float majorRadius = majorVector.length();
+
+    if (majorRadius < 0.001) {
+        return;
+    }
+
+    // Calculate minor radius from current point
+    QVector2D toPoint = d->currentPoint - center;
+    QVector2D majorNormalized = majorVector.normalized();
+    QVector2D perpendicular(-majorNormalized.y(), majorNormalized.x());
+    float minorRadius = qAbs(QVector2D::dotProduct(toPoint, perpendicular));
+
+    // If point is too close to center or major axis, use distance to point
+    if (minorRadius < 0.001) {
+        minorRadius = toPoint.length();
+        if (minorRadius < 0.001) {
+            return; // Too close to center
+        }
+    }
+
+    // Ensure minor radius doesn't exceed major radius for valid ellipse
+    if (minorRadius > majorRadius) {
+        minorRadius = majorRadius;
+    }
+
+    // Create ellipse in 3D
+    QVector3D centerWorld = planeToWorld(center);
+    gp_Pnt centerPnt(centerWorld.x(), centerWorld.y(), centerWorld.z());
+
+    // Calculate major axis direction in 3D
+    QVector3D majorAxisEndWorld = planeToWorld(majorAxisEnd);
+    QVector3D majorAxisDir3D = (majorAxisEndWorld - centerWorld).normalized();
+    gp_Dir xDir(majorAxisDir3D.x(), majorAxisDir3D.y(), majorAxisDir3D.z());
+
+    gp_Dir normalDir(d->plane.normal.x(), d->plane.normal.y(), d->plane.normal.z());
+    gp_Ax2 ax2(centerPnt, normalDir, xDir);
+    gp_Elips ellipse(ax2, majorRadius, minorRadius);
+
+    // Create ellipse point array
+    const int numSegments = 64;
+    Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(numSegments + 1);
+
+    for (int i = 0; i <= numSegments; ++i) {
+        double angle = 2.0 * M_PI * i / numSegments;
+        gp_Pnt pt = ElCLib::Value(angle, ellipse);
+        polyline->AddVertex(pt);
+    }
+
+    // Create presentation
+    d->presentation = new Prs3d_Presentation(d->context->MainPrsMgr()->StructureManager());
+
+    Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+        Quantity_NOC_WHITE,
+        Aspect_TOL_DASH,
+        2.0
+        );
+
+    Handle(Graphic3d_Group) group = d->presentation->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect->Aspect());
+    group->AddPrimitiveArray(polyline);
+
     d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
     d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
     d->presentation->Display();

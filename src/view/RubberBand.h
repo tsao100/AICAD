@@ -15,6 +15,7 @@
 
 #include <Prs3d_Presentation.hxx>
 #include <AIS_InteractiveContext.hxx>
+#include <Graphic3d_ArrayOfPolylines.hxx>
 
 namespace aicad {
 namespace view {
@@ -27,8 +28,11 @@ enum class RubberBandMode {
     Line,       ///< 線段模式
     Rectangle,  ///< 矩形模式
     Polyline,   ///< 多段線模式
+    Polygon,    ///< 正多邊形模式
     Circle,     ///< 圓形模式
-    Arc         ///< 弧線模式
+    Ellipse,    ///< 橢圓形模式
+    Arc,        ///< 弧線模式
+    Spline      ///< 線模式
 };
 
 /**
@@ -167,9 +171,27 @@ private:
     void updatePolyline();
     
     /**
+     * @brief 更新多段線模式
+     */
+    void updatePolygon();
+
+    /**
      * @brief 更新圓形模式
      */
     void updateCircle();
+
+    /**
+     * @brief 更新雲形線模式
+     */
+    void updateSpline();
+
+    void createAndDisplayPresentation(
+        const Handle(Graphic3d_ArrayOfPolylines)& polyline);
+
+    /**
+     * @brief 更新橢圓形模式
+     */
+    void updateEllipse();
     
     /**
      * @brief 更新弧線模式

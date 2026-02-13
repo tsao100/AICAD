@@ -27,6 +27,7 @@ enum class SketchGeometryType {
     Line,        ///< 直線
     Arc,         ///< 圓弧
     Circle,      ///< 圓
+    Ellipse,     ///< 橢圓
     Polyline,    ///< 多段線
     Spline       ///< 樣條曲線
 };
@@ -80,7 +81,32 @@ struct SketchArc : public SketchGeometry {
 struct SketchPolyline : public SketchGeometry {
     bool closed;
 
-    SketchPolyline(const QVector<QVector2D>& pts, bool isClosed = false)
+    SketchPolyline(const QVector<QVector2D>& pts, bool isClosed)
+        : SketchGeometry(SketchGeometryType::Polyline)
+        , closed(isClosed) {
+        points = pts;
+    }
+};
+
+/**
+ * @brief 草圖多段線
+ */
+struct SketchSpline : public SketchGeometry {
+
+    SketchSpline(const QVector<QVector2D>& pts)
+        : SketchGeometry(SketchGeometryType::Spline)
+        {
+        points = pts;
+    }
+};
+
+/**
+ * @brief 草圖正多邊形
+ */
+struct SketchPolygon : public SketchGeometry {
+    bool closed;
+
+    SketchPolygon(const QVector<QVector2D>& pts, bool isClosed = true)
         : SketchGeometry(SketchGeometryType::Polyline)
         , closed(isClosed) {
         points = pts;
@@ -91,7 +117,7 @@ struct SketchPolyline : public SketchGeometry {
  * @brief 草圖圓
  */
 struct SketchCircle : public SketchGeometry {
-    QVector2D center;
+    const QVector2D center;
     double radius;
 
     SketchCircle(const QVector2D& c, double r)
@@ -100,6 +126,26 @@ struct SketchCircle : public SketchGeometry {
         , radius(r) {
     }
 };
+
+/**
+ * @brief 草圖橢圓
+ */
+struct SketchEllipse : public SketchGeometry {
+    const QVector2D& center;
+    double majorRadius;
+    double minorRadius;
+    double angle;
+
+    SketchEllipse(const QVector2D& c, double r1, double r2, double a)
+        : SketchGeometry(SketchGeometryType::Ellipse)
+        , center(c)
+        , majorRadius(r1)
+        , minorRadius(r2)
+        , angle(a)
+    {
+    }
+};
+
 
 /**
  * @brief 草圖特徵
@@ -164,9 +210,12 @@ public:
     // 便捷方法：加入基本幾何
     void addLine(const QVector2D& p1, const QVector2D& p2);
     void addPolyline(const QVector<QVector2D>& points, bool closed = false);
+    void addSpline(const QVector<QVector2D>& points);
     void addCircle(const QVector2D& center, double radius);
+    void addEllipse(const QVector2D& center, double majorRadius, double minorRadius, double angle);
     void addRectangle(const QVector2D& corner1, const QVector2D& corner2);
     void addArc(const QVector2D& startPoint, const QVector2D& midPoint, const QVector2D& endPoint);
+    void addPolygon(const QVector2D& center, double radius, int sides);
 
     /**
      * @brief 取得所有的 Wire（用於擠出等操作）

@@ -119,10 +119,16 @@ ViewManager::ViewManager(QObject* parent)
                         rubber->setMode(view::RubberBandMode::Rectangle);
                     } else if (rbMode == "circle") {
                         rubber->setMode(view::RubberBandMode::Circle);
+                    } else if (rbMode == "spline") {
+                        rubber->setMode(view::RubberBandMode::Spline);
+                    } else if (rbMode == "ellipse") {
+                        rubber->setMode(view::RubberBandMode::Ellipse);
                     } else if (rbMode == "arc") {
                         rubber->setMode(view::RubberBandMode::Arc);
                     } else if (rbMode == "polyline") {
                         rubber->setMode(view::RubberBandMode::Polyline);
+                    } else if (rbMode == "polygon") {
+                        rubber->setMode(view::RubberBandMode::Polygon);
                     }
 
                     // Set rubber band plane to match active sketch
