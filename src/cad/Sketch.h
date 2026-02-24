@@ -131,7 +131,7 @@ struct SketchCircle : public SketchGeometry {
  * @brief 草圖橢圓
  */
 struct SketchEllipse : public SketchGeometry {
-    const QVector2D& center;
+    const QVector2D center;
     double majorRadius;
     double minorRadius;
     double angle;
