@@ -46,9 +46,9 @@ CustomPlane CustomPlane::XY() {
 CustomPlane CustomPlane::XZ() {
     CustomPlane p;
     p.origin = QVector3D(0, 0, 0);
-    p.normal = QVector3D(0, 1, 0);
+    p.normal = QVector3D(0, -1, 0);
     p.uAxis = QVector3D(1, 0, 0);
-    p.vAxis = QVector3D(0, 0, -1);
+    p.vAxis = QVector3D(0, 0, 1);
     return p;
 }
 

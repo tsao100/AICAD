@@ -59,7 +59,7 @@ Plane Plane::xy() {
 Plane Plane::xz() {
     return Plane(
         QVector3D(0, 0, 0),
-        QVector3D(0, 1, 0),
+        QVector3D(0, -1, 0),
         QVector3D(1, 0, 0)
     );
 }
@@ -140,7 +140,7 @@ bool Plane::isXZ() const {
     const double tolerance = 1e-6;
     return m_origin.length() < tolerance &&
            std::abs(m_normal.x()) < tolerance &&
-           std::abs(m_normal.y() - 1.0) < tolerance &&
+           std::abs(m_normal.y() + 1.0) < tolerance &&
            std::abs(m_normal.z()) < tolerance;
 }
 

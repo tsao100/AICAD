@@ -140,6 +140,8 @@ SOURCES += \
     src/command/PolylineCommand.cpp \
     src/command/RectCommand.cpp \
     src/command/SplineCommand.cpp \
+    src/core/geometry/CoordinateTransform.cpp \
+    src/core/geometry/WorkPlane.cpp \
     src/main.cpp \
     \
     # Core Module (核心系統)
@@ -218,6 +220,8 @@ HEADERS += \
     src/cad/Plane.h \                # ✅ 添加
     \
     # Geometry Module                # ✅ 添加
+    src/core/geometry/CoordinateTransform.h \
+    src/core/geometry/WorkPlane.h \
     src/geometry/GeometryBuilder.h \
     \
     # UI Module (James)
