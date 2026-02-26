@@ -358,7 +358,7 @@ int Document::indexOf(Feature* feature) const {
     return m_features.indexOf(feature);
 }
 
-Sketch* Document::createSketch(const Plane& plane, const QString& name) {
+Sketch* Document::createSketch(Plane* plane, const QString& name) {
     Sketch* sketch = new Sketch(this);
     sketch->setPlane(plane);
 
@@ -367,7 +367,7 @@ Sketch* Document::createSketch(const Plane& plane, const QString& name) {
     if (sketchName.isEmpty()) {
         sketchName = QString("Sketch %1 (%2)")
             .arg(m_nextFeatureNumber++)
-            .arg(plane.displayName());
+                         .arg(plane->displayName());
     }
     sketch->setName(sketchName);
     

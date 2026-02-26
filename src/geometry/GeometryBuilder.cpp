@@ -365,8 +365,8 @@ BuildResult GeometryBuilder::extrudeSketch(cad::Sketch* sketch, double height) {
         }
         
         // 計算擠出方向
-        cad::Plane plane = sketch->plane();
-        QVector3D normal = plane.normal();
+        cad::Plane* plane = sketch->plane();
+        QVector3D normal = plane->normal();
         gp_Vec direction = toGpVec(normal * height);
         
         // 執行擠出

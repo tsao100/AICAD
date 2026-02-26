@@ -135,12 +135,12 @@ ViewManager::ViewManager(QObject* parent)
                     Application* app = Application::instance();
                     cad::Sketch* sketch = app->activeSketch();
                     if (sketch) {
-                        cad::Plane sketchPlane = sketch->plane();
+                        cad::Plane* sketchPlane = sketch->plane();
                         view::CustomPlane customPlane;
-                        customPlane.origin = sketchPlane.origin();
-                        customPlane.normal = sketchPlane.normal();
-                        customPlane.uAxis = sketchPlane.xAxis();
-                        customPlane.vAxis = sketchPlane.yAxis();
+                        customPlane.origin = sketchPlane->origin();
+                        customPlane.normal = sketchPlane->normal();
+                        customPlane.uAxis = sketchPlane->xAxis();
+                        customPlane.vAxis = sketchPlane->yAxis();
                         rubber->setPlane(customPlane);
                     }
                 }

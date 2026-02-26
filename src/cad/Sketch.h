@@ -1,15 +1,13 @@
 /**
  * @file Sketch.h
- * @brief 草圖特徵類別
- * @author AICAD Team
- * @date 2025-01-08
+ * @brief 與增強版 Plane 整合的 Sketch 類別範例
  */
 
-#ifndef AICAD_CAD_SKETCH_H
-#define AICAD_CAD_SKETCH_H
+#ifndef AICAD_CAD_SKETCH_ENHANCED_H
+#define AICAD_CAD_SKETCH_ENHANCED_H
 
 #include "Feature.h"
-#include "Plane.h"
+#include "Plane.h"  // 增強版 Plane
 #include <QVector>
 #include <QVector2D>
 #include <QJsonObject>
@@ -95,7 +93,7 @@ struct SketchSpline : public SketchGeometry {
 
     SketchSpline(const QVector<QVector2D>& pts)
         : SketchGeometry(SketchGeometryType::Spline)
-        {
+    {
         points = pts;
     }
 };
@@ -146,60 +144,45 @@ struct SketchEllipse : public SketchGeometry {
     }
 };
 
-
 /**
- * @brief 草圖特徵
+ * @brief 與增強版 Plane 整合的 Sketch 類別
  *
- * 包含 2D 幾何元素的平面草圖
- * - 定義在特定平面上
- * - 包含多個幾何元素（線、圓、多段線等）
- * - 可以轉換為 OCCT Wire 用於建立實體
- *
- * 使用範例:
- * @code
- * Sketch* sketch = new Sketch(document);
- * sketch->setPlane(Plane::xy());
- * sketch->setName("Front Profile");
- *
- * // 加入矩形
- * sketch->addLine(QVector2D(0, 0), QVector2D(100, 0));
- * sketch->addLine(QVector2D(100, 0), QVector2D(100, 50));
- * sketch->addLine(QVector2D(100, 50), QVector2D(0, 50));
- * sketch->addLine(QVector2D(0, 50), QVector2D(0, 0));
- *
- * sketch->rebuild();
- * @endcode
+ * 主要變更：
+ * - m_plane 從值成員改為指標成員
+ * - 監聽 Plane 的事件（刪除、幾何改變）
+ * - JSON 序列化使用 planeId 參考
+ * - 空指標檢查和錯誤處理
  */
 class Sketch : public Feature {
     Q_OBJECT
 
 public:
-    /**
-     * @brief 建構子
-     * @param parent 父文件
-     */
     explicit Sketch(Document* parent = nullptr);
-
-    /**
-     * @brief 解構子
-     */
     ~Sketch() override;
 
-    /**
-     * @brief 取得特徵類型
-     */
     FeatureType type() const override { return FeatureType::Sketch; }
-
-    /**
-     * @brief 重建草圖幾何
-     */
     bool rebuild() override;
 
-    // 平面管理
-    Plane plane() const { return m_plane; }
-    void setPlane(const Plane& plane);
+    // ==================== 平面管理 ====================
 
-    // 幾何元素管理
+    /**
+     * @brief 取得關聯的平面（指標）
+     */
+    Plane* plane() const { return m_plane; }
+
+    /**
+     * @brief 設定關聯的平面
+     * @param plane 平面指標（不可為 null）
+     */
+    void setPlane(Plane* plane);
+
+    /**
+     * @brief 平面是否有效（非 null）
+     */
+    bool hasValidPlane() const { return m_plane != nullptr; }
+
+    // ==================== 幾何元素管理 ====================
+
     void addGeometry(SketchGeometry* geom);
     void removeGeometry(int index);
     void clearGeometry();
@@ -215,65 +198,73 @@ public:
     void addEllipse(const QVector2D& center, double majorRadius, double minorRadius, double angle);
     void addRectangle(const QVector2D& corner1, const QVector2D& corner2);
     void addArc(const QVector2D& startPoint, const QVector2D& midPoint, const QVector2D& endPoint);
-    void addPolygon(const QVector2D& center, double radius, int sides);
 
-    /**
-     * @brief 取得所有的 Wire（用於擠出等操作）
-     */
+    // ==================== OCCT ====================
+
     QList<TopoDS_Wire> wires() const;
-
-    // ✅ 新增：取得對應的 AIS 物件
     QList<Handle(AIS_Shape)> aisShapes() const;
-
-    // ✅ 新增：顯示到 AIS Context
     void displayInContext(const Handle(AIS_InteractiveContext)& context);
     void eraseFromContext(const Handle(AIS_InteractiveContext)& context);
-
-    /**
-     * @brief 取得主要輪廓 Wire
-     * @return 第一個封閉的 Wire，如果沒有則返回第一個 Wire
-     */
     TopoDS_Wire mainWire() const;
-
-    /**
-     * @brief 檢查草圖是否有封閉輪廓
-     */
     bool hasClosedProfile() const;
 
-    /**
-     * @brief 序列化
-     */
-    QJsonObject toJson() const;
+    // ==================== 序列化 ====================
 
     /**
-     * @brief 反序列化
+     * @brief 序列化（使用 planeId 參考）
      */
-    bool fromJson(const QJsonObject& json);
+    QJsonObject toJson() const override;
+
+    /**
+     * @brief 反序列化（從 planeId 恢復參考）
+     */
+    bool fromJson(const QJsonObject& json) override;
 
 Q_SIGNALS:
     /**
      * @brief 平面改變時發出
      */
-    void planeChanged(const Plane& plane);
+    void planeChanged(Plane* plane);
 
     /**
      * @brief 幾何元素改變時發出
      */
     void geometryChanged();
 
-private:
+private Q_SLOTS:
     /**
-     * @brief 從幾何元素建立 OCCT Wire
+     * @brief 當關聯的平面即將被刪除時調用
      */
-    TopoDS_Wire buildWire(const QList<SketchGeometry*>& geoms);
+    void onPlaneAboutToBeDeleted();
 
     /**
-     * @brief 將 2D 點轉換為 3D
+     * @brief 當關聯的平面幾何改變時調用
+     */
+    void onPlaneGeometryChanged();
+
+private:
+    /**
+     * @brief 將 2D 點轉換為 3D（帶空指標檢查）
      */
     gp_Pnt toWorld(const QVector2D& point) const;
 
+    /**
+     * @brief 建立預設平面
+     */
+    void createDefaultPlane();
+
+    /**
+     * @brief 連接平面信號
+     */
+    void connectPlaneSignals();
+
+    /**
+     * @brief 斷開平面信號
+     */
+    void disconnectPlaneSignals();
+
 private:
-    Plane m_plane;                        ///< 草圖平面
+    Plane* m_plane;                       ///< 關聯的平面（指標）
     QList<SketchGeometry*> m_geometries;  ///< 幾何元素列表
     QList<TopoDS_Wire> m_wires;           ///< 快取的 Wire 列表
     QList<Handle(AIS_Shape)> m_aisShapes;
@@ -282,4 +273,4 @@ private:
 } // namespace cad
 } // namespace aicad
 
-#endif // AICAD_CAD_SKETCH_H
+#endif // AICAD_CAD_SKETCH_ENHANCED_H

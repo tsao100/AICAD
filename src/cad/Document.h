@@ -164,7 +164,7 @@ public:
     /**
      * @brief 建立草圖
      */
-    Sketch* createSketch(const class Plane& plane, const QString& name = QString());
+    Sketch* createSketch(class Plane* plane, const QString& name = QString());
     
     /**
      * @brief 建立擠出

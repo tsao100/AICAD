@@ -133,6 +133,7 @@ win32 {
 # ========================================
 
 SOURCES += \
+    src/cad/PlaneManager.cpp \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
     src/command/EllipseCommand.cpp \
@@ -196,6 +197,7 @@ SOURCES += \
 
 HEADERS += \
     # Core Module
+    src/cad/PlaneManager.h \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
     src/command/EllipseCommand.h \
