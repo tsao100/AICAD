@@ -18,6 +18,10 @@
 #include <Graphic3d_ArrayOfPolylines.hxx>
 
 namespace aicad {
+// 前向宣告
+namespace cad {
+    class Plane;
+}
 namespace view {
 
 /**
@@ -33,20 +37,6 @@ enum class RubberBandMode {
     Ellipse,    ///< 橢圓形模式
     Arc,        ///< 弧線模式
     Spline      ///< 線模式
-};
-
-/**
- * @brief 自訂平面結構
- */
-struct CustomPlane {
-    QVector3D origin;
-    QVector3D normal;
-    QVector3D uAxis;
-    QVector3D vAxis;
-    
-    static CustomPlane XY();
-    static CustomPlane XZ();
-    static CustomPlane YZ();
 };
 
 /**
@@ -99,12 +89,12 @@ public:
      * @brief 設定工作平面
      * @param plane 平面定義
      */
-    void setPlane(const CustomPlane& plane);
+    void setPlane(cad::Plane* plane);
     
     /**
      * @brief 取得工作平面
      */
-    CustomPlane plane() const;
+    cad::Plane* plane() const;
     
     /**
      * @brief 加入點

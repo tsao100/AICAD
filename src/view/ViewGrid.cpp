@@ -6,7 +6,7 @@
  */
 
 #include "ViewGrid.h"
-#include "RubberBand.h"
+#include "cad/PlaneManager.h"
 
 #include <QDebug>
 #include <Graphic3d_ArrayOfPolylines.hxx>
@@ -28,7 +28,7 @@ public:
     Handle(Prs3d_Presentation) gridPresentation;
     Handle(Prs3d_Presentation) axesPresentation;
     
-    CustomPlane plane;
+    cad::Plane* plane;
     int gridSize;
     float gridSpacing;
     GridStyle style;
@@ -58,8 +58,25 @@ ViewGrid::ViewGrid(const Handle(AIS_InteractiveContext)& context, QObject* paren
     , d(new Private())
 {
     d->context = context;
-    d->plane = CustomPlane::XY();
-    
+    cad::PlaneManager* manager = cad::PlaneManager::instance();
+    d->plane = manager->activePlane();
+
+    // 如果沒有活動平面，嘗試取得或建立 XY 平面
+    if (!d->plane) {
+        QList<cad::Plane*> planes = manager->planes();
+        for (cad::Plane* p : planes) {
+            if (p->isXY()) {
+                d->plane = p;
+                break;
+            }
+        }
+
+        // 還是沒有，建立新的 XY 平面
+        if (!d->plane) {
+            d->plane = manager->createPlane(cad::Plane::Type::XY, "RubberBandPlane");
+        }
+    }
+
     qDebug() << "[ViewGrid] Created";
 }
 
@@ -69,15 +86,15 @@ ViewGrid::~ViewGrid() {
     qDebug() << "[ViewGrid] Destroyed";
 }
 
-void ViewGrid::setPlane(const CustomPlane& plane) {
+void ViewGrid::setPlane(cad::Plane* plane) {
     d->plane = plane;
-    
+
     if (d->visible) {
         update();
     }
 }
 
-CustomPlane ViewGrid::plane() const {
+cad::Plane* ViewGrid::plane() const {
     return d->plane;
 }
 
@@ -179,10 +196,10 @@ void ViewGrid::update() {
     }
     
     clear();
-    createGridGeometry();
+   // createGridGeometry();
     
     if (d->showAxesFlag) {
-        createAxes();
+       // createAxes();
     }
 }
 
@@ -210,8 +227,8 @@ void ViewGrid::createGridGeometry() {
             if (i == d->gridSize / 2) continue;  // 跳過中心
             
             float v = -halfSize + i * d->gridSpacing;
-            QVector3D p1 = d->plane.origin + d->plane.uAxis * (-halfSize) + d->plane.vAxis * v;
-            QVector3D p2 = d->plane.origin + d->plane.uAxis * halfSize + d->plane.vAxis * v;
+            QVector3D p1 = d->plane->origin() + d->plane->xAxis() * (-halfSize) + d->plane->yAxis() * v;
+            QVector3D p2 = d->plane->origin() + d->plane->xAxis() * halfSize + d->plane->yAxis() * v;
             
             lines->AddBound(2);
             lines->AddVertex(gp_Pnt(p1.x(), p1.y(), p1.z()));
@@ -223,8 +240,8 @@ void ViewGrid::createGridGeometry() {
             if (i == d->gridSize / 2) continue;  // 跳過中心
             
             float u = -halfSize + i * d->gridSpacing;
-            QVector3D p1 = d->plane.origin + d->plane.uAxis * u + d->plane.vAxis * (-halfSize);
-            QVector3D p2 = d->plane.origin + d->plane.uAxis * u + d->plane.vAxis * halfSize;
+            QVector3D p1 = d->plane->origin() + d->plane->xAxis() * u + d->plane->yAxis() * (-halfSize);
+            QVector3D p2 = d->plane->origin() + d->plane->xAxis() * u + d->plane->yAxis() * halfSize;
             
             lines->AddBound(2);
             lines->AddVertex(gp_Pnt(p1.x(), p1.y(), p1.z()));
@@ -251,7 +268,7 @@ void ViewGrid::createGridGeometry() {
             for (int j = 0; j <= d->gridSize; ++j) {
                 float u = -halfSize + i * d->gridSpacing;
                 float v = -halfSize + j * d->gridSpacing;
-                QVector3D p = d->plane.origin + d->plane.uAxis * u + d->plane.vAxis * v;
+                QVector3D p = d->plane->origin() + d->plane->xAxis() * u + d->plane->yAxis() * v;
                 points->AddVertex(gp_Pnt(p.x(), p.y(), p.z()));
             }
         }
@@ -278,18 +295,18 @@ void ViewGrid::createGridGeometry() {
             for (int j = 0; j <= d->gridSize; ++j) {
                 float u = -halfSize + i * d->gridSpacing;
                 float v = -halfSize + j * d->gridSpacing;
-                QVector3D center = d->plane.origin + d->plane.uAxis * u + d->plane.vAxis * v;
+                QVector3D center = d->plane->origin() + d->plane->xAxis() * u + d->plane->yAxis() * v;
                 
                 // 水平線
-                QVector3D h1 = center - d->plane.uAxis * crossSize;
-                QVector3D h2 = center + d->plane.uAxis * crossSize;
+                QVector3D h1 = center - d->plane->xAxis() * crossSize;
+                QVector3D h2 = center + d->plane->xAxis() * crossSize;
                 crosses->AddBound(2);
                 crosses->AddVertex(gp_Pnt(h1.x(), h1.y(), h1.z()));
                 crosses->AddVertex(gp_Pnt(h2.x(), h2.y(), h2.z()));
                 
                 // 垂直線
-                QVector3D v1 = center - d->plane.vAxis * crossSize;
-                QVector3D v2 = center + d->plane.vAxis * crossSize;
+                QVector3D v1 = center - d->plane->yAxis() * crossSize;
+                QVector3D v2 = center + d->plane->yAxis() * crossSize;
                 crosses->AddBound(2);
                 crosses->AddVertex(gp_Pnt(v1.x(), v1.y(), v1.z()));
                 crosses->AddVertex(gp_Pnt(v2.x(), v2.y(), v2.z()));
@@ -323,8 +340,8 @@ void ViewGrid::createAxes() {
     
     // X 軸 (沿 U 軸，紅色)
     Handle(Graphic3d_ArrayOfPolylines) xAxis = new Graphic3d_ArrayOfPolylines(2, 1);
-    QVector3D xStart = d->plane.origin + d->plane.uAxis * (-halfSize);
-    QVector3D xEnd = d->plane.origin + d->plane.uAxis * halfSize;
+    QVector3D xStart = d->plane->origin() + d->plane->xAxis() * (-halfSize);
+    QVector3D xEnd = d->plane->origin() + d->plane->xAxis() * halfSize;
     xAxis->AddBound(2);
     xAxis->AddVertex(gp_Pnt(xStart.x(), xStart.y(), xStart.z()));
     xAxis->AddVertex(gp_Pnt(xEnd.x(), xEnd.y(), xEnd.z()));
@@ -341,8 +358,8 @@ void ViewGrid::createAxes() {
     
     // Y 軸 (沿 V 軸，綠色)
     Handle(Graphic3d_ArrayOfPolylines) yAxis = new Graphic3d_ArrayOfPolylines(2, 1);
-    QVector3D yStart = d->plane.origin + d->plane.vAxis * (-halfSize);
-    QVector3D yEnd = d->plane.origin + d->plane.vAxis * halfSize;
+    QVector3D yStart = d->plane->origin() + d->plane->yAxis() * (-halfSize);
+    QVector3D yEnd = d->plane->origin() + d->plane->yAxis() * halfSize;
     yAxis->AddBound(2);
     yAxis->AddVertex(gp_Pnt(yStart.x(), yStart.y(), yStart.z()));
     yAxis->AddVertex(gp_Pnt(yEnd.x(), yEnd.y(), yEnd.z()));

@@ -31,18 +31,80 @@ PlaneManager* PlaneManager::instance() {
 PlaneManager::PlaneManager(QObject* parent)
     : QObject(parent)
     , m_activePlane(nullptr)
+    , m_xyPlane(nullptr)
+    , m_yzPlane(nullptr)
+    , m_xzPlane(nullptr)
+    , m_initialized(false)
     , m_xyCount(0)
     , m_yzCount(0)
     , m_zxCount(0)
     , m_customCount(0)
     , m_offsetCount(0)
 {
+    initialize();
     qDebug() << "[PlaneManager] Initialized";
 }
 
 PlaneManager::~PlaneManager() {
     clear();
 }
+
+void PlaneManager::initialize() {
+    if (m_initialized) {
+        qDebug() << "[PlaneManager] Already initialized";
+        return;
+    }
+
+    qDebug() << "[PlaneManager] Initializing standard planes...";
+
+    // 建立標準 XY 平面（俯視圖）
+    m_xyPlane = new Plane(
+        QVector3D(0, 0, 0),    // origin
+        QVector3D(0, 0, 1),    // normal (Z+)
+        QVector3D(1, 0, 0),    // xAxis (X+)
+        Plane::Type::XY,
+        this
+        );
+    m_xyPlane->setName("XY");
+    m_xyPlane->setLocked(true);  // 鎖定標準平面
+    registerPlane(m_xyPlane);
+
+    // 建立標準 YZ 平面（右視圖）
+    m_yzPlane = new Plane(
+        QVector3D(0, 0, 0),    // origin
+        QVector3D(1, 0, 0),    // normal (X+)
+        QVector3D(0, 1, 0),    // xAxis (Y+)
+        Plane::Type::YZ,
+        this
+        );
+    m_yzPlane->setName("YZ");
+    m_yzPlane->setLocked(true);
+    registerPlane(m_yzPlane);
+
+    // 建立標準 XZ 平面（前視圖）
+    m_xzPlane = new Plane(
+        QVector3D(0, 0, 0),    // origin
+        QVector3D(0, -1, 0),    // normal (Y+)
+        QVector3D(0, 0, 1),    // xAxis (Z+)
+        Plane::Type::XZ,
+        this
+        );
+    m_xzPlane->setName("XZ");
+    m_xzPlane->setLocked(true);
+    registerPlane(m_xzPlane);
+
+    // 設定 XY 為預設活動平面
+    setActivePlane(m_xyPlane);
+
+    m_initialized = true;
+
+    qDebug() << "[PlaneManager] Standard planes initialized:";
+    qDebug() << "  XY (Top View):" << m_xyPlane->id();
+    qDebug() << "  YZ (Right View):" << m_yzPlane->id();
+    qDebug() << "  XZ (Front View):" << m_xzPlane->id();
+    qDebug() << "  Active plane:" << m_activePlane->displayName();
+}
+
 
 Plane* PlaneManager::createPlane(Plane::Type type, const QString& name) {
     QVector3D origin(0, 0, 0);

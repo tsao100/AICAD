@@ -6,6 +6,8 @@
  */
 
 #include "RubberBand.h"
+#include "cad/Plane.h"
+#include "cad/PlaneManager.h"
 
 #include <QDebug>
 #include <Graphic3d_ArrayOfPolylines.hxx>
@@ -33,41 +35,13 @@
 namespace aicad {
 namespace view {
 
-// CustomPlane 靜態方法實作
-CustomPlane CustomPlane::XY() {
-    CustomPlane p;
-    p.origin = QVector3D(0, 0, 0);
-    p.normal = QVector3D(0, 0, 1);
-    p.uAxis = QVector3D(1, 0, 0);
-    p.vAxis = QVector3D(0, 1, 0);
-    return p;
-}
-
-CustomPlane CustomPlane::XZ() {
-    CustomPlane p;
-    p.origin = QVector3D(0, 0, 0);
-    p.normal = QVector3D(0, -1, 0);
-    p.uAxis = QVector3D(1, 0, 0);
-    p.vAxis = QVector3D(0, 0, 1);
-    return p;
-}
-
-CustomPlane CustomPlane::YZ() {
-    CustomPlane p;
-    p.origin = QVector3D(0, 0, 0);
-    p.normal = QVector3D(1, 0, 0);
-    p.uAxis = QVector3D(0, 1, 0);
-    p.vAxis = QVector3D(0, 0, 1);
-    return p;
-}
-
 class RubberBand::Private {
 public:
     Handle(AIS_InteractiveContext) context;
     Handle(Prs3d_Presentation) presentation;
     
     RubberBandMode mode;
-    CustomPlane plane;
+    cad::Plane* plane;
     QVector<QVector2D> points;
     QVector2D currentPoint;
     bool hasCurrentPoint;
@@ -79,10 +53,30 @@ RubberBand::RubberBand(const Handle(AIS_InteractiveContext)& context, QObject* p
 {
     d->context = context;
     d->mode = RubberBandMode::None;
-    d->plane = CustomPlane::XY();
     d->hasCurrentPoint = false;
     
-    qDebug() << "[RubberBand] Created";
+    // ✅ 使用 PlaneManager 取得預設平面
+    cad::PlaneManager* manager = cad::PlaneManager::instance();
+    d->plane = manager->activePlane();
+
+    // 如果沒有活動平面，嘗試取得或建立 XY 平面
+    if (!d->plane) {
+        QList<cad::Plane*> planes = manager->planes();
+        for (cad::Plane* p : planes) {
+            if (p->isXY()) {
+                d->plane = p;
+                break;
+            }
+        }
+
+        // 還是沒有，建立新的 XY 平面
+        if (!d->plane) {
+            d->plane = manager->createPlane(cad::Plane::Type::XY, "RubberBandPlane");
+        }
+    }
+
+    qDebug() << "[RubberBand] Created with plane:"
+             << (d->plane ? d->plane->displayName() : "None");
 }
 
 RubberBand::~RubberBand() {
@@ -108,12 +102,17 @@ RubberBandMode RubberBand::mode() const {
     return d->mode;
 }
 
-void RubberBand::setPlane(const CustomPlane& plane) {
+void RubberBand::setPlane(cad::Plane* plane) {
+    if (!plane) {
+        qWarning() << "[RubberBand] Cannot set null plane";
+        return;
+    }
+
     d->plane = plane;
-    qDebug() << "[RubberBand] Plane set";
+    qDebug() << "[RubberBand] Plane set to:" << plane->displayName();
 }
 
-CustomPlane RubberBand::plane() const {
+cad::Plane* RubberBand::plane() const {
     return d->plane;
 }
 
@@ -497,7 +496,7 @@ void RubberBand::updateCircle() {
     // 創建圓
     QVector3D centerWorld = planeToWorld(center);
     gp_Pnt centerPnt(centerWorld.x(), centerWorld.y(), centerWorld.z());
-    gp_Dir normalDir(d->plane.normal.x(), d->plane.normal.y(), d->plane.normal.z());
+    gp_Dir normalDir(d->plane->normal().x(), d->plane->normal().y(), d->plane->normal().z());
     gp_Circ circle(gp_Ax2(centerPnt, normalDir), radius);
     
     // 創建圓的點陣列
@@ -602,7 +601,7 @@ void RubberBand::updateEllipse() {
     QVector3D majorAxisDir3D = (majorAxisEndWorld - centerWorld).normalized();
     gp_Dir xDir(majorAxisDir3D.x(), majorAxisDir3D.y(), majorAxisDir3D.z());
 
-    gp_Dir normalDir(d->plane.normal.x(), d->plane.normal.y(), d->plane.normal.z());
+    gp_Dir normalDir(d->plane->normal().x(), d->plane->normal().y(), d->plane->normal().z());
     gp_Ax2 ax2(centerPnt, normalDir, xDir);
     gp_Elips ellipse(ax2, majorRadius, minorRadius);
 
@@ -691,7 +690,7 @@ void RubberBand::updateArc() {
 }
 
 QVector3D RubberBand::planeToWorld(const QVector2D& planePt) const {
-    return d->plane.origin + d->plane.uAxis * planePt.x() + d->plane.vAxis * planePt.y();
+    return d->plane->origin() + d->plane->xAxis() * planePt.x() + d->plane->yAxis() * planePt.y();
 }
 
 } // namespace view

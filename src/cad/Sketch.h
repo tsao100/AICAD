@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <TopoDS_Wire.hxx>
 #include <AIS_Shape.hxx>
+#include <Geom_TrimmedCurve.hxx>
 
 namespace aicad {
 namespace cad {
@@ -60,15 +61,13 @@ struct SketchLine : public SketchGeometry {
 /**
  * @brief 草圖三點弧
  */
-struct SketchArc : public SketchGeometry {
-    QVector2D center;
-    double radius;
-    double startAngle;
-    double endAngle;
+struct SketchArc : public SketchGeometry
+{
+    Handle(Geom_TrimmedCurve) curve;
 
-    SketchArc(const QVector2D& c, double r, double s, double e)
-        : SketchGeometry(SketchGeometryType::Arc), center(c), radius(r)
-        , startAngle(s), endAngle(e)
+    SketchArc(const Handle(Geom_TrimmedCurve)& c)
+        : SketchGeometry(SketchGeometryType::Arc)
+        , curve(c)
     {
     }
 };
@@ -169,6 +168,8 @@ public:
      * @brief 取得關聯的平面（指標）
      */
     Plane* plane() const { return m_plane; }
+
+    QVector3D planeToWorld(const QVector2D& planePt) const;
 
     /**
      * @brief 設定關聯的平面

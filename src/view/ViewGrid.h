@@ -15,6 +15,12 @@
 #include <AIS_InteractiveContext.hxx>
 
 namespace aicad {
+
+// 前向宣告
+namespace cad {
+    class Plane;
+}
+
 namespace view {
 
 struct CustomPlane;
@@ -66,12 +72,12 @@ public:
      * @brief 設定工作平面
      * @param plane 平面定義
      */
-    void setPlane(const CustomPlane& plane);
+    void setPlane(cad::Plane* plane);
     
     /**
      * @brief 取得工作平面
      */
-    CustomPlane plane() const;
+    cad::Plane* plane() const;
     
     /**
      * @brief 設定網格大小 (格線數量)

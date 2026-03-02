@@ -11,6 +11,7 @@
 #include "cad/Feature.h"
 #include "cad/Sketch.h"
 #include "cad/Document.h"
+#include "cad/PlaneManager.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
@@ -174,6 +175,21 @@ void CadView::initializeViewer() {
     d->viewer = new V3d_Viewer(graphicDriver);
     d->viewer->SetDefaultLights();
     d->viewer->SetLightOn();
+
+    d->viewer->ActivateGrid(
+        Aspect_GT_Rectangular,   // Grid type
+        Aspect_GDM_Lines         // 顯示模式 (Lines / Points)
+    );
+
+    // 設定 Grid 參數
+    d->viewer->SetRectangularGridValues(
+        0.0, 0.0,    // 原點
+        10.0, 10.0,  // X/Y 間距
+        0.0          // 旋轉角度
+        );
+
+    // 顯示 Grid
+    d->viewer->SetGridEcho(Standard_True);
     
     // 建立視圖
     d->view = d->viewer->CreateView();
@@ -330,7 +346,7 @@ QString CadView::identifyPlane(const Handle(AIS_Shape)& shape) {
     Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
     Handle(Geom_Plane) plane = Handle(Geom_Plane)::DownCast(surface);
 
-    if (plane.IsNull()) {
+    if (!plane) {
         return "UNKNOWN";
     }
 
@@ -500,28 +516,30 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
     qtToOCCT(screenPos, xp, yp);
     
     // 取得工作平面
-    CustomPlane plane;
+    cad::Plane* plane;
+    cad::PlaneManager* manager = cad::PlaneManager::instance();
+
     switch (d->viewType) {
     case ViewType::Top:
     case ViewType::Bottom:
-        plane = CustomPlane::XY();
+        plane = manager->xyPlane();
         break;
     case ViewType::Front:
     case ViewType::Back:
-        plane = CustomPlane::XZ();
+        plane = manager->xzPlane();
         break;
     case ViewType::Right:
     case ViewType::Left:
-        plane = CustomPlane::YZ();
+        plane = manager->yzPlane();
         break;
     default:
-        plane = CustomPlane::XY();
+        plane = manager->xyPlane();
         break;
     }
     
     gp_Pln gpPlane(
-        gp_Pnt(plane.origin.x(), plane.origin.y(), plane.origin.z()),
-        gp_Dir(plane.normal.x(), plane.normal.y(), plane.normal.z())
+        gp_Pnt(plane->origin().x(), plane->origin().y(), plane->origin().z()),
+        gp_Dir(plane->normal().x(), plane->normal().y(), plane->normal().z())
     );
     
     // 取得投影方向和眼睛位置
@@ -565,10 +583,10 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
         
         // 轉換 3D 世界座標到 2D 平面座標
         QVector3D worldPt(intersectPnt.X(), intersectPnt.Y(), intersectPnt.Z());
-        QVector3D localPt = worldPt - plane.origin;
+        QVector3D localPt = worldPt - plane->origin();
         
-        float u = QVector3D::dotProduct(localPt, plane.uAxis);
-        float v = QVector3D::dotProduct(localPt, plane.vAxis);
+        float u = QVector3D::dotProduct(localPt, plane->xAxis());
+        float v = QVector3D::dotProduct(localPt, plane->yAxis());
         
         return QVector2D(u, v);
     }
@@ -578,7 +596,7 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
 
 void CadView::setGridEnabled(bool enabled) {
     d->gridEnabled = enabled;
-    
+
     if (d->grid) {
         if (enabled) {
             d->grid->show();
@@ -602,6 +620,32 @@ void CadView::setFrontView() {
 
 void CadView::setRightView() {
     setViewType(ViewType::Right);
+}
+
+void CadView::alignToPlane(const cad::Plane* plane)
+{
+    if (!plane || d->view.IsNull())
+        return;
+
+    gp_Pln pln = plane->toGpPln();
+    gp_Ax3 ax  = pln.Position();
+
+    gp_Dir normal = ax.Direction();      // plane normal
+    gp_Dir xDir   = ax.XDirection();     // plane X axis
+
+    // 設定投影方向（鏡頭朝向 plane normal）
+    d->view->SetProj(normal.X(),
+                     normal.Y(),
+                     normal.Z());
+
+    // 設定 up vector（保持平面 X 軸朝右）
+    d->view->SetUp(xDir.X(),
+                   xDir.Y(),
+                   xDir.Z());
+
+    d->viewer->SetPrivilegedPlane(ax);
+
+    d->view->FitAll();
 }
 
 void CadView::setIsometricView() {

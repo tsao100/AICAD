@@ -57,6 +57,32 @@ public:
     static PlaneManager* instance();
 
     /**
+     * @brief 初始化 PlaneManager（建立標準平面）
+     *
+     * 此方法應在應用程式啟動時調用一次
+     * 會建立並鎖定標準 XY, YZ, XZ 平面
+     */
+    void initialize();
+
+    /**
+     * @brief 取得標準 XY 平面
+     * @return XY 平面指標，保證非 null
+     */
+    Plane* xyPlane() const { return m_xyPlane; }
+
+    /**
+     * @brief 取得標準 YZ 平面
+     * @return YZ 平面指標，保證非 null
+     */
+    Plane* yzPlane() const { return m_yzPlane; }
+
+    /**
+     * @brief 取得標準 ZX 平面
+     * @return ZX 平面指標，保證非 null
+     */
+    Plane* xzPlane() const { return m_xzPlane; }
+
+    /**
      * @brief 建立標準平面
      * @param type 平面類型（XY, YZ, ZX, XZ）
      * @param name 平面名稱（空字串則自動命名）
@@ -296,6 +322,12 @@ private:
 
     QHash<QString, Plane*> m_planes;     ///< ID -> Plane 映射
     Plane* m_activePlane;                ///< 當前活動平面
+
+    // 標準平面（預先建立）
+    Plane* m_xyPlane;                    ///< XY 標準平面（俯視圖）
+    Plane* m_yzPlane;                    ///< YZ 標準平面（右視圖）
+    Plane* m_xzPlane;                    ///< XZ 標準平面（前視圖）
+    bool m_initialized;                  ///< 是否已初始化標準平面
 
     // 命名計數器（用於自動命名）
     int m_xyCount;

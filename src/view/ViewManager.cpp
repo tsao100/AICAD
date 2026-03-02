@@ -12,6 +12,7 @@
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "cad/Plane.h"
+#include "cad/PlaneManager.h"
 #include "cad/Sketch.h"
 #include <QDebug>
 #include <QVector>
@@ -136,12 +137,7 @@ ViewManager::ViewManager(QObject* parent)
                     cad::Sketch* sketch = app->activeSketch();
                     if (sketch) {
                         cad::Plane* sketchPlane = sketch->plane();
-                        view::CustomPlane customPlane;
-                        customPlane.origin = sketchPlane->origin();
-                        customPlane.normal = sketchPlane->normal();
-                        customPlane.uAxis = sketchPlane->xAxis();
-                        customPlane.vAxis = sketchPlane->yAxis();
-                        rubber->setPlane(customPlane);
+                        rubber->setPlane(sketchPlane);
                     }
                 }
 
@@ -266,17 +262,17 @@ void ViewManager::onSketchCreated(const QVariant& data) {
     view->highlightSelectablePlanes(false);
 
     // ✅ Update grid plane to match sketch plane
-    CustomPlane gridPlane;
+    cad::PlaneManager* manager = cad::PlaneManager::instance();
+    cad::Plane* gridPlane = manager->activePlane();
+    view->alignToPlane(gridPlane);
     if (planeName == "XY") {
-        gridPlane = CustomPlane::XY();
         view->setTopView();
     } else if (planeName == "XZ") {
-        gridPlane = CustomPlane::XZ();
         view->setFrontView();
     } else if (planeName == "YZ") {
-        gridPlane = CustomPlane::YZ();
         view->setRightView();
-    }
+    } //else{
+    //}
 
     ViewGrid* grid = view->grid();  // Need to add getter method
     if (grid) {

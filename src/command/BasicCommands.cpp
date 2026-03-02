@@ -37,13 +37,13 @@ public:
         , m_selectedPlane(nullptr)
     {
         // 在建構子中取得平面
-        cad::PlaneManager* manager = cad::PlaneManager::instance();
-        m_selectedPlane = manager->activePlane();
+        //cad::PlaneManager* manager = cad::PlaneManager::instance();
+        //m_selectedPlane = manager->activePlane();
 
         // 如果沒有活動平面，建立 XY 平面
-        if (!m_selectedPlane) {
-            m_selectedPlane = manager->createPlane(cad::Plane::Type::XY, "XY");
-        }
+       // if (!m_selectedPlane) {
+       //     m_selectedPlane = manager->createPlane(cad::Plane::Type::XY, "XY");
+       // }
 
     }
 
@@ -137,15 +137,16 @@ private:
         cad::PlaneManager* manager = cad::PlaneManager::instance();
 
         if (planeStr == "XY") {
-            m_selectedPlane = manager->createPlane(cad::Plane::Type::XY, "XY");
+            m_selectedPlane = manager->xyPlane();
         } else if (planeStr == "XZ") {
-            m_selectedPlane = manager->createPlane(cad::Plane::Type::XZ, "XZ");
+            m_selectedPlane = manager->xzPlane();
         } else if (planeStr == "YZ") {
-            m_selectedPlane = manager->createPlane(cad::Plane::Type::YZ, "YZ");
+            m_selectedPlane = manager->yzPlane();
         } else {
             if (bus) bus->publish("command.error", "Invalid plane selected");
             return;
         }
+        if (m_selectedPlane) manager->setActivePlane(m_selectedPlane);
 
         doc->hideAllReferenceGeometry();
 
@@ -165,25 +166,25 @@ private:
         app->setActiveSketch(sketch);
 
         qDebug() << "[SketchCommand] Sketch created:" << name
-                 << "on" << m_selectedPlane->displayName();
+                 << "on" << m_selectedPlane->name();
 
         bus->publish(Events::COMMAND_PROMPT, "");
         bus->publish(Events::COMMAND_LOG,"Sketch created on " +
-                                              m_selectedPlane->displayName());
+                                              m_selectedPlane->name());
 
         // 發布事件通知其他模組
         if (bus) {
             bus->publish(core::Events::FEATURE_CREATED, sketch->name());
 
             QVariantMap sketchData;
-            sketchData["plane"] = m_selectedPlane->displayName().left(2);
+            sketchData["plane"] = m_selectedPlane->name();
             sketchData["sketchId"] = sketch->id();
             sketchData["sketchName"] = name;
             bus->publish("sketch.created", sketchData);
 
             bus->publish("command.message",
                          QString("Sketch '%1' created on %2 plane")
-                             .arg(name).arg(m_selectedPlane->displayName()));
+                             .arg(name).arg(m_selectedPlane->name()));
         }
 
         // ✅ Just emit finished

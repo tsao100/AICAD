@@ -22,6 +22,7 @@ namespace aicad {
 // 前向宣告
 namespace cad {
     class Document;
+    class Plane;
 }
 
 namespace view {
@@ -214,6 +215,8 @@ public Q_SLOTS:
      * @brief 設定視圖為等角視圖
      */
     void setIsometricView();
+
+    void alignToPlane(const cad::Plane* plane);
 
     void onFinishSketchClicked();
     
