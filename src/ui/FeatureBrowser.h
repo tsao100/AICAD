@@ -73,6 +73,8 @@ public:
      * @param featureId 特徵 ID
      */
     void selectFeature(int featureId);
+
+    void selectFeature(const QString& featureId);
     
 Q_SIGNALS:
     /**
@@ -80,12 +82,16 @@ Q_SIGNALS:
      * @param featureId 特徵 ID
      */
     void featureSelected(int featureId);
+
+    void featureSelectedById(QString itemId);
     
     /**
      * @brief 特徵被雙擊時發出
      * @param featureId 特徵 ID
      */
     void featureDoubleClicked(int featureId);
+
+    void featureDoubleClickedById(QString itemId);
     
     /**
      * @brief 特徵需要顯示右鍵選單時發出
@@ -93,6 +99,7 @@ Q_SIGNALS:
      * @param globalPos 滑鼠全域位置
      */
     void featureContextMenu(int featureId, const QPoint& globalPos);
+    void featureContextMenuById(QString itemId,  QPoint& globalPos);
     
 private Q_SLOTS:
     void onItemClicked(QTreeWidgetItem* item, int column);

@@ -264,6 +264,26 @@ private:
      */
     void disconnectPlaneSignals();
 
+    // ✅ 平面解析輔助方法（供 fromJson 使用）
+
+    /**
+     * @brief 依名稱比對 PlaneManager 中已登記的標準平面
+     *        支援 "XY" / "YZ" / "XZ" / "ZX" 及其完整名稱變體
+     * @param planeName  存檔中的 planeName 字串
+     * @return 找到的 Plane*，或 nullptr
+     */
+    Plane* resolveStandardPlane(const QString& planeName);
+
+    /**
+     * @brief 從儲存的 planeData JSON 幾何資料重建平面
+     *        先嘗試與現有平面幾何比對；若無吻合則建立新平面並向 PlaneManager 登記
+     * @param planeJson  Plane::toJson() 所產生的 JSON 物件
+     * @param hint       planeName（作為新平面的名稱提示）
+     * @return 重建或吻合的 Plane*，或 nullptr
+     */
+    Plane* reconstructPlaneFromJson(const QJsonObject& planeJson,
+                                    const QString& hint = QString());
+
 private:
     Plane* m_plane;                       ///< 關聯的平面（指標）
     QList<SketchGeometry*> m_geometries;  ///< 幾何元素列表

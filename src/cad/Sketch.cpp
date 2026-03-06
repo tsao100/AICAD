@@ -1,5 +1,5 @@
 /**
- * @file Sketch_Enhanced.cpp
+ * @file Sketch.cpp
  * @brief 與增強版 Plane 整合的 Sketch 類別實作
  */
 
@@ -45,14 +45,8 @@ Sketch::Sketch(Document* parent)
 }
 
 Sketch::~Sketch() {
-    // 斷開平面信號
     disconnectPlaneSignals();
-
-    // 清理幾何元素
     clearGeometry();
-
-    // 注意：不刪除 m_plane，由 PlaneManager 管理
-
     qDebug() << "[Sketch]" << name() << "destroyed";
 }
 
@@ -66,13 +60,11 @@ void Sketch::setPlane(Plane* plane) {
         return;
     }
 
-    // 斷開舊平面的連接
     disconnectPlaneSignals();
 
     Plane* oldPlane = m_plane;
     m_plane = plane;
 
-    // 連接新平面的信號
     connectPlaneSignals();
 
     qDebug() << "[Sketch]" << name() << "plane changed from"
@@ -85,7 +77,6 @@ void Sketch::setPlane(Plane* plane) {
 
 void Sketch::addGeometry(SketchGeometry* geom) {
     if (!geom) return;
-
     m_geometries.append(geom);
     Q_EMIT geometryChanged();
     Q_EMIT rebuildRequested();
@@ -109,7 +100,6 @@ void Sketch::addLine(const QVector2D& p1, const QVector2D& p2) {
     SketchLine* line = new SketchLine(p1, p2);
     addGeometry(line);
 
-    // 如果有有效平面，記錄 3D 座標
     if (hasValidPlane()) {
         QVector3D w1 = m_plane->toWorld(p1);
         QVector3D w2 = m_plane->toWorld(p2);
@@ -120,8 +110,7 @@ void Sketch::addLine(const QVector2D& p1, const QVector2D& p2) {
 }
 
 void Sketch::addPolyline(const QVector<QVector2D>& points, bool closed) {
-    SketchPolyline* polyline = new SketchPolyline(points, closed);
-    addGeometry(polyline);
+    addGeometry(new SketchPolyline(points, closed));
 }
 
 void Sketch::addSpline(const QVector<QVector2D>& points) {
@@ -132,10 +121,8 @@ void Sketch::addSpline(const QVector<QVector2D>& points) {
     addGeometry(new SketchSpline(points));
 }
 
-
 void Sketch::addCircle(const QVector2D& center, double radius) {
-    SketchCircle* circle = new SketchCircle(center, radius);
-    addGeometry(circle);
+    addGeometry(new SketchCircle(center, radius));
 }
 
 void Sketch::addEllipse(const QVector2D& center, double majorRadius, double minorRadius, double angle) {
@@ -143,15 +130,12 @@ void Sketch::addEllipse(const QVector2D& center, double majorRadius, double mino
         qWarning() << "[Sketch]" << name() << "ellipse radii must be positive";
         return;
     }
-
     if (majorRadius < minorRadius) {
         qWarning() << "[Sketch]" << name() << "major radius must be >= minor radius";
         return;
     }
-
     addGeometry(new SketchEllipse(center, majorRadius, minorRadius, angle));
 }
-
 
 void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {
     QVector<QVector2D> points;
@@ -159,22 +143,18 @@ void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {
            << QVector2D(corner2.x(), corner1.y())
            << corner2
            << QVector2D(corner1.x(), corner2.y());
-
     addPolyline(points, true);
 }
 
 QVector3D Sketch::planeToWorld(const QVector2D& planePt) const {
-    return m_plane->origin() +  m_plane->xAxis() * planePt.x() + m_plane->yAxis() * planePt.y();
+    return m_plane->origin() + m_plane->xAxis() * planePt.x() + m_plane->yAxis() * planePt.y();
 }
-
 
 void Sketch::addArc(const QVector2D& startPoint,
                     const QVector2D& midPoint,
                     const QVector2D& endPoint)
 {
-    try
-    {
-        // ── 1️⃣ 轉成 3D 世界座標 ─────────────────────
+    try {
         QVector3D w1 = planeToWorld(startPoint);
         QVector3D w2 = planeToWorld(midPoint);
         QVector3D w3 = planeToWorld(endPoint);
@@ -183,38 +163,34 @@ void Sketch::addArc(const QVector2D& startPoint,
         gp_Pnt gp2(w2.x(), w2.y(), w2.z());
         gp_Pnt gp3(w3.x(), w3.y(), w3.z());
 
-        // ── 2️⃣ 用 OCCT 建立三點弧 ────────────────────
         GC_MakeArcOfCircle arcMaker(gp1, gp2, gp3);
-
-        if (!arcMaker.IsDone())
-        {
-            qWarning() << "[Sketch]" << name()
-                       << "addArc: failed (points may be collinear)";
+        if (!arcMaker.IsDone()) {
+            qWarning() << "[Sketch]" << name() << "addArc: failed (points may be collinear)";
             return;
         }
 
         Handle(Geom_TrimmedCurve) arc = arcMaker.Value();
-
-        // ── 3️⃣ 加入 Sketch ──────────────────────────
         addGeometry(new SketchArc(arc));
-
-        qDebug() << "[Sketch]" << name()
-                 << "Arc added (OCCT 3-point arc)";
-    }
-    catch (Standard_Failure const& e)
-    {
-        qWarning() << "[Sketch] OCCT error:"
-                   << e.GetMessageString();
+        qDebug() << "[Sketch]" << name() << "Arc added";
+    } catch (Standard_Failure const& e) {
+        qWarning() << "[Sketch] OCCT error:" << e.GetMessageString();
     }
 }
 
 bool Sketch::rebuild() {
     qDebug() << "[Sketch]" << name() << "rebuilding with"
-             << m_geometries.size() << "geometries";
+             << m_geometries.size() << "geometries on plane"
+             << (m_plane ? m_plane->displayName() : "NULL");
+
+    // ✅ Guard: plane 必須有效
+    if (!hasValidPlane()) {
+        qWarning() << "[Sketch]" << name() << "rebuild skipped: no valid plane";
+        return false;
+    }
 
     try {
         m_wires.clear();
-        m_aisShapes.clear();  // ✅ 清除 QList
+        m_aisShapes.clear();
 
         if (m_geometries.isEmpty()) {
             setShape(TopoDS_Shape());
@@ -231,15 +207,15 @@ bool Sketch::rebuild() {
             TopoDS_Wire wire;
             bool wireCreated = false;
 
-            // ✅ 處理 Line
+            // ── Line ───────────────────────────────────────────────────────
             if (geom->type == SketchGeometryType::Line && geom->points.size() >= 2) {
                 QVector3D p1 = m_plane->toWorld(geom->points[0].x(), geom->points[0].y());
                 QVector3D p2 = m_plane->toWorld(geom->points[1].x(), geom->points[1].y());
 
-                gp_Pnt gp1(p1.x(), p1.y(), p1.z());
-                gp_Pnt gp2(p2.x(), p2.y(), p2.z());
+                BRepBuilderAPI_MakeEdge edgeBuilder(
+                    gp_Pnt(p1.x(), p1.y(), p1.z()),
+                    gp_Pnt(p2.x(), p2.y(), p2.z()));
 
-                BRepBuilderAPI_MakeEdge edgeBuilder(gp1, gp2);
                 if (edgeBuilder.IsDone()) {
                     BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
                     if (wireBuilder.IsDone()) {
@@ -249,27 +225,23 @@ bool Sketch::rebuild() {
                 }
             }
 
-            // ✅ 處理 Polyline
+            // ── Polyline ───────────────────────────────────────────────────
             else if (geom->type == SketchGeometryType::Polyline) {
                 const SketchPolyline* pline = static_cast<const SketchPolyline*>(geom);
                 BRepBuilderAPI_MakeWire wireBuilder;
 
-                // ✅ Determine number of segments based on closed status
-                // Open: N-1 segments (connect consecutive points)
-                // Closed: N segments (last point connects back to first)
-                int numSegments = pline->closed ? geom->points.size() : geom->points.size() - 1;
+                int numSegments = pline->closed ? geom->points.size()
+                                                : geom->points.size() - 1;
 
                 for (int i = 0; i < numSegments; ++i) {
                     QVector3D p1 = m_plane->toWorld(geom->points[i].x(), geom->points[i].y());
-
-                    // ✅ For closed polyline, wrap around to first point
-                    int nextIdx = (i + 1) % geom->points.size();
+                    int nextIdx  = (i + 1) % geom->points.size();
                     QVector3D p2 = m_plane->toWorld(geom->points[nextIdx].x(), geom->points[nextIdx].y());
 
-                    gp_Pnt gp1(p1.x(), p1.y(), p1.z());
-                    gp_Pnt gp2(p2.x(), p2.y(), p2.z());
+                    BRepBuilderAPI_MakeEdge edgeBuilder(
+                        gp_Pnt(p1.x(), p1.y(), p1.z()),
+                        gp_Pnt(p2.x(), p2.y(), p2.z()));
 
-                    BRepBuilderAPI_MakeEdge edgeBuilder(gp1, gp2);
                     if (edgeBuilder.IsDone()) {
                         wireBuilder.Add(edgeBuilder.Edge());
                     }
@@ -281,19 +253,16 @@ bool Sketch::rebuild() {
                 }
             }
 
-
-            // ✅ 處理 Circle
+            // ── Circle ────────────────────────────────────────────────────
             else if (geom->type == SketchGeometryType::Circle) {
                 const SketchCircle* circle = static_cast<const SketchCircle*>(geom);
                 QVector3D center3d = m_plane->toWorld(circle->center.x(), circle->center.y());
 
-                gp_Pnt centerPnt(center3d.x(), center3d.y(), center3d.z());
-                gp_Dir normal(m_plane->normal().x(), m_plane->normal().y(), m_plane->normal().z());
-                gp_Ax2 ax2(centerPnt, normal);
+                gp_Ax2 ax2(
+                    gp_Pnt(center3d.x(), center3d.y(), center3d.z()),
+                    gp_Dir(m_plane->normal().x(), m_plane->normal().y(), m_plane->normal().z()));
 
-                gp_Circ gpCircle(ax2, circle->radius);
-                BRepBuilderAPI_MakeEdge edgeBuilder(gpCircle);
-
+                BRepBuilderAPI_MakeEdge edgeBuilder(gp_Circ(ax2, circle->radius));
                 if (edgeBuilder.IsDone()) {
                     BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
                     if (wireBuilder.IsDone()) {
@@ -302,9 +271,9 @@ bool Sketch::rebuild() {
                     }
                 }
             }
-            // ✅ 處理 Spline
+
+            // ── Spline ────────────────────────────────────────────────────
             else if (geom->type == SketchGeometryType::Spline) {
-                // 檢查至少有 3 個控制點
                 if (geom->points.size() < 3) {
                     qWarning() << "[Sketch] Spline requires at least 3 points, got:"
                                << geom->points.size();
@@ -312,7 +281,6 @@ bool Sketch::rebuild() {
                 }
 
                 try {
-                    // 1. 收集控制點並轉換為 3D 世界座標
                     int numPoints = geom->points.size();
                     Handle(TColgp_HArray1OfPnt) controlPoints =
                         new TColgp_HArray1OfPnt(1, numPoints);
@@ -322,12 +290,7 @@ bool Sketch::rebuild() {
                         controlPoints->SetValue(i + 1, gp_Pnt(p.x(), p.y(), p.z()));
                     }
 
-                    // 2. 創建插值樣條曲線
-                    GeomAPI_Interpolate interpolator(
-                        controlPoints,     // 控制點
-                        Standard_False,    // 不閉合
-                        1.0e-6            // 容差
-                        );
+                    GeomAPI_Interpolate interpolator(controlPoints, Standard_False, 1.0e-6);
                     interpolator.Perform();
 
                     if (!interpolator.IsDone()) {
@@ -335,98 +298,65 @@ bool Sketch::rebuild() {
                         continue;
                     }
 
-                    Handle(Geom_BSplineCurve) splineCurve = interpolator.Curve();
-
-                    // 3. 從樣條曲線創建 Edge
-                    BRepBuilderAPI_MakeEdge edgeBuilder(splineCurve);
-
+                    BRepBuilderAPI_MakeEdge edgeBuilder(interpolator.Curve());
                     if (!edgeBuilder.IsDone()) {
                         qWarning() << "[Sketch] Failed to create edge from spline curve";
                         continue;
                     }
 
-                    // 4. 創建 Wire
                     BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
-
                     if (wireBuilder.IsDone()) {
                         wire = wireBuilder.Wire();
                         wireCreated = true;
-                    } else {
-                        qWarning() << "[Sketch] Failed to create wire from spline edge";
                     }
-
                 } catch (Standard_Failure& e) {
-                    qWarning() << "[Sketch] Exception in spline creation:"
-                               << e.GetMessageString();
+                    qWarning() << "[Sketch] Exception in spline creation:" << e.GetMessageString();
                 }
             }
-            // ✅ 處理 Arc
-            else if (geom->type == SketchGeometryType::Arc)
-            {
-                const SketchArc* arc =
-                    static_cast<const SketchArc*>(geom);
 
-                if (arc->curve.IsNull())
-                {
+            // ── Arc ───────────────────────────────────────────────────────
+            else if (geom->type == SketchGeometryType::Arc) {
+                const SketchArc* arc = static_cast<const SketchArc*>(geom);
+                if (arc->curve.IsNull()) {
                     qWarning() << "[Sketch] Arc curve is null";
                     continue;
                 }
 
-                // ── 直接用 OCCT curve 建立 Edge ─────────────────────
                 BRepBuilderAPI_MakeEdge edgeBuilder(arc->curve);
-
-                if (!edgeBuilder.IsDone())
-                {
-                    qWarning() << "[Sketch] Arc edge build failed:"
-                               << edgeBuilder.Error();
+                if (!edgeBuilder.IsDone()) {
+                    qWarning() << "[Sketch] Arc edge build failed:" << edgeBuilder.Error();
                     continue;
                 }
 
                 BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
-
-                if (wireBuilder.IsDone())
-                {
-                    wire        = wireBuilder.Wire();
+                if (wireBuilder.IsDone()) {
+                    wire = wireBuilder.Wire();
                     wireCreated = true;
-                }
-                else
-                {
+                } else {
                     qWarning() << "[Sketch] Arc wire build failed";
                 }
             }
+
+            // ── Ellipse ───────────────────────────────────────────────────
             else if (geom->type == SketchGeometryType::Ellipse) {
                 const SketchEllipse* ellipse = static_cast<const SketchEllipse*>(geom);
 
-                // Transform center from 2D sketch plane to 3D world coordinates
                 QVector3D center3d = m_plane->toWorld(ellipse->center.x(), ellipse->center.y());
                 gp_Pnt centerPnt(center3d.x(), center3d.y(), center3d.z());
-
-                // Get sketch plane normal (Z direction)
                 gp_Dir normal(m_plane->normal().x(), m_plane->normal().y(), m_plane->normal().z());
 
-                // Calculate major axis direction in world coordinates
-                // The ellipse angle is in the sketch plane, so we need to rotate in that plane
                 double cosAngle = qCos(ellipse->angle);
                 double sinAngle = qSin(ellipse->angle);
 
-                // Major axis direction in sketch plane coordinates
-                QVector2D majorAxisDir2D(cosAngle, sinAngle);
-
-                // Transform major axis direction to 3D world coordinates
                 QVector3D majorAxisEnd3D = m_plane->toWorld(
-                    ellipse->center.x() + majorAxisDir2D.x(),
-                    ellipse->center.y() + majorAxisDir2D.y()
-                    );
+                    ellipse->center.x() + cosAngle,
+                    ellipse->center.y() + sinAngle);
                 QVector3D majorAxisDir3D = (majorAxisEnd3D - center3d).normalized();
                 gp_Dir xDir(majorAxisDir3D.x(), majorAxisDir3D.y(), majorAxisDir3D.z());
 
-                // Create coordinate system for ellipse
                 gp_Ax2 ax2(centerPnt, normal, xDir);
-
-                // Create ellipse (major radius, minor radius)
                 gp_Elips gpEllipse(ax2, ellipse->majorRadius, ellipse->minorRadius);
 
-                // Build edge and wire
                 BRepBuilderAPI_MakeEdge edgeBuilder(gpEllipse);
                 if (edgeBuilder.IsDone()) {
                     BRepBuilderAPI_MakeWire wireBuilder(edgeBuilder.Edge());
@@ -437,18 +367,16 @@ bool Sketch::rebuild() {
                 }
             }
 
-            // ✅ 創建 Wire 和對應的 AIS_Shape
+            // ── Wire → AIS_Shape ──────────────────────────────────────────
             if (wireCreated) {
                 m_wires.append(wire);
                 builder.Add(compound, wire);
 
-                // ✅ 為每條線創建獨立的 AIS_Shape
                 Handle(AIS_Shape) aisShape = new AIS_Shape(wire);
                 aisShape->SetColor(Quantity_NOC_WHITE);
                 aisShape->SetWidth(2.0);
                 aisShape->SetDisplayMode(AIS_WireFrame);
-
-                m_aisShapes.append(aisShape);  // ✅ 加入 QList
+                m_aisShapes.append(aisShape);
             }
         }
 
@@ -467,18 +395,23 @@ bool Sketch::rebuild() {
     }
 }
 
+// ============================================================================
+// Serialization
+// ============================================================================
+
 QJsonObject Sketch::toJson() const {
     QJsonObject json = Feature::toJson();
 
-    // ✅ 只儲存平面 ID（參考），而非完整平面資料
     if (m_plane) {
-        json["planeId"] = m_plane->id();
-        json["planeName"] = m_plane->displayName();  // 輔助資訊，用於除錯
+        json["planeId"]   = m_plane->id();
+        json["planeName"] = m_plane->displayName();
+
+        // ✅ 儲存完整平面幾何，確保 load 後能正確重建
+        json["planeData"] = m_plane->toJson();
     } else {
         qWarning() << "[Sketch]" << name() << "has no plane when serializing";
     }
 
-    // 儲存幾何元素（與原版相同）
     QJsonArray geomsArray;
     for (const SketchGeometry* geom : m_geometries) {
         QJsonObject geomJson;
@@ -493,15 +426,60 @@ QJsonObject Sketch::toJson() const {
         }
         geomJson["points"] = pointsArray;
 
-        // 額外屬性
-        if (geom->type == SketchGeometryType::Circle) {
-            const SketchCircle* circle = static_cast<const SketchCircle*>(geom);
-            geomJson["radius"] = circle->radius;
-            geomJson["centerX"] = circle->center.x();
-            geomJson["centerY"] = circle->center.y();
-        } else if (geom->type == SketchGeometryType::Polyline) {
-            const SketchPolyline* polyline = static_cast<const SketchPolyline*>(geom);
-            geomJson["closed"] = polyline->closed;
+        // 各幾何類型的額外屬性
+        switch (geom->type) {
+        case SketchGeometryType::Circle: {
+            const SketchCircle* c = static_cast<const SketchCircle*>(geom);
+            geomJson["radius"]  = c->radius;
+            geomJson["centerX"] = c->center.x();
+            geomJson["centerY"] = c->center.y();
+            break;
+        }
+        case SketchGeometryType::Arc: {
+            const SketchArc* a = static_cast<const SketchArc*>(geom);
+            if (!a->curve.IsNull()) {
+                // Extract start / mid / end from the OCCT trimmed curve
+                double t0  = a->curve->FirstParameter();
+                double t1  = a->curve->LastParameter();
+                gp_Pnt gpS = a->curve->Value(t0);
+                gp_Pnt gpM = a->curve->Value((t0 + t1) * 0.5);
+                gp_Pnt gpE = a->curve->Value(t1);
+
+                // Convert 3-D world → 2-D plane coords
+                auto worldToPlane2D = [&](const gp_Pnt& p) -> QJsonObject {
+                    QVector2D uv = m_plane->toPlane(
+                        QVector3D(p.X(), p.Y(), p.Z()));
+                    QJsonObject o;
+                    o["x"] = uv.x();
+                    o["y"] = uv.y();
+                    return o;
+                };
+
+                geomJson["startPt"] = worldToPlane2D(gpS);
+                geomJson["midPt"]   = worldToPlane2D(gpM);
+                geomJson["endPt"]   = worldToPlane2D(gpE);
+            }
+            break;
+        }
+        case SketchGeometryType::Polyline: {
+            const SketchPolyline* p = static_cast<const SketchPolyline*>(geom);
+            geomJson["closed"] = p->closed;
+            break;
+        }
+        case SketchGeometryType::Ellipse: {
+            const SketchEllipse* e = static_cast<const SketchEllipse*>(geom);
+            geomJson["centerX"]     = e->center.x();
+            geomJson["centerY"]     = e->center.y();
+            geomJson["majorRadius"] = e->majorRadius;
+            geomJson["minorRadius"] = e->minorRadius;
+            geomJson["angle"]       = e->angle;
+            break;
+        }
+        case SketchGeometryType::Spline:
+            // points already saved above
+            break;
+        default:
+            break;
         }
 
         geomsArray.append(geomJson);
@@ -516,89 +494,289 @@ bool Sketch::fromJson(const QJsonObject& json) {
         return false;
     }
 
-    // ✅ 從 planeId 恢復平面參考
-    if (json.contains("planeId")) {
-        QString planeId = json["planeId"].toString();
-        Plane* plane = PlaneManager::instance()->getPlane(planeId);
+    // ================================================================
+    // ✅ 平面恢復：四階段 fallback
+    //   1. 用 UUID 直接查 PlaneManager（同 session 重用時有效）
+    //   2. 用 planeName 比對標準平面（XY / XZ / YZ / ZX）
+    //   3. 用儲存的 planeData 幾何比對現有平面
+    //   4. 用 planeData 重建新平面並向 PlaneManager 登記
+    // ================================================================
+    Plane* resolvedPlane = nullptr;
 
-        if (plane) {
-            setPlane(plane);
-            qDebug() << "[Sketch]" << name() << "restored plane reference:"
-                     << plane->displayName();
-        } else {
-            qWarning() << "[Sketch]" << name()
-                       << "Plane not found:" << planeId
-                       << "Creating default plane instead";
-            createDefaultPlane();
+    const QString planeId   = json["planeId"].toString();
+    const QString planeName = json["planeName"].toString();
+
+    // ── 階段 1：UUID 查找 ────────────────────────────────────────────
+    if (!planeId.isEmpty()) {
+        resolvedPlane = PlaneManager::instance()->getPlane(planeId);
+        if (resolvedPlane) {
+            qDebug() << "[Sketch]" << name()
+                     << "Plane resolved by UUID:" << resolvedPlane->displayName();
         }
+    }
+
+    // ── 階段 2：標準平面名稱比對 ────────────────────────────────────
+    if (!resolvedPlane && !planeName.isEmpty()) {
+        resolvedPlane = resolveStandardPlane(planeName);
+        if (resolvedPlane) {
+            qDebug() << "[Sketch]" << name()
+                     << "Plane resolved by name '" << planeName
+                     << "':" << resolvedPlane->displayName();
+        }
+    }
+
+    // ── 階段 3 & 4：從儲存的幾何資料恢復 ───────────────────────────
+    if (!resolvedPlane && json.contains("planeData")) {
+        resolvedPlane = reconstructPlaneFromJson(json["planeData"].toObject(), planeName);
+        if (resolvedPlane) {
+            qDebug() << "[Sketch]" << name()
+                     << "Plane reconstructed from planeData:" << resolvedPlane->displayName();
+        }
+    }
+
+    // ── 最終 fallback ────────────────────────────────────────────────
+    if (resolvedPlane) {
+        setPlane(resolvedPlane);
     } else {
-        qWarning() << "[Sketch]" << name() << "No planeId in JSON";
+        qWarning() << "[Sketch]" << name()
+                   << "All plane resolution strategies failed, using default XY plane."
+                   << "planeId=" << planeId << "planeName=" << planeName;
         createDefaultPlane();
     }
 
-    // 載入幾何元素（與原版相同）
+    // ================================================================
+    // 載入幾何元素（完整版：含 Line / Polyline / Circle /
+    //                         Spline / Arc(跳過) / Ellipse）
+    // ================================================================
     clearGeometry();
     if (json.contains("geometries")) {
         QJsonArray geomsArray = json["geometries"].toArray();
+
         for (const QJsonValue& val : geomsArray) {
             QJsonObject geomJson = val.toObject();
-            SketchGeometryType type = static_cast<SketchGeometryType>(
-                geomJson["type"].toInt()
-                );
+            SketchGeometryType type =
+                static_cast<SketchGeometryType>(geomJson["type"].toInt());
 
-            // 載入點
+            // 通用：讀取點陣列
             QVector<QVector2D> points;
             QJsonArray pointsArray = geomJson["points"].toArray();
             for (const QJsonValue& ptVal : pointsArray) {
                 QJsonObject ptJson = ptVal.toObject();
-                points.append(QVector2D(
-                    ptJson["x"].toDouble(),
-                    ptJson["y"].toDouble()
-                    ));
+                points.append(QVector2D(ptJson["x"].toDouble(),
+                                        ptJson["y"].toDouble()));
             }
 
-            // 建立幾何元素
-            if (type == SketchGeometryType::Line && points.size() >= 2) {
-                addLine(points[0], points[1]);
-            } else if (type == SketchGeometryType::Polyline) {
+            switch (type) {
+            case SketchGeometryType::Line:
+                if (points.size() >= 2) {
+                    addLine(points[0], points[1]);
+                }
+                break;
+
+            case SketchGeometryType::Polyline: {
                 bool closed = geomJson["closed"].toBool(false);
-                addPolyline(points, closed);
-            } else if (type == SketchGeometryType::Circle) {
-                QVector2D center(
-                    geomJson["centerX"].toDouble(),
-                    geomJson["centerY"].toDouble()
-                    );
+                if (points.size() >= 2) {
+                    addPolyline(points, closed);
+                }
+                break;
+            }
+
+            case SketchGeometryType::Circle: {
+                QVector2D center(geomJson["centerX"].toDouble(),
+                                 geomJson["centerY"].toDouble());
                 double radius = geomJson["radius"].toDouble();
-                addCircle(center, radius);
+                if (radius > 0.0) {
+                    addCircle(center, radius);
+                }
+                break;
+            }
+
+
+
+            case SketchGeometryType::Spline:
+                if (points.size() >= 3) {
+                    addSpline(points);
+                } else {
+                    qWarning() << "[Sketch]" << name()
+                               << "Spline skipped: need >= 3 points, got" << points.size();
+                }
+                break;
+
+            case SketchGeometryType::Arc: {
+                auto readPt = [&](const QString& key) -> QVector2D {
+                    QJsonObject o = geomJson[key].toObject();
+                    return QVector2D(o["x"].toDouble(), o["y"].toDouble());
+                };
+
+                if (geomJson.contains("startPt") &&
+                    geomJson.contains("midPt")   &&
+                    geomJson.contains("endPt")) {
+                    addArc(readPt("startPt"), readPt("midPt"), readPt("endPt"));
+                } else if (points.size() >= 3) {
+                    // legacy fallback
+                    addArc(points[0], points[1], points[2]);
+                } else {
+                    qWarning() << "[Sketch]" << name()
+                               << "Arc skipped: no key points in JSON";
+                }
+                break;
+            }
+            case SketchGeometryType::Ellipse: {
+                QVector2D center(geomJson["centerX"].toDouble(),
+                                 geomJson["centerY"].toDouble());
+                double major = geomJson["majorRadius"].toDouble();
+                double minor = geomJson["minorRadius"].toDouble();
+                double angle = geomJson["angle"].toDouble(0.0);
+                if (major > 0.0 && minor > 0.0) {
+                    addEllipse(center, major, minor, angle);
+                }
+                break;
+            }
+
+            default:
+                qWarning() << "[Sketch]" << name()
+                           << "Unknown geometry type:" << static_cast<int>(type);
+                break;
             }
         }
     }
 
+    qDebug() << "[Sketch]" << name() << "fromJson complete:"
+             << m_geometries.size() << "geometries on plane"
+             << (m_plane ? m_plane->displayName() : "NULL");
+
     return true;
 }
 
+// ============================================================================
+// ✅ 新增：標準平面名稱解析
+//    按 planeName 比對 PlaneManager 中已登記的標準平面
+// ============================================================================
+Plane* Sketch::resolveStandardPlane(const QString& planeName) {
+    PlaneManager* manager = PlaneManager::instance();
+    if (!manager) return nullptr;
+
+    QList<Plane*> planes = manager->planes();
+
+    // ── 優先：完全比對 displayName / name ──────────────────────────
+    for (Plane* p : planes) {
+        if (p->displayName() == planeName || p->name() == planeName) {
+            return p;
+        }
+    }
+
+    // ── 次要：依幾何類型比對 ────────────────────────────────────────
+    //   planeName 可能是 "XY", "YZ", "XZ", "ZX" 等
+    const QString upper = planeName.trimmed().toUpper();
+
+    for (Plane* p : planes) {
+        if ((upper == "XY" || upper == "XY PLANE") && p->isXY()) return p;
+        if ((upper == "YZ" || upper == "YZ PLANE") && p->isYZ()) return p;
+        if ((upper == "XZ" || upper == "XZ PLANE") && p->isXZ()) return p;
+        if ((upper == "ZX" || upper == "ZX PLANE") && p->isZX()) return p;
+    }
+
+    // ── 次要：依 Plane::Type enum 比對 ──────────────────────────────
+    for (Plane* p : planes) {
+        if (upper == "XY" && p->type() == Plane::Type::XY) return p;
+        if (upper == "YZ" && p->type() == Plane::Type::YZ) return p;
+        if ((upper == "XZ" || upper == "ZX") &&
+            (p->type() == Plane::Type::XZ || p->type() == Plane::Type::ZX)) {
+            return p;
+        }
+    }
+
+    return nullptr;
+}
+
+// ============================================================================
+// ✅ 新增：從 planeData JSON 重建平面
+//    先嘗試幾何比對現有平面，若無則建立新平面
+// ============================================================================
+Plane* Sketch::reconstructPlaneFromJson(const QJsonObject& planeJson,
+                                        const QString& hint) {
+    if (planeJson.isEmpty()) return nullptr;
+
+    PlaneManager* manager = PlaneManager::instance();
+    if (!manager) return nullptr;
+
+    // ── 讀取幾何 ────────────────────────────────────────────────────
+    QJsonObject geometry = planeJson["geometry"].toObject();
+    if (geometry.isEmpty()) {
+        // 舊格式：geometry 直接在頂層
+        // 嘗試以 hint 名稱解析
+        return resolveStandardPlane(hint);
+    }
+
+    auto readVec3 = [&](const QString& key) -> QVector3D {
+        QJsonArray arr = geometry[key].toArray();
+        if (arr.size() < 3) return QVector3D();
+        return QVector3D(arr[0].toDouble(), arr[1].toDouble(), arr[2].toDouble());
+    };
+
+    QVector3D origin = readVec3("origin");
+    QVector3D normal = readVec3("normal");
+    QVector3D xAxis  = readVec3("xAxis");
+
+    if (normal.length() < 1e-6) {
+        qWarning() << "[Sketch] reconstructPlaneFromJson: invalid normal";
+        return nullptr;
+    }
+
+    const double tol = 1e-4;
+
+    // ── 嘗試與現有平面幾何比對（避免重複建立） ─────────────────────
+    for (Plane* p : manager->planes()) {
+        if ((p->origin() - origin).length() < tol &&
+            (p->normal() - normal).length() < tol  &&
+            (p->xAxis()  - xAxis ).length() < tol) {
+            qDebug() << "[Sketch] reconstructPlaneFromJson: matched existing plane"
+                     << p->displayName();
+            return p;
+        }
+    }
+
+    // ── 建立新平面並向 PlaneManager 登記 ────────────────────────────
+    QString newName = hint.isEmpty()
+                          ? planeJson["name"].toString("RestoredPlane")
+                          : hint;
+
+    Plane* newPlane = manager->createPlane(Plane::Type::Custom, newName);
+    if (!newPlane) {
+        qWarning() << "[Sketch] reconstructPlaneFromJson: createPlane failed";
+        return nullptr;
+    }
+
+    newPlane->setCoordinateSystem(origin, normal, xAxis);
+
+    qDebug() << "[Sketch] reconstructPlaneFromJson: created new plane"
+             << newName
+             << "normal(" << normal.x() << normal.y() << normal.z() << ")";
+
+    return newPlane;
+}
+
+// ============================================================================
+// Plane signals
+// ============================================================================
+
 void Sketch::onPlaneAboutToBeDeleted() {
     qWarning() << "[Sketch]" << name() << "associated plane is being deleted!";
-
-    // 平面即將被刪除，切換到新的預設平面
     disconnectPlaneSignals();
     createDefaultPlane();
-
     Q_EMIT planeChanged(m_plane);
     Q_EMIT rebuildRequested();
 }
 
 void Sketch::onPlaneGeometryChanged() {
     qDebug() << "[Sketch]" << name() << "plane geometry changed";
-
-    // 平面幾何改變，需要重建
     Q_EMIT rebuildRequested();
 }
 
 gp_Pnt Sketch::toWorld(const QVector2D& point) const {
     if (!hasValidPlane()) {
         qWarning() << "[Sketch]" << name() << "No valid plane for conversion";
-        return gp_Pnt(point.x(), point.y(), 0);  // 退化到 XY 平面
+        return gp_Pnt(point.x(), point.y(), 0);
     }
 
     QVector3D worldPt = m_plane->toWorld(point.x(), point.y());
@@ -606,12 +784,9 @@ gp_Pnt Sketch::toWorld(const QVector2D& point) const {
 }
 
 void Sketch::createDefaultPlane() {
-    // 建立或取得預設 XY 平面
     PlaneManager* manager = PlaneManager::instance();
 
-    // 嘗試使用已存在的 XY 平面
-    QList<Plane*> planes = manager->planes();
-    for (Plane* p : planes) {
+    for (Plane* p : manager->planes()) {
         if (p->type() == Plane::Type::XY && p->isXY()) {
             m_plane = p;
             connectPlaneSignals();
@@ -620,31 +795,28 @@ void Sketch::createDefaultPlane() {
         }
     }
 
-    // 沒有找到，建立新的
     m_plane = manager->createPlane(
         Plane::Type::XY,
-        QString("%1_DefaultPlane").arg(name())
-        );
+        QString("%1_DefaultPlane").arg(name()));
 
     connectPlaneSignals();
-    qDebug() << "[Sketch]" << name() << "created new default plane";
+    qDebug() << "[Sketch]" << name() << "created new default XY plane";
 }
 
 void Sketch::connectPlaneSignals() {
     if (!m_plane) return;
-
-    connect(m_plane, &Plane::aboutToBeDeleted,
-            this, &Sketch::onPlaneAboutToBeDeleted);
-
-    connect(m_plane, &Plane::geometryChanged,
-            this, &Sketch::onPlaneGeometryChanged);
+    connect(m_plane, &Plane::aboutToBeDeleted, this, &Sketch::onPlaneAboutToBeDeleted);
+    connect(m_plane, &Plane::geometryChanged,  this, &Sketch::onPlaneGeometryChanged);
 }
 
 void Sketch::disconnectPlaneSignals() {
     if (!m_plane) return;
-
     disconnect(m_plane, nullptr, this, nullptr);
 }
+
+// ============================================================================
+// AIS display
+// ============================================================================
 
 QList<TopoDS_Wire> Sketch::wires() const {
     return m_wires;
@@ -671,9 +843,7 @@ void Sketch::displayInContext(const Handle(AIS_InteractiveContext)& context) {
 }
 
 void Sketch::eraseFromContext(const Handle(AIS_InteractiveContext)& context) {
-    if (context.IsNull()) {
-        return;
-    }
+    if (context.IsNull()) return;
 
     for (const Handle(AIS_Shape)& aisShape : m_aisShapes) {
         if (!aisShape.IsNull()) {
@@ -685,17 +855,12 @@ void Sketch::eraseFromContext(const Handle(AIS_InteractiveContext)& context) {
 }
 
 TopoDS_Wire Sketch::mainWire() const {
-    if (m_wires.isEmpty()) {
-        return TopoDS_Wire();
-    }
-    return m_wires.first();
+    return m_wires.isEmpty() ? TopoDS_Wire() : m_wires.first();
 }
 
 bool Sketch::hasClosedProfile() const {
     for (const TopoDS_Wire& wire : m_wires) {
-        if (!wire.IsNull() && wire.Closed()) {
-            return true;
-        }
+        if (!wire.IsNull() && wire.Closed()) return true;
     }
     return false;
 }

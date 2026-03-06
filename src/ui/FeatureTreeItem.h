@@ -18,6 +18,7 @@ namespace ui {
  * @brief Feature Tree 項目類型
  */
 enum class ItemType {
+    Base,
     Folder,         ///< 資料夾
     Origin,         ///< 原點
     Plane,          ///< 平面

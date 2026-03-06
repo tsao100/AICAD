@@ -249,6 +249,8 @@ public:
      */
     void initializeOrigin(const Handle(AIS_InteractiveContext)& context);
 
+    // 新增 public method
+    void displayAllFeatures(const Handle(AIS_InteractiveContext)& context);
 
     // 復原/重做（未來實作）
     // bool canUndo() const;
@@ -311,6 +313,10 @@ Q_SIGNALS:
      */
     void treeStructureChanged();
 
+    void allFeaturesLoaded();
+
+    void originReinitializationNeeded();   // ✅ UIManager will call initializeOrigin()
+
 private Q_SLOTS:
     /**
      * @brief 處理特徵重建請求
@@ -358,7 +364,15 @@ private:
 
     QVector<ui::FeatureTreeItem> m_treeItems;  ///< Tree 項目列表
 
-    
+    // 新增 private method
+    void addFeatureInternal(Feature* feature);
+    void rebuildFeatureTreeItems();
+
+    void continueLoad(const QString& jsonData);     // ✅ actual JSON parsing, called after re-init
+
+    QString m_pendingLoadData;
+    QString m_pendingLoadFile;
+
     Q_DISABLE_COPY(Document)
 };
 

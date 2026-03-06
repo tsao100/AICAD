@@ -180,6 +180,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            cad::Document* doc = qvariant_cast<cad::Document*>(data);
                            if (doc && d->cadView) {
                                d->cadView->setDocument(doc);
+                               onDocumentCreated();
                            }
                        });
 
