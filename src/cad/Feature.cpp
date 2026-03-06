@@ -204,7 +204,7 @@ bool Feature::fromJson(const QJsonObject& json) {
     setName(json["name"].toString());
 
     if (json.contains("visible")) {
-        setVisible(json["visible"].toBool());
+        m_visible = json["visible"].toBool();  // set directly, don't emit yet
     }
 
     if (json.contains("suppressed")) {
@@ -216,6 +216,8 @@ bool Feature::fromJson(const QJsonObject& json) {
     }
 
     // 注意：父子關係需要在所有特徵載入後再建立
+    // emit after full load
+    Q_EMIT visibilityChanged(m_visible);
 
     return true;
 }

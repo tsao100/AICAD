@@ -122,7 +122,7 @@
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
-            "visible": true
+            "visible": false
         },
         {
             "geometries": [

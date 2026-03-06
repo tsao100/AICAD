@@ -473,6 +473,10 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     extrude->setSketch(sketch);
     extrude->setHeight(height);
 
+    // ✅ Auto-hide sketch and set parent relationship
+    sketch->setParent(extrude);
+    sketch->setVisible(false);  // hide sketch when it becomes child of extrude
+
     QString extrudeName = name;
     if (extrudeName.isEmpty()) {
         extrudeName = QString("Extrude %1").arg(m_nextFeatureNumber++);
@@ -803,6 +807,9 @@ void Document::displayFeature(Feature* feature,
     if (!feature || context.IsNull()) {
         return;
     }
+
+    // ✅ Respect visibility state
+    if (!feature->isVisible()) return;
 
     if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
         sketch->displayInContext(context);
