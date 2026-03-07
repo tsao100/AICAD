@@ -868,7 +868,7 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
 
     qDebug() << "[Document] Visibility changed:" << itemId << visible;
 
-    // ── 1. Update m_treeItems so checkbox state survives refresh ──────────
+    // ── 1. Update m_treeItems so checkbox stays in sync ───────────────────
     for (ui::FeatureTreeItem& treeItem : m_treeItems) {
         if (treeItem.id == itemId) {
             treeItem.visible = visible;
@@ -877,7 +877,6 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
     }
 
     // ── 2. Reference geometry ─────────────────────────────────────────────
-    // Map itemId string → ReferenceGeometryType (avoid QHash<enum> qHash issue)
     ReferenceGeometryType refType;
     bool isRefGeom = true;
 
@@ -893,48 +892,46 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
     if (isRefGeom) {
         setReferenceGeometryVisible(refType, visible);
 
-        // Toggle paired text label for planes
         if      (refType == ReferenceGeometryType::XYPlane)
             setReferenceGeometryVisible(ReferenceGeometryType::LabelXY, visible);
         else if (refType == ReferenceGeometryType::XZPlane)
             setReferenceGeometryVisible(ReferenceGeometryType::LabelXZ, visible);
         else if (refType == ReferenceGeometryType::YZPlane)
             setReferenceGeometryVisible(ReferenceGeometryType::LabelYZ, visible);
+
+        Q_EMIT treeStructureChanged();  // ✅ sync checkbox
         return;
     }
 
-    // ── 3. Feature (Sketch, Extrude …) — matched by UUID string ──────────
+    // ── 3. Feature (Sketch, Extrude …) ───────────────────────────────────
     Feature* feature = findFeature(itemId);
     if (!feature || m_aisContext.IsNull()) {
         qWarning() << "[Document] onVisibilityChanged: item not found:" << itemId;
         return;
     }
 
-    feature->setVisible(visible);   // updates the Feature's internal flag
+    feature->setVisible(visible);
 
-    // Sketch owns its own AIS shapes
     if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
         if (visible)
             sketch->displayInContext(m_aisContext);
         else
             sketch->eraseFromContext(m_aisContext);
+
+        Q_EMIT treeStructureChanged();  // ✅ sync checkbox
         return;
     }
 
-    // Generic Feature — show/hide its AIS_Shape
-    if (!feature->shape().IsNull()) {
-        // Reuse or create a cached AIS_Shape.
-        // Simple approach: iterate displayed objects to find a match.
-        // A more robust solution would cache Handle(AIS_Shape) per feature.
-        for (auto& entry : m_featureAisShapes) {          // see note below
-            if (entry.first == feature) {
-                if (visible)
-                    m_aisContext->Display(entry.second, Standard_False);
-                else
-                    m_aisContext->Erase(entry.second, Standard_False);
-                m_aisContext->UpdateCurrentViewer();
-                return;
-            }
+    for (auto& entry : m_featureAisShapes) {
+        if (entry.first == feature) {
+            if (visible)
+                m_aisContext->Display(entry.second, Standard_False);
+            else
+                m_aisContext->Erase(entry.second, Standard_False);
+            m_aisContext->UpdateCurrentViewer();
+
+            Q_EMIT treeStructureChanged();  // ✅ sync checkbox
+            return;
         }
     }
 }

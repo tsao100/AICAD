@@ -63,6 +63,9 @@ unix {
     export(first.depends)
     export(copydata.commands)
     QMAKE_EXTRA_TARGETS += first copydata
+
+    # Define PROJECT_SOURCE_DIR as the .pro file's directory
+    DEFINES += PROJECT_SOURCE_DIR=\\\"$$PWD\\\"
 }
 
 # ---------- Windows (Qt6 with MSVC) ----------

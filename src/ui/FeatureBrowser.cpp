@@ -11,6 +11,10 @@
 #include "FeatureBrowser.h"
 #include "cad/Document.h"
 
+#include <QStyledItemDelegate>
+#include <QPainter>
+#include <QApplication>
+#include <QMouseEvent>
 #include <QVBoxLayout>
 #include <QTreeWidgetItem>
 #include <QMenu>
@@ -20,6 +24,99 @@
 namespace aicad {
 namespace ui {
 
+// ─── Add before FeatureBrowser class in FeatureBrowser.cpp ───────────────────
+class AccessibleTreeWidget : public QTreeWidget {
+public:
+    explicit AccessibleTreeWidget(QWidget* parent = nullptr)
+        : QTreeWidget(parent) {}
+
+    QTreeWidgetItem* itemFromIdx(const QModelIndex& index) const {
+        return itemFromIndex(index);   // calls the protected method
+    }
+};
+
+// ─── Custom delegate ─────────────────────────────────────────────────────────
+class FeatureItemDelegate : public QStyledItemDelegate {
+public:
+    static constexpr int EYE_ICON_W = 20;
+    static constexpr int PADDING    = 4;
+
+    explicit FeatureItemDelegate(QObject* parent = nullptr)
+        : QStyledItemDelegate(parent) {}
+
+    // ─── FeatureItemDelegate::paint() — eye LEFT, feature icon, then name ────────
+    void paint(QPainter* p, const QStyleOptionViewItem& opt,
+               const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem o = opt;
+        initStyleOption(&o, index);
+        o.text = QString(); // suppress default text/icon rendering
+
+        p->save();
+
+        QStyle* style = o.widget ? o.widget->style() : QApplication::style();
+        style->drawPrimitive(QStyle::PE_PanelItemViewItem, &o, p, o.widget);
+
+        QRect r = o.rect.adjusted(PADDING, 0, -PADDING, 0);
+
+        // ── 1. Eye icon (leftmost) ──────────────────────────────────────────────
+        bool visible = index.data(Qt::UserRole + 2).toBool();
+        QIcon eyeIcon = visible
+                            ? QIcon(":/icons/eyeOpen.png")
+                            : QIcon(":/icons/eyeClose.png");
+
+        QRect eyeRect = eyeIconRect(o.rect);          // fixed left position
+        eyeIcon.paint(p, eyeRect, Qt::AlignCenter,
+                      (opt.state & QStyle::State_MouseOver)
+                          ? QIcon::Active : QIcon::Normal);
+        r.setLeft(eyeRect.right() + PADDING);
+
+        // ── 2. Feature icon ─────────────────────────────────────────────────────
+        QIcon featureIcon = index.data(Qt::DecorationRole).value<QIcon>();
+        if (!featureIcon.isNull()) {
+            QRect iconRect(r.left(), r.top() + (r.height() - 16) / 2, 16, 16);
+            featureIcon.paint(p, iconRect);
+            r.setLeft(iconRect.right() + PADDING);
+        }
+
+        // ── 3. Name text ─────────────────────────────────────────────────────────
+        bool isFolder = (index.data(Qt::UserRole + 1).toInt()
+                         == static_cast<int>(ItemType::Folder));
+        if (isFolder) {
+            QFont f = p->font(); f.setBold(true); p->setFont(f);
+        }
+        p->setPen((opt.state & QStyle::State_Selected)
+                      ? opt.palette.highlightedText().color()
+                      : opt.palette.text().color());
+        p->drawText(r, Qt::AlignVCenter | Qt::AlignLeft, o.text.isEmpty()
+                                                             ? index.data(Qt::DisplayRole).toString() : o.text);
+
+        p->restore();
+    }
+
+    // Eye icon is anchored to the LEFT of the full item rect (before indent)
+    QRect eyeIconRect(const QRect& itemRect) const {
+        return QRect(itemRect.left(),                           // ← left edge
+                     itemRect.top() + (itemRect.height() - 16) / 2,
+                     EYE_ICON_W, 16);
+    }
+
+    bool editorEvent(QEvent* event, QAbstractItemModel* model,
+                     const QStyleOptionViewItem& opt,
+                     const QModelIndex& index) override
+    {
+        if (event->type() == QEvent::MouseButtonRelease) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (eyeIconRect(opt.rect).contains(me->pos())) {
+                bool cur = index.data(Qt::UserRole + 2).toBool();
+                model->setData(index, !cur, Qt::UserRole + 2);
+                return true;
+            }
+        }
+        return QStyledItemDelegate::editorEvent(event, model, opt, index);
+    }
+};
+
 class FeatureBrowser::Private {
 public:
     Private()
@@ -28,7 +125,7 @@ public:
     {}
 
     cad::Document* document;
-    QTreeWidget*   treeWidget;
+    AccessibleTreeWidget*   treeWidget; // ← was QTreeWidget*
 };
 
 FeatureBrowser::FeatureBrowser(QWidget* parent)
@@ -48,21 +145,30 @@ FeatureBrowser::~FeatureBrowser() {
     delete d;
 }
 
+// ─── setupUI() — plus/minus branch indicators via stylesheet ─────────────────
 void FeatureBrowser::setupUI() {
-    d->treeWidget = new QTreeWidget(this);
-
-    // ✅ 修正：設定 3 欄（名稱 / 類型 / 可見性）
-    d->treeWidget->setColumnCount(3);
-    d->treeWidget->setHeaderLabels({"Name", "Type", "Visible"});
-
-    // 調整欄寬
-    d->treeWidget->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    d->treeWidget->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    d->treeWidget->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-
+    d->treeWidget = new AccessibleTreeWidget(this);
+    d->treeWidget->setColumnCount(1);
+    d->treeWidget->setHeaderHidden(true);
+    d->treeWidget->setRootIsDecorated(true);
+    d->treeWidget->setIndentation(20);
+    d->treeWidget->setMouseTracking(true);
     d->treeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     d->treeWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    d->treeWidget->setAlternatingRowColors(true);
+    d->treeWidget->setItemDelegate(new FeatureItemDelegate(d->treeWidget));
+
+    // d->treeWidget->setStyleSheet(R"(
+    //     QTreeWidget {
+    //         background: #f0f0f0;
+    //         color: #1a1a1a;
+    //         border: none;
+    //         font-size: 12px;
+    //     }
+    //     QTreeWidget::item          { height: 24px; }
+    //     QTreeWidget::item:selected { background: #0078d7; color: #ffffff; }
+    //     QTreeWidget::item:hover    { background: #d6e8fb; color: #1a1a1a; }
+    //     QTreeWidget::branch        { background: #f0f0f0; }
+    // )");
 
     setWidget(d->treeWidget);
 }
@@ -77,9 +183,19 @@ void FeatureBrowser::connectSignals() {
     connect(d->treeWidget, &QTreeWidget::customContextMenuRequested,
             this, &FeatureBrowser::onCustomContextMenu);
 
-    // ✅ 可見性切換（column 2）
-    connect(d->treeWidget, &QTreeWidget::itemChanged,
-            this, &FeatureBrowser::onItemVisibilityToggled);
+    // Eye icon toggle is handled by the delegate via model->setData(…, UserRole+2)
+    connect(d->treeWidget->model(), &QAbstractItemModel::dataChanged,
+            this, [this](const QModelIndex& idx) {
+                QTreeWidgetItem* item = d->treeWidget->itemFromIdx(idx);  // ✅
+                if (!item) return;
+                bool    visible = item->data(0, Qt::UserRole + 2).toBool();
+                QString id      = item->data(0, Qt::UserRole).toString();
+                core::EventBus* bus = core::Application::instance()->eventBus();
+                QVariantMap data;
+                data["itemId"]  = id;
+                data["visible"] = visible;
+                bus->publish("feature.visibility-changed", data);
+            });
 }
 
 void FeatureBrowser::setCurrentDocument(cad::Document* document) {
@@ -174,31 +290,22 @@ void FeatureBrowser::buildTreeFromData(const QVector<FeatureTreeItem>& items) {
 QTreeWidgetItem* FeatureBrowser::createTreeWidgetItem(const FeatureTreeItem& itemData) {
     QTreeWidgetItem* item = new QTreeWidgetItem();
 
-    // ✅ Column 0：名稱 + 圖示
     item->setText(0, itemData.name);
     item->setIcon(0, getIconForType(itemData.type));
 
-    // ✅ Column 1：類型字串
-    item->setText(1, itemData.typeString());
-
-    // ✅ Column 2：可見性 checkbox
-    item->setCheckState(2, itemData.visible ? Qt::Checked : Qt::Unchecked);
-
-    // ✅ 儲存 ID（字串形式，不強制 toInt()）
+    // UserRole     = item id (QString)
+    // UserRole + 1 = item type (int)
+    // UserRole + 2 = visibility (bool)  ← read by delegate
     item->setData(0, Qt::UserRole,     itemData.id);
     item->setData(0, Qt::UserRole + 1, static_cast<int>(itemData.type));
+    item->setData(0, Qt::UserRole + 2, itemData.visible);
 
-    // ✅ 資料夾：不可選取，粗體
     if (itemData.type == ItemType::Folder) {
         item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
-        QFont font = item->font(0);
-        font.setBold(true);
-        item->setFont(0, font);
     }
 
     return item;
 }
-
 QIcon FeatureBrowser::getIconForType(ItemType type) {
     switch (type) {
     case ItemType::Folder:  return QIcon(":/icons/folder.png");
@@ -218,7 +325,7 @@ void FeatureBrowser::onTreeStructureChanged() {
 }
 
 void FeatureBrowser::onItemVisibilityToggled(QTreeWidgetItem* item, int column) {
-    if (column != 2) return;  // 只處理可見性欄位
+    if (column != 1) return;  // 只處理可見性欄位
 
     // ✅ ID 保持字串，不轉 int
     QString itemId = item->data(0, Qt::UserRole).toString();

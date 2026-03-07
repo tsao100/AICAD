@@ -231,6 +231,12 @@ bool Application::initialize() {
         qDebug() << "[Application] Initialization completed successfully";
 
         Q_EMIT initialized();
+
+        QString filePath = QString(PROJECT_SOURCE_DIR) + "/Draw/1.aicad";
+
+        if (d->documentManager->openDocument(filePath)) {
+            qDebug() << "[MainWindow] Loaded:" << filePath;
+        }
         return true;
 
     } catch (const std::exception& e) {
