@@ -176,20 +176,20 @@ void CadView::initializeViewer() {
     d->viewer->SetDefaultLights();
     d->viewer->SetLightOn();
 
-    d->viewer->ActivateGrid(
-        Aspect_GT_Rectangular,   // Grid type
-        Aspect_GDM_Lines         // 顯示模式 (Lines / Points)
-    );
+    // d->viewer->ActivateGrid(
+    //     Aspect_GT_Rectangular,   // Grid type
+    //     Aspect_GDM_Lines         // 顯示模式 (Lines / Points)
+    // );
 
-    // 設定 Grid 參數
-    d->viewer->SetRectangularGridValues(
-        0.0, 0.0,    // 原點
-        10.0, 10.0,  // X/Y 間距
-        0.0          // 旋轉角度
-        );
+    // // 設定 Grid 參數
+    // d->viewer->SetRectangularGridValues(
+    //     0.0, 0.0,    // 原點
+    //     10.0, 10.0,  // X/Y 間距
+    //     0.0          // 旋轉角度
+    //     );
 
-    // 顯示 Grid
-    d->viewer->SetGridEcho(Standard_True);
+    // // 顯示 Grid
+    // d->viewer->SetGridEcho(Standard_True);
     
     // 建立視圖
     d->view = d->viewer->CreateView();
@@ -231,7 +231,7 @@ void CadView::initializeViewer() {
     
     // 建立輔助物件
     d->rubberBand = new RubberBand(d->context, this);
-    d->grid = new ViewGrid(d->context, this);
+    d->grid = new ViewGrid(d->viewer, this);
     
     // 設定初始視角
     setViewType(ViewType::Isometric);
@@ -669,6 +669,19 @@ void CadView::onFinishSketchClicked() {
 
     setMode(InteractionMode::Idle);
     hideFinishSketchButton();
+    d->grid->hide();
+
+    // ✅ Hide the sketch feature in the browser and viewport
+    Application* app = Application::instance();
+    cad::Sketch* sketch = app->activeSketch();
+    core::EventBus* bus = app->eventBus();
+    if (sketch) {
+        QVariantMap data;
+        data["itemId"] =sketch->id();  // UUID string
+        data["visible"] = false;
+        bus->publish("feature.visibility-changed", data);
+
+    }
 
     Q_EMIT sketchFinished();
 }

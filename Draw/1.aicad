@@ -3,11 +3,6 @@
         {
             "geometries": [
                 {
-                    "points": [
-                    ],
-                    "type": 1
-                },
-                {
                     "closed": true,
                     "points": [
                         {
@@ -94,7 +89,7 @@
             "id": "{f0dd8dce-4a44-43e6-bc7f-607656b1f925}",
             "name": "Sketch 1",
             "planeData": {
-                "createdTime": "2026-03-05T18:10:28",
+                "createdTime": "2026-03-06T17:29:42",
                 "geometry": {
                     "normal": [
                         0,
@@ -112,13 +107,13 @@
                         0
                     ]
                 },
-                "id": "47d66ca9-85ae-4eff-82b9-4a7cc939c268",
+                "id": "40653052-49ec-4a07-9f3a-8b1c05ace507",
                 "isLocked": true,
-                "modifiedTime": "2026-03-05T18:10:28",
+                "modifiedTime": "2026-03-06T17:29:42",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "47d66ca9-85ae-4eff-82b9-4a7cc939c268",
+            "planeId": "40653052-49ec-4a07-9f3a-8b1c05ace507",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
@@ -182,7 +177,7 @@
             "id": "{7fbd1456-2dd3-4552-8c70-2fa35fde5330}",
             "name": "Sketch 2",
             "planeData": {
-                "createdTime": "2026-03-05T18:10:28",
+                "createdTime": "2026-03-06T17:29:42",
                 "geometry": {
                     "normal": [
                         0,
@@ -200,17 +195,17 @@
                         1
                     ]
                 },
-                "id": "f2543e5a-9800-4062-933e-4741e7b0abd1",
+                "id": "6e91e700-fbcf-48b2-b4c0-b170a5b517fd",
                 "isLocked": true,
-                "modifiedTime": "2026-03-05T18:10:28",
+                "modifiedTime": "2026-03-06T17:29:42",
                 "name": "XZ",
                 "type": 3
             },
-            "planeId": "f2543e5a-9800-4062-933e-4741e7b0abd1",
+            "planeId": "6e91e700-fbcf-48b2-b4c0-b170a5b517fd",
             "planeName": "XZ",
             "suppressed": false,
             "type": "Sketch",
-            "visible": true
+            "visible": false
         },
         {
             "geometries": [
@@ -291,7 +286,7 @@
             "id": "{8c142bc1-a032-446e-9bc9-f4f9cadfb618}",
             "name": "Sketch 3",
             "planeData": {
-                "createdTime": "2026-03-05T18:10:28",
+                "createdTime": "2026-03-06T17:29:42",
                 "geometry": {
                     "normal": [
                         1,
@@ -309,17 +304,95 @@
                         0
                     ]
                 },
-                "id": "8008ecae-5aa7-46ad-bf95-95b26f5d50fc",
+                "id": "28f42f71-81d8-49ee-8b1a-9bcced8e131f",
                 "isLocked": true,
-                "modifiedTime": "2026-03-05T18:10:28",
+                "modifiedTime": "2026-03-06T17:29:42",
                 "name": "YZ",
                 "type": 1
             },
-            "planeId": "8008ecae-5aa7-46ad-bf95-95b26f5d50fc",
+            "planeId": "28f42f71-81d8-49ee-8b1a-9bcced8e131f",
             "planeName": "YZ",
             "suppressed": false,
             "type": "Sketch",
-            "visible": true
+            "visible": false
+        },
+        {
+            "geometries": [
+                {
+                    "endPt": {
+                        "x": 13.647974967956543,
+                        "y": 41.05958557128906
+                    },
+                    "midPt": {
+                        "x": -30.043994903564453,
+                        "y": 11.949446678161621
+                    },
+                    "points": [
+                    ],
+                    "startPt": {
+                        "x": -50.4281120300293,
+                        "y": -36.43315505981445
+                    },
+                    "type": 1
+                },
+                {
+                    "points": [
+                        {
+                            "x": -88.51710510253906,
+                            "y": 15.446096420288086
+                        },
+                        {
+                            "x": -73.98168182373047,
+                            "y": 15.701104164123535
+                        },
+                        {
+                            "x": -28.84537124633789,
+                            "y": -42.440582275390625
+                        },
+                        {
+                            "x": 27.001249313354492,
+                            "y": 9.580925941467285
+                        },
+                        {
+                            "x": 55.05206298828125,
+                            "y": -6.7395477294921875
+                        }
+                    ],
+                    "type": 5
+                }
+            ],
+            "id": "{ce9d999b-1df6-48d1-84f5-ef94f3606c9d}",
+            "name": "Sketch 4",
+            "planeData": {
+                "createdTime": "2026-03-06T17:29:42",
+                "geometry": {
+                    "normal": [
+                        0,
+                        0,
+                        1
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        1,
+                        0,
+                        0
+                    ]
+                },
+                "id": "40653052-49ec-4a07-9f3a-8b1c05ace507",
+                "isLocked": true,
+                "modifiedTime": "2026-03-06T17:29:42",
+                "name": "XY",
+                "type": 0
+            },
+            "planeId": "40653052-49ec-4a07-9f3a-8b1c05ace507",
+            "planeName": "XY",
+            "suppressed": false,
+            "type": "Sketch",
+            "visible": false
         }
     ],
     "fileName": "1.aicad",

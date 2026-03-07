@@ -5,6 +5,8 @@
  * @date 2025-01-08
  */
 
+#include "core/Application.h"
+#include "core/EventBus.h"
 #include "Document.h"
 #include "Feature.h"
 #include "Sketch.h"
@@ -819,6 +821,7 @@ void Document::displayFeature(Feature* feature,
     if (!feature->shape().IsNull()) {
         Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
         context->Display(aisShape, Standard_False);
+        m_featureAisShapes.append({ feature, aisShape }); // ✅ cache it
     }
 }
 
@@ -859,10 +862,95 @@ void Document::hideAllReferenceGeometry() {
     qDebug() << "[Document] All reference geometry hidden";
 }
 
+void Document::onVisibilityChanged(const QVariantMap& data) {
+    const QString itemId = data["itemId"].toString();
+    const bool    visible = data["visible"].toBool();
+
+    qDebug() << "[Document] Visibility changed:" << itemId << visible;
+
+    // ── 1. Update m_treeItems so checkbox state survives refresh ──────────
+    for (ui::FeatureTreeItem& treeItem : m_treeItems) {
+        if (treeItem.id == itemId) {
+            treeItem.visible = visible;
+            break;
+        }
+    }
+
+    // ── 2. Reference geometry ─────────────────────────────────────────────
+    // Map itemId string → ReferenceGeometryType (avoid QHash<enum> qHash issue)
+    ReferenceGeometryType refType;
+    bool isRefGeom = true;
+
+    if      (itemId == "plane_xy")     refType = ReferenceGeometryType::XYPlane;
+    else if (itemId == "plane_xz")     refType = ReferenceGeometryType::XZPlane;
+    else if (itemId == "plane_yz")     refType = ReferenceGeometryType::YZPlane;
+    else if (itemId == "axis_x")       refType = ReferenceGeometryType::XAxis;
+    else if (itemId == "axis_y")       refType = ReferenceGeometryType::YAxis;
+    else if (itemId == "axis_z")       refType = ReferenceGeometryType::ZAxis;
+    else if (itemId == "origin_point") refType = ReferenceGeometryType::Origin;
+    else                               isRefGeom = false;
+
+    if (isRefGeom) {
+        setReferenceGeometryVisible(refType, visible);
+
+        // Toggle paired text label for planes
+        if      (refType == ReferenceGeometryType::XYPlane)
+            setReferenceGeometryVisible(ReferenceGeometryType::LabelXY, visible);
+        else if (refType == ReferenceGeometryType::XZPlane)
+            setReferenceGeometryVisible(ReferenceGeometryType::LabelXZ, visible);
+        else if (refType == ReferenceGeometryType::YZPlane)
+            setReferenceGeometryVisible(ReferenceGeometryType::LabelYZ, visible);
+        return;
+    }
+
+    // ── 3. Feature (Sketch, Extrude …) — matched by UUID string ──────────
+    Feature* feature = findFeature(itemId);
+    if (!feature || m_aisContext.IsNull()) {
+        qWarning() << "[Document] onVisibilityChanged: item not found:" << itemId;
+        return;
+    }
+
+    feature->setVisible(visible);   // updates the Feature's internal flag
+
+    // Sketch owns its own AIS shapes
+    if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
+        if (visible)
+            sketch->displayInContext(m_aisContext);
+        else
+            sketch->eraseFromContext(m_aisContext);
+        return;
+    }
+
+    // Generic Feature — show/hide its AIS_Shape
+    if (!feature->shape().IsNull()) {
+        // Reuse or create a cached AIS_Shape.
+        // Simple approach: iterate displayed objects to find a match.
+        // A more robust solution would cache Handle(AIS_Shape) per feature.
+        for (auto& entry : m_featureAisShapes) {          // see note below
+            if (entry.first == feature) {
+                if (visible)
+                    m_aisContext->Display(entry.second, Standard_False);
+                else
+                    m_aisContext->Erase(entry.second, Standard_False);
+                m_aisContext->UpdateCurrentViewer();
+                return;
+            }
+        }
+    }
+}
+
 void Document::initializeOrigin(const Handle(AIS_InteractiveContext)& context) {
     qDebug() << "[Document] Initializing origin";
     initializeReferenceGeometry(context);
     createOriginFolderItems();
+
+    // ✅ Subscribe to visibility-changed events from FeatureBrowser
+    core::EventBus* bus = core::Application::instance()->eventBus();
+    bus->subscribe("feature.visibility-changed", this,
+                   [this](const QVariant& data) {
+                       onVisibilityChanged(data.toMap());
+                   });
+
     Q_EMIT treeStructureChanged();
 }
 

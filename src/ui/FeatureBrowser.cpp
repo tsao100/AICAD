@@ -167,6 +167,7 @@ void FeatureBrowser::buildTreeFromData(const QVector<FeatureTreeItem>& items) {
         }
     }
 
+    d->treeWidget->blockSignals(false); // ← ADD THIS
     qDebug() << "[FeatureBrowser] Tree built with" << m_itemMap.size() << "items";
 }
 

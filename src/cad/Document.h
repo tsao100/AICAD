@@ -14,6 +14,7 @@
 #include <QString>
 #include <QList>
 #include <TDocStd_Document.hxx>
+#include <AIS_Shape.hxx>
 #include <AIS_InteractiveObject.hxx>
 
 namespace aicad {
@@ -234,6 +235,8 @@ public:
      */
     void hideAllReferenceGeometry();
 
+    void onVisibilityChanged(const QVariantMap& data);
+
     /**
      * @brief 取得 AIS 上下文
      */
@@ -372,6 +375,8 @@ private:
 
     QString m_pendingLoadData;
     QString m_pendingLoadFile;
+
+    QList<QPair<Feature*, Handle(AIS_Shape)>> m_featureAisShapes;
 
     Q_DISABLE_COPY(Document)
 };
