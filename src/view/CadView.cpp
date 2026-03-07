@@ -484,7 +484,7 @@ void CadView::displayAllFeatures() {
         }
     }
 
-    fitAll();
+    //fitAll();
 }
 
 void CadView::refreshView() {
