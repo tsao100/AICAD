@@ -962,7 +962,7 @@ void CadView::wheelEvent(QWheelEvent* event) {
 
     // Step 1: 滑鼠位置 → OCCT 像素座標
     Standard_Integer xp, yp;
-    qtToOCCT(event->pos(), xp, yp);
+    qtToOCCT(event->position().toPoint(), xp, yp);
 
     // Step 2: 螢幕座標 → 3D 世界座標（縮放前）
     Standard_Real xv, yv, zv;
