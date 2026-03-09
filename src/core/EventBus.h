@@ -151,6 +151,25 @@ constexpr const char* COMMAND_LOG = "command.log";
 constexpr const char* POINT_ACQUIRED = "interaction.point_acquired";
 constexpr const char* POINT_CANCELLED = "interaction.point_cancelled";
 constexpr const char* RUBBER_BAND_UPDATE = "interaction.rubber_update";
+
+// 命令列相關
+constexpr const char* COMMAND_ERROR = "command.error";
+constexpr const char* COMMAND_WARNING = "command.warning";
+
+// 輸入相關
+constexpr const char* COORDINATE_INPUT = "input.coordinate";
+constexpr const char* NUMBER_INPUT = "input.number";
+constexpr const char* OPTION_SELECTED = "input.option";
+constexpr const char* STRING_INPUT = "input.string";
+constexpr const char* YESNO_INPUT = "input.yesno";
+
+// 選項相關
+constexpr const char* OPTIONS_AVAILABLE = "options.available";
+constexpr const char* OPTIONS_CLEARED = "options.cleared";
+
+// 歷史記錄
+constexpr const char* HISTORY_UPDATED = "history.updated";
+
 }
 
 } // namespace core

@@ -141,7 +141,10 @@ SOURCES += \
     src/cad/PlaneManager.cpp \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
+    src/command/CommandAlias.cpp \
+    src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
+    src/command/InputParser.cpp \
     src/command/PolygonCommand.cpp \
     src/command/PolylineCommand.cpp \
     src/command/RectCommand.cpp \
@@ -171,6 +174,13 @@ SOURCES += \
     src/geometry/GeometryBuilder.cpp \
     \
     # UI Module (James - 用戶界面)
+    src/ui/AutoCompleteModel.cpp \
+    src/ui/CommandLineLayout.cpp \
+    src/core/CommandLineManager.cpp \
+    src/ui/CommandLineOptionsPanel.cpp \
+    src/ui/CommandLineSplitter.cpp \
+    src/ui/CommandLineStatusBar.cpp \
+    src/ui/CommandLineToolbar.cpp \
     src/ui/CommandOverlayWidget.cpp \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
@@ -205,7 +215,10 @@ HEADERS += \
     src/cad/PlaneManager.h \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
+    src/command/CommandAlias.h \
+    src/core/CommandHistory.h \
     src/command/EllipseCommand.h \
+    src/command/InputParser.h \
     src/command/PolygonCommand.h \
     src/command/PolylineCommand.h \
     src/command/RectCommand.h \
@@ -232,6 +245,13 @@ HEADERS += \
     src/geometry/GeometryBuilder.h \
     \
     # UI Module (James)
+    src/ui/AutoCompleteModel.h \
+    src/ui/CommandLineLayout.h \
+    src/core/CommandLineManager.h \
+    src/ui/CommandLineOptionsPanel.h \
+    src/ui/CommandLineSplitter.h \
+    src/ui/CommandLineStatusBar.h \
+    src/ui/CommandLineToolbar.h \
     src/ui/CommandOverlayWidget.h \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
