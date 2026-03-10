@@ -14,28 +14,53 @@ CommandLineOptionsPanel::CommandLineOptionsPanel(QWidget* parent)
     m_layout->setSpacing(6);
     m_layout->addStretch();
 
+    // setStyleSheet(R"(
+    //     QWidget {
+    //         background-color: rgba(30, 30, 30, 200);
+    //     }
+    //     QPushButton {
+    //         background-color: #3F3F46;
+    //         color: white;
+    //         border: 1px solid #007ACC;
+    //         border-radius: 3px;
+    //         padding: 6px 14px;
+    //         font-size: 9pt;
+    //         min-width: 60px;
+    //     }
+    //     QPushButton:hover {
+    //         background-color: #007ACC;
+    //     }
+    //     QPushButton:pressed {
+    //         background-color: #005A9E;
+    //     }
+    //     QPushButton[isDefault="true"] {
+    //         border: 2px solid #00FF00;
+    //         font-weight: bold;
+    //     }
+    // )");
+
+    // ✅ 改用 Qt 預設樣式 + 互動效果
     setStyleSheet(R"(
-        QWidget {
-            background-color: rgba(30, 30, 30, 200);
-        }
         QPushButton {
-            background-color: #3F3F46;
-            color: white;
-            border: 1px solid #007ACC;
+            border: 1px solid palette(mid);
             border-radius: 3px;
             padding: 6px 14px;
             font-size: 9pt;
             min-width: 60px;
+            background: palette(button);
         }
         QPushButton:hover {
-            background-color: #007ACC;
+            background: palette(light);
+            border: 1px solid palette(highlight);
         }
         QPushButton:pressed {
-            background-color: #005A9E;
+            background: palette(mid);
         }
         QPushButton[isDefault="true"] {
-            border: 2px solid #00FF00;
+            border: 2px solid palette(highlight);
             font-weight: bold;
+            background: palette(highlight);
+            color: palette(highlighted-text);
         }
     )");
 

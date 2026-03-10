@@ -37,7 +37,7 @@ public:
     // Grid colour (minor lines)
     Quantity_Color gridColor  { 0.4, 0.4, 0.5, Quantity_TOC_RGB };
     // Tenth-line colour (every 10 cells, shown automatically by OCCT)
-    Quantity_Color tenthColor { 0.6, 0.6, 0.7, Quantity_TOC_RGB };
+    Quantity_Color tenthColor { 0.2, 0.2, 0.9, Quantity_TOC_RGB };
 };
 
 // ============================================================================

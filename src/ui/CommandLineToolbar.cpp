@@ -23,34 +23,52 @@ void CommandLineToolbar::setupUI() {
 
     m_layout->addStretch();
 
+    // setStyleSheet(R"(
+    //     QWidget {
+    //         background-color: rgba(45, 45, 48, 200);
+    //     }
+    //     QToolButton {
+    //         background: transparent;
+    //         border: none;
+    //         padding: 4px;
+    //         color: white;
+    //     }
+    //     QToolButton:hover {
+    //         background: rgba(255, 255, 255, 30);
+    //         border-radius: 3px;
+    //     }
+    //     QToolButton:pressed {
+    //         background: rgba(255, 255, 255, 50);
+    //     }
+    //     QToolButton:checked {
+    //         background: rgba(0, 122, 204, 128);
+    //         border-radius: 3px;
+    //     }
+    //     QCheckBox {
+    //         color: white;
+    //         spacing: 4px;
+    //     }
+    //     QCheckBox::indicator {
+    //         width: 14px;
+    //         height: 14px;
+    //     }
+    // )");
+
+    // ✅ 完全清除自定義樣式，使用系統預設
     setStyleSheet(R"(
-        QWidget {
-            background-color: rgba(45, 45, 48, 200);
-        }
         QToolButton {
-            background: transparent;
             border: none;
             padding: 4px;
-            color: white;
         }
         QToolButton:hover {
-            background: rgba(255, 255, 255, 30);
-            border-radius: 3px;
+            background: palette(light);
         }
         QToolButton:pressed {
-            background: rgba(255, 255, 255, 50);
+            background: palette(mid);
         }
         QToolButton:checked {
-            background: rgba(0, 122, 204, 128);
-            border-radius: 3px;
-        }
-        QCheckBox {
-            color: white;
-            spacing: 4px;
-        }
-        QCheckBox::indicator {
-            width: 14px;
-            height: 14px;
+            background: palette(highlight);
+            color: palette(highlighted-text);
         }
     )");
 

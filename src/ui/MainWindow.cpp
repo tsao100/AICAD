@@ -39,7 +39,7 @@ MainWindow::MainWindow()
 {
     qDebug() << "[MainWindow] Created";
     
-    setupUI();
+    //setupUI();
     
     // 設定視窗屬性
     setWindowTitle("AICAD - Advanced Interactive CAD System");

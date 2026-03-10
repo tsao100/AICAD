@@ -38,21 +38,10 @@ void CommandInput::setupAutoComplete() {
     m_completer->setMaxVisibleItems(10);
     m_completer->setModelSorting(QCompleter::CaseInsensitivelySortedModel);
 
-    // 自訂樣式
     m_completer->popup()->setStyleSheet(R"(
-        QListView {
-            background-color: #2D2D30;
-            color: white;
-            border: 1px solid #007ACC;
-            selection-background-color: #007ACC;
-            outline: none;
-        }
         QListView::item {
             padding: 4px;
             min-height: 24px;
-        }
-        QListView::item:hover {
-            background-color: #3F3F46;
         }
     )");
 
@@ -65,16 +54,12 @@ void CommandInput::setupAutoComplete() {
 void CommandInput::setupStyle() {
     setStyleSheet(R"(
         QLineEdit {
-            background-color: #2D2D30;
-            color: #00FF00;
-            font-family: "Consolas", "Courier New", monospace;
+            font-family: "Consolas", "Courier New", "Monaco", monospace;
             font-size: 10pt;
-            border: 1px solid #007ACC;
             padding: 4px 8px;
-            selection-background-color: #264F78;
         }
         QLineEdit:focus {
-            border: 2px solid #007ACC;
+            border: 2px solid palette(highlight);
         }
     )");
 
@@ -196,36 +181,38 @@ void CommandInput::updatePlaceholder() {
 }
 
 void CommandInput::keyPressEvent(QKeyEvent* event) {
-    // 處理特殊鍵
-    handleSpecialKeys(event);
-
-    // 如果已處理，不傳遞給基類
-    if (event->isAccepted()) {
+    // ✅ 修正：先嘗試處理特殊鍵，如果處理了就返回，否則傳遞給基類
+    if (handleSpecialKeys(event)) {
+        // 特殊鍵已處理，不傳遞給基類
+        event->accept();
         return;
     }
 
+    // ✅ 普通按鍵：傳遞給 QLineEdit 處理（允許文字輸入）
     QLineEdit::keyPressEvent(event);
 }
 
-void CommandInput::handleSpecialKeys(QKeyEvent* event) {
+bool CommandInput::handleSpecialKeys(QKeyEvent* event) {
+    // ✅ 返回 true 表示已處理，false 表示未處理
+
     switch (event->key()) {
     case Qt::Key_Up:
         if (!m_completer->popup()->isVisible()) {
             navigateHistory(-1);
-            event->accept();
+            return true;  // ✅ 已處理
         }
         break;
 
     case Qt::Key_Down:
         if (!m_completer->popup()->isVisible()) {
             navigateHistory(+1);
-            event->accept();
+            return true;  // ✅ 已處理
         }
         break;
 
     case Qt::Key_F2:
         emit f2Pressed();
-        event->accept();
+        return true;  // ✅ 已處理
         break;
 
     case Qt::Key_Tab:
@@ -235,7 +222,7 @@ void CommandInput::handleSpecialKeys(QKeyEvent* event) {
                 m_completer->setCurrentRow(0);
             }
             setText(m_completer->currentCompletion());
-            event->accept();
+            return true;  // ✅ 已處理
         }
         break;
 
@@ -244,7 +231,7 @@ void CommandInput::handleSpecialKeys(QKeyEvent* event) {
         hideAutoComplete();
         emit escapePressed();
         emit commandCancelled();
-        event->accept();
+        return true;  // ✅ 已處理
         break;
 
     case Qt::Key_Space:
@@ -253,15 +240,18 @@ void CommandInput::handleSpecialKeys(QKeyEvent* event) {
             if (!m_commandHistory.isEmpty()) {
                 setText(m_commandHistory.first());
                 onReturnPressed();
-                event->accept();
+                return true;  // ✅ 已處理
             }
         }
+        // ✅ 如果不是空輸入，讓 Space 正常輸入空格
         break;
 
     default:
-        // 不處理，傳遞給基類
+        // 不是特殊鍵，返回 false
         break;
     }
+
+    return false;  // ✅ 未處理，讓基類處理
 }
 
 void CommandInput::focusInEvent(QFocusEvent* event) {

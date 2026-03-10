@@ -54,4 +54,7 @@ private:
 } // namespace ui
 } // namespace aicad
 
+Q_DECLARE_METATYPE(aicad::ui::CommandOption)
+Q_DECLARE_METATYPE(QList<aicad::ui::CommandOption>)
+
 #endif

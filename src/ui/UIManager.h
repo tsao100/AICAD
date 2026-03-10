@@ -25,9 +25,12 @@ namespace view {
 
 namespace core {
     class MenuParser;
+    class CommandLineManager;  // ✅ 新增
 }
 
-
+namespace command {
+    class CommandAlias;  // ✅ 新增
+}
 
 namespace ui {
 
@@ -35,6 +38,8 @@ class MainWindow;
 class FeatureBrowser;
 class PropertyPanel;
 class ToolManager;
+class CommandOverlayWidget;  // ✅ 新增
+class AutoCompleteModel;     // ✅ 新增
 
 /**
  * @brief UI 管理器
@@ -125,6 +130,43 @@ public:
 
     void onViewReady();
 
+    /**
+     * @brief 取得命令列覆蓋層
+     * @return CommandOverlayWidget 指標
+     */
+    CommandOverlayWidget* commandLine() const;
+
+    /**
+     * @brief 取得命令列管理器
+     * @return CommandLineManager 指標
+     */
+    core::CommandLineManager* commandLineManager() const;
+
+    /**
+     * @brief 取得命令別名管理器
+     * @return CommandAlias 指標
+     */
+    command::CommandAlias* commandAlias() const;
+
+    /**
+     * @brief 在命令列顯示訊息
+     * @param message 訊息內容
+     * @param color 文字顏色 (預設白色)
+     */
+    void showCommandMessage(const QString& message, const QString& color = "white");
+
+    /**
+     * @brief 在命令列顯示錯誤
+     * @param error 錯誤訊息
+     */
+    void showCommandError(const QString& error);
+
+    /**
+     * @brief 在命令列顯示警告
+     * @param warning 警告訊息
+     */
+    void showCommandWarning(const QString& warning);
+
 Q_SIGNALS:
     /**
      * @brief UI 初始化完成時發出
@@ -141,6 +183,9 @@ private:
     void initializeReferenceGeometry();
     void onDocumentCreated();
     void onCurrentDocumentChanged(cad::Document* doc);
+
+    void setupCommandLine();
+    void connectCommandLineEvents();
 
     class Private;
     Private* d;

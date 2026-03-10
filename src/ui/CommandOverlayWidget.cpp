@@ -47,13 +47,19 @@ void CommandOverlayWidget::setupUI() {
     // 主佈局由 CommandLineLayout 管理
     m_layoutManager = new CommandLineLayout(this, this);
 
+    // ✅ 完全清除自定義樣式，使用系統預設
+    setStyleSheet("");
+
+    // ✅ 確保使用系統調色板
+    setAutoFillBackground(false);  // 不自動填充背景
+
     // 設定整體樣式
-    setStyleSheet(R"(
-        QWidget {
-            background-color: rgba(30, 30, 30, 240);
-            border-radius: 4px;
-        }
-    )");
+    // setStyleSheet(R"(
+    //     QWidget {
+    //         background-color: rgba(30, 30, 30, 240);
+    //         border-radius: 4px;
+    //     }
+    // )");
 }
 
 void CommandOverlayWidget::setupAreas() {
@@ -66,29 +72,39 @@ void CommandOverlayWidget::setupAreas() {
     m_historyWidget->setReadOnly(true);
     m_historyWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_historyWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // m_historyWidget->setStyleSheet(R"(
+    //     QTextEdit {
+    //         background-color: rgba(30, 30, 30, 200);
+    //         color: white;
+    //         border: none;
+    //         font-family: "Consolas", "Courier New", monospace;
+    //         font-size: 9pt;
+    //         padding: 4px;
+    //     }
+    //     QScrollBar:vertical {
+    //         background: #2D2D30;
+    //         width: 12px;
+    //         border-radius: 6px;
+    //     }
+    //     QScrollBar::handle:vertical {
+    //         background: #686868;
+    //         border-radius: 6px;
+    //         min-height: 20px;
+    //     }
+    //     QScrollBar::handle:vertical:hover {
+    //         background: #9E9E9E;
+    //     }
+    // )");
+
+    // ✅ 改用 Qt 預設 + 等寬字體
     m_historyWidget->setStyleSheet(R"(
         QTextEdit {
-            background-color: rgba(30, 30, 30, 200);
-            color: white;
-            border: none;
-            font-family: "Consolas", "Courier New", monospace;
+            font-family: "Consolas", "Courier New", "Monaco", monospace;
             font-size: 9pt;
             padding: 4px;
         }
-        QScrollBar:vertical {
-            background: #2D2D30;
-            width: 12px;
-            border-radius: 6px;
-        }
-        QScrollBar::handle:vertical {
-            background: #686868;
-            border-radius: 6px;
-            min-height: 20px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background: #9E9E9E;
-        }
     )");
+
     m_layoutManager->addArea(CommandLineArea::History, m_historyWidget);
 
     // 3. 選項面板
@@ -189,6 +205,13 @@ LayoutMode CommandOverlayWidget::layoutMode() const {
 
 void CommandOverlayWidget::appendHistory(const QString& text, const QString& color) {
     if (text.isEmpty()) return;
+
+    // ✅ 如果 color 為預設值，使用系統文字顏色
+    QString actualColor = color;
+    if (color == "white") {
+        // 使用調色板的文字顏色
+        actualColor = palette().color(QPalette::Text).name();
+    }
 
     QString html = QString("<span style='color:%1'>%2</span>")
                        .arg(color)

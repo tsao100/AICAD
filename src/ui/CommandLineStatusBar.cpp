@@ -47,10 +47,22 @@ void CommandLineStatusBar::setupUI() {
     m_layout->addWidget(m_stateTextLabel);
     m_layout->addStretch();
 
+    // setStyleSheet(R"(
+    //     QWidget {
+    //         background-color: #007ACC;
+    //         font-size: 9pt;
+    //     }
+    // )");
+
+    // ✅ 改用 Qt 預設樣式 + 淺色背景
     setStyleSheet(R"(
         QWidget {
-            background-color: #007ACC;
+            background: palette(window);
+            border-top: 1px solid palette(mid);
             font-size: 9pt;
+        }
+        QLabel {
+            color: palette(text);
         }
     )");
 
@@ -81,19 +93,19 @@ void CommandLineStatusBar::updateStateIndicator() {
 
     switch (m_currentState) {
     case CommandLineState::Ready:
-        color = "#00FF00";
+        color = "#00AA00";  // 綠色（保留，用於狀態指示）
         text = "Ready";
         break;
     case CommandLineState::Busy:
-        color = "#FFFF00";
+        color = "#CCAA00";  // 黃色
         text = "Busy";
         break;
     case CommandLineState::Error:
-        color = "#FF0000";
+        color = "#CC0000";  // 紅色
         text = "Error";
         break;
     case CommandLineState::Warning:
-        color = "#FFA500";
+        color = "#FF8800";  // 橙色
         text = "Warning";
         break;
     }

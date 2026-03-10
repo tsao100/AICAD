@@ -1,42 +1,40 @@
+// CommandInput.h
 #ifndef COMMANDINPUT_H
 #define COMMANDINPUT_H
 
 #include <QLineEdit>
 #include <QCompleter>
 #include <QStringListModel>
-#include <QValidator>
 
 namespace aicad {
 namespace ui {
+
+enum class InputMode {
+    Command,
+    Coordinate,
+    Number,
+    Option,
+    String
+};
 
 class CommandInput : public QLineEdit {
     Q_OBJECT
 
 public:
-    enum class InputMode {
-        Command,       // 命令模式
-        Coordinate,    // 座標輸入
-        Number,        // 數值輸入
-        Option,        // 選項輸入
-        String         // 字串輸入
-    };
-
     explicit CommandInput(QWidget* parent = nullptr);
     ~CommandInput() override;
 
     // 自動完成
     void setAutoCompleteModel(QAbstractItemModel* model);
     void setAutoCompleteEnabled(bool enabled);
-    bool isAutoCompleteEnabled() const { return m_autoCompleteEnabled; }
-
     void showAutoComplete();
     void hideAutoComplete();
 
-    // 歷史記錄
+    // 命令歷史
     void setCommandHistory(const QStringList& history);
-    QStringList commandHistory() const { return m_commandHistory; }
     void addToHistory(const QString& command);
     void navigateHistory(int direction);
+    QStringList commandHistory() const { return m_commandHistory; }
 
     // 輸入模式
     void setInputMode(InputMode mode);
@@ -50,10 +48,10 @@ signals:
     void commandEntered(const QString& command);
     void commandCancelled();
     void autoCompleteRequested(const QString& prefix);
-    void historyNavigated(const QString& command);
     void inputModeChanged(InputMode mode);
-    void escapePressed();
+    void historyNavigated(const QString& command);
     void f2Pressed();
+    void escapePressed();
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
@@ -68,8 +66,10 @@ private slots:
 private:
     void setupAutoComplete();
     void setupStyle();
-    void handleSpecialKeys(QKeyEvent* event);
     void updatePlaceholder();
+
+    // ✅ 修改為返回 bool，表示是否已處理
+    bool handleSpecialKeys(QKeyEvent* event);
 
     QCompleter* m_completer;
     QStringListModel* m_completerModel;

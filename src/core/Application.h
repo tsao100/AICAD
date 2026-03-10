@@ -31,6 +31,7 @@ class LispEngine;
 
 namespace command {
 class CommandManager;
+class CommandAlias;
 }
 }
 
@@ -40,7 +41,7 @@ namespace core {
 class EventBus;
 class DocumentManager;
 class MenuParser;
-
+class CommandLineManager;
 
 /**
  * @brief 應用程式單例，管理全域資源和模組生命週期
@@ -105,7 +106,8 @@ public:
     view::ViewManager* viewManager() const;
     scripting::LispEngine* lispEngine() const;
     command::CommandManager* commandManager() const;
-    
+    core::CommandLineManager* commandLineManager() const;
+    command::CommandAlias* commandAlias() const;
     /**
      * @brief 取得事件總線
      * @return EventBus 指標，未初始化則為 nullptr

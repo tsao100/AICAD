@@ -8,12 +8,14 @@
 #include "Application.h"
 #include "EventBus.h"
 #include "DocumentManager.h"
+#include "CommandLineManager.h"
 #include "MenuParser.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "command/CommandManager.h"
 #include "command/RectCommand.h"
 #include "command/CommandFactory.h"
+#include "command/CommandAlias.h"
 #include "ui/UIManager.h"
 #include "view/ViewManager.h"
 #include "scripting/LispEngine.h"
@@ -41,6 +43,8 @@ public:
         , lispEngine(nullptr)
         , menuParser(nullptr)
         , activeSketch(nullptr)
+        , commandLineManager(nullptr)  // ✅ 新增
+        , commandAlias(nullptr)        // ✅ 新增
     {
     }
     
@@ -63,6 +67,9 @@ public:
     scripting::LispEngine* lispEngine;
     MenuParser* menuParser;
     cad::Sketch* activeSketch;
+    // ✅ 新增
+    core::CommandLineManager* commandLineManager;
+    command::CommandAlias* commandAlias;
 
     static const QString VERSION;
     static const QString APP_NAME;
@@ -149,6 +156,21 @@ bool Application::initialize() {
         if (!d->documentManager) {
             Q_EMIT errorOccurred("Failed to create DocumentManager");
             return false;
+        }
+
+        // ✅ 在創建 UIManager 之前初始化命令列單例
+        // 2.5. 初始化命令列系統
+        qDebug() << "[Application] Initializing command line system...";
+        d->commandLineManager = core::CommandLineManager::instance();
+        d->commandAlias = command::CommandAlias::instance();
+
+        // 載入別名（如果有配置檔）
+        QString aliasFile = QCoreApplication::applicationDirPath() + "/acad.pgp";
+        if (QFile::exists(aliasFile)) {
+            d->commandAlias->loadFromFile(aliasFile);
+        } else {
+            // 使用預設別名
+            d->commandAlias->loadDefaults();
         }
 
         // 3. 建立命令管理器
@@ -311,6 +333,16 @@ scripting::LispEngine* Application::lispEngine() const {
 
 command::CommandManager* Application::commandManager() const {
     return d->commandManager;
+}
+
+// 添加 getter 方法
+
+core::CommandLineManager* Application::commandLineManager() const {
+    return d->commandLineManager;
+}
+
+command::CommandAlias* Application::commandAlias() const {
+    return d->commandAlias;
 }
 
 // 槽函數實作
