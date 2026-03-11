@@ -149,6 +149,8 @@ SOURCES += \
     src/command/PolylineCommand.cpp \
     src/command/RectCommand.cpp \
     src/command/SplineCommand.cpp \
+    src/core/GripManager.cpp \
+    src/core/GripTypes.cpp \
     src/core/geometry/CoordinateTransform.cpp \
     src/core/geometry/WorkPlane.cpp \
     src/main.cpp \
@@ -226,6 +228,8 @@ HEADERS += \
     src/core/Application.h \
     src/core/EventBus.h \
     src/core/DocumentManager.h \
+    src/core/GripManager.h \
+    src/core/GripTypes.h \
     src/core/PluginManager.h \
     src/core/Settings.h \
     src/core/MenuParser.h \

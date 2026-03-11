@@ -54,17 +54,17 @@ void CommandLineStatusBar::setupUI() {
     //     }
     // )");
 
-    // ✅ 改用 Qt 預設樣式 + 淺色背景
-    setStyleSheet(R"(
-        QWidget {
-            background: palette(window);
-            border-top: 1px solid palette(mid);
-            font-size: 9pt;
-        }
-        QLabel {
-            color: palette(text);
-        }
-    )");
+    // // ✅ 改用 Qt 預設樣式 + 淺色背景
+    // setStyleSheet(R"(
+    //     QWidget {
+    //         background: palette(window);
+    //         border-top: 1px solid palette(mid);
+    //         font-size: 9pt;
+    //     }
+    //     QLabel {
+    //         color: palette(text);
+    //     }
+    // )");
 
     setFixedHeight(22);
     updateStateIndicator();
@@ -112,6 +112,7 @@ void CommandLineStatusBar::updateStateIndicator() {
 
     m_stateIndicator->setStyleSheet(QString("color: %1; font-size: 12pt;").arg(color));
     m_stateTextLabel->setText(text);
+    m_layout->activate();
 }
 
 } // namespace ui

@@ -16,6 +16,14 @@ CommandOverlayWidget::CommandOverlayWidget(QWidget* parent)
     , m_isPinned(false)
     , m_commandActive(false)
 {
+    setAutoFillBackground(true);
+
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, QApplication::palette().color(QPalette::Window));
+    setPalette(pal);
+
+    setStyleSheet("background: palette(window);");
+
     setWindowFlags(Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, false);
 
@@ -65,6 +73,28 @@ void CommandOverlayWidget::setupUI() {
 void CommandOverlayWidget::setupAreas() {
     // 1. 工具列
     m_toolbarWidget = new CommandLineToolbar(this);
+    // 使用系統 palette
+    m_toolbarWidget->setPalette(QApplication::palette());
+    m_toolbarWidget->setAutoFillBackground(true);
+
+    // ===== 美化樣式 =====
+    m_toolbarWidget->setStyleSheet(R"(
+        QToolBar {
+            background: palette(window);
+            border: 1px solid palette(mid);
+            border-radius: 6px;
+            padding: 4px;
+        }
+
+        QToolButton {
+            padding: 4px;
+        }
+
+        QToolButton:hover {
+            background: palette(light);
+        }
+    )");
+
     m_layoutManager->addArea(CommandLineArea::Toolbar, m_toolbarWidget);
 
     // 2. 歷史記錄
@@ -116,8 +146,8 @@ void CommandOverlayWidget::setupAreas() {
     m_layoutManager->addArea(CommandLineArea::Input, m_inputWidget);
 
     // 5. 狀態列
-    m_statusBarWidget = new CommandLineStatusBar(this);
-    m_layoutManager->addArea(CommandLineArea::StatusBar, m_statusBarWidget);
+    // m_statusBarWidget = new CommandLineStatusBar(this);
+    // m_layoutManager->addArea(CommandLineArea::StatusBar, m_statusBarWidget);
 }
 
 void CommandOverlayWidget::setupConnections() {
