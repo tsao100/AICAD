@@ -49,7 +49,11 @@ void CommandLineSplitterHandle::paintEvent(QPaintEvent* event) {
     }
 }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+void CommandLineSplitterHandle::enterEvent(QEnterEvent* event) {
+#else
 void CommandLineSplitterHandle::enterEvent(QEvent* event) {
+#endif
     m_hovered = true;
     update();
     QSplitterHandle::enterEvent(event);
