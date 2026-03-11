@@ -16,6 +16,7 @@
 #include <AIS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
+#include "core/GripTypes.h"
 
 namespace aicad {
 
@@ -137,12 +138,16 @@ public:
      * @brief 取得橡皮筋物件
      */
     RubberBand* rubberBand() const;
-    
+
+    void setupGripHandling();
+
     /**
      * @brief 顯示所有特徵
      */
     void displayAllFeatures();
-    
+
+    void setCurrentSketchPlane(cad::Plane* plane);
+
     /**
      * @brief 刷新視圖
      */
@@ -194,7 +199,13 @@ public:
     QString identifyPlane(const Handle(AIS_Shape)& shape);
 
     ViewGrid* grid() const;  // Add this public method declaration
-    
+
+    // ✅ Grip 相關方法
+    void drawGrip(const core::Grip& grip);
+    void clearAllGrips();
+    void updateGripPosition(const QString& gripId, const QVector2D& newPos);
+    void setGripActive(const QString& gripId, bool active);
+
 public Q_SLOTS:
     /**
      * @brief 設定視圖為俯視圖
@@ -359,6 +370,28 @@ private:
 
     void showFinishSketchButton();
     void hideFinishSketchButton();
+
+    // ✅ Grip 視覺化
+    Handle(AIS_Shape) createGripShape(const gp_Pnt& position, bool isActive);
+    QString getGripId(const core::Grip& grip) const;
+    gp_Pnt gripPositionToWorld(const QVector2D& pos2D);
+
+    // OCCT 相關
+    Handle(AIS_InteractiveContext) m_context;
+
+    // ✅ Grip 儲存
+    struct GripVisual {
+        core::Grip grip;
+        Handle(AIS_Shape) aisShape;
+    };
+    QMap<QString, GripVisual> m_grips;  // gripId -> visual
+
+    // 當前編輯的 sketch 平面（用於 2D->3D 轉換）
+    cad::Plane* m_currentSketchPlane;
+
+    // Grip 視覺參數
+    static constexpr double GRIP_SIZE = 3.0;           // Grip 方塊大小
+    static constexpr double GRIP_SIZE_ACTIVE = 4.5;   // 活動 Grip 大小
 
     class Private;
     Private* d;

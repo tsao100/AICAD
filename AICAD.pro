@@ -150,7 +150,6 @@ SOURCES += \
     src/command/RectCommand.cpp \
     src/command/SplineCommand.cpp \
     src/core/GripManager.cpp \
-    src/core/GripTypes.cpp \
     src/core/geometry/CoordinateTransform.cpp \
     src/core/geometry/WorkPlane.cpp \
     src/main.cpp \

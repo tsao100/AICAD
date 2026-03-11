@@ -170,6 +170,19 @@ constexpr const char* OPTIONS_CLEARED = "options.cleared";
 // 歷史記錄
 constexpr const char* HISTORY_UPDATED = "history.updated";
 
+// Grip 相關事件
+constexpr const char* GRIP_SHOW = "grip.show";
+constexpr const char* GRIP_HIDE = "grip.hide";
+constexpr const char* GRIP_HIDE_ALL = "grip.hide-all";
+constexpr const char* GRIP_DRAG_STARTED = "grip.drag-started";
+constexpr const char* GRIP_DRAGGING = "grip.dragging";
+constexpr const char* GRIP_DRAG_ENDED = "grip.drag-ended";
+constexpr const char* GRIP_EDIT_COMPLETED = "grip.edit-completed";
+
+// 實體選擇事件
+constexpr const char* ENTITY_SELECTED = "entity.selected";
+constexpr const char* ENTITY_DESELECTED = "entity.deselected";
+constexpr const char* ENTITY_UPDATE_VIA_GRIP = "entity.update-via-grip";
 }
 
 } // namespace core

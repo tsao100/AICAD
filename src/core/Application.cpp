@@ -9,11 +9,11 @@
 #include "EventBus.h"
 #include "DocumentManager.h"
 #include "CommandLineManager.h"
+#include "GripManager.h"
 #include "MenuParser.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "command/CommandManager.h"
-#include "command/RectCommand.h"
 #include "command/CommandFactory.h"
 #include "command/CommandAlias.h"
 #include "ui/UIManager.h"
@@ -63,6 +63,7 @@ public:
     DocumentManager* documentManager;
     command::CommandManager* commandManager;
     ui::UIManager* uiManager;
+    GripManager* gripManager;
     view::ViewManager* viewManager;
     scripting::LispEngine* lispEngine;
     MenuParser* menuParser;
@@ -196,6 +197,9 @@ bool Application::initialize() {
             Q_EMIT errorOccurred("Failed to create UIManager");
             return false;
         }
+
+        // 創建 GripManager
+        d->gripManager = new GripManager(d->eventBus, this);
 
         // 6. 初始化 UI 系統
         // qDebug() << "[Application] Initializing UI system...";
