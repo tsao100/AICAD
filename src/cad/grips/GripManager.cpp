@@ -50,6 +50,9 @@ void GripManager::displayHandles()
         if (!gp.enabled) continue;
 
         Handle(AIS_GripHandle) handle = new AIS_GripHandle(gp, gripSizeForType(gp.type));
+
+        handle->SetPlaneAxes(m_planeX, m_planeY);
+
         m_context->Display(handle, Standard_False);
         m_context->Deactivate(handle);   // 不參與一般 AIS 選取
         m_handles[gp.id] = handle;

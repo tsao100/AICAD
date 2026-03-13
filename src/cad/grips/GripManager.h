@@ -29,6 +29,11 @@ public:
 
     void setContext(const Handle(AIS_InteractiveContext)& ctx);
 
+    void setPlaneAxes(const gp_Dir& xAxis, const gp_Dir& yAxis) {
+        m_planeX = xAxis;
+        m_planeY = yAxis;
+    }
+
     // ── 選取物件後，載入其 grip ────────────────────────────────
     void attachProvider(IGripProvider* provider);
     void detach();
@@ -58,6 +63,9 @@ Q_SIGNALS:
     void snapOccurred(const SnapResult& result);
 
 private:
+    gp_Dir  m_planeX = gp_Dir(1, 0, 0);
+    gp_Dir  m_planeY = gp_Dir(0, 1, 0);
+
     SnapResult  computeSnap(const gp_Pnt& rawPos) const;
     QString     hitTestGrip(const gp_Pnt& worldPos, double threshold = 5.0) const;
     void        displayHandles();

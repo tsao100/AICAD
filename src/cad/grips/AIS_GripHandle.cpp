@@ -62,38 +62,45 @@ Quantity_Color AIS_GripHandle::colorForState(GripState s) const
 void AIS_GripHandle::Compute(
     const Handle(PrsMgr_PresentationManager)&,
     const Handle(Prs3d_Presentation)& prs,
-    Standard_Integer /*mode*/)
+    Standard_Integer)
 {
     prs->Clear();
 
     Quantity_Color col = colorForState(m_state);
     double half = m_size * 0.5;
 
-    // ── 繪製實心方塊（用 4 個三角形組成）──────────────────
-    Handle(Graphic3d_Group) grp = prs->NewGroup();
+    // ✅ 用 sketch plane 的 X/Y 軸計算方塊角點，而非固定 XY offset
+    gp_Vec vX = gp_Vec(m_planeX) * half;
+    gp_Vec vY = gp_Vec(m_planeY) * half;
 
-    // 方塊邊框（Polyline）
+    gp_Pnt p0 = m_position.Translated(-vX - vY);  // bottom-left
+    gp_Pnt p1 = m_position.Translated( vX - vY);  // bottom-right
+    gp_Pnt p2 = m_position.Translated( vX + vY);  // top-right
+    gp_Pnt p3 = m_position.Translated(-vX + vY);  // top-left
+
+    // 方塊邊框
+    Handle(Graphic3d_Group) grp = prs->NewGroup();
     Handle(Graphic3d_ArrayOfPolylines) border =
         new Graphic3d_ArrayOfPolylines(5);
-    border->AddVertex(gp_Pnt(m_position.X()-half, m_position.Y()-half, m_position.Z()));
-    border->AddVertex(gp_Pnt(m_position.X()+half, m_position.Y()-half, m_position.Z()));
-    border->AddVertex(gp_Pnt(m_position.X()+half, m_position.Y()+half, m_position.Z()));
-    border->AddVertex(gp_Pnt(m_position.X()-half, m_position.Y()+half, m_position.Z()));
-    border->AddVertex(gp_Pnt(m_position.X()-half, m_position.Y()-half, m_position.Z()));
+    border->AddVertex(p0);
+    border->AddVertex(p1);
+    border->AddVertex(p2);
+    border->AddVertex(p3);
+    border->AddVertex(p0);  // close
 
     Handle(Graphic3d_AspectLine3d) lineAspect =
         new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
     grp->SetGroupPrimitivesAspect(lineAspect);
     grp->AddPrimitiveArray(border);
 
-    // 中心點（fill indicator）
+    // 中心填充點
+    Handle(Graphic3d_Group) grp2 = prs->NewGroup();
     Handle(Graphic3d_ArrayOfPoints) centerPt =
         new Graphic3d_ArrayOfPoints(1);
     centerPt->AddVertex(m_position);
 
     Handle(Graphic3d_AspectMarker3d) markerAspect =
-        new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, col, m_size * 0.5);
-    Handle(Graphic3d_Group) grp2 = prs->NewGroup();
+        new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, col, m_size * 0.4);
     grp2->SetGroupPrimitivesAspect(markerAspect);
     grp2->AddPrimitiveArray(centerPt);
 }

@@ -121,8 +121,19 @@ void UIManager::initGripSystem()
 
                        // Attach appropriate provider
                        if (auto* sketch = qobject_cast<cad::Sketch*>(feature)) {
-                           // ✅ Tell GripEventFilter which plane to project onto
-                           d->gripFilter->setSketchPlane(sketch->plane());
+                           cad::Plane* plane = sketch->plane();
+
+                           // ✅ 把 sketch plane 的真實軸向傳給 GripManager
+                           QVector3D qx = plane->xAxis();
+                           QVector3D qy = plane->yAxis();
+
+                           d->gripManager->setPlaneAxes(
+                               gp_Dir(qx.x(), qx.y(), qx.z()),
+                               gp_Dir(qy.x(), qy.y(), qy.z())
+                               );
+
+                           // ✅ 同樣傳給 GripEventFilter 做 ray-plane 投影
+                           d->gripFilter->setSketchPlane(plane);
                            d->gripManager->attachProvider(
                                new cad::SketchGripProvider(sketch, geomIndices));
                            qDebug() << "[UIManager] Grips attached for sketch:"

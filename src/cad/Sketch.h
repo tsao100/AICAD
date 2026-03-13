@@ -232,6 +232,9 @@ Q_SIGNALS:
      */
     void geometryChanged();
 
+    // ✅ emit after every successful rebuild
+    void rebuilt();
+
 private Q_SLOTS:
     /**
      * @brief 當關聯的平面即將被刪除時調用

@@ -431,26 +431,53 @@ RubberBand* CadView::rubberBand() const {
 }
 
 void CadView::displayAllFeatures() {
-    if (!d->document || d->context.IsNull()) {
-        return;
-    }
+    if (!d->document || d->context.IsNull()) return;
 
     qDebug() << "[CadView] Displaying all features";
-
     d->context->RemoveAll(Standard_False);
     d->context->Display(d->viewCube, Standard_False);
 
-    QList<Feature*> features = d->document->features();
-
-    for (Feature* feature : features) {
-        if (!feature || !feature->isVisible()) {
-            continue;
-        }
+    for (Feature* feature : d->document->features()) {
+        if (!feature || !feature->isVisible()) continue;
 
         if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
+
+            // ✅ Extract registration into a reusable lambda
+            auto registerSketchShapes = [this, feature, sketch]() {
+                // ① Erase old entries for this feature from both maps
+                for (auto it = d->aisToFeatureId.begin();
+                     it != d->aisToFeatureId.end(); ) {
+                    if (it.value() == feature->id())
+                        it = d->aisToFeatureId.erase(it);
+                    else
+                        ++it;
+                }
+                // Clean up geomIndex map for removed shapes
+                for (auto it = d->aisToGeomIndex.begin();
+                     it != d->aisToGeomIndex.end(); ) {
+                    if (!d->aisToFeatureId.contains(it.key()))
+                        it = d->aisToGeomIndex.erase(it);
+                    else
+                        ++it;
+                }
+
+                // ② Re-register current shapes
+                int geomIndex = 0;
+                for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
+                    if (!s.IsNull()) {
+                        d->aisToFeatureId[s.get()] = feature->id();
+                        d->aisToGeomIndex[s.get()] = geomIndex++;
+                    }
+                }
+
+                qDebug() << "[CadView] Re-registered" << geomIndex
+                         << "shapes for" << feature->id();
+            };
+
+            // ③ Initial display + registration
             QList<Handle(AIS_Shape)> shapes =
                 sketch->displayInContext(d->context);
-            // ✅ Register each shape → featureId
+
             int geomIndex = 0;
             for (const Handle(AIS_Shape)& s : shapes) {
                 if (!s.IsNull()) {
@@ -458,12 +485,17 @@ void CadView::displayAllFeatures() {
                     d->aisToGeomIndex[s.get()] = geomIndex++;
                 }
             }
-        }
-        else if (!feature->shape().IsNull()) {
+
+            // ✅ Re-register automatically every time sketch rebuilds
+            // UniqueConnection prevents duplicate connections on repeated calls
+            connect(sketch, &Sketch::rebuilt,
+                    this, registerSketchShapes,
+                    Qt::UniqueConnection);
+
+        } else if (!feature->shape().IsNull()) {
             Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
             aisShape->SetColor(Quantity_NOC_YELLOW);
             d->context->Display(aisShape, Standard_False);
-            // ✅ Store the reverse mapping
             d->aisToFeatureId[aisShape.get()] = feature->id();
         }
     }

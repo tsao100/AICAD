@@ -380,11 +380,13 @@ bool Sketch::rebuild() {
             }
         }
 
+
         setShape(compound);
 
         qDebug() << "[Sketch]" << name() << "rebuilt with"
                  << m_wires.size() << "wires and"
                  << m_aisShapes.size() << "AIS shapes";
+        Q_EMIT rebuilt();
         return true;
 
     } catch (const Standard_Failure& e) {
