@@ -32,6 +32,10 @@ void GripManager::attachProvider(IGripProvider* provider)
 
 void GripManager::detach()
 {
+    m_isDragging    = false;
+    m_activeGripId.clear();
+    m_hoveredGripId.clear();
+
     eraseHandles();
     m_handles.clear();
     m_grips.clear();

@@ -23,6 +23,11 @@ namespace aicad {
 namespace cad {
 class Document;
 class Plane;
+class GripManager;
+}
+
+namespace ui {
+class GripEventFilter;
 }
 
 namespace view {
@@ -89,6 +94,8 @@ public:
      * @brief 解構子
      */
     ~CadView() override;
+
+    void setGripManager(cad::GripManager* mgr, ui::GripEventFilter* filter);
 
     /**
      * @brief 設定關聯的文件

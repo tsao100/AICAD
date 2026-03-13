@@ -78,6 +78,7 @@ public:
      */
     bool initialize(core::MenuParser* menuParser);
     void initGripSystem();
+
     /**
      * @brief 顯示主視窗
      */

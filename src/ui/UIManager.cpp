@@ -810,6 +810,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // 安裝事件攔截器到 CadView widget
         d->gripFilter = new GripEventFilter(d->gripManager, d->cadView->view(), this);
         d->cadView->installEventFilter(d->gripFilter);
+        d->cadView->setGripManager(d->gripManager, d->gripFilter);
 
         // ── 當使用者選取 Feature 時，掛載對應 provider ───────────────────────
         connect(d->featureBrowser, &FeatureBrowser::featureSelectedById,

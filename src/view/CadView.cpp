@@ -16,6 +16,7 @@
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
 #include "ui/GripEventFilter.h"
+#include "cad/grips/GripManager.h"
 
 #include <QDebug>
 #include <QTimer>
@@ -96,6 +97,7 @@ public:
     QMap<AIS_InteractiveObject*, int>      aisToGeomIndex;
     QSet<int>                              selectedGeomIndices;
     ui::GripEventFilter* gripFilter;
+    GripManager*         gripManager;
 
     Private()
         : document(nullptr)
@@ -109,6 +111,7 @@ public:
         , pressedButton(Qt::NoButton)
         , middleButtonPressed(false)   // ✅ FIX: 初始化中間鍵狀態
         , gripFilter(nullptr)
+        , gripManager(nullptr)
     {
     }
 
@@ -261,7 +264,124 @@ void CadView::initializeViewer() {
             }
             displayAllFeatures();
         });
-    }
+
+
+        bus->subscribe("feature.visibility-changed", this,
+                       [this](const QVariant& v) {
+                           QVariantMap data = v.toMap();
+                           QString itemId   = data["itemId"].toString();
+                           bool    visible  = data["visible"].toBool();
+
+                           cad::Feature* feature = d->document->findFeature(itemId);
+                           if (!feature) return;
+
+                           feature->setVisible(visible);
+
+                           if (auto* sketch = qobject_cast<cad::Sketch*>(feature)) {
+
+                               if (!visible) {
+                                   // ✅ 順序非常重要：
+                                   // ① 先 detach grips（釋放對 AIS handles 的參考）
+                                   d->gripManager->detach();
+                                   d->gripFilter->clearSketchPlane();
+
+                                   // ② 再清除 map 條目
+                                   for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
+                                       if (!s.IsNull()) {
+                                           d->aisToFeatureId.remove(s.get());
+                                           d->aisToGeomIndex.remove(s.get());
+                                       }
+                                   }
+
+                                   // ③ 最後才 erase from context
+                                   sketch->eraseFromContext(d->context);
+
+                               } else {
+                                   // visible: 顯示並重新註冊
+                                   QList<Handle(AIS_Shape)> shapes =
+                                       sketch->displayInContext(d->context);
+
+                                   // 清除舊條目
+                                   for (auto it = d->aisToFeatureId.begin();
+                                        it != d->aisToFeatureId.end(); ) {
+                                       if (it.value() == itemId)
+                                           it = d->aisToFeatureId.erase(it);
+                                       else
+                                           ++it;
+                                   }
+                                   for (auto it = d->aisToGeomIndex.begin();
+                                        it != d->aisToGeomIndex.end(); ) {
+                                       if (!d->aisToFeatureId.contains(it.key()))
+                                           it = d->aisToGeomIndex.erase(it);
+                                       else
+                                           ++it;
+                                   }
+
+                                   // 重新註冊
+                                   int idx = 0;
+                                   for (const Handle(AIS_Shape)& s : shapes) {
+                                       if (!s.IsNull()) {
+                                           d->aisToFeatureId[s.get()] = itemId;
+                                           d->aisToGeomIndex[s.get()] = idx++;
+                                       }
+                                   }
+
+                                   connect(sketch, &cad::Sketch::rebuilt,
+                                           this, [this, sketch, itemId]() {
+                                               for (auto it = d->aisToFeatureId.begin();
+                                                    it != d->aisToFeatureId.end(); ) {
+                                                   if (it.value() == itemId)
+                                                       it = d->aisToFeatureId.erase(it);
+                                                   else
+                                                       ++it;
+                                               }
+                                               for (auto it = d->aisToGeomIndex.begin();
+                                                    it != d->aisToGeomIndex.end(); ) {
+                                                   if (!d->aisToFeatureId.contains(it.key()))
+                                                       it = d->aisToGeomIndex.erase(it);
+                                                   else
+                                                       ++it;
+                                               }
+                                               int idx = 0;
+                                               for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
+                                                   if (!s.IsNull()) {
+                                                       d->aisToFeatureId[s.get()] = itemId;
+                                                       d->aisToGeomIndex[s.get()] = idx++;
+                                                   }
+                                               }
+                                           },
+                                           Qt::UniqueConnection);
+                               }
+
+                           } else if (!feature->shape().IsNull()) {
+                               // 非 Sketch feature
+                               if (!visible) {
+                                   // ① detach grips first
+                                   d->gripManager->detach();
+
+                                   // ② find and erase
+                                   for (auto it = d->aisToFeatureId.begin();
+                                        it != d->aisToFeatureId.end(); ++it) {
+                                       if (it.value() == itemId) {
+                                           Handle(AIS_InteractiveObject) obj =
+                                               Handle(AIS_InteractiveObject)::DownCast(
+                                                   static_cast<Standard_Transient*>(it.key()));
+                                           if (!obj.IsNull())
+                                               d->context->Erase(obj, Standard_False);
+                                           d->aisToFeatureId.erase(it);
+                                           break;
+                                       }
+                                   }
+                               } else {
+                                   Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
+                                   aisShape->SetColor(Quantity_NOC_YELLOW);
+                                   d->context->Display(aisShape, Standard_False);
+                                   d->aisToFeatureId[aisShape.get()] = itemId;
+                               }
+                           }
+
+                           d->context->UpdateCurrentViewer();
+                       });    }
 
     qDebug() << "[CadView] OCCT viewer initialized";
 }
@@ -355,6 +475,11 @@ ViewGrid* CadView::grid() const {
     return d->grid;
 }
 
+void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
+    d->gripManager = mgr;
+    d->gripFilter  = filter;
+}
+
 void CadView::setDocument(cad::Document* document) {
     if (d->document == document) {
         return;
@@ -433,26 +558,25 @@ RubberBand* CadView::rubberBand() const {
 void CadView::displayAllFeatures() {
     if (!d->document || d->context.IsNull()) return;
 
-    qDebug() << "[CadView] Displaying all features";
     d->context->RemoveAll(Standard_False);
     d->context->Display(d->viewCube, Standard_False);
+    d->aisToFeatureId.clear();  // ✅ 全部重建
+    d->aisToGeomIndex.clear();
 
     for (Feature* feature : d->document->features()) {
-        if (!feature || !feature->isVisible()) continue;
+        if (!feature) continue;
 
         if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
 
-            // ✅ Extract registration into a reusable lambda
-            auto registerSketchShapes = [this, feature, sketch]() {
-                // ① Erase old entries for this feature from both maps
+            auto registerSketchShapes = [this, sketch, feature]() {
+                QString fid = feature->id();
                 for (auto it = d->aisToFeatureId.begin();
                      it != d->aisToFeatureId.end(); ) {
-                    if (it.value() == feature->id())
+                    if (it.value() == fid)
                         it = d->aisToFeatureId.erase(it);
                     else
                         ++it;
                 }
-                // Clean up geomIndex map for removed shapes
                 for (auto it = d->aisToGeomIndex.begin();
                      it != d->aisToGeomIndex.end(); ) {
                     if (!d->aisToFeatureId.contains(it.key()))
@@ -460,34 +584,40 @@ void CadView::displayAllFeatures() {
                     else
                         ++it;
                 }
+                int idx = 0;
+                for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
+                    if (!s.IsNull()) {
+                        d->aisToFeatureId[s.get()] = fid;
+                        d->aisToGeomIndex[s.get()] = idx++;
+                    }
+                }
+            };
 
-                // ② Re-register current shapes
-                int geomIndex = 0;
+            if (feature->isVisible()) {
+                // ✅ visible: 正常顯示並註冊
+                QList<Handle(AIS_Shape)> shapes =
+                    sketch->displayInContext(d->context);
+                int idx = 0;
+                for (const Handle(AIS_Shape)& s : shapes) {
+                    if (!s.IsNull()) {
+                        d->aisToFeatureId[s.get()] = feature->id();
+                        d->aisToGeomIndex[s.get()] = idx++;
+                    }
+                }
+            } else {
+                // ✅ invisible: rebuild 但不 display，只建立 aisShapes
+                //    讓 map 有條目，之後 setVisible(true) 時 display 即生效
+                sketch->rebuild();
+                // 不呼叫 displayInContext，shapes 存在但不顯示
+                int idx = 0;
                 for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
                     if (!s.IsNull()) {
                         d->aisToFeatureId[s.get()] = feature->id();
-                        d->aisToGeomIndex[s.get()] = geomIndex++;
+                        d->aisToGeomIndex[s.get()] = idx++;
                     }
-                }
-
-                qDebug() << "[CadView] Re-registered" << geomIndex
-                         << "shapes for" << feature->id();
-            };
-
-            // ③ Initial display + registration
-            QList<Handle(AIS_Shape)> shapes =
-                sketch->displayInContext(d->context);
-
-            int geomIndex = 0;
-            for (const Handle(AIS_Shape)& s : shapes) {
-                if (!s.IsNull()) {
-                    d->aisToFeatureId[s.get()] = feature->id();
-                    d->aisToGeomIndex[s.get()] = geomIndex++;
                 }
             }
 
-            // ✅ Re-register automatically every time sketch rebuilds
-            // UniqueConnection prevents duplicate connections on repeated calls
             connect(sketch, &Sketch::rebuilt,
                     this, registerSketchShapes,
                     Qt::UniqueConnection);
@@ -495,10 +625,13 @@ void CadView::displayAllFeatures() {
         } else if (!feature->shape().IsNull()) {
             Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
             aisShape->SetColor(Quantity_NOC_YELLOW);
-            d->context->Display(aisShape, Standard_False);
+            if (feature->isVisible())
+                d->context->Display(aisShape, Standard_False);
             d->aisToFeatureId[aisShape.get()] = feature->id();
         }
     }
+
+    d->context->UpdateCurrentViewer();
 }
 
 // ── Reverse lookup ────────────────────────────────────────────────────
@@ -1133,6 +1266,30 @@ void CadView::keyPressEvent(QKeyEvent* event) {
 
             Q_EMIT pointCancelled();
         }
+        // ① 先 detach grips（安全順序同 visibility-changed）
+        if (d->gripManager && d->gripManager->hasActiveGrips()) {
+
+            d->gripManager->detach();
+
+            if (d->gripFilter)
+                d->gripFilter->clearSketchPlane();
+
+            // ② 清除 OCCT selection 高亮
+            if (!d->context.IsNull()) {
+                d->context->ClearSelected(Standard_False);
+                d->context->UpdateCurrentViewer();
+            }
+
+            // ③ 通知其他元件選取已清除
+            auto* bus = core::Application::instance()->eventBus();
+            bus->publish("selection.cleared", QVariant());
+
+            qDebug() << "[CadView] ESC: grips detached";
+
+            event->accept();
+
+        }
+
 
         return;
     }
