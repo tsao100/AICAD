@@ -18,13 +18,15 @@
 #include "view/CadView.h"      // ✅ 添加
 #include <QShortcut>
 #include "ui/CommandOverlayWidget.h"
-#include "ui/CommandHistoryDockWidget.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
 #include "core/MenuParser.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
+#include "cad/grips/GripManager.h"
+#include "cad/grips/SketchGripProvider.h"
+#include "ui/GripEventFilter.h"
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
 
@@ -50,6 +52,8 @@ public:
         , toolManager(nullptr)
         , cadView(nullptr)           // ✅ 添加
         , menuParser(nullptr)  // 新增
+        , gripManager(nullptr)
+        , gripFilter(nullptr)
         , initialized(false)
         , commandOverlay(nullptr)           // ✅ 新增
         , commandLineManager(nullptr)       // ✅ 新增
@@ -69,6 +73,8 @@ public:
     ToolManager* toolManager;
     view::CadView* cadView;          // ✅ 添加
     core::MenuParser* menuParser;  // 新增
+    GripManager* gripManager;
+    GripEventFilter* gripFilter;
     bool initialized;
 
     // ✅ 新增：命令列組件
@@ -88,6 +94,55 @@ UIManager::UIManager(QObject* parent)
 UIManager::~UIManager() {
     qDebug() << "[UIManager] Destroyed";
     delete d;
+}
+
+void UIManager::initGripSystem()
+{
+    // 取得核心系統
+    core::Application* app = core::Application::instance();
+    core::EventBus* bus = app->eventBus();
+    core::DocumentManager* docMgr = app->documentManager();
+
+    // ── A) Feature selected → attach grip provider ────────────────────
+    bus->subscribe("selection.featureSelected", this,
+                   [this, docMgr](const QVariant& v) {
+                    QString featureId = v.toMap()["featureId"].toString();
+                    // ✅ Reconstruct QSet<int> from QVariantList
+                    QSet<int> geomIndices;
+                    for (const QVariant& idx : v.toMap()["geomIndices"].toList())
+                        geomIndices.insert(idx.toInt());
+                    qDebug() << "[UIManager]" << featureId;
+
+        cad::Feature* feature = docMgr->currentDocument()->findFeature(featureId);
+                       if (!feature) return;
+
+                       // Detach old grips first
+                       d->gripManager->detach();
+
+                       // Attach appropriate provider
+                       if (auto* sketch = qobject_cast<cad::Sketch*>(feature)) {
+                           // ✅ Tell GripEventFilter which plane to project onto
+                           d->gripFilter->setSketchPlane(sketch->plane());
+                           d->gripManager->attachProvider(
+                               new cad::SketchGripProvider(sketch, geomIndices));
+                           qDebug() << "[UIManager] Grips attached for sketch:"
+                                    << sketch->id() << " -> " << geomIndices;
+                       }
+                       // future: else if Extrude → ExtrudeGripProvider ...
+                   });
+
+    // ── B) Selection cleared → detach grips ──────────────────────────
+    bus->subscribe("selection.cleared", this,
+                   [this](const QVariant&) {
+                       d->gripManager->detach();
+                       qDebug() << "[UIManager] Grips detached (selection cleared)";
+                   });
+
+    // ── C) Document closed / new document → detach grips ─────────────
+    connect(docMgr->currentDocument(), &cad::Document::aboutToClose,
+            this, [this]() {
+                d->gripManager->detach();
+            });
 }
 
 bool UIManager::initialize(core::MenuParser* menuParser) {
@@ -735,6 +790,57 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         }
                     }
                 });
+
+        // 初始化 GripManager
+        d->gripManager = new GripManager(this);
+        d->gripManager->setContext(d->cadView->context());
+        d->gripManager->setGridSnap(true, 5.0);
+
+        // 安裝事件攔截器到 CadView widget
+        d->gripFilter = new GripEventFilter(d->gripManager, d->cadView->view(), this);
+        d->cadView->installEventFilter(d->gripFilter);
+
+        // ── 當使用者選取 Feature 時，掛載對應 provider ───────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::featureSelectedById,
+                this, [this, docMgr](const QString& featureId) {
+
+                    d->gripManager->detach();   // 先清除舊 grips
+
+            cad::Feature* f = docMgr->currentDocument()->findFeature(featureId);
+                    if (!f) return;
+
+                    if (auto* sketch = qobject_cast<cad::Sketch*>(f)) {
+                        // Sketch 使用 SketchGripProvider
+                        auto* provider = new SketchGripProvider(sketch);
+                        d->gripManager->attachProvider(provider);
+                    }
+                    // 其他 Feature 類型可在此擴展（ExtrudeGripProvider 等）
+                });
+
+        // ── 取消選取時清除 grips ──────────────────────────────────────────────
+        // connect(d->cadView->context().get(), &SomeSelectionSignal, this, [this]() {
+        //     d->gripManager->detach();
+        // });
+
+        // ── 監聽 Grip 拖拉完成（Log / Status bar）────────────────────────────
+        connect(d->gripManager, &GripManager::gripDragFinished,
+                this, [bus](const QString& id, const gp_Pnt& from, const gp_Pnt& to) {
+                    QString msg = QString("Grip '%1' moved Δ(%.2f, %.2f, %.2f)")
+                                      .arg(id)
+                                      .arg(to.X() - from.X())
+                                      .arg(to.Y() - from.Y())
+                                      .arg(to.Z() - from.Z());
+                    bus->publish(Events::COMMAND_LOG, msg);
+                });
+
+        // ── Snap 指示（顯示在 status bar）──────────────────────────────────────
+        connect(d->gripManager, &GripManager::snapOccurred,
+                this, [bus](const SnapResult& s) {
+                    if (s.snapped)
+                        bus->publish(Events::COMMAND_LOG, "Snap: " + s.description);
+                });
+
+        initGripSystem();
 
         d->initialized = true;
         qDebug() << "[UIManager] Initialization completed";

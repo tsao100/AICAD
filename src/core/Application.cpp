@@ -9,11 +9,11 @@
 #include "EventBus.h"
 #include "DocumentManager.h"
 #include "CommandLineManager.h"
-#include "GripManager.h"
 #include "MenuParser.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "command/CommandManager.h"
+#include "command/RectCommand.h"
 #include "command/CommandFactory.h"
 #include "command/CommandAlias.h"
 #include "ui/UIManager.h"
@@ -47,7 +47,7 @@ public:
         , commandAlias(nullptr)        // ✅ 新增
     {
     }
-    
+
     ~Private() {
         delete lispEngine;
         delete viewManager;
@@ -57,13 +57,12 @@ public:
         delete menuParser;
         delete eventBus;
     }
-    
+
     bool initialized;
     EventBus* eventBus;
     DocumentManager* documentManager;
     command::CommandManager* commandManager;
     ui::UIManager* uiManager;
-    GripManager* gripManager;
     view::ViewManager* viewManager;
     scripting::LispEngine* lispEngine;
     MenuParser* menuParser;
@@ -197,9 +196,6 @@ bool Application::initialize() {
             Q_EMIT errorOccurred("Failed to create UIManager");
             return false;
         }
-
-        // 創建 GripManager
-        d->gripManager = new GripManager(d->eventBus, this);
 
         // 6. 初始化 UI 系統
         // qDebug() << "[Application] Initializing UI system...";
@@ -370,27 +366,27 @@ void Application::shutdown() {
     if (!d->initialized) {
         return;
     }
-    
+
     qDebug() << "[Application] Shutting down...";
-    
+
     Q_EMIT aboutToQuit();
-    
+
     // 取消當前執行的命令
     // if (d->commandManager) {
     //     qDebug() << "[Application] Cancelling current command...";
     //     d->commandManager->cancelCurrentCommand();
     // }
-    
+
     // 關閉所有文件
     if (d->documentManager) {
         qDebug() << "[Application] Closing all documents...";
         d->documentManager->closeAll();
     }
-    
+
     // 清理 OCCT 資源 (暫略)
     qDebug() << "[Application] Cleaning up OCCT resources...";
     // TODO: 實際的 OCCT 清理
-    
+
     d->initialized = false;
     qDebug() << "[Application] Shutdown completed";
 }

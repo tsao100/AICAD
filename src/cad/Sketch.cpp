@@ -826,10 +826,10 @@ QList<Handle(AIS_Shape)> Sketch::aisShapes() const {
     return m_aisShapes;
 }
 
-void Sketch::displayInContext(const Handle(AIS_InteractiveContext)& context) {
+QList<Handle(AIS_Shape)> Sketch::displayInContext(const Handle(AIS_InteractiveContext)& context) {
     if (context.IsNull()) {
         qWarning() << "[Sketch]" << name() << "Cannot display: context is null";
-        return;
+        return {};
     }
 
     for (const Handle(AIS_Shape)& aisShape : m_aisShapes) {
@@ -840,6 +840,7 @@ void Sketch::displayInContext(const Handle(AIS_InteractiveContext)& context) {
 
     context->UpdateCurrentViewer();
     qDebug() << "[Sketch]" << name() << "displayed" << m_aisShapes.size() << "shapes";
+    return m_aisShapes;
 }
 
 void Sketch::eraseFromContext(const Handle(AIS_InteractiveContext)& context) {

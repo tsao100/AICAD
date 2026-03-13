@@ -139,6 +139,9 @@ win32 {
 
 SOURCES += \
     src/cad/PlaneManager.cpp \
+    src/cad/grips/AIS_GripHandle.cpp \
+    src/cad/grips/GripManager.cpp \
+    src/cad/grips/SketchGripProvider.cpp \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
@@ -149,7 +152,6 @@ SOURCES += \
     src/command/PolylineCommand.cpp \
     src/command/RectCommand.cpp \
     src/command/SplineCommand.cpp \
-    src/core/GripManager.cpp \
     src/core/geometry/CoordinateTransform.cpp \
     src/core/geometry/WorkPlane.cpp \
     src/main.cpp \
@@ -183,6 +185,7 @@ SOURCES += \
     src/ui/CommandLineStatusBar.cpp \
     src/ui/CommandLineToolbar.cpp \
     src/ui/CommandOverlayWidget.cpp \
+    src/ui/GripEventFilter.cpp \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/PropertyPanel.cpp \
@@ -214,9 +217,15 @@ SOURCES += \
 HEADERS += \
     # Core Module
     src/cad/PlaneManager.h \
+    src/cad/grips/AIS_GripHandle.h \
+    src/cad/grips/GripManager.h \
+    src/cad/grips/GripPoint.h \
+    src/cad/grips/GripProvider.h \
+    src/cad/grips/SketchGripProvider.h \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
     src/command/CommandAlias.h \
+    src/command/GripMoveCommand.h \
     src/core/CommandHistory.h \
     src/command/EllipseCommand.h \
     src/command/InputParser.h \
@@ -227,8 +236,6 @@ HEADERS += \
     src/core/Application.h \
     src/core/EventBus.h \
     src/core/DocumentManager.h \
-    src/core/GripManager.h \
-    src/core/GripTypes.h \
     src/core/PluginManager.h \
     src/core/Settings.h \
     src/core/MenuParser.h \
@@ -256,6 +263,7 @@ HEADERS += \
     src/ui/CommandLineStatusBar.h \
     src/ui/CommandLineToolbar.h \
     src/ui/CommandOverlayWidget.h \
+    src/ui/GripEventFilter.h \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
     src/ui/PropertyPanel.h \

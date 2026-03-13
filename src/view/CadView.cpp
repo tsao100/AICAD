@@ -15,8 +15,7 @@
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
-#include "core/GripTypes.h"
-#include "core/GripManager.h"
+#include "ui/GripEventFilter.h"
 
 #include <QDebug>
 #include <QTimer>
@@ -27,8 +26,6 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <AIS_ViewCube.hxx>
 #include <AIS_AnimationCamera.hxx>
-#include <BRepPrimAPI_MakeBox.hxx>
-#include <BRepBuilderAPI_Transform.hxx>
 #include <Quantity_Color.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Lin.hxx>
@@ -82,8 +79,6 @@ public:
     // 輔助物件
     RubberBand* rubberBand;
     ViewGrid* grid;
-    GripManager* gripManager;
-    bool isDraggingGrip;
 
     // 視圖狀態
     ViewType viewType;
@@ -97,12 +92,15 @@ public:
     Qt::MouseButton pressedButton;
     // ✅ FIX: 追蹤中間鍵是否正在按壓
     bool middleButtonPressed;
+    QMap<AIS_InteractiveObject*, QString>  aisToFeatureId;
+    QMap<AIS_InteractiveObject*, int>      aisToGeomIndex;
+    QSet<int>                              selectedGeomIndices;
+    ui::GripEventFilter* gripFilter;
 
     Private()
         : document(nullptr)
         , rubberBand(nullptr)
         , grid(nullptr)
-        , gripManager(nullptr)
         , viewType(ViewType::Isometric)
         , mode(InteractionMode::Idle)
         , viewInitialized(false)
@@ -110,6 +108,7 @@ public:
         , mousePressed(false)
         , pressedButton(Qt::NoButton)
         , middleButtonPressed(false)   // ✅ FIX: 初始化中間鍵狀態
+        , gripFilter(nullptr)
     {
     }
 
@@ -171,7 +170,7 @@ CadView::~CadView() {
 void CadView::initializeViewer() {
     qDebug() << "[CadView] Initializing OCCT viewer...";
 
-    // 建立顯示連接
+// 建立顯示連接
 #ifdef _WIN32
     Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection();
 #else
@@ -189,7 +188,7 @@ void CadView::initializeViewer() {
     // 建立視圖
     d->view = d->viewer->CreateView();
 
-    // 建立視窗
+// 建立視窗
 #ifdef _WIN32
     Handle(WNT_Window) window = new WNT_Window((Aspect_Handle)winId());
 #else
@@ -431,8 +430,6 @@ RubberBand* CadView::rubberBand() const {
     return d->rubberBand;
 }
 
-
-
 void CadView::displayAllFeatures() {
     if (!d->document || d->context.IsNull()) {
         return;
@@ -451,222 +448,32 @@ void CadView::displayAllFeatures() {
         }
 
         if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
-            sketch->displayInContext(d->context);
+            QList<Handle(AIS_Shape)> shapes =
+                sketch->displayInContext(d->context);
+            // ✅ Register each shape → featureId
+            int geomIndex = 0;
+            for (const Handle(AIS_Shape)& s : shapes) {
+                if (!s.IsNull()) {
+                    d->aisToFeatureId[s.get()] = feature->id();
+                    d->aisToGeomIndex[s.get()] = geomIndex++;
+                }
+            }
         }
         else if (!feature->shape().IsNull()) {
             Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
             aisShape->SetColor(Quantity_NOC_YELLOW);
             d->context->Display(aisShape, Standard_False);
+            // ✅ Store the reverse mapping
+            d->aisToFeatureId[aisShape.get()] = feature->id();
         }
     }
 }
 
-void CadView::setupGripHandling() {
-    EventBus* bus = Application::instance()->eventBus();
-
-    // 訂閱 grip 顯示事件
-    bus->subscribe(Events::GRIP_SHOW, this,
-                   [this](const QVariant& data) {
-                       QVariantMap map = data.toMap();
-                       QVariantList gripsList = map["grips"].toList();
-
-                       // 在視圖中繪製 grips
-                       for (const auto& gripVar : gripsList) {
-                           Grip grip = Grip::fromVariant(gripVar.toMap());
-                           drawGrip(grip);
-                       }
-                   });
-
-    // 訂閱 grip 隱藏事件
-    bus->subscribe(Events::GRIP_HIDE_ALL, this,
-                   [this](const QVariant&) {
-                       clearAllGrips();
-                   });
-}
-
-// ============================================================================
-// ✅ 繪製單個 Grip
-// ============================================================================
-void CadView::drawGrip(const core::Grip& grip) {
-    if (m_context.IsNull()) {
-        qWarning() << "[CadView] Cannot draw grip: context is null";
-        return;
-    }
-
-    QString gripId = getGripId(grip);
-
-    // 如果已存在，先移除
-    if (m_grips.contains(gripId)) {
-        auto& visual = m_grips[gripId];
-        if (!visual.aisShape.IsNull()) {
-            m_context->Erase(visual.aisShape, Standard_False);
-        }
-        m_grips.remove(gripId);
-    }
-
-    // 將 2D 座標轉換為 3D 世界座標
-    gp_Pnt worldPos = gripPositionToWorld(grip.position);
-
-    // 創建 Grip 視覺化物件
-    Handle(AIS_Shape) aisShape = createGripShape(worldPos, grip.isActive);
-
-    if (aisShape.IsNull()) {
-        qWarning() << "[CadView] Failed to create grip shape";
-        return;
-    }
-
-    // 顯示 Grip
-    m_context->Display(aisShape, Standard_False);
-
-    // ✅ 設定 Grip 為可選擇（用於拖動）
-    m_context->SetSelectionModeActive(aisShape, 0, Standard_True);
-
-    // 儲存 Grip 資訊
-    GripVisual visual;
-    visual.grip = grip;
-    visual.aisShape = aisShape;
-    m_grips[gripId] = visual;
-
-    qDebug() << "[CadView] Grip drawn:" << gripId
-             << "at" << grip.position
-             << "type:" << static_cast<int>(grip.type);
-}
-
-// ============================================================================
-// ✅ 清除所有 Grips
-// ============================================================================
-void CadView::clearAllGrips() {
-    if (m_context.IsNull()) {
-        return;
-    }
-
-    qDebug() << "[CadView] Clearing" << m_grips.size() << "grips";
-
-    // 遍歷所有 grips 並移除顯示
-    for (auto it = m_grips.begin(); it != m_grips.end(); ++it) {
-        const GripVisual& visual = it.value();
-
-        if (!visual.aisShape.IsNull()) {
-            m_context->Erase(visual.aisShape, Standard_False);
-            // 不需要手動刪除，Handle 會自動管理記憶體
-        }
-    }
-
-    m_grips.clear();
-
-    // 更新視圖
-    m_context->UpdateCurrentViewer();
-
-    qDebug() << "[CadView] All grips cleared";
-}
-
-// ============================================================================
-// ✅ 更新 Grip 位置（拖動時使用）
-// ============================================================================
-void CadView::updateGripPosition(const QString& gripId, const QVector2D& newPos) {
-    if (!m_grips.contains(gripId)) {
-        qWarning() << "[CadView] Grip not found:" << gripId;
-        return;
-    }
-
-    auto& visual = m_grips[gripId];
-    visual.grip.position = newPos;
-
-    // 重新繪製 Grip
-    drawGrip(visual.grip);
-}
-
-// ============================================================================
-// ✅ 設定 Grip 活動狀態
-// ============================================================================
-void CadView::setGripActive(const QString& gripId, bool active) {
-    if (!m_grips.contains(gripId)) {
-        return;
-    }
-
-    auto& visual = m_grips[gripId];
-    visual.grip.isActive = active;
-
-    // 重新繪製以更新外觀
-    drawGrip(visual.grip);
-}
-
-// ============================================================================
-// ✅ 創建 Grip 的視覺化形狀（小方塊）
-// ============================================================================
-Handle(AIS_Shape) CadView::createGripShape(const gp_Pnt& position, bool isActive) {
-    try {
-        // 決定 Grip 大小
-        double size = isActive ? GRIP_SIZE_ACTIVE : GRIP_SIZE;
-        double halfSize = size / 2.0;
-
-        // 創建方塊（中心在原點）
-        gp_Pnt corner(-halfSize, -halfSize, -halfSize);
-        TopoDS_Shape box = BRepPrimAPI_MakeBox(corner, size, size, size).Shape();
-
-        // 移動到正確位置
-        gp_Trsf transform;
-        transform.SetTranslation(gp_Vec(position.X(), position.Y(), position.Z()));
-        TopoDS_Shape translatedBox = BRepBuilderAPI_Transform(box, transform).Shape();
-
-        // 創建 AIS 物件
-        Handle(AIS_Shape) aisShape = new AIS_Shape(translatedBox);
-
-        // 設定顏色
-        if (isActive) {
-            // 活動狀態：紅色
-            aisShape->SetColor(Quantity_NOC_RED);
-        } else {
-            // 非活動狀態：藍色
-            aisShape->SetColor(Quantity_NOC_BLUE1);
-        }
-
-        // 設定顯示模式為實體
-        aisShape->SetDisplayMode(AIS_Shaded);
-
-        // 設定透明度（可選）
-        // aisShape->SetTransparency(0.3);
-
-        return aisShape;
-
-    } catch (const Standard_Failure& e) {
-        qCritical() << "[CadView] OCCT error creating grip shape:"
-                    << e.GetMessageString();
-        return Handle(AIS_Shape)();
-    }
-}
-
-// ============================================================================
-// ✅ 生成 Grip 的唯一 ID
-// ============================================================================
-QString CadView::getGripId(const core::Grip& grip) const {
-    return QString("%1_%2_%3")
-        .arg(grip.entityId)
-        .arg(static_cast<int>(grip.type))
-        .arg(grip.index);
-}
-
-// ============================================================================
-// ✅ 將 2D Sketch 座標轉換為 3D 世界座標
-// ============================================================================
-gp_Pnt CadView::gripPositionToWorld(const QVector2D& pos2D) {
-    if (!m_currentSketchPlane) {
-        // 沒有 sketch 平面，退化到 XY 平面
-        return gp_Pnt(pos2D.x(), pos2D.y(), 0.0);
-    }
-
-    // 使用 Plane 的轉換方法
-    QVector3D worldPos = m_currentSketchPlane->toWorld(pos2D);
-    return gp_Pnt(worldPos.x(), worldPos.y(), worldPos.z());
-}
-
-// ============================================================================
-// ✅ 設定當前編輯的 Sketch 平面（從外部調用）
-// ============================================================================
-void CadView::setCurrentSketchPlane(cad::Plane* plane) {
-    m_currentSketchPlane = plane;
-    qDebug() << "[CadView] Current sketch plane set:"
-             << (plane ? plane->displayName() : "None");
+// ── Reverse lookup ────────────────────────────────────────────────────
+QString CadView::findFeatureIdByAIS(
+    const Handle(AIS_Shape)& aisShape) const
+{
+    return d->aisToFeatureId.value(aisShape.get(), QString());
 }
 
 void CadView::refreshView() {
@@ -1009,7 +816,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             bus->publish(Events::POINT_ACQUIRED, data);
 
             Q_EMIT pointAcquired(planePt);
-            return;
+            //return;
         }
     }
 
@@ -1043,16 +850,62 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         d->view->StartRotation(xp, yp);
     }
 
-    QVector2D mousePos(event->pos().x(), event->pos().y());
+    if (!d->context.IsNull() && event->button() == Qt::LeftButton) {
 
-    // 檢查是否點擊到 grip
-    Grip* grip = d->gripManager->getGripAtPosition(mousePos);
-    if (grip) {
-        QVariantMap data = grip->toVariant();
-        EventBus* bus = Application::instance()->eventBus();
-        bus->publish(Events::GRIP_DRAG_STARTED, data);
-        d->isDraggingGrip = true;
-        return;
+        // ① Let GripEventFilter have first chance (already installed)
+        //    If grip captured the event, it returns true and Qt won't
+        //    propagate here — but if you handle manually, check:
+        if (d->gripFilter && d->gripFilter->isCapturing()) {
+            return;  // grip is dragging, skip AIS selection
+        }
+
+        // ✅ Shift = add to selection, otherwise replace
+        bool additive = (!d->aisToGeomIndex.empty());
+
+        // ② Tell OCCT to perform selection at this pixel
+        d->context->SelectDetected(
+            additive ? AIS_SelectionScheme_Add
+                     : AIS_SelectionScheme_Replace);
+
+        // ✅ Collect ALL currently selected shapes
+        QMap<QString, QSet<int>> selectionMap;  // featureId → set of geomIndices
+
+        for (d->context->InitSelected();
+             d->context->MoreSelected();
+             d->context->NextSelected())
+        {
+            Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
+                d->context->SelectedInteractive());
+            if (s.IsNull()) continue;
+
+            QString featureId = d->aisToFeatureId.value(s.get());
+            int     geomIdx   = d->aisToGeomIndex.value(s.get(), -1);
+
+            if (!featureId.isEmpty() && geomIdx >= 0) {
+                selectionMap[featureId].insert(geomIdx);
+            }
+        }
+
+        if (!selectionMap.isEmpty()) {
+            // For simplicity, take the first (or only) feature
+            // Multi-feature selection can be extended here
+            QString featureId   = selectionMap.firstKey();
+            QSet<int> indices   = selectionMap[featureId];
+
+            // ✅ Convert QSet<int> to QVariantList for EventBus
+            QVariantList indexList;
+            for (int idx : indices) indexList.append(idx);
+
+            auto* bus = core::Application::instance()->eventBus();
+            QVariantMap data;
+            data["featureId"]   = featureId;
+            data["geomIndices"] = indexList;  // ✅ replaces single geomIndex
+            bus->publish("selection.featureSelected", data);
+
+        } else {
+            auto* bus = core::Application::instance()->eventBus();
+            bus->publish("selection.cleared", QVariant());
+        }
     }
 
     Q_EMIT viewClicked(event->pos(), event->button());
@@ -1108,13 +961,11 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         }
     }
 
-    if (d->isDraggingGrip) {
-        QVector2D mousePos(event->pos().x(), event->pos().y());
-        QVariantMap data;
-        data["position"] = QVariant::fromValue(mousePos);
-        EventBus* bus = Application::instance()->eventBus();
-        bus->publish(Events::GRIP_DRAGGING, data);
+    if (!d->context.IsNull()) {
+        // Update OCCT's internal detected object
+        d->context->MoveTo(event->x(), event->y(), d->view, Standard_True);
     }
+
 }
 
 void CadView::handleViewCubeClick(const QPoint& pos)
@@ -1125,7 +976,7 @@ void CadView::handleViewCubeClick(const QPoint& pos)
         Handle(AIS_InteractiveObject) detected = d->context->DetectedInteractive();
 
         if (detected == d->viewCube) {
-            d->context->Select(Standard_True);
+            d->context->SelectDetected(AIS_SelectionScheme_Replace);
 
             if (!d->viewCube->HasAnimation()) return;
 
@@ -1176,12 +1027,6 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
 
     if (event->button() == Qt::RightButton) {
         d->mousePressed = false;
-    }
-
-    if (d->isDraggingGrip) {
-        EventBus* bus = Application::instance()->eventBus();
-        bus->publish(Events::GRIP_DRAG_ENDED, QVariant());
-        d->isDraggingGrip = false;
     }
 }
 

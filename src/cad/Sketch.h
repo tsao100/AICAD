@@ -204,7 +204,7 @@ public:
 
     QList<TopoDS_Wire> wires() const;
     QList<Handle(AIS_Shape)> aisShapes() const;
-    void displayInContext(const Handle(AIS_InteractiveContext)& context);
+    QList<Handle(AIS_Shape)> displayInContext(const Handle(AIS_InteractiveContext)& context);
     void eraseFromContext(const Handle(AIS_InteractiveContext)& context);
     TopoDS_Wire mainWire() const;
     bool hasClosedProfile() const;
