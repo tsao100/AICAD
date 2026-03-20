@@ -177,6 +177,10 @@ SOURCES += \
     src/geometry/GeometryBuilder.cpp \
     \
     # UI Module (James - 用戶界面)
+    src/osnap/OSnapDetector.cpp \
+    src/osnap/OSnapIndicator.cpp \
+    src/osnap/OSnapManager.cpp \
+    src/osnap/OSnapToolbar.cpp \
     src/ui/AutoCompleteModel.cpp \
     src/ui/CommandLineLayout.cpp \
     src/core/CommandLineManager.cpp \
@@ -255,6 +259,11 @@ HEADERS += \
     src/geometry/GeometryBuilder.h \
     \
     # UI Module (James)
+    src/osnap/OSnapDetector.h \
+    src/osnap/OSnapIndicator.h \
+    src/osnap/OSnapManager.h \
+    src/osnap/OSnapToolbar.h \
+    src/osnap/OSnapTypes.h \
     src/ui/AutoCompleteModel.h \
     src/ui/CommandLineLayout.h \
     src/core/CommandLineManager.h \
