@@ -1013,6 +1013,34 @@ void UIManager::showMainWindow() {
     d->mainWindow->show();
 }
 
+void UIManager::onSketchEditStarted(Sketch* sketch)
+{
+    if (!sketch) return;
+
+    // 1️⃣ 設定 OSnap 平面
+    if (d->cadView && d->cadView->snapManager()) {
+        d->cadView->snapManager()->setActivePlane(sketch->plane());
+        d->cadView->snapManager()->setSnapEnabled(true);
+    }
+
+    // 2️⃣ 發事件（讓其他系統同步）
+    auto* bus = Application::instance()->eventBus();
+    bus->publish("sketch.editStarted", QVariant::fromValue(sketch));
+}
+
+void UIManager::onSketchEditEnded()
+{
+    // 1️⃣ 清掉 snap 狀態
+    if (d->cadView && d->cadView->snapManager()) {
+        d->cadView->snapManager()->setActivePlane(nullptr);
+        d->cadView->snapManager()->clearLastInputPoint();
+    }
+
+    // 2️⃣ 發事件
+    auto* bus = Application::instance()->eventBus();
+    bus->publish("sketch.editEnded", QVariant{});
+}
+
 MainWindow* UIManager::mainWindow() const {
     return d->mainWindow;
 }

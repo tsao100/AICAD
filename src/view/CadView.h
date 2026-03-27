@@ -17,8 +17,12 @@
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 
-namespace aicad {
+#include "osnap/OSnapManager.h"
 
+namespace aicad {
+namespace osnap {
+class OSnapManager;
+}
 // 前向宣告
 namespace cad {
 class Document;
@@ -205,6 +209,8 @@ public:
 
     ViewGrid* grid() const;  // Add this public method declaration
 
+    osnap::OSnapManager* snapManager() const;
+
 public Q_SLOTS:
     /**
      * @brief 設定視圖為俯視圖
@@ -369,6 +375,13 @@ private:
 
     void showFinishSketchButton();
     void hideFinishSketchButton();
+
+    // ── Object Snap ──────────────────────────────────────────
+    aicad::osnap::OSnapManager* m_snapManager = nullptr;
+
+    /// 從 snap 取得目前座標（優先 snap，退而其次用 mouse pick）
+    gp_Pnt currentInputPoint(int mouseX, int mouseY) const;
+
 
     class Private;
     Private* d;

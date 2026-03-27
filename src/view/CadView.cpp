@@ -15,6 +15,7 @@
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
+#include "osnap/OSnapManager.h"
 #include "ui/GripEventFilter.h"
 #include "cad/grips/GripManager.h"
 
@@ -162,6 +163,8 @@ CadView::CadView(QWidget* parent)
 
     m_selectionFilter = "all";
 
+    m_snapManager = new osnap::OSnapManager(this);
+
     qDebug() << "[CadView] Created";
 }
 
@@ -232,6 +235,36 @@ void CadView::initializeViewer() {
 
     // 設定初始視角
     setViewType(ViewType::Isometric);
+
+    // ── 初始化 OSnap ───────────────────────────────────────────────────────
+    m_snapManager = new aicad::osnap::OSnapManager(this);
+    m_snapManager->initialize(d->context, d->view);
+
+    // 預設設定（可根據需求調整）
+    aicad::osnap::OSnapSettings settings;
+    settings.enabledTypes   = aicad::osnap::SnapType::Standard;
+    settings.pickPixelRadius = 12.0;
+    settings.magnetRadius    = 8.0;
+    settings.showTooltip     = true;
+    m_snapManager->setSettings(settings);
+
+    // 連接 OSnap 確認事件 → 通知 Command 系統
+    connect(m_snapManager, &aicad::osnap::OSnapManager::snapConfirmed,
+            this, [](const gp_Pnt& pt, aicad::osnap::SnapType type) {
+                // 發布到 EventBus，讓正在執行的 Command 接收到確認的點
+                auto* bus = aicad::core::Application::instance()->eventBus();
+                if (bus) {
+                    QVariantMap data;
+                    data["x"]        = pt.X();
+                    data["y"]        = pt.Y();
+                    data["z"]        = pt.Z();
+                    data["snapType"] = static_cast<int>(type);
+                    bus->publish("cadview.pointPicked", data);
+                }
+            });
+
+    qDebug() << "[CadView] OSnapManager initialized";
+
 
     // 延遲初始化
     QTimer::singleShot(0, this, [this]() {
@@ -473,6 +506,11 @@ QString CadView::identifyPlane(const Handle(AIS_Shape)& shape) {
 
 ViewGrid* CadView::grid() const {
     return d->grid;
+}
+
+osnap::OSnapManager*  CadView::snapManager() const
+{
+    return m_snapManager;
 }
 
 void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
@@ -985,6 +1023,18 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         }
     }
 
+    int x = event->x();
+    int y = event->y();
+
+    // ── 使用 OSnap 確認點（若有 snap 鎖定則使用 snap 座標）─────────────────
+    if (m_snapManager && m_snapManager->onMousePress(x, y)) {
+        // OSnapManager 已發布 "osnap.confirmed" 事件
+        // 也已 emit snapConfirmed signal
+        // Command 系統會從 EventBus 接收座標，不需要額外處理
+        return;
+    }
+
+
     if (!d->context.IsNull() && !d->view.IsNull()) {
 
         if (event->button() == Qt::LeftButton) {
@@ -1077,6 +1127,19 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
+    int x = event->x();
+    int y = event->y();
+
+    // ── OSnap 偵測（每次 mouse move）──────────────────────────────────────
+    // 注意：Grip 系統已透過 EventBus 設定 m_snapManager 的 m_gripActive 旗標，
+    //       所以這裡不需要額外判斷。
+    if (m_snapManager && m_snapManager->isSnapEnabled()) {
+        m_snapManager->onMouseMove(x, y);
+    }
+
+    // ── 原有的 OCCT move 處理 ─────────────────────────────────────────────
+    d->context->MoveTo(x, y, d->view, Standard_True);
+
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
 

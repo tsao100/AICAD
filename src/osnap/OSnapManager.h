@@ -43,7 +43,10 @@
 #include <optional>
 
 namespace aicad {
-namespace cad  { class Plane; }
+namespace cad  {
+class Plane;
+class Sketch;
+}
 namespace osnap {
 
 class OSnapManager : public QObject
@@ -77,6 +80,7 @@ public:
     // ── 草圖平面模式（2D） ─────────────────────────────────────────────────────
     void setActivePlane(cad::Plane* plane);
     cad::Plane* activePlane() const;
+    void setActiveSketch(cad::Sketch* sketch);   // ⭐新增
 
     /// 設定「上一個確認的輸入點」（用於 Perpendicular/Tangent）
     void setLastInputPoint(const gp_Pnt& pt);

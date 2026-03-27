@@ -17,6 +17,7 @@ namespace aicad {
 // 前向宣告
 namespace cad {
     class Document;
+    class Sketch;
 }
 
 namespace view {
@@ -178,6 +179,11 @@ Q_SIGNALS:
      * @brief 主視窗關閉時發出
      */
     void mainWindowClosed();
+
+public slots:
+    void onSketchEditStarted(cad::Sketch* sketch);
+    void onSketchEditEnded();
+
     
 private:
 
