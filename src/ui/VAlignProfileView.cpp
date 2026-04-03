@@ -819,7 +819,7 @@ void VAlignProfileView::drawVipPoints(QPainter& p, const QVector<VcData>& vcs) c
         }
 
         // Diamond shape
-        const QPolygonF diamond = {
+        const QPolygonF diamond = QVector<QPointF>{
             QPointF(cx,         cy - kVipR),
             QPointF(cx + kVipR, cy),
             QPointF(cx,         cy + kVipR),
@@ -1054,7 +1054,7 @@ void VAlignProfileView::drawStripVipTicks(QPainter& p) const
         p.drawLine(sx, stripTop(), sx, stripTop() + kSH);
 
         // Downward triangle at the top of the strip
-        QPolygonF tri = {
+        QPolygonF tri = QVector<QPointF>{
             QPointF(sx,     stripTop() + 3),
             QPointF(sx + 5, stripTop() + 12),
             QPointF(sx - 5, stripTop() + 12),
