@@ -158,7 +158,7 @@ void HorizontalAlignment::load(const QVector<AlignmentPoint>& points)
 
         auto elem = AlignmentElementFactory::create(prev, cur, next);
         if (elem) {
-            m_elements.append(std::move(elem));
+            m_elements.push_back(std::move(elem));
         } else {
             qWarning() << "[HorizontalAlignment] Failed to create element at index" << i
                        << "tsc=" << cur.tsc;
@@ -177,11 +177,12 @@ void HorizontalAlignment::clear()
     Q_EMIT dataChanged();
 }
 
-const QList<const AlignmentElement*> HorizontalAlignment::elements() const
+const std::vector<const AlignmentElement*> HorizontalAlignment::elements() const
 {
-    QList<const AlignmentElement*> result;
+    std::vector<const AlignmentElement*> result;
+    result.reserve(m_elements.size());
     for (const auto& e : m_elements)
-        result.append(e.get());
+        result.push_back(e.get());
     return result;
 }
 
@@ -276,7 +277,7 @@ QPointF HorizontalAlignment::getPW(double x, double y) const
 
 QList<QPointF> HorizontalAlignment::getAllPW(double x, double y) const
 {
-    if (m_elements.isEmpty()) return {};
+    if (m_elements.empty()) return {};
 
     QList<QPointF> results;
     double         minAbsW = kInf;

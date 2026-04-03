@@ -554,7 +554,7 @@ public:
      * @param next  End   keypoint of the element.
      * @return      Newly allocated element (caller takes ownership).
      */
-    std::unique_ptr<AlignmentElement>     create(
+    static std::unique_ptr<AlignmentElement> create(
         const AlignmentPoint& prev,
         const AlignmentPoint& cur,
         const AlignmentPoint& next);

@@ -39,6 +39,7 @@
 #include <QPointF>
 #include <QVector3D>
 #include <memory>
+#include <vector>
 #include <limits>
 
 namespace aicad {
@@ -150,11 +151,11 @@ public:
     void load(const QVector<AlignmentPoint>& points);
     void clear();
 
-    bool isEmpty() const { return m_elements.isEmpty(); }
-    int  count()   const { return m_elements.size(); }
+    bool isEmpty() const { return m_elements.empty(); }
+    int  count()   const { return static_cast<int>(m_elements.size()); }
 
     const QVector<AlignmentPoint>&       rawPoints() const { return m_pts; }
-    const QList<const AlignmentElement*> elements()  const;
+    const std::vector<const AlignmentElement*> elements()  const;
 
     /** Index into raw keypoints for chainage p (binary search). */
     int rawIndexAt(double p) const;
@@ -214,7 +215,7 @@ private:
     int     leftRightSign          (int rawIdx) const;
 
     QVector<AlignmentPoint>                   m_pts;
-    QList<std::unique_ptr<AlignmentElement>>  m_elements;
+    std::vector<std::unique_ptr<AlignmentElement>>    m_elements;
     double                                    m_offsetLimit = 500.0;
 };
 
