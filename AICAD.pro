@@ -181,6 +181,8 @@ SOURCES += \
     src/osnap/OSnapIndicator.cpp \
     src/osnap/OSnapManager.cpp \
     src/osnap/OSnapToolbar.cpp \
+    src/railway/RailwayAlignment.cpp \
+    src/railway/RailwayAlignmentElement.cpp \
     src/ui/AutoCompleteModel.cpp \
     src/ui/CommandLineLayout.cpp \
     src/core/CommandLineManager.cpp \
@@ -264,6 +266,8 @@ HEADERS += \
     src/osnap/OSnapManager.h \
     src/osnap/OSnapToolbar.h \
     src/osnap/OSnapTypes.h \
+    src/railway/RailwayAlignment.h \
+    src/railway/RailwayAlignmentElement.h \
     src/ui/AutoCompleteModel.h \
     src/ui/CommandLineLayout.h \
     src/core/CommandLineManager.h \
