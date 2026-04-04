@@ -71,6 +71,7 @@ private:
     void setupToolbar();
     void setupContent();
     void updateCursorLabel(double ch, double el);
+    void refreshPanel(int selIdx);
 
     // ── Widgets ────────────────────────────────────────────────────────────
     QToolBar*             m_toolbar     = nullptr;
