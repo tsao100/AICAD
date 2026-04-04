@@ -154,6 +154,11 @@ SOURCES += \
     src/command/SplineCommand.cpp \
     src/core/geometry/CoordinateTransform.cpp \
     src/core/geometry/WorkPlane.cpp \
+    src/drawing/DrawingSheet.cpp \
+    src/drawing/DrawingSheetDialog.cpp \
+    src/drawing/DrawingSheetManager.cpp \
+    src/drawing/DrawingSheetWidget.cpp \
+    src/drawing/DrawingViewRenderer.cpp \
     src/main.cpp \
     \
     # Core Module (核心系統)
@@ -260,6 +265,10 @@ HEADERS += \
     # Geometry Module                # ✅ 添加
     src/core/geometry/CoordinateTransform.h \
     src/core/geometry/WorkPlane.h \
+    src/drawing/DrawingSheet.h \
+    src/drawing/DrawingSheetManager.h \
+    src/drawing/DrawingSheetWidget.h \
+    src/drawing/DrawingViewRenderer.h \
     src/geometry/GeometryBuilder.h \
     \
     # UI Module (James)
