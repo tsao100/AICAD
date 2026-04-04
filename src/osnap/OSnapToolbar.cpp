@@ -102,7 +102,13 @@ void OSnapToolbar::addSnapButton(SnapType type,
                                  const QString& tooltip)
 {
     QAction* action = new QAction(this);
-    action->setIcon(QIcon(iconPath));
+    QIcon icon(iconPath);
+    if (icon.isNull() || icon.availableSizes().isEmpty()) {
+        // ✅ Fallback：無圖示時顯示縮寫文字
+        action->setText(snapTypeName(type).left(3));
+    } else {
+        action->setIcon(icon);
+    }
     action->setToolTip(tooltip);
     action->setCheckable(true);
     action->setData(static_cast<int>(type));

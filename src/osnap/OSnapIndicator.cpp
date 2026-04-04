@@ -67,7 +67,20 @@ void OSnapIndicator::Compute(const Handle(PrsMgr_PresentationManager)& /*mgr*/,
         return;
 
     const gp_Pnt& p = m_candidate.worldPoint;
-    const double  s = m_screenSize;  // 符號「視覺半徑」（用模型單位近似）
+
+    // ✅ 動態計算：將 m_screenSize 像素換算為當前視圖的世界單位
+    double s = m_screenSize;  // fallback
+    if (!m_view.IsNull()) {
+        // 用兩個相鄰螢幕點之間的世界距離推算
+        double x1, y1, z1, x2, y2, z2;
+        Standard_Integer px, py;
+        m_view->Convert(p.X(), p.Y(), p.Z(), px, py);
+        m_view->Convert(px, py, x1, y1, z1);
+        m_view->Convert(px + static_cast<int>(m_screenSize), py, x2, y2, z2);
+        gp_Pnt wp1(x1, y1, z1), wp2(x2, y2, z2);
+        double worldDist = wp1.Distance(wp2);
+        if (worldDist > 1e-10) s = worldDist;
+    }
 
     // 建立 Graphic3d_Group 並設定顏色
     Handle(Graphic3d_Group) grp = prs->NewGroup();

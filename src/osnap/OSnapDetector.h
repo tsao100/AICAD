@@ -26,6 +26,7 @@
 #pragma once
 
 #include "OSnapTypes.h"
+#include "cad/Sketch.h"
 
 #include <AIS_InteractiveContext.hxx>
 #include <V3d_View.hxx>
@@ -73,6 +74,9 @@ public:
     void setActivePlane(cad::Plane* plane)     { m_activePlane = plane; }
     cad::Plane* activePlane() const            { return m_activePlane; }
 
+    void setActiveSketch(cad::Sketch* sketch) { m_activeSketch = sketch; }
+    cad::Sketch* activeSketch() const         { return m_activeSketch; }
+
     /// 設定「上一個輸入點」（用於 Perpendicular / Tangent / Parallel 計算）
     void setLastInputPoint(const gp_Pnt& pt)   { m_lastInputPoint = pt; m_hasLastPoint = true; }
     void clearLastInputPoint()                 { m_hasLastPoint = false; }
@@ -110,18 +114,22 @@ private:
     // ── 各類型偵測子程式 ──────────────────────────────────────────────────────
     void detectEndpoints   (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                          const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                         int mouseX, int mouseY,         // ✅ 新增
                          QVector<SnapCandidate>&);
 
     void detectMidpoints   (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                          const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                         int mouseX, int mouseY,         // ✅ 新增
                          QVector<SnapCandidate>&);
 
     void detectCenters     (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                        const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                       int mouseX, int mouseY,         // ✅ 新增
                        QVector<SnapCandidate>&);
 
     void detectQuadrants   (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                          const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                         int mouseX, int mouseY,         // ✅ 新增
                          QVector<SnapCandidate>&);
 
     void detectIntersections(const QVector<TopoDS_Shape>& shapes,
@@ -131,10 +139,12 @@ private:
 
     void detectPerpendicular(const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                              const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                             int mouseX, int mouseY,         // ✅ 新增
                              QVector<SnapCandidate>&);
 
     void detectTangent     (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                        const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                       int mouseX, int mouseY,         // ✅ 新增
                        QVector<SnapCandidate>&);
 
     void detectNearest     (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
@@ -178,6 +188,7 @@ private:
     bool                       m_hasLastPoint = false;
     gp_Pnt                     m_lastInputPoint;
     QVector<SnapCandidate>     m_lastCandidates;
+    cad::Sketch* m_activeSketch = nullptr;
 
     static constexpr double    kMinEdgeLength = 1e-7;
 };

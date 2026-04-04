@@ -11,6 +11,7 @@
 #include <QObject>
 #include <QString>
 #include <QMainWindow>
+#include "osnap/OSnapToolbar.h"
 
 namespace aicad {
 
@@ -193,6 +194,8 @@ private:
 
     void setupCommandLine();
     void connectCommandLineEvents();
+
+    osnap::OSnapToolbar* m_snapToolbar = nullptr;
 
     class Private;
     Private* d;

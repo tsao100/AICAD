@@ -21,6 +21,7 @@
 
 #include "OSnapTypes.h"
 
+#include <V3d_View.hxx>
 #include <AIS_InteractiveObject.hxx>
 #include <Graphic3d_ZLayerId.hxx>
 #include <Graphic3d_ArrayOfPolylines.hxx>
@@ -59,6 +60,8 @@ public:
 
     const SnapCandidate& currentCandidate() const { return m_candidate; }
 
+    void setView(const Handle(V3d_View)& view) { m_view = view; }
+
 protected:
     /// AIS_InteractiveObject 必要覆寫
     virtual void Compute(const Handle(PrsMgr_PresentationManager)& mgr,
@@ -85,6 +88,7 @@ private:
     SnapCandidate m_candidate;
     bool          m_hasCandidate = false;
     double        m_screenSize   = 14.0;  ///< 符號大小（像素）
+    Handle(V3d_View) m_view;
 };
 
 } // namespace osnap

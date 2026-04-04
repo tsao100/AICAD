@@ -214,6 +214,13 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->commandOverlay->setLayoutMode(LayoutMode::Standard);
         d->commandOverlay->setLayoutMode(LayoutMode::Compact);
 
+        // 建立並加入 OSnap 工具列
+        if (d->cadView && d->cadView->snapManager()) {
+            m_snapToolbar = new osnap::OSnapToolbar(
+                d->cadView->snapManager(), d->mainWindow);
+            d->mainWindow->addToolBar(Qt::BottomToolBarArea, m_snapToolbar);
+        }
+
         // auto* cmdOverlay =
         //     new aicad::ui::CommandOverlayWidget(d->cadView);
         // // 初始位置
@@ -1020,6 +1027,7 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
     // 1️⃣ 設定 OSnap 平面
     if (d->cadView && d->cadView->snapManager()) {
         d->cadView->snapManager()->setActivePlane(sketch->plane());
+        d->cadView->snapManager()->setActiveSketch(sketch);   // ✅ 新增
         d->cadView->snapManager()->setSnapEnabled(true);
     }
 
@@ -1033,6 +1041,7 @@ void UIManager::onSketchEditEnded()
     // 1️⃣ 清掉 snap 狀態
     if (d->cadView && d->cadView->snapManager()) {
         d->cadView->snapManager()->setActivePlane(nullptr);
+        d->cadView->snapManager()->setActiveSketch(nullptr);  // ✅ 新增
         d->cadView->snapManager()->clearLastInputPoint();
     }
 

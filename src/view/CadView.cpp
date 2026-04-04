@@ -163,8 +163,6 @@ CadView::CadView(QWidget* parent)
 
     m_selectionFilter = "all";
 
-    m_snapManager = new osnap::OSnapManager(this);
-
     qDebug() << "[CadView] Created";
 }
 
@@ -250,17 +248,19 @@ void CadView::initializeViewer() {
 
     // 連接 OSnap 確認事件 → 通知 Command 系統
     connect(m_snapManager, &aicad::osnap::OSnapManager::snapConfirmed,
-            this, [](const gp_Pnt& pt, aicad::osnap::SnapType type) {
-                // 發布到 EventBus，讓正在執行的 Command 接收到確認的點
+            this, [this](const gp_Pnt& pt, aicad::osnap::SnapType /*type*/) {
                 auto* bus = aicad::core::Application::instance()->eventBus();
-                if (bus) {
-                    QVariantMap data;
-                    data["x"]        = pt.X();
-                    data["y"]        = pt.Y();
-                    data["z"]        = pt.Z();
-                    data["snapType"] = static_cast<int>(type);
-                    bus->publish("cadview.pointPicked", data);
-                }
+                if (!bus) return;
+
+                // 取得 2D 草圖平面座標（OSnapManager 已持有 activePlane）
+                std::optional<QVector2D> pt2d = m_snapManager->snapPoint2D();
+                QVector2D planePt = pt2d.has_value() ? pt2d.value()
+                                                     : screenToPlane(mapFromGlobal(QCursor::pos()));
+
+                QVariantMap data;
+                data["point"] = QVariant::fromValue(planePt);
+                bus->publish(core::Events::POINT_ACQUIRED, data);  // ✅ Command 系統能收到
+                Q_EMIT pointAcquired(planePt);
             });
 
     qDebug() << "[CadView] OSnapManager initialized";
@@ -789,6 +789,16 @@ void CadView::setGridEnabled(bool enabled) {
             d->grid->hide();
         }
     }
+    // ✅ 同步 OSnap 網格吸附設定
+    if (m_snapManager) {
+        osnap::OSnapSettings s = m_snapManager->settings();
+        s.gridSnapEnabled = enabled;
+        // 從 ViewGrid 同步間距
+        if (d->grid && enabled) {
+            s.gridSpacing = d->grid->spacing();  // 需確認 ViewGrid 有 spacing() 方法
+        }
+        m_snapManager->setSettings(s);
+    }
 }
 
 bool CadView::isGridEnabled() const {
@@ -1007,33 +1017,24 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     }
 
     if (event->button() == Qt::LeftButton) {
-        if (d->mode == InteractionMode::Sketching) {
-            QVector2D planePt = screenToPlane(event->pos());
+        int x = event->x();
+        int y = event->y();
 
-            EventBus* bus = Application::instance()->eventBus();
-
-            QVariantMap data;
-            data["point"] = QVariant::fromValue(planePt);
-            data["screenPos"] = event->pos();
-
-            bus->publish(Events::POINT_ACQUIRED, data);
-
-            Q_EMIT pointAcquired(planePt);
-            //return;
+        // ✅ 優先讓 OSnap 確認（它內部會發布 POINT_ACQUIRED）
+        if (m_snapManager && m_snapManager->isSnapActive()) {
+            m_snapManager->onMousePress(x, y);
+            return;   // snap 已處理，不重複發布原始座標
         }
-    }
 
-    int x = event->x();
-    int y = event->y();
-
-    // ── 使用 OSnap 確認點（若有 snap 鎖定則使用 snap 座標）─────────────────
-    if (m_snapManager && m_snapManager->onMousePress(x, y)) {
-        // OSnapManager 已發布 "osnap.confirmed" 事件
-        // 也已 emit snapConfirmed signal
-        // Command 系統會從 EventBus 接收座標，不需要額外處理
+        // 無 snap 鎖定，退而使用原始平面座標
+        QVector2D planePt = screenToPlane(event->pos());
+        auto* bus = core::Application::instance()->eventBus();
+        QVariantMap data;
+        data["point"] = QVariant::fromValue(planePt);
+        bus->publish(core::Events::POINT_ACQUIRED, data);
+        Q_EMIT pointAcquired(planePt);
         return;
     }
-
 
     if (!d->context.IsNull() && !d->view.IsNull()) {
 
@@ -1183,7 +1184,17 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     // 草圖模式：更新橡皮筋
     if (d->mode == InteractionMode::Sketching) {
         if (d->rubberBand) {
-            QVector2D planePt = screenToPlane(event->pos());
+            QVector2D planePt;
+
+            // ✅ 優先使用 snap 鎖定座標
+            if (m_snapManager && m_snapManager->isSnapActive()) {
+                auto pt2d = m_snapManager->snapPoint2D();
+                planePt = pt2d.has_value() ? pt2d.value()
+                                           : screenToPlane(event->pos());
+            } else {
+                planePt = screenToPlane(event->pos());
+            }
+
             d->rubberBand->setCurrentPoint(planePt);
             d->rubberBand->update();
         }

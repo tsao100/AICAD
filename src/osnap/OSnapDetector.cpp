@@ -103,10 +103,11 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     }
 
     // ── Step 4: 過濾掉超過 pickRadius 的候選 ──────────────────────────────────
+    // ✅ 修正：鎖定用 magnetRadius，收集用 pickPixelRadius
     candidates.erase(
         std::remove_if(candidates.begin(), candidates.end(),
                        [this](const SnapCandidate& c) {
-                           return c.screenDist > m_settings.pickPixelRadius;
+                           return c.screenDist > m_settings.magnetRadius;  // 磁吸半徑
                        }),
         candidates.end());
 
@@ -195,22 +196,22 @@ void OSnapDetector::detectOnShape(
 
     if (enabled.testFlag(SnapType::Endpoint) ||
         enabled.testFlag(SnapType::Node)) {
-        detectEndpoints(shape, aisObj, mouseWorldPt, view, candidates);
+        detectEndpoints(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
     if (enabled.testFlag(SnapType::Midpoint)) {
-        detectMidpoints(shape, aisObj, mouseWorldPt, view, candidates);
+        detectMidpoints(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
     if (enabled.testFlag(SnapType::Center)) {
-        detectCenters(shape, aisObj, mouseWorldPt, view, candidates);
+        detectCenters(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
     if (enabled.testFlag(SnapType::Quadrant)) {
-        detectQuadrants(shape, aisObj, mouseWorldPt, view, candidates);
+        detectQuadrants(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
     if (enabled.testFlag(SnapType::Perpendicular) && m_hasLastPoint) {
-        detectPerpendicular(shape, aisObj, mouseWorldPt, view, candidates);
+        detectPerpendicular(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
     if (enabled.testFlag(SnapType::Tangent) && m_hasLastPoint) {
-        detectTangent(shape, aisObj, mouseWorldPt, view, candidates);
+        detectTangent(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
     if (enabled.testFlag(SnapType::Nearest)) {
         detectNearest(shape, aisObj, mouseWorldPt, view, candidates);
@@ -225,6 +226,7 @@ void OSnapDetector::detectEndpoints(
     const Handle(AIS_InteractiveObject)& aisObj,
     const gp_Pnt& /*mousePt*/,
     const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
     // 使用 TopExp::MapShapes 避免重複頂點
@@ -241,7 +243,7 @@ void OSnapDetector::detectEndpoints(
         c.sourceShape  = shape;
         c.sourceVertex = v;
         c.sourceAIS    = aisObj;
-        c.screenDist   = screenDistance(view, pt, 0, 0);  // 暫時用 0,0（後面會重算）
+        c.screenDist   = screenDistance(view, pt, mouseX, mouseY);
         c.isValid      = true;
 
         // 使用 OCCT convert 取得精確螢幕距離
@@ -264,6 +266,7 @@ void OSnapDetector::detectMidpoints(
     const Handle(AIS_InteractiveObject)& aisObj,
     const gp_Pnt& /*mousePt*/,
     const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
     TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
@@ -284,6 +287,7 @@ void OSnapDetector::detectMidpoints(
         c.sourceEdge  = edge;
         c.sourceAIS   = aisObj;
         c.paramOnEdge = 0.5;
+        c.screenDist   = screenDistance(view, midPt, mouseX, mouseY);
         c.isValid     = true;
         out.append(c);
     }
@@ -297,6 +301,7 @@ void OSnapDetector::detectCenters(
     const Handle(AIS_InteractiveObject)& aisObj,
     const gp_Pnt& /*mousePt*/,
     const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
     TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
@@ -335,6 +340,7 @@ void OSnapDetector::detectCenters(
             c.sourceShape = shape;
             c.sourceEdge  = edge;
             c.sourceAIS   = aisObj;
+            c.screenDist   = screenDistance(view, center, mouseX, mouseY);
             c.isValid     = true;
             out.append(c);
         }
@@ -349,6 +355,7 @@ void OSnapDetector::detectQuadrants(
     const Handle(AIS_InteractiveObject)& aisObj,
     const gp_Pnt& /*mousePt*/,
     const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
     TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
@@ -386,6 +393,7 @@ void OSnapDetector::detectQuadrants(
             c.sourceEdge  = edge;
             c.sourceAIS   = aisObj;
             c.paramOnEdge = normAngle;
+            c.screenDist   = screenDistance(view, qpt, mouseX, mouseY);
             c.isValid     = true;
             out.append(c);
         }
@@ -446,6 +454,7 @@ void OSnapDetector::detectPerpendicular(
     const Handle(AIS_InteractiveObject)& aisObj,
     const gp_Pnt& /*mousePt*/,
     const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
     if (!m_hasLastPoint) return;
@@ -470,6 +479,7 @@ void OSnapDetector::detectPerpendicular(
         c.sourceEdge  = edge;
         c.sourceAIS   = aisObj;
         c.paramOnEdge = proj.LowerDistanceParameter();
+        c.screenDist   = screenDistance(view, foot, mouseX, mouseY);
         c.isValid     = true;
         out.append(c);
     }
@@ -484,6 +494,7 @@ void OSnapDetector::detectTangent(
     const Handle(AIS_InteractiveObject)& aisObj,
     const gp_Pnt& mousePt,
     const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
     if (!m_hasLastPoint) return;
@@ -539,6 +550,7 @@ void OSnapDetector::detectTangent(
             c.sourceShape = shape;
             c.sourceEdge  = edge;
             c.sourceAIS   = aisObj;
+            c.screenDist   = screenDistance(view, tangPt, mouseX, mouseY);
             c.isValid     = true;
             out.append(c);
         }
@@ -573,7 +585,7 @@ void OSnapDetector::detectNearest(
         Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
         if (!curve.IsNull()) {
             Standard_Real param = 0.0;
-            dist.ParOnEdgeS1(1, param);
+            dist.ParOnEdgeS2(1, param);
             double relParam = (param - first) / (last - first + 1e-12);
             // 若接近端點或中點，跳過（讓更高優先的 snap 覆蓋）
             if (relParam < 0.02 || relParam > 0.98 ||

@@ -40,6 +40,8 @@ void OSnapManager::initialize(const Handle(AIS_InteractiveContext)& context,
         return;
     }
 
+    m_indicator->setView(view);   // ✅ 新增
+
     m_context = context;
     m_view    = view;
 
@@ -118,6 +120,12 @@ void OSnapManager::setActivePlane(cad::Plane* plane) {
 
 cad::Plane* OSnapManager::activePlane() const {
     return m_detector.activePlane();
+}
+
+void OSnapManager::setActiveSketch(cad::Sketch* sketch) {
+    m_detector.setActiveSketch(sketch);
+    qDebug() << "[OSnapManager] Active sketch:"
+             << (sketch ? sketch->id() : "none");
 }
 
 void OSnapManager::setLastInputPoint(const gp_Pnt& pt) {
@@ -318,6 +326,18 @@ void OSnapManager::connectEventBus() {
         setSnapEnabled(false);
         clearLastInputPoint();
         qDebug() << "[OSnapManager] Snap disabled (sketch edit ended)";
+    });
+
+    // ✅ 新增：自動追蹤最後確認的輸入點，供 Perp/Tangent snap 使用
+    bus->subscribe(core::Events::POINT_ACQUIRED, this, [this](const QVariant& v) {
+        QVariantMap map = v.toMap();
+        QVector2D pt2d = map["point"].value<QVector2D>();
+        // 若有 activePlane，轉回世界座標設定
+        cad::Plane* plane = m_detector.activePlane();
+        if (plane) {
+            QVector3D w = plane->toWorld(pt2d);
+            m_detector.setLastInputPoint(gp_Pnt(w.x(), w.y(), w.z()));
+        }
     });
 
     qDebug() << "[OSnapManager] EventBus connected";
