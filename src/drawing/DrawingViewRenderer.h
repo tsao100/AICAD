@@ -27,11 +27,14 @@
 
 #include <QObject>
 #include <QSizeF>
+#include <QPainter>
 
 // OCCT forward declarations
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
+
+#include "DrawingSheet.h"
 
 namespace aicad {
 namespace drawing {

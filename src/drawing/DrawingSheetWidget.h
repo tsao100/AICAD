@@ -18,6 +18,13 @@
 #include "DrawingViewRenderer.h"
 
 #include <QWidget>
+#include <QDialog>
+#include <QTabWidget>
+#include <QTableWidget>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QListWidget>
+#include <QCheckBox>
 #include <QMap>
 #include <QUuid>
 #include <QPointF>

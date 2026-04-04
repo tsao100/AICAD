@@ -15,6 +15,7 @@
  *   sheetPt  = (screenPt - m_panOffset) / m_zoom
  */
 
+#include "cad/Feature.h"
 #include "DrawingSheetWidget.h"
 #include "DrawingSheet.h"
 #include "DrawingViewRenderer.h"
