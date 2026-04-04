@@ -26,7 +26,6 @@
 #pragma once
 
 #include <QObject>
-#include <QSizeF>
 #include <QPainter>
 
 // OCCT forward declarations
@@ -80,6 +79,9 @@ struct ViewRenderResult {
  */
 class DrawingViewRenderer : public QObject {
     Q_OBJECT
+
+    // RenderTask 定義於 DrawingViewRenderer.cpp，需存取 render_internal()
+    friend class RenderTask;
 
 public:
     explicit DrawingViewRenderer(QObject* parent = nullptr);

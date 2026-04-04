@@ -99,15 +99,20 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
 
+public Q_SLOTS:
+    /**
+     * 觸發單一視圖的非同步 HLR 渲染。
+     * DrawingSheetDialog 的「Rebuild All」按鈕會呼叫 triggerRenderAll()。
+     */
+    void triggerRender(DrawingView* view);
+    void triggerRenderAll();
+
 private Q_SLOTS:
     void onViewRendered(const QUuid& viewId, const ViewRenderResult& result);
     void onSheetConfigChanged();
     void onSheetViewAdded(DrawingView* view);
     void onSheetViewRemoved(const QUuid& viewId);
     void onRebuildAllViews();
-
-    void triggerRender(DrawingView* view);
-    void triggerRenderAll();
 
 private:
     // ── 座標轉換 ──────────────────────────────────────────────────────────
