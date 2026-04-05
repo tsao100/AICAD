@@ -103,6 +103,11 @@ void UIManager::initGripSystem()
     core::EventBus* bus = app->eventBus();
     core::DocumentManager* docMgr = app->documentManager();
 
+    // 關閉 GripManager 自己的舊式 snap（由 OSnapManager 統一管理）
+    d->gripManager->setGridSnap(false);
+    d->gripManager->setEndpointSnap(false);
+    d->gripManager->setMidpointSnap(false);
+
     // ── A) Feature selected → attach grip provider ────────────────────
     bus->subscribe("selection.featureSelected", this,
                    [this, docMgr](const QVariant& v) {

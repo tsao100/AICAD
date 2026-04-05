@@ -122,6 +122,41 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+//  排除清單管理
+// ──────────────────────────────────────────────────────────────────────────────
+void OSnapDetector::addExcludedObject(const Handle(AIS_InteractiveObject)& obj)
+{
+    if (obj.IsNull()) return;
+
+    // 避免重複加入：用指標值比對（OCCT Handle 的 get() 回傳底層原始指標）
+    for (const Handle(AIS_InteractiveObject)& existing : m_excludedObjects) {
+        if (existing.get() == obj.get()) return;
+    }
+
+    m_excludedObjects.append(obj);
+    qDebug() << "[OSnapDetector] Excluded object added, total excluded:"
+             << m_excludedObjects.size();
+}
+
+void OSnapDetector::removeExcludedObject(const Handle(AIS_InteractiveObject)& obj)
+{
+    if (obj.IsNull()) return;
+
+    const int sizeBefore = m_excludedObjects.size();
+    m_excludedObjects.erase(
+        std::remove_if(m_excludedObjects.begin(), m_excludedObjects.end(),
+                       [&obj](const Handle(AIS_InteractiveObject)& existing) {
+                           return existing.get() == obj.get();
+                       }),
+        m_excludedObjects.end());
+
+    if (m_excludedObjects.size() < sizeBefore) {
+        qDebug() << "[OSnapDetector] Excluded object removed, total excluded:"
+                 << m_excludedObjects.size();
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 //  收集附近的 AIS Shape
 //  策略：
 //   1. 先用 AIS_InteractiveContext::MoveTo 讓 OCCT 做初步 HLR 篩選
@@ -143,6 +178,13 @@ void OSnapDetector::collectCandidateShapes(
     for (AIS_ListIteratorOfListOfInteractive it(displayed); it.More(); it.Next()) {
         Handle(AIS_InteractiveObject) obj = it.Value();
         if (obj.IsNull()) continue;
+
+        // ✅ 排除黑名單物件（參考平面、ViewCube 等）
+        bool excluded = false;
+        for (const auto& excl : m_excludedObjects) {
+            if (obj == excl) { excluded = true; break; }
+        }
+        if (excluded) continue;
 
         // 只處理 AIS_Shape
         Handle(AIS_Shape) aisShape = Handle(AIS_Shape)::DownCast(obj);
@@ -214,7 +256,7 @@ void OSnapDetector::detectOnShape(
         detectTangent(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
     if (enabled.testFlag(SnapType::Nearest)) {
-        detectNearest(shape, aisObj, mouseWorldPt, view, candidates);
+        detectNearest(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
 }
 
@@ -382,7 +424,10 @@ void OSnapDetector::detectQuadrants(
         for (double angle : angles) {
             // 檢查此角度是否在弧段範圍內
             double normAngle = ElCLib::InPeriod(angle, first, last);
-            if (normAngle < first || normAngle > last) continue;
+
+            // ✅ 修正：使用寬鬆容差比較，避免浮點邊界誤判
+            const double tol = 1e-7;
+            if (normAngle < first - tol || normAngle > last + tol) continue;
 
             gp_Pnt qpt = ElCLib::Value(normAngle, circle->Circ());
 
@@ -566,6 +611,7 @@ void OSnapDetector::detectNearest(
     const Handle(AIS_InteractiveObject)& aisObj,
     const gp_Pnt& mousePt,
     const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
     // 建立滑鼠位置的頂點 shape
@@ -601,6 +647,7 @@ void OSnapDetector::detectNearest(
         c.sourceEdge  = edge;
         c.sourceAIS   = aisObj;
         c.worldDist   = dist.Value();
+        c.screenDist = screenDistance(view, nearPt, mouseX, mouseY);
         c.isValid     = true;
         out.append(c);
     }

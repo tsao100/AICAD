@@ -237,6 +237,7 @@ void CadView::initializeViewer() {
     // ── 初始化 OSnap ───────────────────────────────────────────────────────
     m_snapManager = new aicad::osnap::OSnapManager(this);
     m_snapManager->initialize(d->context, d->view);
+    m_snapManager->detector().addExcludedObject(d->viewCube);
 
     // 預設設定（可根據需求調整）
     aicad::osnap::OSnapSettings settings;
@@ -433,6 +434,11 @@ void CadView::highlightSelectablePlanes(bool highlight) {
     if (!d->context) return;
 
     qDebug() << "[CadView] Highlight selectable planes:" << highlight;
+
+    // 在 highlightSelectablePlanes 加入參考平面時，也同步排除它們：
+    for (const Handle(AIS_Shape)& plane : m_referencePlanes) {
+        m_snapManager->detector().addExcludedObject(plane);
+    }
 
     AIS_ListOfInteractive allObjects;
     d->context->DisplayedObjects(allObjects);

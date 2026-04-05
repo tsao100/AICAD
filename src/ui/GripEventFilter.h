@@ -33,6 +33,7 @@ private:
     Handle(V3d_View)   m_view;
     cad::Plane*        m_sketchPlane  = nullptr;
     bool               m_gripCaptured = false;
+    bool m_lastHovered = false;
 };
 
 } // namespace aicad::ui

@@ -94,6 +94,10 @@ public:
     /// 取得上次偵測的所有候選（除錯用）
     const QVector<SnapCandidate>& lastCandidates() const { return m_lastCandidates; }
 
+    void addExcludedObject(const Handle(AIS_InteractiveObject)& obj);
+    void removeExcludedObject(const Handle(AIS_InteractiveObject)& obj);
+    void clearExcludedObjects(){ m_excludedObjects.clear(); }
+
 private:
     // ── 內部偵測管線 ──────────────────────────────────────────────────────────
     void collectCandidateShapes(
@@ -149,6 +153,7 @@ private:
 
     void detectNearest     (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                        const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                       int mouseX, int mouseY,
                        QVector<SnapCandidate>&);
 
     void detectGridPoint   (const Handle(V3d_View)&,
@@ -189,6 +194,7 @@ private:
     gp_Pnt                     m_lastInputPoint;
     QVector<SnapCandidate>     m_lastCandidates;
     cad::Sketch* m_activeSketch = nullptr;
+    QVector<Handle(AIS_InteractiveObject)> m_excludedObjects;
 
     static constexpr double    kMinEdgeLength = 1e-7;
 };

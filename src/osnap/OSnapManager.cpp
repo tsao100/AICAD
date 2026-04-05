@@ -319,6 +319,12 @@ void OSnapManager::connectEventBus() {
     bus->subscribe("sketch.editStarted", this, [this](const QVariant& v) {
         // Sketch 開始編輯時啟用 snap
         setSnapEnabled(true);
+        // ✅ 若事件帶有 Sketch* 則同時設定平面（防禦性）
+        auto* sketch = v.value<cad::Sketch*>();
+        if (sketch && sketch->plane()) {
+            setActivePlane(sketch->plane());
+            setActiveSketch(sketch);
+        }
         qDebug() << "[OSnapManager] Snap enabled (sketch edit started)";
     });
 

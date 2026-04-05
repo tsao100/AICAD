@@ -1,4 +1,7 @@
 // src/ui/GripEventFilter.cpp
+
+#include "core/Application.h"
+#include "core/EventBus.h"
 #include "GripEventFilter.h"
 #include <QMouseEvent>
 #include <V3d_View.hxx>
@@ -70,6 +73,20 @@ bool GripEventFilter::eventFilter(QObject* /*obj*/, QEvent* event)
         auto* e = static_cast<QMouseEvent*>(event);
         gp_Pnt wp = screenToWorld(e->x(), e->y());
         bool handled = m_gripManager->mouseMoveEvent(wp);
+        // 在 mouseMoveEvent 處理中，當 grip hover 狀態改變時發布事件：
+        bool wasHovered = m_lastHovered;
+
+        if (handled != wasHovered) {
+            auto* bus = core::Application::instance()->eventBus();
+            if (bus) {
+                if (handled)
+                    bus->publish("grip.hovered", QVariant{});
+                else
+                    bus->publish("grip.released", QVariant{});
+            }
+            m_lastHovered = handled;
+        }
+
         if (m_gripCaptured) return true;   // 吃掉事件，不傳給 orbit
         return handled;
     }

@@ -118,6 +118,7 @@ public:
     // ── 指示器管理 ────────────────────────────────────────────────────────────
     void showIndicator();
     void hideIndicator();
+    OSnapDetector& detector() { return m_detector; }
 
 Q_SIGNALS:
     /// 有新的 snap 點鎖定

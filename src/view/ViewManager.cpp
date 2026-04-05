@@ -164,6 +164,7 @@ ViewManager::ViewManager(QObject* parent)
                         QVector2D point = update["point"].value<QVector2D>();
                         rubber->addPoint(point);
                     }
+                    rubber->update();   // ✅ 新增：立即重繪
                 } else if (action == "addPoint") {
                     if (update.contains("point")) {
                         QVector2D point = update["point"].value<QVector2D>();
