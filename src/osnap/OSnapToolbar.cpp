@@ -42,12 +42,14 @@ void OSnapToolbar::setupUI() {
     QAction* enableAll  = addAction("All On");
     enableAll->setToolTip("Enable all snap types (F3)");
     enableAll->setShortcut(QKeySequence(Qt::Key_F3));
+    enableAll->setIcon(QIcon(":/icons/osnap/OSNAP.ico"));
     connect(enableAll, &QAction::triggered,
             this, &OSnapToolbar::onEnableAllClicked);
 
     QAction* disableAll = addAction("All Off");
     disableAll->setToolTip("Disable all snap types (Shift+F3)");
     disableAll->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
+    disableAll->setIcon(QIcon(":/icons/osnap/OSNNON.ico"));
     connect(disableAll, &QAction::triggered,
             this, &OSnapToolbar::onDisableAllClicked);
 
@@ -56,30 +58,30 @@ void OSnapToolbar::setupUI() {
     // ── 各 Snap 類型按鈕 ────────────────────────────────────────────────────────
     // 圖示路徑：使用 Qt resource system（應在 qrc 中定義）
     // 若圖示不存在，Qt 會顯示空白按鈕但功能正常
-    addSnapButton(SnapType::Endpoint,      ":/osnap/endpoint",
+    addSnapButton(SnapType::Endpoint,      ":/icons/osnap/OSNEND.ico",
                   "Endpoint (ENDpoint)\nSnap to line endpoints and edge endpoints");
-    addSnapButton(SnapType::Midpoint,      ":/osnap/midpoint",
+    addSnapButton(SnapType::Midpoint,      ":/icons/osnap/OSNMID.ico",
                   "Midpoint (MIDpoint)\nSnap to midpoint of edges");
-    addSnapButton(SnapType::Center,        ":/osnap/center",
+    addSnapButton(SnapType::Center,        ":/icons/osnap/OSNCEN.ico",
                   "Center (CENter)\nSnap to center of circles, arcs, ellipses");
-    addSnapButton(SnapType::Quadrant,      ":/osnap/quadrant",
+    addSnapButton(SnapType::Quadrant,      ":/icons/osnap/OSNQUA.ico",
                   "Quadrant (QUAdrant)\nSnap to 0°/90°/180°/270° of circles");
-    addSnapButton(SnapType::Intersection,  ":/osnap/intersection",
+    addSnapButton(SnapType::Intersection,  ":/icons/osnap/OSNINT.ico",
                   "Intersection (INTersection)\nSnap to intersection of edges");
-    addSnapButton(SnapType::Perpendicular, ":/osnap/perp",
+    addSnapButton(SnapType::Perpendicular, ":/icons/osnap/OSNPER.ico",
                   "Perpendicular (PERpendicular)\nSnap to perpendicular foot");
-    addSnapButton(SnapType::Tangent,       ":/osnap/tangent",
+    addSnapButton(SnapType::Tangent,       ":/icons/osnap/OSNTAN.ico",
                   "Tangent (TANgent)\nSnap to tangent point on circles");
-    addSnapButton(SnapType::Nearest,       ":/osnap/nearest",
+    addSnapButton(SnapType::Nearest,       ":/icons/osnap/OSNNEA.ico",
                   "Nearest (NEArest)\nSnap to nearest point on edge");
-    addSnapButton(SnapType::Node,          ":/osnap/node",
+    addSnapButton(SnapType::Node,          ":/icons/osnap/OSNNOD.ico",
                   "Node (NODe)\nSnap to sketch geometry nodes");
-    addSnapButton(SnapType::Extension,     ":/osnap/extension",
+    addSnapButton(SnapType::Extension,     ":/icons/osnap/OSNEXT.ico",
                   "Extension (EXTension)\nSnap on extension of edge");
 
     addSeparator();
 
-    addSnapButton(SnapType::Grid,          ":/osnap/grid",
+    addSnapButton(SnapType::Grid,          ":/icons/osnap/OSNGRID.ico",
                   "Grid (GRID)\nSnap to grid points");
 
     addSeparator();
