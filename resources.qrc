@@ -42,5 +42,6 @@
         <file>icons/osnap/OSNQUA.ico</file>
         <file>icons/osnap/OSNTAN.ico</file>
         <file>icons/osnap/OSNTMP.ico</file>
+        <file>icons/osnap/OSNGRID.ico</file>
     </qresource>
 </RCC>
