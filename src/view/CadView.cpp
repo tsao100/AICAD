@@ -1049,24 +1049,33 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     }
 
     if (event->button() == Qt::LeftButton) {
-        int x = event->x();
-        int y = event->y();
-
         if (d->mode == InteractionMode::Sketching) {
-            // OSnap 優先（修自問題三）
-            if (m_snapManager && m_snapManager->isSnapActive()) {
-                m_snapManager->onMousePress(x, y);
-                return;
-            }
             QVector2D planePt = screenToPlane(event->pos());
-            auto* bus = core::Application::instance()->eventBus();
+
+            EventBus* bus = Application::instance()->eventBus();
+
             QVariantMap data;
             data["point"] = QVariant::fromValue(planePt);
-            bus->publish(core::Events::POINT_ACQUIRED, data);
+            data["screenPos"] = event->pos();
+
+            bus->publish(Events::POINT_ACQUIRED, data);
+
             Q_EMIT pointAcquired(planePt);
-            return;   // ✅ 必須 return，避免後面的 switch-case 再發布一次
+            //return;
         }
     }
+
+    int x = event->x();
+    int y = event->y();
+
+    // ── 使用 OSnap 確認點（若有 snap 鎖定則使用 snap 座標）─────────────────
+    if (m_snapManager && m_snapManager->onMousePress(x, y)) {
+        // OSnapManager 已發布 "osnap.confirmed" 事件
+        // 也已 emit snapConfirmed signal
+        // Command 系統會從 EventBus 接收座標，不需要額外處理
+        return;
+    }
+
 
     if (!d->context.IsNull() && !d->view.IsNull()) {
 

@@ -215,19 +215,9 @@ bool OSnapManager::onMousePress(int mouseX, int mouseY) {
              << snap.worldPoint.Y()
              << snap.worldPoint.Z();
 
+    // Q_EMIT snapConfirmed → CadView 的 lambda 會將世界座標投影到草圖平面，
+    // 並以正確格式發布 POINT_ACQUIRED，Command 系統從那裡取點。
     Q_EMIT snapConfirmed(snap.worldPoint, snap.type);
-
-    // EventBus
-    auto* bus = core::Application::instance()->eventBus();
-    if (bus) {
-        QVariantMap data;
-        data["x"]        = snap.worldPoint.X();
-        data["y"]        = snap.worldPoint.Y();
-        data["z"]        = snap.worldPoint.Z();
-        data["type"]     = static_cast<int>(snap.type);
-        data["typeName"] = snapTypeName(snap.type);
-        bus->publish("osnap.confirmed", data);
-    }
 
     return true;
 }
