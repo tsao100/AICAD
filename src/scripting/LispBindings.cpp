@@ -60,6 +60,7 @@ void LispBindings::registerAll() {
     registerViewAPI();
     registerQueryAPI();
     registerUtilityAPI();
+    registerSnapAPI();
     
     qDebug() << "[LispBindings] All API functions registered";
 }
@@ -487,6 +488,26 @@ void LispBindings::registerUtilityAPI() {
             
             return result;
         }, 4, 4);
+}
+
+// 新增 registerSnapAPI() 實作：
+void LispBindings::registerSnapAPI() {
+    // (osnap-enable t/nil)
+    d->engine->registerFunction("OSNAP-ENABLE",
+                                [this](const QVariantList& args) -> QVariant {
+                                    bool on = args.isEmpty() ? true : args[0].toBool();
+                                    d->app->eventBus()->publish("scripting.osnap-enable", on);
+                                    return on;
+                                }, 0, 1);
+
+    // (osnap-set type1 type2 ...)  e.g. (osnap-set "endpoint" "midpoint")
+    d->engine->registerFunction("OSNAP-SET",
+                                [this](const QVariantList& args) -> QVariant {
+                                    QStringList types;
+                                    for (const QVariant& a : args) types << a.toString();
+                                    d->app->eventBus()->publish("scripting.osnap-set", types);
+                                    return true;
+                                }, 0, -1);
 }
 
 } // namespace scripting

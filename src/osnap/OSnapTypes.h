@@ -172,3 +172,7 @@ inline QString snapTypeName(SnapType t) {
 
 } // namespace osnap
 } // namespace aicad
+
+Q_DECLARE_METATYPE(aicad::osnap::SnapCandidate)
+Q_DECLARE_METATYPE(aicad::osnap::OSnapSettings)
+

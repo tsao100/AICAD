@@ -180,6 +180,7 @@ private:
             sketchData["plane"] = m_selectedPlane->name();
             sketchData["sketchId"] = sketch->id();
             sketchData["sketchName"] = name;
+            sketchData["sketch"]     = QVariant::fromValue(sketch);  // ✅ 攜帶指標
             bus->publish("sketch.created", sketchData);
 
             bus->publish("command.message",

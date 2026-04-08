@@ -119,6 +119,7 @@ public:
     void showIndicator();
     void hideIndicator();
     OSnapDetector& detector() { return m_detector; }
+    void refreshIndicator() { updateIndicator(m_currentSnap); }
 
 Q_SIGNALS:
     /// 有新的 snap 點鎖定
@@ -154,6 +155,7 @@ private:
     bool m_enabled     = true;
     bool m_initialized = false;
     bool m_gripActive  = false;   ///< Grip 系統活躍中，OSnap 讓步
+    bool m_eventBusConnected = false;
 };
 
 } // namespace osnap

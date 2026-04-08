@@ -16,6 +16,7 @@
 #include "command/CommandAlias.h"        // ✅ 新增
 #include "view/ViewManager.h"  // ✅ 添加
 #include "view/CadView.h"      // ✅ 添加
+#include "view/ViewGrid.h"      // ✅ 添加
 #include <QShortcut>
 #include "ui/CommandOverlayWidget.h"
 #include "core/Application.h"
@@ -226,6 +227,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             d->mainWindow->addToolBar(Qt::BottomToolBarArea, m_snapToolbar);
         }
 
+        if (d->cadView) {
+            connect(d->cadView, &view::CadView::sketchFinished,
+                    this, &UIManager::onSketchEditEnded);
+        }
+
         // auto* cmdOverlay =
         //     new aicad::ui::CommandOverlayWidget(d->cadView);
         // // 初始位置
@@ -250,6 +256,20 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // ✅ 6. 連接視圖就緒信號，延遲初始化參考幾何
         connect(d->cadView, &view::CadView::viewInitialized,
                 this, &UIManager::onViewReady);
+
+        // 在 initialize() 中，ViewManager 初始化後加入：
+        connect(app->viewManager(), &view::ViewManager::activeViewChanged,
+                this, [this](view::CadView* newView) {
+                    d->cadView = newView;
+                    // 若正在編輯草圖，同步 snap 設定到新視圖
+                    if (newView && newView->snapManager()) {
+                        auto* app = core::Application::instance();
+                        if (auto* sketch = app->activeSketch()) {
+                            newView->snapManager()->setActivePlane(sketch->plane());
+                            newView->snapManager()->setActiveSketch(sketch);
+                        }
+                    }
+                });
         // 連接命令列事件
         connectCommandLineEvents();
 
@@ -287,6 +307,13 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             [this](const QVariant& data) {
                 qDebug() << "[UIManager] Document closed:" << data.toString();
                 updateFeatureTree();
+                // ✅ 重設 OSnap 狀態，避免 dangling plane 指標
+                if (d->cadView && d->cadView->snapManager()) {
+                    d->cadView->snapManager()->setActivePlane(nullptr);
+                    d->cadView->snapManager()->setActiveSketch(nullptr);
+                    d->cadView->snapManager()->clearLastInputPoint();
+                    d->cadView->snapManager()->setSnapEnabled(false);
+                }
             });
         
         // 監聽特徵事件
@@ -319,6 +346,24 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // 7. 連接主視窗關閉信號
         connect(d->mainWindow, &MainWindow::aboutToClose,
                 this, &UIManager::mainWindowClosed);
+
+        // 在 UIManager::initialize() 的 EventBus 訂閱區段加入：
+        bus->subscribe("sketch.created", this, [this](const QVariant& v) {
+            QVariantMap data = v.toMap();
+            QString sketchId = data["sketchId"].toString();
+
+            cad::Sketch* sketch = data["sketch"].value<cad::Sketch*>();  // ✅ 直接取指標
+
+            if (sketch) {
+                onSketchEditStarted(sketch);  // ✅ 補上這個呼叫
+            }
+        });
+
+        // 同時訂閱草圖結束事件（從 CadView::sketchFinished signal 或 command）
+        bus->subscribe("sketch.editEnded", this, [this](const QVariant&) {
+            // sketch.editEnded 由 onSketchEditEnded() 自己發布，避免遞迴
+            // 此處僅作防禦性處理
+        });
 
         // ✅ 監聽平面選取請求（顯示提示）
         bus->subscribe("command.request-plane-selection", this,
@@ -802,6 +847,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
+        bus->subscribe("scripting.osnap-enable", this, [this](const QVariant& v) {
+            if (d->cadView && d->cadView->snapManager())
+                d->cadView->snapManager()->setSnapEnabled(v.toBool());
+        });
 
 
         // ✅ Connect view refresh when features update
@@ -865,6 +914,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 });
 
         initGripSystem();
+
+        // 在 cadView 設定完成後：
+        connect(d->cadView, &view::CadView::sketchFinished,
+                this, &UIManager::onSketchEditEnded);
 
         d->initialized = true;
         qDebug() << "[UIManager] Initialization completed";
@@ -1034,6 +1087,13 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         d->cadView->snapManager()->setActivePlane(sketch->plane());
         d->cadView->snapManager()->setActiveSketch(sketch);   // ✅ 新增
         d->cadView->snapManager()->setSnapEnabled(true);
+        // ✅ grid snap spacing 同步（配合問題十的修復）
+        if (d->cadView->grid()) {
+            osnap::OSnapSettings s = d->cadView->snapManager()->settings();
+            s.gridSnapEnabled = d->cadView->isGridEnabled();
+            s.gridSpacing     = static_cast<double>(d->cadView->grid()->spacing());
+            d->cadView->snapManager()->setSettings(s);
+        }
     }
 
     // 2️⃣ 發事件（讓其他系統同步）

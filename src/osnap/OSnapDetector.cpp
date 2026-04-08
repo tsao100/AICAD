@@ -69,10 +69,37 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     if (context.IsNull() || view.IsNull())
         return std::nullopt;
 
-    // ── Step 1: 滑鼠射線轉世界座標 ──────────────────────────────────────────
-    double wx = 0, wy = 0, wz = 0;
-    view->Convert(mouseX, mouseY, wx, wy, wz);
-    gp_Pnt mouseWorldPt(wx, wy, wz);
+    // ── Step 1: 滑鼠射線投影至草圖平面（或預設 XY 平面）─────────────────────
+    gp_Pnt mouseWorldPt;
+    if (m_activePlane) {
+        // ✅ 射線與草圖平面求交（與 GripEventFilter 一致）
+        double px, py, pz, dx, dy, dz;
+        view->ProjReferenceAxe(mouseX, mouseY, px, py, pz, dx, dy, dz);
+        gp_Pnt  rayOrigin(px, py, pz);
+        gp_Dir  rayDir(dx, dy, dz);
+
+        QVector3D qo = m_activePlane->origin();
+        QVector3D qn = m_activePlane->normal();
+        gp_Pnt  planeOrigin(qo.x(), qo.y(), qo.z());
+        gp_Dir  planeNormal(qn.x(), qn.y(), qn.z());
+
+        gp_Vec toPlane(rayOrigin, planeOrigin);
+        double denom = rayDir.XYZ().Dot(planeNormal.XYZ());
+        if (std::abs(denom) > 1e-10) {
+            double t = toPlane.XYZ().Dot(planeNormal.XYZ()) / denom;
+            mouseWorldPt = gp_Pnt(rayOrigin.X() + rayDir.X() * t,
+                                  rayOrigin.Y() + rayDir.Y() * t,
+                                  rayOrigin.Z() + rayDir.Z() * t);
+        } else {
+            double wx, wy, wz;
+            view->Convert(mouseX, mouseY, wx, wy, wz);
+            mouseWorldPt = gp_Pnt(wx, wy, wz);
+        }
+    } else {
+        double wx, wy, wz;
+        view->Convert(mouseX, mouseY, wx, wy, wz);
+        mouseWorldPt = gp_Pnt(wx, wy, wz);
+    }
 
     // ── Step 2: 收集附近的候選 Shape ──────────────────────────────────────────
     QVector<TopoDS_Shape>                   shapes;
@@ -92,9 +119,8 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     }
 
     // Intersection 需要跨 shape 檢測
-    if (m_settings.enabledTypes.testFlag(SnapType::Intersection) && shapes.size() >= 2) {
-        detectIntersections(shapes, view, mouseWorldPt, candidates);
-    }
+    if (m_settings.enabledTypes.testFlag(SnapType::Intersection) && shapes.size() >= 2)
+        detectIntersections(shapes, aisObjects, view, mouseWorldPt, mouseX, mouseY, candidates);
 
     // Grid snap（不依賴 shape）
     if (m_settings.gridSnapEnabled &&
@@ -116,6 +142,10 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
 
     // ── Step 5: 排序（優先順序 + 螢幕距離） ────────────────────────────────────
     std::sort(candidates.begin(), candidates.end());
+
+    // ✅ 截斷到 maxCandidates（排序後保留最佳候選）
+    if (candidates.size() > m_settings.maxCandidates)
+        candidates.resize(m_settings.maxCandidates);
 
     m_lastCandidates = candidates;
     return candidates.first();
@@ -195,24 +225,30 @@ void OSnapDetector::collectCandidateShapes(
 
         // 快速篩選：取 shape 中任意頂點檢查螢幕距離
         bool inRange = false;
-        TopExp_Explorer vertExp(shape, TopAbs_VERTEX);
-        if (vertExp.More()) {
-            TopoDS_Vertex v = TopoDS::Vertex(vertExp.Current());
-            gp_Pnt pt = BRep_Tool::Pnt(v);
-            double dist = screenDistance(view, pt, mouseX, mouseY);
-            inRange = (dist < pickRadius * 3.0);
-        } else {
-            // 沒有頂點（例如面），嘗試邊
-            TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
-            if (edgeExp.More()) {
-                TopoDS_Edge e = TopoDS::Edge(edgeExp.Current());
-                double first, last;
-                Handle(Geom_Curve) curve = BRep_Tool::Curve(e, first, last);
-                if (!curve.IsNull()) {
-                    gp_Pnt mid = curve->Value((first + last) * 0.5);
-                    double dist = screenDistance(view, mid, mouseX, mouseY);
-                    inRange = (dist < pickRadius * 3.0);
-                }
+        // ✅ 修正：對每條邊取多點採樣，任一點在範圍內即納入
+        TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
+        for (; edgeExp.More() && !inRange; edgeExp.Next()) {
+            TopoDS_Edge edge = TopoDS::Edge(edgeExp.Current());
+            double first, last;
+            Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
+            if (curve.IsNull()) continue;
+
+            // 採樣 5 個點（兩端點 + 3 個內部點）
+            for (int k = 0; k <= 4 && !inRange; ++k) {
+                double param = first + (last - first) * k / 4.0;
+                gp_Pnt pt = curve->Value(param);
+                double dist = screenDistance(view, pt, mouseX, mouseY);
+                if (dist < pickRadius * 3.0) inRange = true;
+            }
+        }
+
+        // 若無邊，退而使用頂點
+        if (!inRange) {
+            TopExp_Explorer vertExp(shape, TopAbs_VERTEX);
+            for (; vertExp.More() && !inRange; vertExp.Next()) {
+                gp_Pnt pt = BRep_Tool::Pnt(TopoDS::Vertex(vertExp.Current()));
+                if (screenDistance(view, pt, mouseX, mouseY) < pickRadius * 3.0)
+                    inRange = true;
             }
         }
 
@@ -258,6 +294,8 @@ void OSnapDetector::detectOnShape(
     if (enabled.testFlag(SnapType::Nearest)) {
         detectNearest(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
     }
+    if (enabled.testFlag(SnapType::Extension))
+        detectExtension(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -452,9 +490,11 @@ void OSnapDetector::detectQuadrants(
 // ──────────────────────────────────────────────────────────────────────────────
 void OSnapDetector::detectIntersections(
     const QVector<TopoDS_Shape>& shapes,
-    const Handle(V3d_View)& view,
-    const gp_Pnt& mousePt,
-    QVector<SnapCandidate>& out)
+     const QVector<Handle(AIS_InteractiveObject)>& aisObjects,
+     const Handle(V3d_View)& view,
+     const gp_Pnt& mousePt,
+     int mouseX, int mouseY,
+     QVector<SnapCandidate>& out)
 {
     // 收集所有邊
     QVector<TopoDS_Edge> allEdges;
@@ -485,6 +525,8 @@ void OSnapDetector::detectIntersections(
             c.type       = SnapType::Intersection;
             c.worldPoint = intersect;
             c.sourceEdge = allEdges[i];
+            c.screenDist = screenDistance(view, intersect, mouseX, mouseY);
+            c.sourceAIS  = aisObjects[i];
             c.isValid    = true;
             out.append(c);
         }
@@ -686,6 +728,49 @@ void OSnapDetector::detectGridPoint(
     c.worldPoint = gridPt;
     c.isValid    = true;
     out.append(c);
+}
+
+void OSnapDetector::detectExtension(
+    const TopoDS_Shape& shape, const Handle(AIS_InteractiveObject)& aisObj,
+    const gp_Pnt& mousePt, const Handle(V3d_View)& view,
+    int mouseX, int mouseY, QVector<SnapCandidate>& out)
+{
+    TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
+    for (; edgeExp.More(); edgeExp.Next()) {
+        TopoDS_Edge edge = TopoDS::Edge(edgeExp.Current());
+        double first, last;
+        Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
+        if (curve.IsNull()) continue;
+
+        // 只處理直線延伸
+        Handle(Geom_Line) line = Handle(Geom_Line)::DownCast(curve);
+        if (line.IsNull()) {
+            Handle(Geom_TrimmedCurve) tc = Handle(Geom_TrimmedCurve)::DownCast(curve);
+            if (!tc.IsNull()) line = Handle(Geom_Line)::DownCast(tc->BasisCurve());
+        }
+        if (line.IsNull()) continue;
+
+        // 投影滑鼠點到無限直線
+        GeomAPI_ProjectPointOnCurve proj(mousePt,
+                                         new Geom_Line(line->Lin()), -1e9, 1e9);
+        if (proj.NbPoints() == 0) continue;
+
+        double param = proj.LowerDistanceParameter();
+        // 只取邊的端點以外（延伸段）
+        if (param >= first && param <= last) continue;
+
+        gp_Pnt extPt = line->Value(param);
+
+        SnapCandidate c;
+        c.type        = SnapType::Extension;
+        c.worldPoint  = extPt;
+        c.sourceShape = shape;
+        c.sourceEdge  = edge;
+        c.sourceAIS   = aisObj;
+        c.screenDist  = screenDistance(view, extPt, mouseX, mouseY);
+        c.isValid     = true;
+        out.append(c);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

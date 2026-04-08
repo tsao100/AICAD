@@ -113,6 +113,8 @@ public:
      * - distance (x1 y1 x2 y2)
      */
     void registerUtilityAPI();
+
+    void registerSnapAPI();
     
 private:
     class Private;

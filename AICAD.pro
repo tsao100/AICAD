@@ -1,4 +1,5 @@
 # AICAD.pro - cross-platform Qt CAD project with ECL Lisp integration
+# Q1-25 Ok.
 
 CONFIG   += moc
 CONFIG   += debug_and_release

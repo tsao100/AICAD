@@ -297,4 +297,6 @@ private:
 } // namespace cad
 } // namespace aicad
 
+Q_DECLARE_METATYPE(aicad::cad::Sketch*)
+
 #endif // AICAD_CAD_SKETCH_ENHANCED_H

@@ -137,8 +137,10 @@ private:
                          QVector<SnapCandidate>&);
 
     void detectIntersections(const QVector<TopoDS_Shape>& shapes,
+                             const QVector<Handle(AIS_InteractiveObject)>& aisObjects,
                              const Handle(V3d_View)&,
                              const gp_Pnt& mousePt,
+                             int mouseX, int mouseY,
                              QVector<SnapCandidate>&);
 
     void detectPerpendicular(const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
@@ -160,6 +162,13 @@ private:
                          const gp_Pnt& mousePt,
                          QVector<SnapCandidate>&);
 
+    void detectExtension(const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
+                         const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                         int mouseX, int mouseY, QVector<SnapCandidate>&);
+
+    void detectParallel (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
+                        const gp_Pnt& mousePt, const Handle(V3d_View)&,
+                        int mouseX, int mouseY, QVector<SnapCandidate>&);
     // ── 工具函數 ──────────────────────────────────────────────────────────────
 
     /// 世界座標 → 螢幕座標

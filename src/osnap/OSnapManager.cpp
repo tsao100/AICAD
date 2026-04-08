@@ -23,6 +23,9 @@ OSnapManager::OSnapManager(QObject* parent)
     : QObject(parent)
     , m_indicator(new OSnapIndicator())
 {
+    // ✅ 確保跨執行緒 signal 安全
+    qRegisterMetaType<aicad::osnap::SnapCandidate>("SnapCandidate");
+    qRegisterMetaType<aicad::osnap::OSnapSettings>("OSnapSettings");
     qDebug() << "[OSnapManager] Created";
 }
 
@@ -63,6 +66,10 @@ void OSnapManager::initialize(const Handle(AIS_InteractiveContext)& context,
 void OSnapManager::shutdown() {
     if (!m_initialized) return;
 
+    // ✅ 先從 EventBus 取消所有訂閱
+    auto* bus = core::Application::instance()->eventBus();
+    if (bus) bus->unsubscribeAll(this);
+
     // 從 context 移除指示器
     if (!m_context.IsNull() && !m_indicator.IsNull()) {
         m_context->Erase(m_indicator, Standard_False);
@@ -70,6 +77,7 @@ void OSnapManager::shutdown() {
     }
 
     m_initialized = false;
+    m_eventBusConnected = false;  // 配合問題三十五
     qDebug() << "[OSnapManager] Shut down";
 }
 
@@ -303,6 +311,9 @@ void OSnapManager::publishSnapEvent(const SnapCandidate& c) {
 }
 
 void OSnapManager::connectEventBus() {
+    if (m_eventBusConnected) return;   // ✅ 防重複訂閱
+    m_eventBusConnected = true;
+
     auto* bus = core::Application::instance()->eventBus();
     if (!bus) return;
 

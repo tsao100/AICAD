@@ -80,6 +80,7 @@ private:
     void drawPerpendSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
     void drawTangentSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
     void drawNearestSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
+    void drawExtensionSymbol  (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
 
     /// 建立多段線（閉合或開放）的 Graphic3d_ArrayOfPolylines
     Handle(Graphic3d_ArrayOfPolylines) makePolyline(

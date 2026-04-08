@@ -23,6 +23,7 @@
 #include <QTimer>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QToolTip>
 
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -253,10 +254,11 @@ void CadView::initializeViewer() {
                 auto* bus = aicad::core::Application::instance()->eventBus();
                 if (!bus) return;
 
-                // 取得 2D 草圖平面座標（OSnapManager 已持有 activePlane）
+                // ✅ 用 snapPoint2D() 取草圖平面座標，格式與 Command 期待一致
                 std::optional<QVector2D> pt2d = m_snapManager->snapPoint2D();
-                QVector2D planePt = pt2d.has_value() ? pt2d.value()
-                                                     : screenToPlane(mapFromGlobal(QCursor::pos()));
+                QVector2D planePt = pt2d.has_value()
+                                        ? pt2d.value()
+                                        : screenToPlane(mapFromGlobal(QCursor::pos()));
 
                 QVariantMap data;
                 data["point"] = QVariant::fromValue(planePt);
@@ -265,6 +267,22 @@ void CadView::initializeViewer() {
             });
 
     qDebug() << "[CadView] OSnapManager initialized";
+
+    connect(m_snapManager, &osnap::OSnapManager::snapLocked,
+            this, [this](const osnap::SnapCandidate& c) {
+                if (!m_snapManager->settings().showTooltip) return;
+                // 將 snap 世界座標轉成螢幕座標
+                Standard_Integer sx, sy;
+                d->view->Convert(c.worldPoint.X(), c.worldPoint.Y(), c.worldPoint.Z(),
+                                 sx, sy);
+                QPoint screenPt = mapToGlobal(QPoint(sx, sy - 20));
+                QToolTip::showText(screenPt, osnap::snapTypeName(c.type), this);
+            });
+
+    connect(m_snapManager, &osnap::OSnapManager::snapCleared,
+            this, [this]() {
+                QToolTip::hideText();
+            });
 
 
     // 延遲初始化
@@ -915,6 +933,14 @@ void CadView::updateProjection() {
 void CadView::handlePointInput(const QPoint& screenPos) {
     QVector2D planePt = screenToPlane(screenPos);
 
+    // ✅ 同時發布到 EventBus，確保 Command 系統能收到
+    auto* bus = core::Application::instance()->eventBus();
+    if (bus) {
+        QVariantMap data;
+        data["point"] = QVariant::fromValue(planePt);
+        bus->publish(core::Events::POINT_ACQUIRED, data);
+    }
+
     qDebug() << "[CadView] Point acquired:" << planePt.x() << "," << planePt.y();
 
     Q_EMIT pointAcquired(planePt);
@@ -1026,20 +1052,20 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         int x = event->x();
         int y = event->y();
 
-        // ✅ 優先讓 OSnap 確認（它內部會發布 POINT_ACQUIRED）
-        if (m_snapManager && m_snapManager->isSnapActive()) {
-            m_snapManager->onMousePress(x, y);
-            return;   // snap 已處理，不重複發布原始座標
+        if (d->mode == InteractionMode::Sketching) {
+            // OSnap 優先（修自問題三）
+            if (m_snapManager && m_snapManager->isSnapActive()) {
+                m_snapManager->onMousePress(x, y);
+                return;
+            }
+            QVector2D planePt = screenToPlane(event->pos());
+            auto* bus = core::Application::instance()->eventBus();
+            QVariantMap data;
+            data["point"] = QVariant::fromValue(planePt);
+            bus->publish(core::Events::POINT_ACQUIRED, data);
+            Q_EMIT pointAcquired(planePt);
+            return;   // ✅ 必須 return，避免後面的 switch-case 再發布一次
         }
-
-        // 無 snap 鎖定，退而使用原始平面座標
-        QVector2D planePt = screenToPlane(event->pos());
-        auto* bus = core::Application::instance()->eventBus();
-        QVariantMap data;
-        data["point"] = QVariant::fromValue(planePt);
-        bus->publish(core::Events::POINT_ACQUIRED, data);
-        Q_EMIT pointAcquired(planePt);
-        return;
     }
 
     if (!d->context.IsNull() && !d->view.IsNull()) {
@@ -1137,18 +1163,16 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     int x = event->x();
     int y = event->y();
 
+    Standard_Integer xp, yp;
+    qtToOCCT(event->pos(), xp, yp);
+    d->context->MoveTo(xp, yp, d->view, Standard_True);
+
     // ── OSnap 偵測（每次 mouse move）──────────────────────────────────────
     // 注意：Grip 系統已透過 EventBus 設定 m_snapManager 的 m_gripActive 旗標，
     //       所以這裡不需要額外判斷。
     if (m_snapManager && m_snapManager->isSnapEnabled()) {
         m_snapManager->onMouseMove(x, y);
     }
-
-    // ── 原有的 OCCT move 處理 ─────────────────────────────────────────────
-    d->context->MoveTo(x, y, d->view, Standard_True);
-
-    Standard_Integer xp, yp;
-    qtToOCCT(event->pos(), xp, yp);
 
     // ✅ FIX: 中間鍵拖曳 → 執行 Pan
     if (d->middleButtonPressed && !d->view.IsNull()) {
@@ -1165,7 +1189,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
     // 更新懸停偵測
     if (!d->context.IsNull() && !d->view.IsNull()) {
-        d->context->MoveTo(xp, yp, d->view, Standard_True);
+        //d->context->MoveTo(xp, yp, d->view, Standard_True);
 
         if (d->context->HasDetected()) {
             Handle(AIS_InteractiveObject) detected = d->context->DetectedInteractive();
@@ -1206,10 +1230,10 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         }
     }
 
-    if (!d->context.IsNull()) {
-        // Update OCCT's internal detected object
-        d->context->MoveTo(event->x(), event->y(), d->view, Standard_True);
-    }
+    //if (!d->context.IsNull()) {
+    //    // Update OCCT's internal detected object
+    //     d->context->MoveTo(event->x(), event->y(), d->view, Standard_True);
+    //}
 
 }
 
@@ -1314,10 +1338,32 @@ void CadView::wheelEvent(QWheelEvent* event) {
     // OCCT Pan(dX, dY)：dX 向右為正，dY 向上為正（螢幕 Y 軸相反）
     d->view->Pan(xp - newXp, -(yp - newYp));
 
+    if (m_snapManager && m_snapManager->isSnapActive()) {
+        // 重新算一次同位置的 snap，讓 Indicator 以新的 scale 重繪
+        m_snapManager->refreshIndicator();
+    }
     update();
 }
 
 void CadView::keyPressEvent(QKeyEvent* event) {
+    // 在 keyPressEvent 的 ESC 判斷之前加入：
+    if (event->key() == Qt::Key_F3) {
+        if (m_snapManager) {
+            if (event->modifiers() & Qt::ShiftModifier) {
+                // Shift+F3：全部關閉
+                osnap::OSnapSettings s = m_snapManager->settings();
+                s.enabledTypes = osnap::SnapType::None;
+                m_snapManager->setSettings(s);
+            } else {
+                // F3：切換 snap 全開/全關
+                bool nowEnabled = m_snapManager->isSnapEnabled();
+                m_snapManager->setSnapEnabled(!nowEnabled);
+            }
+        }
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_Escape) {
         if (m_selectionFilter == "plane") {
             qDebug() << "[CadView] Plane selection cancelled";
