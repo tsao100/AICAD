@@ -401,8 +401,7 @@ void CadView::initializeViewer() {
                                                        d->aisToGeomIndex[s.get()] = idx++;
                                                    }
                                                }
-                                           },
-                                           Qt::UniqueConnection);
+                                           });
                                }
 
                            } else if (!feature->shape().IsNull()) {
@@ -681,8 +680,7 @@ void CadView::displayAllFeatures() {
             }
 
             connect(sketch, &Sketch::rebuilt,
-                    this, registerSketchShapes,
-                    Qt::UniqueConnection);
+                    this, registerSketchShapes);
 
         } else if (!feature->shape().IsNull()) {
             Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());

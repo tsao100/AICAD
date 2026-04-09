@@ -26,6 +26,7 @@
 #include <QVector2D>
 #include <QVector3D>
 #include <QFlags>
+#include <QMetaType>
 
 namespace aicad {
 namespace osnap {
