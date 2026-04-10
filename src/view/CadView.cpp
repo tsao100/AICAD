@@ -97,6 +97,8 @@ public:
     bool middleButtonPressed;
     QMap<AIS_InteractiveObject*, QString>  aisToFeatureId;
     QMap<AIS_InteractiveObject*, int>      aisToGeomIndex;
+    QHash<cad::Sketch*, QString>           sketchFeatureIds;
+
     QSet<int>                              selectedGeomIndices;
     ui::GripEventFilter* gripFilter;
     GripManager*         gripManager;
@@ -378,30 +380,10 @@ void CadView::initializeViewer() {
                                        }
                                    }
 
+                                   d->sketchFeatureIds[sketch] = itemId;
                                    connect(sketch, &cad::Sketch::rebuilt,
-                                           this, [this, sketch, itemId]() {
-                                               for (auto it = d->aisToFeatureId.begin();
-                                                    it != d->aisToFeatureId.end(); ) {
-                                                   if (it.value() == itemId)
-                                                       it = d->aisToFeatureId.erase(it);
-                                                   else
-                                                       ++it;
-                                               }
-                                               for (auto it = d->aisToGeomIndex.begin();
-                                                    it != d->aisToGeomIndex.end(); ) {
-                                                   if (!d->aisToFeatureId.contains(it.key()))
-                                                       it = d->aisToGeomIndex.erase(it);
-                                                   else
-                                                       ++it;
-                                               }
-                                               int idx = 0;
-                                               for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
-                                                   if (!s.IsNull()) {
-                                                       d->aisToFeatureId[s.get()] = itemId;
-                                                       d->aisToGeomIndex[s.get()] = idx++;
-                                                   }
-                                               }
-                                           });
+                                           this, &CadView::onSketchRebuilt,
+                                           Qt::UniqueConnection);
                                }
 
                            } else if (!feature->shape().IsNull()) {
@@ -629,31 +611,6 @@ void CadView::displayAllFeatures() {
 
         if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
 
-            auto registerSketchShapes = [this, sketch, feature]() {
-                QString fid = feature->id();
-                for (auto it = d->aisToFeatureId.begin();
-                     it != d->aisToFeatureId.end(); ) {
-                    if (it.value() == fid)
-                        it = d->aisToFeatureId.erase(it);
-                    else
-                        ++it;
-                }
-                for (auto it = d->aisToGeomIndex.begin();
-                     it != d->aisToGeomIndex.end(); ) {
-                    if (!d->aisToFeatureId.contains(it.key()))
-                        it = d->aisToGeomIndex.erase(it);
-                    else
-                        ++it;
-                }
-                int idx = 0;
-                for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
-                    if (!s.IsNull()) {
-                        d->aisToFeatureId[s.get()] = fid;
-                        d->aisToGeomIndex[s.get()] = idx++;
-                    }
-                }
-            };
-
             if (feature->isVisible()) {
                 // ✅ visible: 正常顯示並註冊
                 QList<Handle(AIS_Shape)> shapes =
@@ -679,8 +636,10 @@ void CadView::displayAllFeatures() {
                 }
             }
 
+            d->sketchFeatureIds[sketch] = feature->id();
             connect(sketch, &Sketch::rebuilt,
-                    this, registerSketchShapes);
+                    this, &CadView::onSketchRebuilt,
+                    Qt::UniqueConnection);
 
         } else if (!feature->shape().IsNull()) {
             Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
@@ -825,6 +784,35 @@ void CadView::setGridEnabled(bool enabled) {
 
 bool CadView::isGridEnabled() const {
     return d->gridEnabled;
+}
+
+void CadView::onSketchRebuilt()
+{
+    auto* sketch = qobject_cast<cad::Sketch*>(sender());
+    if (!sketch) return;
+
+    const QString fid = d->sketchFeatureIds.value(sketch);
+    if (fid.isEmpty()) return;
+
+    for (auto it = d->aisToFeatureId.begin(); it != d->aisToFeatureId.end(); ) {
+        if (it.value() == fid)
+            it = d->aisToFeatureId.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = d->aisToGeomIndex.begin(); it != d->aisToGeomIndex.end(); ) {
+        if (!d->aisToFeatureId.contains(it.key()))
+            it = d->aisToGeomIndex.erase(it);
+        else
+            ++it;
+    }
+    int idx = 0;
+    for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
+        if (!s.IsNull()) {
+            d->aisToFeatureId[s.get()] = fid;
+            d->aisToGeomIndex[s.get()] = idx++;
+        }
+    }
 }
 
 void CadView::setTopView() {

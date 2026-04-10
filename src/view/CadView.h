@@ -212,6 +212,9 @@ public:
     osnap::OSnapManager* snapManager() const;
 
 public Q_SLOTS:
+
+    void onSketchRebuilt();
+
     /**
      * @brief 設定視圖為俯視圖
      */
