@@ -40,7 +40,8 @@ class MainWindow;
 class FeatureBrowser;
 class PropertyPanel;
 class ToolManager;
-class CommandOverlayWidget;  // ✅ 新增
+class CommandLineWidget;
+class TransientCommandHistory;
 class AutoCompleteModel;     // ✅ 新增
 
 /**
@@ -135,9 +136,9 @@ public:
 
     /**
      * @brief 取得命令列覆蓋層
-     * @return CommandOverlayWidget 指標
+     * @return  CommandLineWidget 指標
      */
-    CommandOverlayWidget* commandLine() const;
+    CommandLineWidget* commandLine() const;
 
     /**
      * @brief 取得命令列管理器

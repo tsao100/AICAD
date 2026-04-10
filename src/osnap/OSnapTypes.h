@@ -61,7 +61,7 @@ enum class SnapType : quint32 {
     Grid            = 0x00001000,  ///< 網格點吸附
 
     // ── 預設組合 ──────────────────────────────────────────────────────────────
-    Standard = Endpoint | Midpoint | Center | Intersection | Nearest,
+    Standard = Endpoint | Midpoint | Center | Quadrant,
     All      = 0x0000FFFF
 };
 Q_DECLARE_FLAGS(SnapTypes, SnapType)

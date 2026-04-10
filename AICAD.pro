@@ -190,23 +190,18 @@ SOURCES += \
     src/railway/RailwayAlignment.cpp \
     src/railway/RailwayAlignmentElement.cpp \
     src/ui/AutoCompleteModel.cpp \
-    src/ui/CommandLineLayout.cpp \
+    src/ui/CommandHistoryPopup.cpp \
+    src/ui/CommandInputEdit.cpp \
     src/core/CommandLineManager.cpp \
-    src/ui/CommandLineOptionsPanel.cpp \
-    src/ui/CommandLineSplitter.cpp \
-    src/ui/CommandLineStatusBar.cpp \
-    src/ui/CommandLineToolbar.cpp \
-    src/ui/CommandOverlayWidget.cpp \
+    src/ui/CommandLineWidget.cpp \
     src/ui/GripEventFilter.cpp \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/PropertyPanel.cpp \
     src/ui/ToolManager.cpp \
+    src/ui/TransientCommandHistory.cpp \
     src/ui/UIManager.cpp \
-    src/ui/CommandInput.cpp \
     src/ui/ResultPopup.cpp \
-    src/ui/CommandPromptLabel.cpp \
-    src/ui/CommandHistoryDockWidget.cpp \
     \
     # View Module (Felicia - 視圖系統)
     src/ui/VAlignEditorDockWidget.cpp \
@@ -281,23 +276,18 @@ HEADERS += \
     src/railway/RailwayAlignment.h \
     src/railway/RailwayAlignmentElement.h \
     src/ui/AutoCompleteModel.h \
-    src/ui/CommandLineLayout.h \
+    src/ui/CommandHistoryPopup.h \
+    src/ui/CommandInputEdit.h \
     src/core/CommandLineManager.h \
-    src/ui/CommandLineOptionsPanel.h \
-    src/ui/CommandLineSplitter.h \
-    src/ui/CommandLineStatusBar.h \
-    src/ui/CommandLineToolbar.h \
-    src/ui/CommandOverlayWidget.h \
+    src/ui/CommandLineWidget.h \
     src/ui/GripEventFilter.h \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
     src/ui/PropertyPanel.h \
     src/ui/ToolManager.h \
+    src/ui/TransientCommandHistory.h \
     src/ui/UIManager.h \
-    src/ui/CommandInput.h \
     src/ui/ResultPopup.h \
-    src/ui/CommandPromptLabel.h \
-    src/ui/CommandHistoryDockWidget.h \
     \
     # View Module (Felicia)
     src/ui/VAlignEditorDockWidget.h \

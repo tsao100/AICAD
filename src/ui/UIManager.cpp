@@ -10,7 +10,6 @@
 #include "ToolManager.h"
 #include "FeatureBrowser.h"
 #include "PropertyPanel.h"
-#include "CommandOverlayWidget.h"        // ✅ 新增
 #include "core/CommandLineManager.h"     // ✅ 新增
 #include "AutoCompleteModel.h"           // ✅ 新增
 #include "command/CommandAlias.h"        // ✅ 新增
@@ -18,7 +17,9 @@
 #include "view/CadView.h"      // ✅ 添加
 #include "view/ViewGrid.h"      // ✅ 添加
 #include <QShortcut>
-#include "ui/CommandOverlayWidget.h"
+#include "CommandLineWidget.h"
+#include "CommandInputEdit.h"
+#include "TransientCommandHistory.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
@@ -56,7 +57,7 @@ public:
         , gripManager(nullptr)
         , gripFilter(nullptr)
         , initialized(false)
-        , commandOverlay(nullptr)           // ✅ 新增
+        , commandLine(nullptr)           // ✅ 新增
         , commandLineManager(nullptr)       // ✅ 新增
         , commandAlias(nullptr)             // ✅ 新增
         , autoCompleteModel(nullptr)        // ✅ 新增
@@ -79,7 +80,7 @@ public:
     bool initialized;
 
     // ✅ 新增：命令列組件
-    CommandOverlayWidget* commandOverlay;
+    CommandLineWidget* commandLine;
     core::CommandLineManager* commandLineManager;
     command::CommandAlias* commandAlias;
     AutoCompleteModel* autoCompleteModel;
@@ -217,8 +218,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         app->viewManager()->setActiveView(d->cadView);
         // 設置命令列系統（在 CadView 創建後）
         setupCommandLine();
-        d->commandOverlay->setLayoutMode(LayoutMode::Standard);
-        d->commandOverlay->setLayoutMode(LayoutMode::Compact);
 
         // 建立並加入 OSnap 工具列
         if (d->cadView && d->cadView->snapManager()) {
@@ -231,27 +230,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             connect(d->cadView, &view::CadView::sketchFinished,
                     this, &UIManager::onSketchEditEnded);
         }
-
-        // auto* cmdOverlay =
-        //     new aicad::ui::CommandOverlayWidget(d->cadView);
-        // // 初始位置
-        // cmdOverlay->raise();
-        // cmdOverlay->show();
-        // cmdOverlay->setLayoutMode(aicad::ui::LayoutMode::Standard);
-
-        // auto* historyDock = new aicad::ui::CommandHistoryDockWidget(d->mainWindow);
-        // d->mainWindow->addDockWidget(Qt::BottomDockWidgetArea, historyDock);
-        // historyDock->hide();
-
-        // // F2 toggle
-        // QWidget* owner = d->mainWindow;  // 一定是 QWidget*
-
-        // auto* shortcut = new QShortcut(QKeySequence(Qt::Key_F2), owner);
-        // connect(shortcut, &QShortcut::activated, owner, [historyDock]() {
-        //     historyDock->setVisible(!historyDock->isVisible());
-        //     if (historyDock->isVisible())
-        //         historyDock->raise();
-        // });
 
         // ✅ 6. 連接視圖就緒信號，延遲初始化參考幾何
         connect(d->cadView, &view::CadView::viewInitialized,
@@ -936,106 +914,120 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
 // ✅ 新增：設置命令列系統
 void UIManager::setupCommandLine() {
-    qDebug() << "[UIManager] Setting up command line...";
+    if (!d->cadView) return;
 
-    if (!d->cadView) {
-        qWarning() << "[UIManager] CadView not available, cannot setup command line";
-        return;
-    }
-
-    // 1. 獲取單例
     d->commandLineManager = core::CommandLineManager::instance();
-    d->commandAlias = command::CommandAlias::instance();
+    d->commandAlias       = command::CommandAlias::instance();
 
-    // 2. 創建自動完成模型
-    d->autoCompleteModel = new AutoCompleteModel(this);
+    d->autoCompleteModel  = new AutoCompleteModel(this);
     d->autoCompleteModel->updateFromAlias();
 
-    // 3. 創建命令列覆蓋層（附加到 CadView）
-    d->commandOverlay = new CommandOverlayWidget(d->cadView);
+    // ① 建立新命令列 Widget（以 cadView 為 anchor）
+    d->commandLine = new CommandLineWidget(d->cadView, d->cadView);
 
-    // 4. 設置自動完成
-    d->commandOverlay->inputWidget()->setAutoCompleteModel(d->autoCompleteModel);
+    // ② 注入歷程到 CommandInputEdit
+    d->commandLine->inputEdit()->setHistory(
+        d->commandLineManager->commandHistory());
 
-    // 5. 設置命令歷史
-    d->commandOverlay->inputWidget()->setCommandHistory(
-        d->commandLineManager->commandHistory()
-        );
+    // ③ Ctrl+9 快捷鍵
+    auto* shortcut9 = new QShortcut(
+        QKeySequence(Qt::CTRL | Qt::Key_9), d->mainWindow);
+    connect(shortcut9, &QShortcut::activated,
+            d->commandLine, &CommandLineWidget::toggleVisible);
 
-    // 6. 預設為緊湊模式
-    d->commandOverlay->setLayoutMode(LayoutMode::Compact);
-    qDebug() << "[UIManager] Command line setup complete";
+    // ④ F2 快捷鍵（等同按▲）
+    auto* shortcutF2 = new QShortcut(
+        QKeySequence(Qt::Key_F2), d->mainWindow);
+    connect(shortcutF2, &QShortcut::activated,
+            d->commandLine, &CommandLineWidget::onHistoryButtonClicked);
+
+    d->commandLine->show();
 }
 
 // ✅ 新增：連接命令列事件
 void UIManager::connectCommandLineEvents() {
-    if (!d->commandOverlay) {
-        return;
-    }
+    if (!d->commandLine) return;
 
     auto* bus = core::Application::instance()->eventBus();
 
-    // 命令輸入
-    connect(d->commandOverlay, &CommandOverlayWidget::commandEntered,
-            this, [this](const QString& command) {
-                qDebug() << "[UIManager] Command entered:" << command;
-
-                // 解析別名
-                QString resolved = d->commandAlias->resolveAlias(command);
-
-                // 更新使用統計
+    // ── 使用者輸入命令 ───────────────────────────────────────────────
+    connect(d->commandLine, &CommandLineWidget::commandSubmitted,
+            this, [this](const QString& cmd) {
+                QString resolved = d->commandAlias->resolveAlias(cmd);
                 d->autoCompleteModel->incrementUsage(resolved);
 
-                // 執行命令
+                // 同步歷程給 InputEdit
+                d->commandLineManager->addToHistory(resolved);
+                d->commandLine->inputEdit()->addToHistory(resolved);
+
                 d->commandLineManager->executeCommand(resolved);
             });
 
-    // 命令提示
+    // ── 使用者選了選項按鈕 ──────────────────────────────────────────
+    connect(d->commandLine, &CommandLineWidget::optionSelected,
+            d->commandLineManager, &core::CommandLineManager::onOptionSelected);
+
+    // ── 命令發出提示（prompt）───────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_PROMPT, this,
                    [this](const QVariant& v) {
-                       QString prompt = v.toString();
-                       d->commandOverlay->setPrompt(prompt);
+                       d->commandLine->appendHistory(v.toString(), /*isPrompt=*/true);
+                       d->commandLine->inputEdit()->setPlaceholderText(v.toString());
+                       // TransientCommandHistory 自動在 appendHistory 觸發
                    });
 
-    // 命令完成
+    // ── 命令完成 ────────────────────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_EXECUTED, this,
                    [this](const QVariant& v) {
-                       QString result = v.toString();
-                       if (!result.isEmpty()) {
-                           d->commandOverlay->appendHistory(result, "#00FF00");
-                       }
+                       if (!v.toString().isEmpty())
+                           d->commandLine->appendHistory(v.toString());
+                       // 命令結束 → transient history 淡出
+                       d->commandLine->transientHistory()->beginFadeOut();
+                       d->commandLine->clearCommandOptions();
+                       d->commandLine->inputEdit()->setPlaceholderText(
+                           tr("輸入指令或 LISP..."));
                    });
 
-    // 命令錯誤
+    // ── 命令錯誤 ────────────────────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_ERROR, this,
                    [this](const QVariant& v) {
-                       QString error = v.toString();
-                       d->commandOverlay->appendHistory("Error: " + error, "#FF0000");
-                       d->commandOverlay->setState(CommandLineState::Error);
+                       d->commandLine->appendHistory("Error: " + v.toString());
+                       d->commandLine->transientHistory()->beginFadeOut();
                    });
 
-    // 命令警告
+    // ── 命令警告 ────────────────────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_WARNING, this,
                    [this](const QVariant& v) {
-                       QString warning = v.toString();
-                       d->commandOverlay->appendHistory("Warning: " + warning, "#FFA500");
-                       d->commandOverlay->setState(CommandLineState::Warning);
+                       d->commandLine->appendHistory("Warning: " + v.toString());
                    });
 
-    // 選項可用
+    // ── 命令取消（Esc）──────────────────────────────────────────────
+    bus->subscribe(core::Events::COMMAND_CANCELLED, this,
+                   [this](const QVariant&) {
+                       d->commandLine->appendHistory(tr("*取消*"));
+                       d->commandLine->transientHistory()->beginFadeOut();
+                       d->commandLine->clearCommandOptions();
+                       d->commandLine->inputEdit()->setPlaceholderText(
+                           tr("輸入指令或 LISP..."));
+                   });
+
+    // ── 選項可用（命令進行中）──────────────────────────────────────
     bus->subscribe(core::Events::OPTIONS_AVAILABLE, this,
                    [this](const QVariant& v) {
-                       QList<CommandOption> options = v.value<QList<CommandOption>>();
-                       d->commandOverlay->showOptions(options);
+                       QStringList opts = v.toStringList();
+                       d->commandLine->setCommandOptions(opts);
                    });
 
-    qDebug() << "[UIManager] Command line events connected";
+    // ── 命令 log（一般訊息）────────────────────────────────────────
+    bus->subscribe(core::Events::COMMAND_LOG, this,
+                   [this](const QVariant& v) {
+                       d->commandLine->appendHistory(v.toString());
+                   });
 }
 
 // ===== 新增的公開方法 =====
 
-CommandOverlayWidget* UIManager::commandLine() const {
-    return d->commandOverlay;
+CommandLineWidget* UIManager::commandLine() const {
+    return d->commandLine;
 }
 
 core::CommandLineManager* UIManager::commandLineManager() const {
@@ -1047,25 +1039,18 @@ command::CommandAlias* UIManager::commandAlias() const {
 }
 
 void UIManager::showCommandMessage(const QString& message, const QString& color) {
-    if (d->commandOverlay) {
-        d->commandOverlay->appendHistory(message, color);
-    }
+    if (d->commandLine && !message.isEmpty())
+        d->commandLine->appendHistory(message);
 }
 
 void UIManager::showCommandError(const QString& error) {
-    showCommandMessage("Error: " + error, "#FF0000");
-
-    if (d->commandOverlay) {
-        d->commandOverlay->setState(CommandLineState::Error);
-    }
+    if (d->commandLine)
+        d->commandLine->appendHistory("Error: " + error);
 }
 
 void UIManager::showCommandWarning(const QString& warning) {
-    showCommandMessage("Warning: " + warning, "#FFA500");
-
-    if (d->commandOverlay) {
-        d->commandOverlay->setState(CommandLineState::Warning);
-    }
+    if (d->commandLine)
+        d->commandLine->appendHistory("Warning: " + warning);
 }
 
 void UIManager::showMainWindow() {
@@ -1076,6 +1061,7 @@ void UIManager::showMainWindow() {
     
     qDebug() << "[UIManager] Showing MainWindow";
     d->mainWindow->show();
+    //d->mainWindow->showFullScreen();
 }
 
 void UIManager::onSketchEditStarted(Sketch* sketch)
@@ -1141,13 +1127,11 @@ void UIManager::updateFeatureTree() {
 }
 
 void UIManager::setStatusMessage(const QString& message, int timeout) {
-    if (!d->mainWindow) {
-        return;
-    }
-    
-    d->mainWindow->statusBar()->showMessage(message, timeout);
-    // ✅ 同時在命令列顯示
-    showCommandMessage(message, "#AAAAAA");
+    if (d->mainWindow)
+        d->mainWindow->statusBar()->showMessage(message, timeout);
+
+    if (d->commandLine && !message.isEmpty())
+        d->commandLine->appendHistory(message);
 }
 
 // 添加 getter

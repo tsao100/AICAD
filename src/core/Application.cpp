@@ -254,7 +254,8 @@ bool Application::initialize() {
 
         Q_EMIT initialized();
 
-        QString filePath = QString(PROJECT_SOURCE_DIR) + "/Draw/1.aicad";
+        //QString filePath = QString(PROJECT_SOURCE_DIR) + "/Draw/1.aicad";
+        QString filePath = QString(PROJECT_SOURCE_DIR) + "/Draw/new.aicad";
 
         if (d->documentManager->openDocument(filePath)) {
             qDebug() << "[MainWindow] Loaded:" << filePath;

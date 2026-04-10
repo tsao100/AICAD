@@ -63,8 +63,8 @@ int main(int argc, char **argv) {
     // 顯示主視窗
     aicad::ui::UIManager* uiMgr = app->uiManager();
     if (uiMgr) {
+        //uiMgr->showMainWindow();
         uiMgr->showMainWindow();
-        //uiMgr->showMaximized();
     }
     
     qDebug() << "Main window shown";
