@@ -82,23 +82,27 @@ void TransientCommandHistory::addLine(const QString& text, bool isPrompt) {
 void TransientCommandHistory::repositionLabels() {
     if (!m_anchor || !m_cadView) return;
 
-    // anchor 在 cadView 中的本地座標
-    const QPoint anchorPos = m_anchor->mapTo(m_cadView, QPoint(0, 0));
-    const int    anchorTop = anchorPos.y();
-    const int    anchorX   = anchorPos.x();
-    const int    anchorW   = m_anchor->width();
+    // 不論 anchor 是否為 cadView 的 child（浮動/嵌入皆適用）
+    const QPoint anchorGlobal = m_anchor->mapToGlobal(QPoint(0, 0));
+    const QPoint anchorInCad  = m_cadView->mapFromGlobal(anchorGlobal);
 
-    const int n = m_lines.size();
+    const int anchorTop = anchorInCad.y();
+    const int anchorX   = anchorInCad.x();
+    const int n         = m_lines.size();
 
     for (int i = 0; i < m_labels.size(); ++i) {
         if (i < n) {
-            // 最新一行在最下方（緊貼 anchor 上緣），往上排
             const int row = n - 1 - i;   // row=0 最靠近 anchor
-            const int y   = anchorTop - GAP_BELOW - LINE_H * (row + 1);
+            const int y   = anchorTop - GAP_BELOW - (LINE_H + GAP_BELOW) * (row + 1);
 
-            m_labels[i]->setGeometry(anchorX, y, anchorW, LINE_H);
+            // 依該行文字的實際寬度計算 label 寬，加左右 padding
+            const QFontMetrics fm(m_labels[i]->font());
+            const int textW = fm.horizontalAdvance(m_lines[i]);
+            const int labelW = qMin(textW + SIDE_PAD * 2,
+                                    m_anchor->minimumWidth());  // 不小於 anchor 最小寬
 
-            // 文字顏色
+            m_labels[i]->setGeometry(anchorX, y, labelW, LINE_H);
+
             const QString color = m_isPrompt[i] ? "#aaaaaa" : "#eeeeee";
             m_labels[i]->setStyleSheet(
                 QString("QLabel { background: rgba(30,30,30,210); color: %1; }")
@@ -120,54 +124,33 @@ void TransientCommandHistory::updatePosition() {
 void TransientCommandHistory::beginFadeOut() {
     if (m_lines.isEmpty()) return;
 
-    // 用第一個 effect 做主動畫，其餘跟進
     if (!m_fadeAnim) {
-        m_fadeAnim = new QPropertyAnimation(this);
-        m_fadeAnim->setDuration(800);
-        m_fadeAnim->setEasingCurve(QEasingCurve::InQuad);
-        connect(m_fadeAnim, &QPropertyAnimation::finished, this, [this]() {
-            for (auto* lbl : m_labels)
-                lbl->hide();
-            m_lines.clear();
-            m_isPrompt.clear();
-        });
-        connect(m_fadeAnim, &QPropertyAnimation::valueChanged,
+        // QPropertyAnimation 不能 animate QObject 本身（無 Q_PROPERTY）
+        // 改用 QVariantAnimation 直接操作 effects
+        auto* anim = new QVariantAnimation(this);
+        anim->setDuration(800);
+        anim->setStartValue(1.0);
+        anim->setEndValue(0.0);
+        anim->setEasingCurve(QEasingCurve::InQuad);
+        connect(anim, &QVariantAnimation::valueChanged,
                 this, [this](const QVariant& v) {
                     const qreal op = v.toReal();
                     for (auto* e : m_effects)
                         e->setOpacity(op);
                 });
+        connect(anim, &QVariantAnimation::finished,
+                this, [this]() {
+                    for (auto* lbl : m_labels)
+                        lbl->hide();
+                    m_lines.clear();
+                    m_isPrompt.clear();
+                });
+        m_fadeAnim = anim;   // m_fadeAnim 型別改為 QVariantAnimation*（見下方 .h 修改）
     }
 
     m_fadeAnim->setStartValue(1.0);
     m_fadeAnim->setEndValue(0.0);
     m_fadeAnim->start();
-}
-
-void TransientCommandHistory::rebuildLabels() {
-    //    const int lineH = fontMetrics().height() + LINE_PADDING;
-        const int lineH = 10 + LINE_PADDING;
-    const int n     = m_lines.size();
-    //    const int w     = width() > 0 ? width() : 300;
-        const int w     = 300;
-
-//    resize(w, n * lineH);
-
-    for (int i = 0; i < m_labels.size(); ++i) {
-        if (i < n) {
-            m_labels[i]->setText(m_lines[i]);
-
-            QPalette pal = m_labels[i]->palette();
-            pal.setColor(QPalette::WindowText,
-                         m_isPrompt[i] ? QColor(0xaa, 0xaa, 0xaa) : Qt::white);
-            m_labels[i]->setPalette(pal);
-
-            m_labels[i]->setGeometry(6, i * lineH, w - 12, lineH);
-            m_labels[i]->show();
-        } else {
-            m_labels[i]->hide();
-        }
-    }
 }
 } // namespace ui
 } // namespace aicad

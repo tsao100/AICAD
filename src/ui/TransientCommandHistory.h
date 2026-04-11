@@ -4,7 +4,7 @@
 #include <QObject>
 #include <QLabel>
 #include <QTimer>
-#include <QPropertyAnimation>
+#include <QVariantAnimation>
 #include <QGraphicsOpacityEffect>
 #include <QStringList>
 
@@ -28,7 +28,6 @@ public:
     void updatePosition();
 
 private:
-    void rebuildLabels();       // 依 m_maxLines 增刪 QLabel
     void repositionLabels();    // 計算每個 label 的 geometry
 
     QWidget*             m_anchor;
@@ -41,12 +40,11 @@ private:
     int                  m_maxLines = 3;
 
     QTimer*              m_fadeTimer = nullptr;
-    QPropertyAnimation*  m_fadeAnim  = nullptr;   // 動畫目標：所有 effect
+    QVariantAnimation*  m_fadeAnim  = nullptr;   // 動畫目標：所有 effect
 
     static constexpr int LINE_H       = 22;   // 每行高度 px
     static constexpr int SIDE_PAD     =  6;   // 左右內距
     static constexpr int GAP_BELOW    =  2;   // 與 anchor 上緣的間距
-    static constexpr int LINE_PADDING = 4;   // 上下各 2px
 };
 
 } // namespace ui
