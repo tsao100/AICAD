@@ -923,7 +923,7 @@ void UIManager::setupCommandLine() {
     d->autoCompleteModel->updateFromAlias();
 
     // ① 建立新命令列 Widget（以 cadView 為 anchor）
-    d->commandLine = new CommandLineWidget(d->cadView, d->cadView);
+    d->commandLine = new CommandLineWidget(d->cadView, d->mainWindow);
 
     // ② 注入歷程到 CommandInputEdit
     d->commandLine->inputEdit()->setHistory(
@@ -941,7 +941,19 @@ void UIManager::setupCommandLine() {
     connect(shortcutF2, &QShortcut::activated,
             d->commandLine, &CommandLineWidget::onHistoryButtonClicked);
 
-    d->commandLine->show();
+    // ── 訂閱 VIEW_READY，初次對齊延後到 CadView 真正就緒 ──
+    auto* bus = core::Application::instance()->eventBus();
+    bus->subscribe(core::Events::VIEW_READY, d->commandLine,
+                   [this](const QVariant&) {
+                       // VIEW_READY 只需處理一次，對齊後取消訂閱
+                       d->commandLine->alignToCadView();
+                       d->commandLine->show();
+                       auto* bus = core::Application::instance()->eventBus();
+                       bus->unsubscribe(core::Events::VIEW_READY, d->commandLine);
+                   });
+
+    // 注意：show() 移到 VIEW_READY callback 內，這裡不呼叫
+    //d->commandLine->show();
 }
 
 // ✅ 新增：連接命令列事件

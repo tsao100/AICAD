@@ -18,6 +18,24 @@ CommandHistoryPopup::CommandHistoryPopup(QWidget* parent)
     hide();
 }
 
+void CommandHistoryPopup::appendLine(const QString& text, bool isPrompt) {
+    const QString color = isPrompt ? QStringLiteral("gray")
+                                   : QStringLiteral("white");
+    m_textEdit->append(
+        QStringLiteral("<span style='color:%1;'>%2</span>")
+            .arg(color, text.toHtmlEscaped()));
+    auto* sb = m_textEdit->verticalScrollBar();
+    sb->setValue(sb->maximum());
+}
+
+void CommandHistoryPopup::toggle(QWidget* anchor) {
+    if (isVisible()) {
+        slideOut();
+    } else {
+        slideIn(anchor);
+    }
+}
+
 void CommandHistoryPopup::slideIn(QWidget* anchor) {
     m_anchor = anchor;
     reposition();

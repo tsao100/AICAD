@@ -345,6 +345,9 @@ protected:
      */
     QPaintEngine* paintEngine() const override { return nullptr; }
 
+    void showEvent(QShowEvent* event) override;
+
+
 private:
     /**
      * @brief 初始化 OCCT 視圖器
@@ -375,6 +378,7 @@ private:
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面
 
     QPushButton* m_finishSketchButton;
+    bool m_viewReadyPublished = false;
 
     void showFinishSketchButton();
     void hideFinishSketchButton();

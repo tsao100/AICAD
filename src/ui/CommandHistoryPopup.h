@@ -16,8 +16,10 @@ class CommandHistoryPopup : public QWidget {
 public:
     explicit CommandHistoryPopup(QWidget* parent);
 
+    void appendLine(const QString& text, bool isPrompt = false);
     void slideIn(QWidget* anchor);
     void slideOut();
+    void toggle(QWidget* anchor);
     void setContent(const QString& html);
 
     int  slideHeight() const { return height(); }

@@ -136,6 +136,7 @@ constexpr const char* SELECTION_CHANGED = "selection.changed";
 // 視圖事件
 constexpr const char* VIEW_CHANGED = "view.changed";
 constexpr const char* VIEW_REFRESHED = "view.refreshed";
+constexpr const char* VIEW_READY    = "view.ready";
 
 // 命令事件
 constexpr const char* COMMAND_STARTED = "command.started";

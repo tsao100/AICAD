@@ -1436,5 +1436,18 @@ void CadView::keyPressEvent(QKeyEvent* event) {
     QWidget::keyPressEvent(event);
 }
 
+// CadView.cpp
+void CadView::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+
+    if (!m_viewReadyPublished && isVisible() && width() > 0 && height() > 0) {
+        m_viewReadyPublished = true;
+        auto* bus = core::Application::instance()->eventBus();
+        // 延一個 event loop，確保 WM 完成初始定位
+        QTimer::singleShot(0, this, [bus, this]() {
+            bus->publish(core::Events::VIEW_READY);
+        });
+    }
+}
 } // namespace view
 } // namespace aicad

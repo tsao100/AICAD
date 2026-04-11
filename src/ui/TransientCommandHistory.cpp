@@ -1,30 +1,58 @@
 #include "TransientCommandHistory.h"
 #include <QPainter>
-#include <QApplication>
 
 namespace aicad {
 namespace ui {
 
 TransientCommandHistory::TransientCommandHistory(QWidget* anchor)
-    : QWidget(anchor->window(), Qt::Tool | Qt::FramelessWindowHint |
-                                    Qt::WindowTransparentForInput)
+    : QWidget(nullptr,
+              Qt::Tool | Qt::FramelessWindowHint | Qt::WindowTransparentForInput)
     , m_anchor(anchor)
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
 
-    m_layout = new QVBoxLayout(this);
-    m_layout->setContentsMargins(4, 2, 4, 2);
-    m_layout->setSpacing(1);
+    // 先呼叫 setMaxLines 建立初始 label 陣列
+    setMaxLines(m_maxLines);
 
     m_fadeTimer = new QTimer(this);
     m_fadeTimer->setSingleShot(true);
-    connect(m_fadeTimer, &QTimer::timeout, this, &TransientCommandHistory::beginFadeOut);
+    connect(m_fadeTimer, &QTimer::timeout,
+            this, &TransientCommandHistory::beginFadeOut);
+}
+
+void TransientCommandHistory::setMaxLines(int n) {
+    n = qMax(1, n);
+    if (n == m_maxLines && !m_labels.isEmpty()) return;
+
+    m_maxLines = n;
+
+    // 刪除多餘的
+    while (m_labels.size() > n) {
+        delete m_labels.takeLast();
+    }
+
+    // 補足不夠的
+    while (m_labels.size() < n) {
+        auto* lbl = new QLabel(this);
+        lbl->setContentsMargins(0, 0, 0, 0);
+        lbl->hide();
+        m_labels.append(lbl);
+    }
+
+    // 裁剪已記錄的行數，避免超出新上限
+    while (m_lines.size() > m_maxLines) {
+        m_lines.removeFirst();
+        m_isPrompt.removeFirst();
+    }
+
+    // 若已顯示中，立刻重排
+    if (isVisible())
+        rebuildLabels();
 }
 
 void TransientCommandHistory::addLine(const QString& text, bool isPrompt) {
-    // 停止進行中的淡出
-    if (m_fadeAnim) { m_fadeAnim->stop(); }
+    if (m_fadeAnim) m_fadeAnim->stop();
     setOpacity(1.0);
 
     m_lines.append(text);
@@ -33,70 +61,74 @@ void TransientCommandHistory::addLine(const QString& text, bool isPrompt) {
         m_lines.removeFirst();
         m_isPrompt.removeFirst();
     }
+
+    // 先 rebuildLabels 確定高度，再 reposition
     rebuildLabels();
     repositionAboveAnchor();
     show();
-
-    // 重設淡出計時（2 秒後淡出）
     m_fadeTimer->start(2000);
-}
-
-void TransientCommandHistory::setMaxLines(int n) {
-    m_maxLines = qBound(1, n, 3);
 }
 
 void TransientCommandHistory::beginFadeOut() {
     if (!m_fadeAnim) {
         m_fadeAnim = new QPropertyAnimation(this, "opacity");
         m_fadeAnim->setDuration(800);
-        m_fadeAnim->setStartValue(1.0);
-        m_fadeAnim->setEndValue(0.0);
         m_fadeAnim->setEasingCurve(QEasingCurve::InQuad);
         connect(m_fadeAnim, &QPropertyAnimation::finished,
                 this, &QWidget::hide);
     }
+    m_fadeAnim->setStartValue(1.0);
+    m_fadeAnim->setEndValue(0.0);
     m_fadeAnim->start();
 }
 
 void TransientCommandHistory::setOpacity(qreal v) {
     m_opacity = v;
     setWindowOpacity(v);
-    update();
-}
-
-void TransientCommandHistory::rebuildLabels() {
-    QLayoutItem* item;
-    while ((item = m_layout->takeAt(0)) != nullptr) {
-        if (item->widget()) item->widget()->deleteLater();
-        delete item;
-    }
-    for (int i = 0; i < m_lines.size(); ++i) {
-        auto* lbl = new QLabel(m_lines[i], this);
-        QPalette pal = lbl->palette();
-        pal.setColor(QPalette::WindowText,
-                     m_isPrompt[i] ? Qt::gray : Qt::white);
-        lbl->setPalette(pal);
-        lbl->setWordWrap(false);
-        m_layout->addWidget(lbl);
-    }
-    adjustSize();
 }
 
 void TransientCommandHistory::repositionAboveAnchor() {
     if (!m_anchor) return;
-    QPoint anchorGlobal = m_anchor->mapToGlobal(QPoint(0, 0));
-    // 底部對齊 anchor 上緣
-    int x = anchorGlobal.x();
-    int y = anchorGlobal.y()-60; // - height() - 2;
-    move(x, y);
-    resize(m_anchor->width(), height());
+    const QPoint ag = m_anchor->mapToGlobal(QPoint(0, 0));
+    const int    w  = m_anchor->width();
+
+    resize(w, height());
+
+    const int lineH = fontMetrics().height() + LINE_PADDING;
+    for (int i = 0; i < m_lines.size(); ++i)
+        m_labels[i]->setGeometry(6, i * lineH, w - 12, lineH);
+
+    move(ag.x(), ag.y() - height() - 2);
+}
+
+void TransientCommandHistory::rebuildLabels() {
+    const int lineH = fontMetrics().height() + LINE_PADDING;
+    const int n     = m_lines.size();
+    const int w     = width() > 0 ? width() : 300;
+
+    resize(w, n * lineH);
+
+    for (int i = 0; i < m_labels.size(); ++i) {
+        if (i < n) {
+            m_labels[i]->setText(m_lines[i]);
+
+            QPalette pal = m_labels[i]->palette();
+            pal.setColor(QPalette::WindowText,
+                         m_isPrompt[i] ? QColor(0xaa, 0xaa, 0xaa) : Qt::white);
+            m_labels[i]->setPalette(pal);
+
+            m_labels[i]->setGeometry(6, i * lineH, w - 12, lineH);
+            m_labels[i]->show();
+        } else {
+            m_labels[i]->hide();
+        }
+    }
 }
 
 void TransientCommandHistory::paintEvent(QPaintEvent* event) {
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.fillRect(rect(), QColor(30, 30, 30, 200));
-    QWidget::paintEvent(event);
+    p.fillRect(rect(), QColor(30, 30, 30, 210));
+    //QLabel::paintEvent(event);
 }
 
 } // namespace ui

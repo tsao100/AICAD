@@ -6,7 +6,6 @@
 #include <QVBoxLayout>
 #include <QSplitter>
 #include <QTextEdit>
-#include <QComboBox>
 #include <QToolButton>
 #include <QMenu>
 #include <QPropertyAnimation>
@@ -42,12 +41,11 @@ public:
     // Ctrl+9 切換顯示
     void toggleVisible();
 
-    // 設定
-    int historyTransientLines() const { return m_transientLines; }
-    void setHistoryTransientLines(int n);
-
     CommandInputEdit* inputEdit();
     TransientCommandHistory* transientHistory() const;
+
+    // 對齊 CadView
+    void alignToCadView();
 
 signals:
     void commandSubmitted(const QString& cmd);
@@ -64,6 +62,8 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     void buildSingleRow();          // 建立單行排版
@@ -82,16 +82,21 @@ private:
 
     void onCustomizeMenu();
     void onInputSubmit(const QString& text);
-    void onComboActivated(int index);
+    void onRecentMenuTriggered(QAction* action);
 
     // 右邊緣/上邊緣拖曳
     void updateResizeCursor(const QPoint& pos);
     void startResize(const QPoint& pos);
     void doResize(const QPoint& pos);
+    void doResizeFloating(const QPoint& delta);
+    void doResizeEmbedded(const QPoint& delta);
     void endResize();
 
-    // 對齊 CadView
-    void alignToCadView();
+    void checkSnapToEdge();
+    void attachToCadView();
+    void detachToCadView();
+
+    static constexpr int SNAP_THRESHOLD = 30;   // px，可依需求調整
 
     // --- 子 Widget ---
     QWidget*    m_cadView         = nullptr;
@@ -112,7 +117,9 @@ private:
     QWidget*    m_inputRow        = nullptr;
     QHBoxLayout* m_inputRowLayout = nullptr;
 
-    QComboBox*       m_recentCombo    = nullptr;
+    QToolButton* m_recentButton   = nullptr;
+    QMenu*       m_recentMenu     = nullptr;
+    QStringList  m_recentCommands;
     CommandInputEdit* m_inputEdit     = nullptr;
     QToolButton*     m_historyButton  = nullptr;
 
@@ -130,17 +137,31 @@ private:
 
     // 指令歷程彈出視窗
     CommandHistoryPopup* m_historyPopup = nullptr;
+    QStringList  m_fullHistory;
 
     // 狀態
     bool m_multiRowMode   = false;
     int  m_transientLines = 3;       // 可設 1~3
 
     // 拖曳 resize
-    enum ResizeEdge { None, Right, Top };
+    enum ResizeEdge { None, Right, Top, TopRight };
     ResizeEdge m_resizeEdge = None;
     QPoint     m_resizeStart;
     QSize      m_resizeStartSize;
     int        m_resizeStartX = 0;   // 右邊緣拖曳：記錄 widget 的 x
+    int        m_resizeStartY = 0;   // ← 新增
+    // 拖曳/resize 後設 true，停止自動對齊
+    bool m_userPositioned = false;
+    // alignToCadView 呼叫 move() 期間設 true，避免 moveEvent 誤判
+    bool m_aligning       = false;
+    // 新增：是否正在 resize 中（給 paintEvent 畫 highlight 用）
+    bool m_resizing = false;
+    bool m_floating = false;
+
+    // 雙擊 gripper 可重置回自動對齊（選用）
+    bool m_initialAlignDone = false;
+    void resetAlignment();
+
 
     static constexpr int SINGLE_ROW_HEIGHT = 32;
     static constexpr int MULTI_ROW_THRESHOLD = 50;
