@@ -1,46 +1,51 @@
 #ifndef TRANSIENTCOMMANDHISTORY_H
 #define TRANSIENTCOMMANDHISTORY_H
 
-#include <QWidget>
+#include <QObject>
 #include <QLabel>
 #include <QTimer>
 #include <QPropertyAnimation>
+#include <QGraphicsOpacityEffect>
 #include <QStringList>
 
 namespace aicad {
 namespace ui {
 
-class TransientCommandHistory : public QWidget {
+// 不再是 QWidget，純粹管理直接掛在 cadView 上的 QLabel 群
+class TransientCommandHistory : public QObject {
     Q_OBJECT
-    Q_PROPERTY(qreal opacity READ opacity WRITE setOpacity)
 
 public:
-    explicit TransientCommandHistory(QWidget* anchor);
+    // anchor = CommandLineWidget，cadView = labels 的 parent
+    explicit TransientCommandHistory(QWidget* anchor, QWidget* cadView);
+    ~TransientCommandHistory() override;
 
     void addLine(const QString& text, bool isPrompt = false);
-    void setMaxLines(int n);        // 1~3
+    void setMaxLines(int n);
     void beginFadeOut();
 
-    qreal opacity() const  { return m_opacity; }
-    void  setOpacity(qreal v);
-
-protected:
-    void paintEvent(QPaintEvent* event) override;
+    // anchor 位置改變時（CommandLineWidget move/resize）呼叫
+    void updatePosition();
 
 private:
-    void repositionAboveAnchor();
-    void rebuildLabels();           // 手動 setGeometry，無 layout
+    void rebuildLabels();       // 依 m_maxLines 增刪 QLabel
+    void repositionLabels();    // 計算每個 label 的 geometry
 
-    QWidget*     m_anchor;
-    QVector<QLabel*> m_labels;          // 數量由 m_maxLines 決定
-    QStringList  m_lines;
-    QList<bool>  m_isPrompt;
-    int          m_maxLines = 3;
-    qreal        m_opacity  = 1.0;
+    QWidget*             m_anchor;
+    QWidget*             m_cadView;
+    QVector<QLabel*>     m_labels;       // parent = m_cadView
+    QVector<QGraphicsOpacityEffect*> m_effects;  // 對應每個 label
 
-    QPropertyAnimation* m_fadeAnim  = nullptr;
-    QTimer*             m_fadeTimer = nullptr;
+    QStringList          m_lines;
+    QList<bool>          m_isPrompt;
+    int                  m_maxLines = 3;
 
+    QTimer*              m_fadeTimer = nullptr;
+    QPropertyAnimation*  m_fadeAnim  = nullptr;   // 動畫目標：所有 effect
+
+    static constexpr int LINE_H       = 22;   // 每行高度 px
+    static constexpr int SIDE_PAD     =  6;   // 左右內距
+    static constexpr int GAP_BELOW    =  2;   // 與 anchor 上緣的間距
     static constexpr int LINE_PADDING = 4;   // 上下各 2px
 };
 

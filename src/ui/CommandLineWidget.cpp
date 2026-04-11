@@ -143,9 +143,8 @@ void CommandLineWidget::setupOptionsBar() {
 }
 
 void CommandLineWidget::setupTransientHistory() {
-    // TransientCommandHistory 是獨立的頂層視窗（浮動在命令列上方）
-    m_transientHistory = new TransientCommandHistory(this);
-    m_transientHistory->hide();
+    // m_cadView 是 anchor 的 parent，labels 掛在上面
+    m_transientHistory = new TransientCommandHistory(this, m_cadView);
 }
 
 void CommandLineWidget::setupResizeHandles() {
@@ -273,7 +272,7 @@ void CommandLineWidget::resizeEvent(QResizeEvent* event) {
         alignToCadView();   // 只在非 resize、未手動定位時才對齊
 
     if (m_transientHistory)
-        m_transientHistory->update();
+        m_transientHistory->updatePosition();
 }
 
 bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
@@ -383,7 +382,7 @@ void CommandLineWidget::moveEvent(QMoveEvent* event) {
             checkSnapToEdge();   // 嵌入模式座標系不同，不做 snap
     }
     if (m_transientHistory)
-        m_transientHistory->update();
+        m_transientHistory->updatePosition();
 }
 
 void CommandLineWidget::showEvent(QShowEvent* event) {
