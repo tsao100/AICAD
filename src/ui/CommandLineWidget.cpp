@@ -162,7 +162,10 @@ void CommandLineWidget::buildSingleRow() {
     // 清除現有排版
     if (m_singleRowBar) m_singleRowBar->deleteLater();
     if (m_leftButtonCol) m_leftButtonCol->deleteLater();
-    if (m_rightSplitter) m_rightSplitter->deleteLater();
+    if (m_rightSplitter){
+        m_historyView = nullptr;
+        m_rightSplitter->deleteLater();
+    }
     m_singleRowBar = m_leftButtonCol = nullptr;
     m_rightSplitter = nullptr;
 
@@ -246,6 +249,10 @@ void CommandLineWidget::switchLayout(bool multiRow) {
     m_customizeButton->setParent(this);
     m_inputRow->setParent(this);
     m_optionsBar->setParent(this);
+
+    // 切換到單行時，historyView 即將消失
+    if (!multiRow)
+        m_historyView = nullptr;   // ← 新增
 
     // 刪除現有 layout
     delete layout();
