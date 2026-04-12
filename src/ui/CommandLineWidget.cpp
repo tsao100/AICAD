@@ -211,6 +211,14 @@ void CommandLineWidget::buildMultiRow() {
     m_historyView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     m_historyView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
+    const QString color = QStringLiteral("#888888");
+
+    for (int i = 0; i < m_fullHistory.size(); ++i)
+        m_historyView->append(
+            QStringLiteral("<span style='color:%1;'>%2</span>")
+                .arg(color, (m_fullHistory[i]).toHtmlEscaped()));
+
+
     m_rightSplitter = new QSplitter(Qt::Vertical, this);
     m_rightSplitter->setHandleWidth(3);
     m_rightSplitter->setChildrenCollapsible(false);
