@@ -95,6 +95,7 @@ private:
     void checkSnapToEdge();
     void attachToCadView();
     void detachToCadView();
+    void installMouseFilterOnChildren(QWidget* parent);
 
     static constexpr int SNAP_THRESHOLD = 30;   // px，可依需求調整
 

@@ -3,6 +3,7 @@
 
 #include <QWidget>
 #include <QTextEdit>
+#include <QToolBar>
 #include <QPropertyAnimation>
 
 namespace aicad {
@@ -25,13 +26,20 @@ public:
     int  slideHeight() const { return height(); }
     void setSlideHeight(int h);
 
+private slots:
+    void copySelected();                  // ← 新增
+    void copyAll();                       // ← 新增
+    void clearContent();
+
 private:
     QTextEdit*          m_textEdit  = nullptr;
+    QToolBar*           m_toolbar   = nullptr;
     QPropertyAnimation* m_anim      = nullptr;
     QWidget*            m_anchor    = nullptr;
     int                 m_targetH   = 200;
 
     void reposition();
+    void buildToolbar();
 };
 
 } // namespace ui

@@ -37,6 +37,8 @@ CommandLineWidget::CommandLineWidget(QWidget* cadView, QWidget* parent)
     //buildMultiRow();
     //alignToCadView(); CadView 尚未就緒
 
+    installMouseFilterOnChildren(this);
+
     if (m_cadView)
         m_cadView->installEventFilter(this);
 }
@@ -276,6 +278,23 @@ void CommandLineWidget::resizeEvent(QResizeEvent* event) {
 }
 
 bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
+
+    // ── 子 Widget hover：轉換座標後更新 resize 游標 ──
+    if (event->type() == QEvent::MouseMove) {
+        if (auto* cw = qobject_cast<QWidget*>(obj);
+            cw && cw != this && isAncestorOf(cw))
+        {
+            auto* me = static_cast<QMouseEvent*>(event);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            const QPoint localPos = mapFromGlobal(me->globalPosition().toPoint());
+#else
+            const QPoint localPos = mapFromGlobal(me->globalPos());
+#endif
+            if (!m_resizing)
+                updateResizeCursor(localPos);
+        }
+    }
+
     // gripper 雙擊 → 恢復自動對齊
     if (obj == m_gripButton && event->type() == QEvent::MouseButtonDblClick) {
         resetAlignment();
@@ -325,18 +344,24 @@ void CommandLineWidget::mousePressEvent(QMouseEvent* event) {
 }
 
 void CommandLineWidget::mouseMoveEvent(QMouseEvent* event) {
-    if (m_resizeEdge != None && (event->buttons() & Qt::LeftButton)) {
+    if (m_resizing) {
+        if (event->buttons() & Qt::LeftButton) {
+            // 正在 resize，持續更新
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        doResize(event->globalPosition().toPoint());
+            doResize(event->globalPosition().toPoint());
 #else
-        doResize(event->globalPos());
+            doResize(event->globalPos());
 #endif
-        event->accept();
-        return;
+            event->accept();
+            return;
+        } else {
+            // 按鍵在 widget 外被放開（Alt-Tab 等），強制結束 resize
+            endResize();
+        }
     }
-    // 沒在拖曳時才更新 hover 游標
-    if (!(event->buttons() & Qt::LeftButton))
-        updateResizeCursor(event->pos());
+
+    // 非 resize 狀態（含 hover）：始終更新游標與 m_resizeEdge
+    updateResizeCursor(event->pos());
     QWidget::mouseMoveEvent(event);
 }
 
@@ -452,6 +477,7 @@ void CommandLineWidget::doResizeFloating(const QPoint& delta) {
         newW = qMax(minimumWidth(), newW + delta.x());
         newH = qMax(SINGLE_ROW_HEIGHT, newH - delta.y());
         newY = bottom - newH;
+        setFixedHeight(newH);
         break;
     default:
         return;
@@ -477,6 +503,7 @@ void CommandLineWidget::doResizeEmbedded(const QPoint& delta) {
     case TopRight:
         newW = qMax(minimumWidth(), newW + delta.x() * 2);
         newH = qMax(SINGLE_ROW_HEIGHT, newH - delta.y());
+        setFixedHeight(newH);
         break;
     default:
         return;
@@ -580,6 +607,19 @@ void CommandLineWidget::detachToCadView() {
     show();
 
     m_floating = true;
+}
+
+// CommandLineWidget.cpp
+
+// ── 工具函式：遞迴安裝 ──────────────────────
+void CommandLineWidget::installMouseFilterOnChildren(QWidget* w) {
+    for (QObject* child : w->children()) {
+        if (auto* cw = qobject_cast<QWidget*>(child)) {
+            cw->setMouseTracking(true);
+            cw->installEventFilter(this);
+            installMouseFilterOnChildren(cw);   // 遞迴
+        }
+    }
 }
 
 // ─────────────────────────────────────────
