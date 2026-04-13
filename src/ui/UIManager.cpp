@@ -1037,6 +1037,10 @@ void UIManager::connectCommandLineEvents() {
                 QString resolved = d->commandAlias->resolveAlias(cmd);
                 d->autoCompleteModel->incrementUsage(resolved);
 
+                // ✅ 以 resolved 名稱修正 widget 內的所有歷程
+                d->commandLine->recordResolvedCommand(resolved);
+
+                // CommandLineManager 內部的 addToHistory 也是 resolved
                 d->commandLineManager->executeCommand(resolved);
             });
 

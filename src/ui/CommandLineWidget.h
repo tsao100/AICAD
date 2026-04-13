@@ -50,6 +50,8 @@ public:
     // 程式化提交命令（等同使用者手動輸入並按 Enter）
     // 工具列、FeatureBrowser context menu 等非 UI 輸入均應呼叫此方法
     void submitCommand(const QString& cmd);
+    // 讓 UIManager 在 alias resolve 後以正確名稱修正歷程
+    void recordResolvedCommand(const QString& resolved);
 
 signals:
     void commandSubmitted(const QString& cmd);

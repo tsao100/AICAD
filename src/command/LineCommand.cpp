@@ -1,6 +1,7 @@
 #include "command/LineCommand.h"
 #include "command/Command.h"
 #include "command/CommandTypes.h"
+#include "command/CommandFactory.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include <QFileDialog>

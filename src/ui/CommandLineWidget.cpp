@@ -649,21 +649,6 @@ void CommandLineWidget::onInputSubmit(const QString& text) {
         return;
     }
 
-    // 更新最近指令清單（去重，最多 10 筆）
-    m_recentCommands.removeAll(text);
-    m_recentCommands.prepend(text);
-    if (m_recentCommands.size() > 10)
-        m_recentCommands.removeLast();
-
-    // 重建 menu
-    m_recentMenu->clear();
-    for (const QString& cmd : m_recentCommands)
-        m_recentMenu->addAction(cmd);
-
-    // 同步 CommandInputEdit 歷程（上下鍵）
-    m_inputEdit->addToHistory(text);
-
-
     appendHistory(text, false);
     emit commandSubmitted(text);
 }
@@ -678,6 +663,24 @@ void CommandLineWidget::submitCommand(const QString& cmd) {
     // 直接走 onInputSubmit，行為與使用者手打完全相同：
     // 更新 m_recentCommands、m_recentMenu、inputEdit 歷程、appendHistory、emit commandSubmitted
     onInputSubmit(cmd);
+}
+
+void CommandLineWidget::recordResolvedCommand(const QString& resolved) {
+    if (resolved.isEmpty()) return;
+
+    // ↑/↓ 鍵歷程：記錄 resolved 名稱
+    m_inputEdit->addToHistory(resolved);
+
+    // 最近命令清單：去重後以 resolved 置頂
+    m_recentCommands.removeAll(resolved);
+    m_recentCommands.prepend(resolved);
+    if (m_recentCommands.size() > 10)
+        m_recentCommands.removeLast();
+
+    // 重建下拉選單
+    m_recentMenu->clear();
+    for (const QString& cmd : m_recentCommands)
+        m_recentMenu->addAction(cmd);
 }
 
 void CommandLineWidget::onHistoryButtonClicked() {

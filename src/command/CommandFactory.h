@@ -61,12 +61,12 @@ private:
 
 // 輔助巨集，簡化命令註冊
 #define REGISTER_COMMAND(ID, CLASS) \
-    static bool _reg_##CLASS = []() { \
+static bool _reg_##CLASS = []() { \
         CommandFactory::registerCreator(ID, []() -> Command* { \
-            return new CLASS(); \
+                return new CLASS(); \
         }); \
         return true; \
-    }()
+}()
 
 } // namespace command
 } // namespace aicad

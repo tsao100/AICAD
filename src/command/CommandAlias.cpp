@@ -141,7 +141,7 @@ bool CommandAlias::loadFromFile(const QString& filePath) {
                 command = command.mid(1);
             }
 
-            registerAlias(alias, command, description, false);
+            registerAlias(alias.toUpper(), command.toUpper(), description, false);
         }
         else {
             qWarning() << "[CommandAlias] Invalid format at line" << lineNum << ":" << line;
