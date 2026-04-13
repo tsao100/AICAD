@@ -868,6 +868,64 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     // 其他 Feature 類型可在此擴展（ExtrudeGripProvider 等）
                 });
 
+        // ── 編輯草圖 ──────────────────────────────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::editSketchRequested,
+                this, [this, docMgr](const QString& featureId) {
+                    auto* doc    = docMgr->currentDocument();
+                    if (!doc) return;
+                    auto* sketch = qobject_cast<cad::Sketch*>(doc->findFeature(featureId));
+                    if (!sketch) return;
+
+                    core::Application::instance()->setActiveSketch(sketch);
+                    if (d->cadView)
+                        d->cadView->setMode(view::InteractionMode::Sketching);
+                    onSketchEditStarted(sketch);
+                });
+
+        // ── 刪除特徵 ──────────────────────────────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::deleteFeatureRequested,
+                this, [this, docMgr](const QString& featureId) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    auto* feature = doc->findFeature(featureId);
+                    if (!feature) return;
+
+                    // 若正在編輯此草圖，先結束草圖模式
+                    auto* sketch = qobject_cast<cad::Sketch*>(feature);
+                    if (sketch &&
+                        core::Application::instance()->activeSketch() == sketch) {
+                        onSketchEditEnded();
+                        if (d->cadView)
+                            d->cadView->setMode(view::InteractionMode::Navigation);
+                    }
+
+                    doc->removeFeature(feature);
+                    // featureRemoved → FeatureBrowser::onTreeStructureChanged → refresh() 自動執行
+                });
+
+        // ── 剖面視圖（toggle）──────────────────────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::sectionViewRequested,
+                this, [this, docMgr](const QString& featureId) {
+                    if (!d->cadView) return;
+
+                    // 再按一次同一個草圖 → 取消剖面
+                    if (d->cadView->isSectionActive()) {
+                        d->cadView->clearSectionPlane();
+                        setStatusMessage(tr("剖面已取消"), 2000);
+                        return;
+                    }
+
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    auto* sketch = qobject_cast<cad::Sketch*>(
+                        doc->findFeature(featureId));
+                    if (!sketch || !sketch->plane()) return;
+
+                    d->cadView->setSectionPlane(sketch->plane()->toGpPln());
+                    setStatusMessage(
+                        tr("剖面：%1（再次右鍵選「剖面」可取消）").arg(sketch->name()), 0);
+                });
+
         // ── 取消選取時清除 grips ──────────────────────────────────────────────
         // connect(d->cadView->context().get(), &SomeSelectionSignal, this, [this]() {
         //     d->gripManager->detach();

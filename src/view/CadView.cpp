@@ -41,6 +41,8 @@
 #include <TopoDS_Face.hxx>
 #include <Geom_Surface.hxx>
 #include <Geom_Plane.hxx>
+#include <Graphic3d_ClipPlane.hxx>
+#include <Graphic3d_SequenceOfHClipPlane.hxx>
 
 #ifdef _WIN32
 #include <WNT_Window.hxx>
@@ -73,7 +75,8 @@ public:
     Handle(V3d_Viewer) viewer;
     Handle(V3d_View) view;
     Handle(AIS_InteractiveContext) context;
-    Handle(AIS_ViewCube) viewCube;
+    Handle(AIS_ViewCube) viewCube;    
+    Handle(Graphic3d_ClipPlane) sectionClipPlane;
     QTimer* viewCubeTimer;
 
     // 關聯的文件
@@ -516,6 +519,37 @@ ViewGrid* CadView::grid() const {
 osnap::OSnapManager*  CadView::snapManager() const
 {
     return m_snapManager;
+}
+
+void CadView::setSectionPlane(const gp_Pln& plane) {
+    if (d->view.IsNull()) return;
+
+    // 若舊的還在，先移除
+    if (!d->sectionClipPlane.IsNull())
+        d->view->RemoveClipPlane(d->sectionClipPlane);
+
+    d->sectionClipPlane = new Graphic3d_ClipPlane(plane);
+    d->sectionClipPlane->SetOn(Standard_True);
+    d->sectionClipPlane->SetCapping(Standard_True);      // 顯示剖切填充面
+
+    Graphic3d_MaterialAspect mat;
+    mat.SetColor(Quantity_Color(0.75, 0.75, 0.80, Quantity_TOC_RGB));
+    mat.SetTransparency(0.2f);
+    d->sectionClipPlane->SetCappingMaterial(mat);
+
+    d->view->AddClipPlane(d->sectionClipPlane);
+    d->view->Redraw();
+}
+
+void CadView::clearSectionPlane() {
+    if (d->view.IsNull() || d->sectionClipPlane.IsNull()) return;
+    d->view->RemoveClipPlane(d->sectionClipPlane);
+    d->sectionClipPlane.Nullify();
+    d->view->Redraw();
+}
+
+bool CadView::isSectionActive() const {
+    return !d->sectionClipPlane.IsNull();
 }
 
 void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {

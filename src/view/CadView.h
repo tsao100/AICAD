@@ -62,7 +62,8 @@ enum class InteractionMode {
     Sketching,      ///< 草圖繪製
     Selecting,      ///< 選擇物件
     Measuring,      ///< 測量
-    GetPoint        ///< 取得點輸入
+    GetPoint,       ///< 取得點輸入
+    Navigation
 };
 
 /**
@@ -210,6 +211,11 @@ public:
     ViewGrid* grid() const;  // Add this public method declaration
 
     osnap::OSnapManager* snapManager() const;
+
+    // 新增剖面方法
+    void setSectionPlane(const gp_Pln& plane);
+    void clearSectionPlane();
+    bool isSectionActive() const;
 
 public Q_SLOTS:
 

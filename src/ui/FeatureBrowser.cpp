@@ -399,14 +399,43 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
     QTreeWidgetItem* item = d->treeWidget->itemAt(pos);
     if (!item) return;
 
-    QString itemId  = item->data(0, Qt::UserRole).toString();
-    QPoint globalPos = d->treeWidget->mapToGlobal(pos);
+    QString  itemId   = item->data(0, Qt::UserRole).toString();
+    ItemType itemType = static_cast<ItemType>(
+        item->data(0, Qt::UserRole + 1).toInt());
+    QPoint   globalPos = d->treeWidget->mapToGlobal(pos);
 
-    qDebug() << "[FeatureBrowser] Context menu for:" << item->text(0);
+    if (itemType == ItemType::Folder || itemType == ItemType::Origin)
+        return;
 
-    Q_EMIT featureContextMenuById(itemId, globalPos);
-    Q_EMIT featureContextMenu(0, globalPos);
+    QMenu menu(this);
+
+    // ── 編輯草圖（僅 Sketch）────────────────────────────────────────────────
+    if (itemType == ItemType::Sketch) {
+        QAction* actEdit = menu.addAction(
+            QIcon(":/icons/sketch.png"), tr("編輯草圖"));
+        connect(actEdit, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT editSketchRequested(itemId);
+        });
+        menu.addSeparator();
+    }
+
+    // ── 刪除（所有可刪類型）─────────────────────────────────────────────────
+    QAction* actDelete = menu.addAction(
+        QIcon(":/icons/cut.png"), tr("刪除"));
+    connect(actDelete, &QAction::triggered, this, [this, itemId] {
+        Q_EMIT deleteFeatureRequested(itemId);
+    });
+
+    // ── 剖面（僅 Sketch）────────────────────────────────────────────────────
+    if (itemType == ItemType::Sketch) {
+        menu.addSeparator();
+        QAction* actSection = menu.addAction(tr("剖面"));
+        connect(actSection, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT sectionViewRequested(itemId);
+        });
+    }
+
+    menu.exec(globalPos);
 }
-
 } // namespace ui
 } // namespace aicad

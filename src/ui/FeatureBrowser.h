@@ -100,6 +100,11 @@ Q_SIGNALS:
      */
     void featureContextMenu(int featureId, const QPoint& globalPos);
     void featureContextMenuById(QString itemId,  QPoint& globalPos);
+
+    // Context menu actions
+    void editSketchRequested(const QString& featureId);
+    void deleteFeatureRequested(const QString& featureId);
+    void sectionViewRequested(const QString& featureId);
     
 private Q_SLOTS:
     void onItemClicked(QTreeWidgetItem* item, int column);
