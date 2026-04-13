@@ -47,6 +47,10 @@ public:
     // 對齊 CadView
     void alignToCadView();
 
+    // 程式化提交命令（等同使用者手動輸入並按 Enter）
+    // 工具列、FeatureBrowser context menu 等非 UI 輸入均應呼叫此方法
+    void submitCommand(const QString& cmd);
+
 signals:
     void commandSubmitted(const QString& cmd);
     void optionSelected(const QString& key);

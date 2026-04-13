@@ -876,6 +876,17 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     auto* sketch = qobject_cast<cad::Sketch*>(doc->findFeature(featureId));
                     if (!sketch) return;
 
+                    // 1️⃣ 確保 sketch visible（Feature 層）+ AIS 顯示
+                    if (!sketch->isVisible()) {
+                        sketch->setVisible(true);
+                        sketch->displayInContext(doc->aisContext());
+                    }
+
+                    // 2️⃣ 開啟格線
+                    if (d->cadView)
+                        d->cadView->setGridEnabled(true);
+
+                    // 3️⃣ 設定 active sketch、切換模式、OSnap 等（原有邏輯）
                     core::Application::instance()->setActiveSketch(sketch);
                     if (d->cadView)
                         d->cadView->setMode(view::InteractionMode::Sketching);
@@ -1026,16 +1037,21 @@ void UIManager::connectCommandLineEvents() {
                 QString resolved = d->commandAlias->resolveAlias(cmd);
                 d->autoCompleteModel->incrementUsage(resolved);
 
-                // 同步歷程給 InputEdit
-                d->commandLineManager->addToHistory(resolved);
-                d->commandLine->inputEdit()->addToHistory(resolved);
-
                 d->commandLineManager->executeCommand(resolved);
             });
 
     // ── 使用者選了選項按鈕 ──────────────────────────────────────────
     connect(d->commandLine, &CommandLineWidget::optionSelected,
             d->commandLineManager, &core::CommandLineManager::onOptionSelected);
+
+    // ── COMMAND_EXECUTE_REQUEST → CommandManager ──
+    bus->subscribe(core::Events::COMMAND_EXECUTE_REQUEST, this,
+                   [this](const QVariant& data) {
+                       QString cmdName = data.toString();
+                       auto* cmdMgr = core::Application::instance()->commandManager();
+                       if (cmdMgr)
+                           cmdMgr->executeCommand(cmdName);
+                   });
 
     // ── 命令發出提示（prompt）───────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_PROMPT, this,
@@ -1073,9 +1089,8 @@ void UIManager::connectCommandLineEvents() {
     // ── 命令取消（Esc）──────────────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_CANCELLED, this,
                    [this](const QVariant&) {
-                       d->commandLine->appendHistory(tr("*取消*"));
-                       d->commandLine->transientHistory()->beginFadeOut();
-                       d->commandLine->clearCommandOptions();
+                       auto* cmdMgr = core::Application::instance()->commandManager();
+                       if (cmdMgr) cmdMgr->cancelCurrentCommand();
                        d->commandLine->inputEdit()->setPlaceholderText(
                            tr("輸入指令或 LISP..."));
                    });
@@ -1301,27 +1316,26 @@ void UIManager::setupToolbarsFromParser() {
 }
 
 void UIManager::executeCommand(const QString& commandId) {
-    core::Application* app = core::Application::instance();
-    command::CommandManager* cmdMgr = app->commandManager();
+    if (commandId.isEmpty()) return;
 
-    if (!cmdMgr) {
-        qWarning() << "[UIManager] CommandManager not available";
-        return;
-    }
+    QString resolved = d->commandAlias
+                           ? d->commandAlias->resolveAlias(commandId)
+                           : commandId;
 
-    qDebug() << "[UIManager] Executing command:" << commandId;
-
-    // 執行命令
-    command::CommandResult result = cmdMgr->executeCommand(commandId);
-
-    // 顯示結果
-    if (result.success) {
-        setStatusMessage(result.message, 3000);
+    if (d->commandLine) {
+        // 走 onInputSubmit 完整路徑：
+        // → 更新 recentCommands / recentMenu
+        // → m_inputEdit->addToHistory()   ← ↑/↓ 鍵有效
+        // → appendHistory()               ← 歷程區顯示
+        // → emit commandSubmitted()       ← 觸發 connectCommandLineEvents slot
+        //       → alias resolve → commandLineManager->executeCommand()
+        d->commandLine->submitCommand(resolved);
     } else {
-        setStatusMessage("Error: " + result.message, 5000);
+        // fallback：CommandLine 尚未建立（極早期呼叫）
+        if (d->commandLineManager)
+            d->commandLineManager->executeCommand(resolved);
     }
 }
-
 void UIManager::setupDefaultUI() {
     // 回退到預設 UI (如果沒有 menu.txt)
     qDebug() << "[UIManager] Setting up default UI...";

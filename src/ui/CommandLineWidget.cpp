@@ -663,6 +663,7 @@ void CommandLineWidget::onInputSubmit(const QString& text) {
     // 同步 CommandInputEdit 歷程（上下鍵）
     m_inputEdit->addToHistory(text);
 
+
     appendHistory(text, false);
     emit commandSubmitted(text);
 }
@@ -670,6 +671,13 @@ void CommandLineWidget::onInputSubmit(const QString& text) {
 void CommandLineWidget::onRecentMenuTriggered(QAction* action) {
     m_inputEdit->setText(action->text());
     m_inputEdit->setFocus();
+}
+
+void CommandLineWidget::submitCommand(const QString& cmd) {
+    if (cmd.isEmpty()) return;
+    // 直接走 onInputSubmit，行為與使用者手打完全相同：
+    // 更新 m_recentCommands、m_recentMenu、inputEdit 歷程、appendHistory、emit commandSubmitted
+    onInputSubmit(cmd);
 }
 
 void CommandLineWidget::onHistoryButtonClicked() {
