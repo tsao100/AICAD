@@ -4,20 +4,20 @@
 CONFIG   += moc
 CONFIG   += debug_and_release
 
-# ---------- Unix / Linux (Qt5 with GCC) ----------
-unix {
-    QT += widgets opengl printsupport
+# ---------- macOS (Qt6 with Clang) ----------
+macx {
+    QT += widgets openglwidgets printsupport
     CONFIG += c++17
 
-    # GCC specific options
     QMAKE_CXXFLAGS += -Wall -Wextra
-    # --- OCCT 8.0.0 paths ---
-    OCCT_DIR = /usr/local/occt
+
+    # --- OCCT 7.9.3 (Homebrew Cellar) ---
+    OCCT_DIR = /usr/local/Cellar/opencascade/7.9.3
 
     INCLUDEPATH += $$OCCT_DIR/include/opencascade
-    LIBS += -L$$OCCT_DIR/lib -Wl,-rpath,$$OCCT_DIR/lib
+    LIBS += -L$$OCCT_DIR/lib \
+            -Wl,-rpath,$$OCCT_DIR/lib
 
-    # Essential OCCT libraries
     LIBS += -lTKernel \
             -lTKMath \
             -lTKG2d \
@@ -46,16 +46,71 @@ unix {
             -lTKBinL \
             -lTKBinXCAF
 
-    # Link X11 (required for OpenGL context)
+    # ECL 24.5.10 (Homebrew Cellar)
+    INCLUDEPATH += /usr/local/Cellar/ecl/24.5.10/include/ecl
+    LIBS += -L/usr/local/Cellar/ecl/24.5.10/lib \
+            -lecl
+
+    # macOS 不需要 X11；OpenGL framework 已由 Qt 帶入
+    QMAKE_LFLAGS += -Wl,-rpath,/usr/local/Cellar/ecl/24.5.10/lib
+
+    # Copy menu.txt to build directory
+    copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD
+    first.depends = $(first) copydata
+    export(first.depends)
+    export(copydata.commands)
+    QMAKE_EXTRA_TARGETS += first copydata
+}
+
+# ---------- Linux (Qt5 with GCC) ----------
+unix:!macx {
+    QT += widgets opengl printsupport
+    CONFIG += c++17
+
+    QMAKE_CXXFLAGS += -Wall -Wextra
+    QMAKE_CXXFLAGS += -std=c++11
+
+    # --- OCCT 8.0.0 paths ---
+    OCCT_DIR = /usr/local/occt
+
+    INCLUDEPATH += $$OCCT_DIR/include/opencascade
+    LIBS += -L$$OCCT_DIR/lib -Wl,-rpath,$$OCCT_DIR/lib
+
+    LIBS += -lTKernel \
+            -lTKMath \
+            -lTKG2d \
+            -lTKG3d \
+            -lTKGeomBase \
+            -lTKGeomAlgo \
+            -lTKBRep \
+            -lTKTopAlgo \
+            -lTKPrim \
+            -lTKV3d \
+            -lTKOpenGl \
+            -lTKService \
+            -lTKLCAF \
+            -lTKCAF \
+            -lTKCDF \
+            -lTKVCAF \
+            -lTKMesh \
+            -lTKHLR \
+            -lTKBO \
+            -lTKBool \
+            -lTKOffset \
+            -lTKFillet \
+            -lTKXSBase \
+            -lTKXCAF \
+            -lTKBin \
+            -lTKBinL \
+            -lTKBinXCAF
+
+    # Link X11 (required for OpenGL context on Linux)
     LIBS += -lX11 -lXext
 
     DEFINES += __linux__
-    QMAKE_CXXFLAGS += -std=c++11
 
-    # ECL headers (adjust path if needed)
+    # ECL headers
     INCLUDEPATH += /usr/include/ecl
-
-    # ECL libraries
     LIBS += -lecl -lgmp -lmpfr
 
     # Copy menu.txt to build directory
@@ -64,7 +119,6 @@ unix {
     export(first.depends)
     export(copydata.commands)
     QMAKE_EXTRA_TARGETS += first copydata
-
 }
 
 # Define PROJECT_SOURCE_DIR as the .pro file's directory
