@@ -47,7 +47,9 @@ macx {
             -lTKBinXCAF
 
     # ECL 24.5.10 (Homebrew Cellar)
-    INCLUDEPATH += /usr/local/Cellar/ecl/24.5.10/include/ecl
+    INCLUDEPATH += /usr/local/Cellar/ecl/24.5.10/include
+    INCLUDEPATH += /usr/local/Cellar/gmp/6.3.0/include
+    INCLUDEPATH += /usr/local/Cellar/bdw-gc/8.2.12/include
     LIBS += -L/usr/local/Cellar/ecl/24.5.10/lib \
             -lecl
 
