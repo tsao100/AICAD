@@ -668,12 +668,13 @@ void CommandLineWidget::submitCommand(const QString& cmd) {
 void CommandLineWidget::recordResolvedCommand(const QString& resolved) {
     if (resolved.isEmpty()) return;
 
+    QString upper = resolved.trimmed().toUpper();
     // ↑/↓ 鍵歷程：記錄 resolved 名稱
-    m_inputEdit->addToHistory(resolved);
+    m_inputEdit->addToHistory(upper);
 
     // 最近命令清單：去重後以 resolved 置頂
-    m_recentCommands.removeAll(resolved);
-    m_recentCommands.prepend(resolved);
+    m_recentCommands.removeAll(upper);
+    m_recentCommands.prepend(upper);
     if (m_recentCommands.size() > 10)
         m_recentCommands.removeLast();
 

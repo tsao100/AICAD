@@ -17,8 +17,9 @@ void CommandInputEdit::setHistory(const QStringList& history) {
 
 void CommandInputEdit::addToHistory(const QString& cmd) {
     if (cmd.isEmpty()) return;
-    m_history.removeAll(cmd);
-    m_history.prepend(cmd);
+    QString upper = cmd.trimmed().toUpper();
+    m_history.removeAll(upper);
+    m_history.prepend(upper);
     m_historyIndex = -1;
 }
 
