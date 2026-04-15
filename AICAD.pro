@@ -7,7 +7,7 @@ QT       += qml
 
 # ---------- macOS (Qt6 with Clang) ----------
 macx {
-    QT += widgets openglwidgets printsupport qml
+    QT += widgets openglwidgets printsupport
     CONFIG += c++17
 
     QMAKE_CXXFLAGS += -Wall -Wextra
@@ -47,15 +47,27 @@ macx {
             -lTKBinL \
             -lTKBinXCAF
 
-    # ECL 24.5.10 (Homebrew Cellar)
-    INCLUDEPATH += /usr/local/Cellar/ecl/24.5.10/include
-    INCLUDEPATH += /usr/local/Cellar/gmp/6.3.0/include
-    INCLUDEPATH += /usr/local/Cellar/bdw-gc/8.2.12/include
-    LIBS += -L/usr/local/Cellar/ecl/24.5.10/lib \
-            -lecl
+    # macOS 系統 framework（Cocoa 視窗 + OpenGL）
+    LIBS += -framework Cocoa \
+            -framework OpenGL \
+            -framework IOKit \
+            -framework CoreFoundation
 
-    # macOS 不需要 X11；OpenGL framework 已由 Qt 帶入
-    QMAKE_LFLAGS += -Wl,-rpath,/usr/local/Cellar/ecl/24.5.10/lib
+    # --- ECL ---
+    ECL_PREFIX = $$system(brew --prefix ecl 2>/dev/null)
+    isEmpty(ECL_PREFIX): ECL_PREFIX = /usr/local/opt/ecl
+
+    GMP_PREFIX = $$system(brew --prefix gmp 2>/dev/null)
+    isEmpty(GMP_PREFIX): GMP_PREFIX = /usr/local/opt/gmp
+
+    BDWGC_PREFIX = $$system(brew --prefix bdw-gc 2>/dev/null)
+    isEmpty(BDWGC_PREFIX): BDWGC_PREFIX = /usr/local/opt/bdw-gc
+
+    INCLUDEPATH += $$ECL_PREFIX/include
+    INCLUDEPATH += $$GMP_PREFIX/include
+    INCLUDEPATH += $$BDWGC_PREFIX/include
+    LIBS += -L$$ECL_PREFIX/lib -lecl
+    QMAKE_LFLAGS += -Wl,-rpath,$$ECL_PREFIX/lib
 
     # Copy menu.txt to build directory
     copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD

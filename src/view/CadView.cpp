@@ -45,9 +45,11 @@
 #include <Graphic3d_SequenceOfHClipPlane.hxx>
 
 #ifdef _WIN32
-#include <WNT_Window.hxx>
+#  include <WNT_Window.hxx>
+#elif defined(__APPLE__)
+#  include <Cocoa_Window.hxx>
 #else
-#include <Xw_Window.hxx>
+#  include <Xw_Window.hxx>
 #endif
 
 using namespace aicad::core;
@@ -59,7 +61,7 @@ namespace view {
 // 輔助函式：Qt 座標轉 OCCT 座標
 static void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
                      Standard_Integer& occX, Standard_Integer& occY) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     qreal dpr = widget->devicePixelRatio();
     occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
     occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
@@ -181,7 +183,7 @@ void CadView::initializeViewer() {
     qDebug() << "[CadView] Initializing OCCT viewer...";
 
 // 建立顯示連接
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection();
 #else
     Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection("");
@@ -201,6 +203,8 @@ void CadView::initializeViewer() {
 // 建立視窗
 #ifdef _WIN32
     Handle(WNT_Window) window = new WNT_Window((Aspect_Handle)winId());
+#elif defined(__APPLE__)
+    Handle(Cocoa_Window) window = new Cocoa_Window((NSView*)winId());
 #else
     Handle(Xw_Window) window = new Xw_Window(displayConnection, (Aspect_Drawable)winId());
 #endif

@@ -23,10 +23,12 @@ int main(int argc, char **argv) {
     QSurfaceFormat fmt;
     fmt.setRenderableType(QSurfaceFormat::OpenGL);
     QSurfaceFormat::setDefaultFormat(fmt);
+#elif defined(__APPLE__)
+    // macOS：Qt 使用原生 Cocoa，無須設定 QPA platform
+    // Retina 支援由 Qt 自動處理
 #else
-    // Force Qt to use XCB before QApplication is created
+    // Linux：偵測 Wayland 並強制回退到 XCB
     const char* session = std::getenv("XDG_SESSION_TYPE");
-
     if (session && strcmp(session, "wayland") == 0) {
         qDebug("Detected Wayland session → forcing xcb");
         qputenv("QT_QPA_PLATFORM", QByteArray("xcb"));
