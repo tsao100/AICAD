@@ -137,6 +137,7 @@ CadView::CadView(QWidget* parent)
     // 設定 Widget 屬性
     setAttribute(Qt::WA_PaintOnScreen);
     setAttribute(Qt::WA_NoSystemBackground);
+    setAttribute(Qt::WA_NativeWindow);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setBackgroundRole(QPalette::NoRole);
@@ -182,6 +183,13 @@ CadView::~CadView() {
 void CadView::initializeViewer() {
     qDebug() << "[CadView] Initializing OCCT viewer...";
 
+    // 確認 native window handle 已存在（macOS 必要）
+    WId wid = winId();
+    if (wid == 0) {
+        qCritical() << "[CadView] winId() == 0, native window not ready!";
+        return;
+    }
+
 // 建立顯示連接
 #if defined(_WIN32) || defined(__APPLE__)
     Handle(Aspect_DisplayConnection) displayConnection = new Aspect_DisplayConnection();
@@ -191,6 +199,14 @@ void CadView::initializeViewer() {
 
     // 建立圖形驅動
     Handle(OpenGl_GraphicDriver) graphicDriver = new OpenGl_GraphicDriver(displayConnection);
+
+    // VMware / 軟體 OpenGL 容錯：關閉 OpenGL 3.2+ core profile 強制要求
+#ifdef __APPLE__
+    OpenGl_Caps& caps = graphicDriver->ChangeOptions();
+    caps.contextCompatible = Standard_True;   // 允許 compatibility profile
+    caps.buffersNoSwap     = Standard_False;
+    caps.swapInterval      = 0;               // VMware 下關閉 vsync 同步等待
+#endif
 
     // 建立視圖器
     d->viewer = new V3d_Viewer(graphicDriver);
@@ -1478,6 +1494,24 @@ void CadView::keyPressEvent(QKeyEvent* event) {
 void CadView::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
 
+    // ← 新增：首次 show 時才真正初始化 OCCT viewer
+    if (!d->viewer.IsNull() == false) {   // 尚未初始化
+        // 用 singleShot 確保 Native Window / NSView 已完全就緒
+        QTimer::singleShot(0, this, [this]() {
+            initializeViewer();
+
+            if (!m_viewReadyPublished && isVisible() && width() > 0 && height() > 0) {
+                m_viewReadyPublished = true;
+                auto* bus = core::Application::instance()->eventBus();
+                QTimer::singleShot(0, this, [bus]() {
+                    bus->publish(core::Events::VIEW_READY);
+                });
+            }
+        });
+        return;
+    }
+
+    // 已初始化後再次 show（例如 dock 顯示）
     if (!m_viewReadyPublished && isVisible() && width() > 0 && height() > 0) {
         m_viewReadyPublished = true;
         auto* bus = core::Application::instance()->eventBus();
