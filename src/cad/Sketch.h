@@ -35,16 +35,34 @@ enum class SketchGeometryType {
 };
 
 /**
+* @brief 幾何元素的角色
+*
+* Normal      : 正常幾何，參與 Wire 建立與 Extrude
+* Construction: 建構線，僅供參考與約束，不進入輪廓
+* Centerline  : 中心線（建構線的特殊樣式，語意為旋轉軸/對稱軸）
+*/
+enum class GeomRole {
+    Normal,
+    Construction,
+    Centerline,
+};
+
+/**
  * @brief 草圖幾何元素基礎類別
  */
 struct SketchGeometry {
-    QString         uuid;   // ← 新增，供約束系統和跨特徵參考使用
+    QString    uuid;
     SketchGeometryType type;
+    GeomRole   role = GeomRole::Normal;
     QVector<QVector2D> points;
 
-    SketchGeometry(SketchGeometryType t)
+    SketchGeometry(SketchGeometryType t, GeomRole r = GeomRole::Normal)
         : uuid(QUuid::createUuid().toString(QUuid::WithoutBraces))
-        , type(t) {}
+        , type(t), role(r) {}
+
+    bool isConstruction() const {
+        return role == GeomRole::Construction || role == GeomRole::Centerline;
+    }
     virtual ~SketchGeometry() = default;
 };
 
@@ -55,8 +73,9 @@ struct SketchLine : public SketchGeometry {
     QVector2D start;
     QVector2D end;
 
-    SketchLine(const QVector2D& p1, const QVector2D& p2)
-        :SketchGeometry(SketchGeometryType::Line),  start(p1), end(p2)
+    SketchLine(const QVector2D& p1, const QVector2D& p2,
+               GeomRole role = GeomRole::Normal)
+        :SketchGeometry(SketchGeometryType::Line, role),  start(p1), end(p2)
     {
         points.clear();
         points.append(p1);  // ✅ points[0] = 起點
@@ -71,8 +90,9 @@ struct SketchArc : public SketchGeometry
 {
     Handle(Geom_TrimmedCurve) curve;
 
-    SketchArc(const Handle(Geom_TrimmedCurve)& c)
-        : SketchGeometry(SketchGeometryType::Arc)
+    SketchArc(const Handle(Geom_TrimmedCurve)& c,
+              GeomRole role = GeomRole::Normal)
+        : SketchGeometry(SketchGeometryType::Arc, role)
         , curve(c)
     {
     }
@@ -84,8 +104,9 @@ struct SketchArc : public SketchGeometry
 struct SketchPolyline : public SketchGeometry {
     bool closed;
 
-    SketchPolyline(const QVector<QVector2D>& pts, bool isClosed)
-        : SketchGeometry(SketchGeometryType::Polyline)
+    SketchPolyline(const QVector<QVector2D>& pts, bool isClosed,
+                   GeomRole role = GeomRole::Normal)
+        : SketchGeometry(SketchGeometryType::Polyline, role)
         , closed(isClosed) {
         points = pts;
     }
@@ -96,8 +117,9 @@ struct SketchPolyline : public SketchGeometry {
  */
 struct SketchSpline : public SketchGeometry {
 
-    SketchSpline(const QVector<QVector2D>& pts)
-        : SketchGeometry(SketchGeometryType::Spline)
+    SketchSpline(const QVector<QVector2D>& pts,
+                 GeomRole role = GeomRole::Normal)
+        : SketchGeometry(SketchGeometryType::Spline, role)
     {
         points = pts;
     }
@@ -109,8 +131,9 @@ struct SketchSpline : public SketchGeometry {
 struct SketchPolygon : public SketchGeometry {
     bool closed;
 
-    SketchPolygon(const QVector<QVector2D>& pts, bool isClosed = true)
-        : SketchGeometry(SketchGeometryType::Polyline)
+    SketchPolygon(const QVector<QVector2D>& pts, bool isClosed = true,
+                  GeomRole role = GeomRole::Normal)
+        : SketchGeometry(SketchGeometryType::Polyline, role)
         , closed(isClosed) {
         points = pts;
     }
@@ -123,8 +146,9 @@ struct SketchCircle : public SketchGeometry {
     const QVector2D center;
     double radius;
 
-    SketchCircle(const QVector2D& c, double r)
-        : SketchGeometry(SketchGeometryType::Circle)
+    SketchCircle(const QVector2D& c, double r,
+                 GeomRole role = GeomRole::Normal)
+        : SketchGeometry(SketchGeometryType::Circle, role)
         , center(c)
         , radius(r) {
     }
@@ -139,8 +163,9 @@ struct SketchEllipse : public SketchGeometry {
     double minorRadius;
     double angle;
 
-    SketchEllipse(const QVector2D& c, double r1, double r2, double a)
-        : SketchGeometry(SketchGeometryType::Ellipse)
+    SketchEllipse(const QVector2D& c, double r1, double r2, double a,
+                  GeomRole role = GeomRole::Normal)
+        : SketchGeometry(SketchGeometryType::Ellipse, role)
         , center(c)
         , majorRadius(r1)
         , minorRadius(r2)
@@ -267,6 +292,19 @@ public:
     QString constrainRadius(const QString& geomUuid, double radius);
     QString constrainPointOnCurve(const GeomRef& point, const QString& curveUuid);
 
+    // ── 建構線便捷方法 ────────────────────────────────────────────
+    void addConstructionLine(const QVector2D& p1, const QVector2D& p2);
+    void addCenterline(const QVector2D& p1, const QVector2D& p2);
+    void addConstructionCircle(const QVector2D& center, double radius);
+    void addConstructionArc(const QVector2D& start,
+                            const QVector2D& mid,
+                            const QVector2D& end,
+                            GeomRole role = GeomRole::Construction);
+
+    // ── 查詢 ─────────────────────────────────────────────────────
+    QList<SketchGeometry*> normalGeometries() const;        ///< 只回傳 Normal
+    QList<SketchGeometry*> constructionGeometries() const;  ///< 只回傳建構線
+
 Q_SIGNALS:
     /**
      * @brief 平面改變時發出
@@ -343,7 +381,10 @@ private:
     QList<TopoDS_Wire> m_wires;           ///< 快取的 Wire 列表
     QList<Handle(AIS_Shape)> m_aisShapes;
     QList<SketchConstraint> m_constraints;
+    QList<Handle(AIS_Shape)>  m_constructionShapes;
     ConstraintSolver        m_solver;
+
+    void applyConstructionStyle(Handle(AIS_Shape)& shape, GeomRole role);
 };
 
 } // namespace cad

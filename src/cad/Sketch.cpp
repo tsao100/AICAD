@@ -26,6 +26,7 @@
 #include <gp_Elips.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <Geom_TrimmedCurve.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <QJsonArray>
 
 namespace aicad {
@@ -180,6 +181,43 @@ void Sketch::addArc(const QVector2D& startPoint,
     }
 }
 
+// ── 便捷方法實作 ──────────────────────────────────────────────────────────
+
+void Sketch::addConstructionLine(const QVector2D& p1, const QVector2D& p2) {
+    addGeometry(new SketchLine(p1, p2, GeomRole::Construction));
+}
+
+void Sketch::addCenterline(const QVector2D& p1, const QVector2D& p2) {
+    addGeometry(new SketchLine(p1, p2, GeomRole::Centerline));
+}
+
+void Sketch::addConstructionCircle(const QVector2D& center, double radius) {
+    addGeometry(new SketchCircle(center, radius, GeomRole::Construction));
+}
+
+void Sketch::addConstructionArc(const QVector2D& start, const QVector2D& mid,
+                                const QVector2D& end, GeomRole role) {
+    // 複用現有 addArc 邏輯，但在建立後設定 role
+    int countBefore = m_geometries.size();
+    addArc(start, mid, end);
+    if (m_geometries.size() > countBefore)
+        m_geometries.last()->role = role;
+}
+
+QList<SketchGeometry*> Sketch::normalGeometries() const {
+    QList<SketchGeometry*> result;
+    for (auto* g : m_geometries)
+        if (!g->isConstruction()) result.append(g);
+    return result;
+}
+
+QList<SketchGeometry*> Sketch::constructionGeometries() const {
+    QList<SketchGeometry*> result;
+    for (auto* g : m_geometries)
+        if (g->isConstruction()) result.append(g);
+    return result;
+}
+
 bool Sketch::rebuild() {
     qDebug() << "[Sketch]" << name() << "rebuilding with"
              << m_geometries.size() << "geometries on plane"
@@ -194,6 +232,7 @@ bool Sketch::rebuild() {
     try {
         m_wires.clear();
         m_aisShapes.clear();
+        m_constructionShapes.clear();
 
         if (m_geometries.isEmpty()) {
             setShape(TopoDS_Shape());
@@ -372,17 +411,28 @@ bool Sketch::rebuild() {
 
             // ── Wire → AIS_Shape ──────────────────────────────────────────
             if (wireCreated) {
-                m_wires.append(wire);
-                builder.Add(compound, wire);
-
                 Handle(AIS_Shape) aisShape = new AIS_Shape(wire);
-                aisShape->SetColor(Quantity_NOC_WHITE);
-                aisShape->SetWidth(2.0);
-                aisShape->SetDisplayMode(AIS_WireFrame);
-                m_aisShapes.append(aisShape);
+
+                if (geom->isConstruction()) {
+                    // ── 建構線樣式 ────────────────────────────────
+                    applyConstructionStyle(aisShape, geom->role);  // ← 新增
+                    m_constructionShapes.append(aisShape);
+                    // 不加入 m_wires（不參與輪廓）
+                } else {
+                    // ── 正常幾何樣式 ──────────────────────────────
+                    aisShape->SetColor(Quantity_NOC_WHITE);
+                    aisShape->SetWidth(2.0);
+                    aisShape->SetDisplayMode(AIS_WireFrame);
+                    m_wires.append(wire);
+                    m_aisShapes.append(aisShape);
+                }
             }
         }
 
+        // compound 只由 normal wires 組成（供 Extrude 使用）
+        builder.MakeCompound(compound);
+        for (const TopoDS_Wire& w : m_wires)
+            builder.Add(compound, w);
 
         setShape(compound);
 
@@ -397,6 +447,30 @@ bool Sketch::rebuild() {
         qCritical() << "[Sketch]" << name() << error;
         setError(error);
         return false;
+    }
+}
+
+// 加在 Sketch.cpp 匿名 namespace 或 private 方法中
+void Sketch::applyConstructionStyle(Handle(AIS_Shape)& shape, GeomRole role) {
+    shape->SetDisplayMode(AIS_WireFrame);
+
+    switch (role) {
+    case GeomRole::Construction:
+        // 青色虛線，細線
+        shape->SetColor(Quantity_NOC_CYAN1);
+        shape->SetWidth(1.0);
+        shape->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+        break;
+
+    case GeomRole::Centerline:
+        // 橙色點鏈線，區別於一般建構線
+        shape->SetColor(Quantity_NOC_ORANGE);
+        shape->SetWidth(1.0);
+        shape->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DOTDASH);
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -420,7 +494,8 @@ QJsonObject Sketch::toJson() const {
     QJsonArray geomsArray;
     for (const SketchGeometry* geom : m_geometries) {
         QJsonObject geomJson;
-        geomJson["type"] = static_cast<int>(geom->type);
+        geomJson["type"] = static_cast<int>(geom->type);        
+        geomJson["role"] = static_cast<int>(geom->role);
 
         QJsonArray pointsArray;
         for (const QVector2D& pt : geom->points) {
@@ -581,13 +656,17 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 if (points.size() >= 2) {
                     addLine(points[0], points[1]);
                 }
+                // 通用：在每個 case 的 addXxx() 之後加：
+                if (geomJson.contains("role") && !m_geometries.isEmpty())
+                    m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
-
             case SketchGeometryType::Polyline: {
                 bool closed = geomJson["closed"].toBool(false);
                 if (points.size() >= 2) {
                     addPolyline(points, closed);
                 }
+                if (geomJson.contains("role") && !m_geometries.isEmpty())
+                    m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
             }
 
@@ -598,6 +677,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 if (radius > 0.0) {
                     addCircle(center, radius);
                 }
+                if (geomJson.contains("role") && !m_geometries.isEmpty())
+                    m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
             }
 
@@ -610,6 +691,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                     qWarning() << "[Sketch]" << name()
                                << "Spline skipped: need >= 3 points, got" << points.size();
                 }
+                if (geomJson.contains("role") && !m_geometries.isEmpty())
+                    m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
 
             case SketchGeometryType::Arc: {
@@ -629,6 +712,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                     qWarning() << "[Sketch]" << name()
                                << "Arc skipped: no key points in JSON";
                 }
+                if (geomJson.contains("role") && !m_geometries.isEmpty())
+                    m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
             }
             case SketchGeometryType::Ellipse: {
@@ -640,6 +725,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 if (major > 0.0 && minor > 0.0) {
                     addEllipse(center, major, minor, angle);
                 }
+                if (geomJson.contains("role") && !m_geometries.isEmpty())
+                    m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
             }
 
@@ -907,32 +994,31 @@ QList<Handle(AIS_Shape)> Sketch::aisShapes() const {
     return m_aisShapes;
 }
 
-QList<Handle(AIS_Shape)> Sketch::displayInContext(const Handle(AIS_InteractiveContext)& context) {
-    if (context.IsNull()) {
-        qWarning() << "[Sketch]" << name() << "Cannot display: context is null";
-        return {};
-    }
+QList<Handle(AIS_Shape)> Sketch::displayInContext(
+    const Handle(AIS_InteractiveContext)& context) {
+    if (context.IsNull()) return {};
 
-    for (const Handle(AIS_Shape)& aisShape : m_aisShapes) {
-        if (!aisShape.IsNull()) {
-            context->Display(aisShape, Standard_False);
+    for (const Handle(AIS_Shape)& s : m_aisShapes)
+        if (!s.IsNull()) context->Display(s, Standard_False);
+
+    // ← 新增：建構線也顯示，但不可選（避免誤選）
+    for (const Handle(AIS_Shape)& s : m_constructionShapes) {
+        if (!s.IsNull()) {
+            context->Display(s, Standard_False);
+            context->Deactivate(s);    // 不參與選擇
         }
     }
 
     context->UpdateCurrentViewer();
-    qDebug() << "[Sketch]" << name() << "displayed" << m_aisShapes.size() << "shapes";
-    return m_aisShapes;
+    return m_aisShapes;   // 只回傳 normal shapes
 }
 
 void Sketch::eraseFromContext(const Handle(AIS_InteractiveContext)& context) {
     if (context.IsNull()) return;
-
-    for (const Handle(AIS_Shape)& aisShape : m_aisShapes) {
-        if (!aisShape.IsNull()) {
-            context->Erase(aisShape, Standard_False);
-        }
-    }
-
+    for (const Handle(AIS_Shape)& s : m_aisShapes)
+        if (!s.IsNull()) context->Erase(s, Standard_False);
+    for (const Handle(AIS_Shape)& s : m_constructionShapes)   // ← 新增
+        if (!s.IsNull()) context->Erase(s, Standard_False);
     context->UpdateCurrentViewer();
 }
 
