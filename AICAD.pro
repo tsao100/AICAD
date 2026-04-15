@@ -3,10 +3,11 @@
 
 CONFIG   += moc
 CONFIG   += debug_and_release
+QT       += qml
 
 # ---------- macOS (Qt6 with Clang) ----------
 macx {
-    QT += widgets openglwidgets printsupport
+    QT += widgets openglwidgets printsupport qml
     CONFIG += c++17
 
     QMAKE_CXXFLAGS += -Wall -Wextra
@@ -195,6 +196,7 @@ win32 {
 # ========================================
 
 SOURCES += \
+    src/cad/DependencyGraph.cpp \
     src/cad/PlaneManager.cpp \
     src/cad/grips/AIS_GripHandle.cpp \
     src/cad/grips/GripManager.cpp \
@@ -209,6 +211,7 @@ SOURCES += \
     src/command/PolylineCommand.cpp \
     src/command/RectCommand.cpp \
     src/command/SplineCommand.cpp \
+    src/core/ParameterStore.cpp \
     src/core/geometry/CoordinateTransform.cpp \
     src/core/geometry/WorkPlane.cpp \
     src/drawing/DrawingSheet.cpp \
@@ -281,6 +284,7 @@ SOURCES += \
 
 HEADERS += \
     # Core Module
+    src/cad/DependencyGraph.h \
     src/cad/PlaneManager.h \
     src/cad/grips/AIS_GripHandle.h \
     src/cad/grips/GripManager.h \
@@ -301,6 +305,7 @@ HEADERS += \
     src/core/Application.h \
     src/core/EventBus.h \
     src/core/DocumentManager.h \
+    src/core/ParameterStore.h \
     src/core/PluginManager.h \
     src/core/Settings.h \
     src/core/MenuParser.h \

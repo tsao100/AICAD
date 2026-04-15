@@ -19,7 +19,6 @@ namespace cad {
 Extrude::Extrude(Document* parent)
     : Feature(parent)
     , m_sketch(nullptr)
-    , m_height(10.0)
     , m_reversed(false)
     , m_symmetric(false)
     , m_draftAngle(0.0)
@@ -59,18 +58,6 @@ void Extrude::setSketch(Sketch* sketch) {
              << (sketch ? sketch->name() : "null");
     
     Q_EMIT sketchChanged(sketch);
-    Q_EMIT rebuildRequested();
-}
-
-void Extrude::setHeight(double height) {
-    if (qFuzzyCompare(m_height, height)) {
-        return;
-    }
-    
-    m_height = height;
-    qDebug() << "[Extrude]" << name() << "height changed to" << height;
-    
-    Q_EMIT heightChanged(height);
     Q_EMIT rebuildRequested();
 }
 
@@ -125,7 +112,7 @@ bool Extrude::rebuild() {
     
     try {
         // 計算實際高度
-        double actualHeight = m_height;
+        double actualHeight = m_heightExpr.cachedValue;
         if (m_reversed) {
             actualHeight = -actualHeight;
         }
@@ -157,45 +144,54 @@ bool Extrude::rebuild() {
     }
 }
 
-QJsonObject Extrude::toJson() const {
-    QJsonObject json = Feature::toJson();
-    
-    json["height"] = m_height;
-    json["reversed"] = m_reversed;
-    json["symmetric"] = m_symmetric;
-    json["draftAngle"] = m_draftAngle;
-    
-    if (m_sketch) {
-        json["sketchId"] = m_sketch->id();
+void Extrude::setHeight(double h) {
+    m_heightExpr = aicad::core::ParameterExpr(h);
+    markDirty();
+    Q_EMIT heightChanged(h);
+    Q_EMIT rebuildRequested();
+}
+
+void Extrude::setHeightExpression(const QString& expr) {
+    // 從 Document 取得 ParameterStore 求值
+    if (document()) {
+        auto [ok, v] = document()->parameterStore()->evaluate(expr);
+        m_heightExpr = aicad::core::ParameterExpr(expr, ok ? v : m_heightExpr.cachedValue);
+        if (ok) {
+            markDirty();
+            Q_EMIT heightChanged(v);
+            Q_EMIT rebuildRequested();
+        }
+    } else {
+        m_heightExpr.expression = expr;
     }
-    
-    return json;
+}
+
+QSet<QString> Extrude::featureDependencies() const {
+    if (m_sketch) return { m_sketch->id() };
+    return {};
+}
+
+// toJson：儲存表達式而非計算值
+QJsonObject Extrude::toJson() const {
+    QJsonObject obj = Feature::toJson();
+    obj["sketchId"]        = m_sketch ? m_sketch->id() : QString();
+    obj["heightExpression"] = m_heightExpr.expression;   // ← 設計意圖
+    obj["reversed"]        = m_reversed;
+    obj["symmetric"]       = m_symmetric;
+    obj["draftAngle"]      = m_draftAngle;
+    return obj;
 }
 
 bool Extrude::fromJson(const QJsonObject& json) {
-    if (!Feature::fromJson(json)) {
-        return false;
-    }
-    
-    if (json.contains("height")) {
-        m_height = json["height"].toDouble();
-    }
-    
-    if (json.contains("reversed")) {
-        m_reversed = json["reversed"].toBool();
-    }
-    
-    if (json.contains("symmetric")) {
-        m_symmetric = json["symmetric"].toBool();
-    }
-    
-    if (json.contains("draftAngle")) {
-        m_draftAngle = json["draftAngle"].toDouble();
-    }
-    
-    // 注意：草圖參考需要在所有特徵載入後才能建立
-    // 這通常由 Document 處理
-    
+    Feature::fromJson(json);
+    // heightExpression 優先，相容舊格式 "height"
+    if (json.contains("heightExpression"))
+        setHeightExpression(json["heightExpression"].toString());
+    else
+        setHeight(json["height"].toDouble(10.0));
+    m_reversed   = json["reversed"].toBool(false);
+    m_symmetric  = json["symmetric"].toBool(false);
+    m_draftAngle = json["draftAngle"].toDouble(0.0);
     return true;
 }
 

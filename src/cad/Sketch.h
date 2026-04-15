@@ -35,10 +35,13 @@ enum class SketchGeometryType {
  * @brief 草圖幾何元素基礎類別
  */
 struct SketchGeometry {
+    QString         uuid;   // ← 新增，供約束系統和跨特徵參考使用
     SketchGeometryType type;
     QVector<QVector2D> points;
 
-    SketchGeometry(SketchGeometryType t) : type(t) {}
+    SketchGeometry(SketchGeometryType t)
+        : uuid(QUuid::createUuid().toString(QUuid::WithoutBraces))
+        , type(t) {}
     virtual ~SketchGeometry() = default;
 };
 

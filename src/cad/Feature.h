@@ -153,6 +153,18 @@ public:
      */
     virtual bool fromJson(const QJsonObject& json);
 
+    // ── 參數化：依賴宣告 ──────────────────────────────
+    /**
+     * 子類別覆寫，回傳此特徵直接依賴的 Feature ID 集合
+     * （預設：無依賴）
+     */
+    virtual QSet<QString> featureDependencies() const { return {}; }
+
+    // ── Dirty flag ────────────────────────────────────
+    bool isDirty() const { return m_dirty; }
+    void markDirty();       ///< 標記需要重建，並向上傳播給依賴者
+    void clearDirty()       { m_dirty = false; }
+
 Q_SIGNALS:
     /**
      * @brief 名稱改變時發出
@@ -184,6 +196,8 @@ Q_SIGNALS:
      */
     void rebuildRequested();
 
+    void dirtyStateChanged(); ///< 當 dirty 狀態改變時發出
+
 protected:
     /**
      * @brief 設定錯誤狀態（給子類別使用）
@@ -205,6 +219,8 @@ private:
 
     Feature* m_parent;             ///< 父特徵
     QList<Feature*> m_children;    ///< 子特徵列表
+
+    bool m_dirty = true;           ///< 初始為 true，需要第一次 rebuild
 
     Q_DISABLE_COPY(Feature)
 };

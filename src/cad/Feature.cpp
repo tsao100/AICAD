@@ -222,5 +222,12 @@ bool Feature::fromJson(const QJsonObject& json) {
     return true;
 }
 
+void Feature::markDirty() {
+    if (m_dirty) return;  // 避免重複傳播
+    m_dirty = true;
+    Q_EMIT dirtyStateChanged();
+    Q_EMIT rebuildRequested();
+}
+
 } // namespace cad
 } // namespace aicad

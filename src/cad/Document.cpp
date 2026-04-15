@@ -60,8 +60,14 @@ Document::Document(QObject* parent)
     , m_fileName()
     , m_modified(false)
     , m_nextFeatureNumber(1)
+    , m_parameterStore(new aicad::core::ParameterStore(this))
 {
     initOCAF();
+
+    // 當任一參數改變 → 標記所有參數化特徵 dirty 並重建
+    connect(m_parameterStore, &aicad::core::ParameterStore::parameterChanged,
+            this, [this](const QString&) { rebuildAll(); });
+
     qDebug() << "[Document] Created";
 }
 
@@ -116,6 +122,9 @@ bool Document::save(const QString& fileName) {
                 featuresArray.append(feature->toJson());
             }
         }
+
+        docJson["parameters"] = m_parameterStore->toJson();
+
         docJson["features"] = featuresArray;
 
         QFile file(saveFileName);
@@ -184,6 +193,9 @@ bool Document::load(const QString& fileName) {
 
         QJsonObject docJson = jsonDoc.object();
 
+        if (docJson.contains("parameters"))
+            m_parameterStore->fromJson(docJson["parameters"].toObject());
+
         // ✅ 載入特徵
         if (docJson.contains("features")) {
             QJsonArray featuresArray = docJson["features"].toArray();
@@ -238,21 +250,26 @@ bool Document::load(const QString& fileName) {
 }
 
 // ✅ 內部加入 feature，不更新 tree（供 load 使用）
+// addFeature：同時更新依賴圖
 void Document::addFeatureInternal(Feature* feature) {
-    if (!feature || m_features.contains(feature)) {
-        return;
-    }
-
     m_features.append(feature);
 
-    connect(feature, &Feature::nameChanged,
-            this, &Document::onFeatureChanged);
-    connect(feature, &Feature::shapeChanged,
-            this, &Document::onFeatureChanged);
-    connect(feature, &Feature::rebuildRequested,
-            this, &Document::onFeatureRebuildRequested);
+    // 向依賴圖登記
+    m_depGraph.ensureNode(feature->id());   // ← 需在 DependencyGraph 加 public ensureNode
+    for (const QString& depId : feature->featureDependencies())
+        m_depGraph.addDependency(feature->id(), depId);
 
-    qDebug() << "[Document] Feature added internally:" << feature->name();
+    // 當特徵 dirty → 通知依賴者
+    connect(feature, &Feature::dirtyStateChanged, this, [this, feature]() {
+        // 連鎖標記受影響特徵
+        for (const QString& affectedId : m_depGraph.affectedBy(feature->id())) {
+            if (Feature* f = findFeature(affectedId))
+                f->markDirty();
+        }
+    });
+
+    Q_EMIT featureAdded(feature);
+    Q_EMIT featureCountChanged(m_features.size());
 }
 
 // ✅ 根據目前 m_features 重建 tree items（保留 origin 資料夾）
@@ -352,6 +369,8 @@ void Document::addFeature(Feature* feature) {
 }
 
 void Document::removeFeature(Feature* feature) {
+    m_depGraph.removeNode(feature->id());
+    m_features.removeOne(feature);
     if (!feature) {
         return;
     }
@@ -505,27 +524,43 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     return extrude;
 }
 
+// rebuildAll：改用拓撲順序
 void Document::rebuildAll() {
-    qDebug() << "[Document] Rebuilding all features...";
-
     Q_EMIT rebuildStarted();
-
-    bool success = true;
-    int rebuilt = 0;
-
-    for (Feature* feature : m_features) {
-        if (feature && !feature->isSuppressed()) {
-            if (feature->rebuild()) {
-                rebuilt++;
-            } else {
-                success = false;
-                qWarning() << "[Document] Failed to rebuild:" << feature->name();
-            }
-        }
+    bool cycle;
+    QList<QString> order = m_depGraph.topologicalOrder(&cycle);
+    if (cycle) {
+        qWarning() << "[Document] Circular dependency, rebuild aborted";
+        Q_EMIT rebuildFinished(false);
+        return;
     }
 
-    qDebug() << "[Document] Rebuild complete:" << rebuilt << "features";
-    Q_EMIT rebuildFinished(success);
+    bool allOk = true;
+    // 依拓撲順序重建（被依賴者先）
+    for (const QString& id : order) {
+        Feature* f = findFeature(id);
+        if (!f || f->isSuppressed()) continue;
+        if (!f->isDirty()) continue;             // ← 跳過未標記者
+
+        // 若是帶表達式的特徵，先更新 cachedValue
+        if (auto* ext = qobject_cast<Extrude*>(f)) {
+            auto [ok, v] = m_parameterStore->evaluate(ext->heightExpression());
+            if (ok) ext->setHeight(v);           // 更新快取，不會再 emit rebuildRequested
+        }
+
+        bool ok = f->rebuild();
+        f->clearDirty();
+        if (!ok) { allOk = false; f->setError("Rebuild failed"); }
+        else        f->clearError();
+    }
+    // 未在圖中的特徵（孤立）線性補跑
+    for (Feature* f : m_features) {
+        if (!order.contains(f->id()) && f->isDirty() && !f->isSuppressed()) {
+            f->rebuild();
+            f->clearDirty();
+        }
+    }
+    Q_EMIT rebuildFinished(allOk);
 }
 
 void Document::rebuildFeature(Feature* feature) {
@@ -840,6 +875,28 @@ void Document::displayAllFeatures(const Handle(AIS_InteractiveContext)& context)
 
     context->UpdateCurrentViewer();
     qDebug() << "[Document] All features displayed:" << m_features.size();
+}
+
+// rebuildFrom：只重建受影響的子樹
+void Document::rebuildFrom(Feature* changedFeature) {
+    if (!changedFeature) return;
+    changedFeature->markDirty();
+    QList<QString> affected = m_depGraph.affectedBy(changedFeature->id());
+    // 在 topologicalOrder 中只取受影響子集
+    bool cycle;
+    QList<QString> fullOrder = m_depGraph.topologicalOrder(&cycle);
+    if (cycle) return;
+
+    QSet<QString> affectedSet(affected.begin(), affected.end());
+    affectedSet.insert(changedFeature->id());
+
+    for (const QString& id : fullOrder) {
+        if (!affectedSet.contains(id)) continue;
+        Feature* f = findFeature(id);
+        if (!f || f->isSuppressed()) continue;
+        f->rebuild();
+        f->clearDirty();
+    }
 }
 
 void Document::showAllReferenceGeometry() {

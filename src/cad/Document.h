@@ -9,6 +9,8 @@
 #define AICAD_CAD_DOCUMENT_H
 
 #include "ui/FeatureTreeItem.h"
+#include "DependencyGraph.h"
+#include "core/ParameterStore.h"
 
 #include <QObject>
 #include <QString>
@@ -255,6 +257,14 @@ public:
     // 新增 public method
     void displayAllFeatures(const Handle(AIS_InteractiveContext)& context);
 
+    aicad::core::ParameterStore* parameterStore() { return m_parameterStore; }
+
+    /**
+     * 重建從 changedFeature 往下受影響的所有特徵
+     * （依拓撲順序，只重建 dirty 者）
+     */
+    void rebuildFrom(Feature* changedFeature);
+
     // 復原/重做（未來實作）
     // bool canUndo() const;
     // bool canRedo() const;
@@ -377,6 +387,9 @@ private:
     QString m_pendingLoadFile;
 
     QList<QPair<Feature*, Handle(AIS_Shape)>> m_featureAisShapes;
+
+    aicad::core::ParameterStore* m_parameterStore;
+    DependencyGraph              m_depGraph;
 
     Q_DISABLE_COPY(Document)
 };

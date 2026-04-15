@@ -9,6 +9,7 @@
 #define AICAD_CAD_EXTRUDE_H
 
 #include "Feature.h"
+#include "core/ParameterStore.h"
 
 namespace aicad {
 namespace cad {
@@ -64,7 +65,7 @@ public:
     Sketch* sketch() const { return m_sketch; }
     void setSketch(Sketch* sketch);
     
-    double height() const { return m_height; }
+    double height() const { return m_heightExpr.cachedValue; }
     void setHeight(double height);
     
     bool isReversed() const { return m_reversed; }
@@ -86,6 +87,13 @@ public:
      */
     bool fromJson(const QJsonObject& json) override;
 
+    // ← 新增：表達式介面
+    QString heightExpression() const { return m_heightExpr.expression; }
+    void    setHeightExpression(const QString& expr);
+
+    // ← 新增：覆寫依賴宣告
+    QSet<QString> featureDependencies() const override;
+
 Q_SIGNALS:
     /**
      * @brief 高度改變時發出
@@ -104,7 +112,7 @@ Q_SIGNALS:
 
 private:
     Sketch* m_sketch;           ///< 參考草圖
-    double m_height;            ///< 擠出高度
+    core::ParameterExpr m_heightExpr;   /// ← 設計意圖（表達式）
     bool m_reversed;            ///< 是否反向
     bool m_symmetric;           ///< 是否對稱
     double m_draftAngle;        ///< 拔模角度（未來實作）
