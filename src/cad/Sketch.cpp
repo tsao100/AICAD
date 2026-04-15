@@ -84,11 +84,14 @@ void Sketch::addGeometry(SketchGeometry* geom) {
 
 void Sketch::removeGeometry(int index) {
     if (index >= 0 && index < m_geometries.size()) {
+        QString uuid = m_geometries[index]->uuid;
+        removeConstraintsOf(uuid);          // ← 新增
         delete m_geometries.takeAt(index);
         Q_EMIT geometryChanged();
         Q_EMIT rebuildRequested();
     }
 }
+
 
 void Sketch::clearGeometry() {
     qDeleteAll(m_geometries);
@@ -488,6 +491,11 @@ QJsonObject Sketch::toJson() const {
     }
     json["geometries"] = geomsArray;
 
+    QJsonArray conArr;
+    for (const auto& c : m_constraints)
+        conArr.append(c.toJson());
+    json["constraints"] = conArr;
+
     return json;
 }
 
@@ -647,7 +655,78 @@ bool Sketch::fromJson(const QJsonObject& json) {
              << m_geometries.size() << "geometries on plane"
              << (m_plane ? m_plane->displayName() : "NULL");
 
+    m_constraints.clear();
+    if (json.contains("constraints")) {
+        for (const QJsonValue& v : json["constraints"].toArray())
+            m_constraints.append(SketchConstraint::fromJson(v.toObject()));
+    }
+
     return true;
+}
+
+// ── 加入約束 ─────────────────────────────────────────────────────────────
+QString Sketch::addConstraint(const SketchConstraint& c) {
+    // 驗證參考的幾何是否存在
+    for (const GeomRef& ref : c.refs) {
+        bool found = std::any_of(m_geometries.begin(), m_geometries.end(),
+                                 [&](const SketchGeometry* g){ return g->uuid == ref.geomUuid; });
+        if (!found) {
+            qWarning() << "[Sketch] addConstraint: geom not found:" << ref.geomUuid;
+            return {};
+        }
+    }
+    m_constraints.append(c);
+    Q_EMIT constraintAdded(c.uuid);
+    // 加入約束後立即嘗試求解
+    solveConstraints();
+    return c.uuid;
+}
+
+bool Sketch::removeConstraint(const QString& uuid) {
+    for (int i=0; i<m_constraints.size(); ++i) {
+        if (m_constraints[i].uuid == uuid) {
+            m_constraints.removeAt(i);
+            Q_EMIT constraintRemoved(uuid);
+            solveConstraints();
+            return true;
+        }
+    }
+    return false;
+}
+
+void Sketch::removeConstraintsOf(const QString& geomUuid) {
+    m_constraints.erase(
+        std::remove_if(m_constraints.begin(), m_constraints.end(),
+                       [&](const SketchConstraint& c){
+                           return std::any_of(c.refs.begin(), c.refs.end(),
+                                              [&](const GeomRef& r){ return r.geomUuid == geomUuid; });
+                       }),
+        m_constraints.end());
+}
+
+SolveResult Sketch::solveConstraints() {
+    auto result = m_solver.solve(m_geometries, m_constraints);
+    Q_EMIT constraintSolved(result);
+    if (result.status != SolveStatus::Conflict &&
+        result.status != SolveStatus::SolverError) {
+        // 求解後幾何已被修改，觸發重建
+        markDirty();
+        Q_EMIT geometryChanged();
+        Q_EMIT rebuildRequested();
+    }
+    return result;
+}
+
+int Sketch::degreesOfFreedom() const {
+    return ConstraintSolver::computeDOF(m_geometries, m_constraints);
+}
+
+// ── 便捷 API ──────────────────────────────────────────────────────────────
+QString Sketch::constrainCoincident(const GeomRef& a, const GeomRef& b) {
+    return addConstraint(SketchConstraint::makeCoincident(a, b));
+}
+QString Sketch::constrainHorizontal(const QString& uuid) {
+    return addConstraint(SketchConstraint::makeHorizontal(uuid));
 }
 
 // ============================================================================

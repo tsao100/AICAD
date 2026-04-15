@@ -116,6 +116,8 @@ unix:!macx {
     INCLUDEPATH += /usr/include/ecl
     LIBS += -lecl -lgmp -lmpfr
 
+    INCLUDEPATH += /usr/include/eigen3
+
     # Copy menu.txt to build directory
     copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD
     first.depends = $(first) copydata
@@ -201,6 +203,8 @@ SOURCES += \
     src/cad/grips/AIS_GripHandle.cpp \
     src/cad/grips/GripManager.cpp \
     src/cad/grips/SketchGripProvider.cpp \
+    src/cad/sketch/ConstraintSolver.cpp \
+    src/cad/sketch/SketchConstraint.cpp \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
@@ -291,6 +295,8 @@ HEADERS += \
     src/cad/grips/GripPoint.h \
     src/cad/grips/GripProvider.h \
     src/cad/grips/SketchGripProvider.h \
+    src/cad/sketch/ConstraintSolver.h \
+    src/cad/sketch/SketchConstraint.h \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
     src/command/CommandAlias.h \

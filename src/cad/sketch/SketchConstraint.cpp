@@ -1,0 +1,138 @@
+#include "SketchConstraint.h"
+#include <QJsonArray>
+
+namespace aicad::cad {
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GeomRef
+// ──────────────────────────────────────────────────────────────────────────────
+QJsonObject GeomRef::toJson() const {
+    QJsonObject o;
+    o["geomUuid"] = geomUuid;
+    o["handle"]   = static_cast<int>(handle);
+    return o;
+}
+GeomRef GeomRef::fromJson(const QJsonObject& j) {
+    return GeomRef(j["geomUuid"].toString(),
+                   static_cast<GeomHandle>(j["handle"].toInt()));
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SketchConstraint 工廠
+// ──────────────────────────────────────────────────────────────────────────────
+SketchConstraint SketchConstraint::makeCoincident(const GeomRef& a, const GeomRef& b) {
+    SketchConstraint c; c.type = ConstraintType::Coincident;
+    c.refs = {a, b}; return c;
+}
+SketchConstraint SketchConstraint::makeHorizontal(const QString& lineUuid) {
+    SketchConstraint c; c.type = ConstraintType::Horizontal;
+    c.refs = { GeomRef(lineUuid, GeomHandle::Curve) }; return c;
+}
+SketchConstraint SketchConstraint::makeVertical(const QString& lineUuid) {
+    SketchConstraint c; c.type = ConstraintType::Vertical;
+    c.refs = { GeomRef(lineUuid, GeomHandle::Curve) }; return c;
+}
+SketchConstraint SketchConstraint::makeParallel(const QString& a, const QString& b) {
+    SketchConstraint c; c.type = ConstraintType::Parallel;
+    c.refs = { GeomRef(a, GeomHandle::Curve), GeomRef(b, GeomHandle::Curve) }; return c;
+}
+SketchConstraint SketchConstraint::makePerpendicular(const QString& a, const QString& b) {
+    SketchConstraint c; c.type = ConstraintType::Perpendicular;
+    c.refs = { GeomRef(a, GeomHandle::Curve), GeomRef(b, GeomHandle::Curve) }; return c;
+}
+SketchConstraint SketchConstraint::makeTangent(const QString& a, const QString& b) {
+    SketchConstraint c; c.type = ConstraintType::Tangent;
+    c.refs = { GeomRef(a, GeomHandle::Curve), GeomRef(b, GeomHandle::Curve) }; return c;
+}
+SketchConstraint SketchConstraint::makeEqualLength(const QString& a, const QString& b) {
+    SketchConstraint c; c.type = ConstraintType::EqualLength;
+    c.refs = { GeomRef(a, GeomHandle::Curve), GeomRef(b, GeomHandle::Curve) }; return c;
+}
+SketchConstraint SketchConstraint::makeEqualRadius(const QString& a, const QString& b) {
+    SketchConstraint c; c.type = ConstraintType::EqualRadius;
+    c.refs = { GeomRef(a, GeomHandle::Center), GeomRef(b, GeomHandle::Center) }; return c;
+}
+SketchConstraint SketchConstraint::makeConcentric(const QString& a, const QString& b) {
+    SketchConstraint c; c.type = ConstraintType::Concentric;
+    c.refs = { GeomRef(a, GeomHandle::Center), GeomRef(b, GeomHandle::Center) }; return c;
+}
+SketchConstraint SketchConstraint::makeFixed(const QString& uuid) {
+    SketchConstraint c; c.type = ConstraintType::Fixed;
+    c.refs = { GeomRef(uuid, GeomHandle::WholeGeom) }; return c;
+}
+SketchConstraint SketchConstraint::makeFixedDistance(const GeomRef& a, const GeomRef& b, double dist) {
+    SketchConstraint c; c.type = ConstraintType::FixedDistance;
+    c.refs = {a, b}; c.value = dist; return c;
+}
+SketchConstraint SketchConstraint::makeFixedRadius(const QString& uuid, double r) {
+    SketchConstraint c; c.type = ConstraintType::FixedRadius;
+    c.refs = { GeomRef(uuid, GeomHandle::Center) }; c.value = r; return c;
+}
+SketchConstraint SketchConstraint::makeFixedX(const GeomRef& pt, double x) {
+    SketchConstraint c; c.type = ConstraintType::FixedX;
+    c.refs = {pt}; c.value = x; return c;
+}
+SketchConstraint SketchConstraint::makeFixedY(const GeomRef& pt, double y) {
+    SketchConstraint c; c.type = ConstraintType::FixedY;
+    c.refs = {pt}; c.value = y; return c;
+}
+SketchConstraint SketchConstraint::makePointOnCurve(const GeomRef& pt, const QString& curveUuid) {
+    SketchConstraint c; c.type = ConstraintType::PointOnCurve;
+    c.refs = {pt, GeomRef(curveUuid, GeomHandle::Curve)}; return c;
+}
+SketchConstraint SketchConstraint::makeMidpoint(const GeomRef& pt, const QString& lineUuid) {
+    SketchConstraint c; c.type = ConstraintType::Midpoint;
+    c.refs = {pt, GeomRef(lineUuid, GeomHandle::Curve)}; return c;
+}
+
+int SketchConstraint::dofConsumed() const {
+    switch (type) {
+    case ConstraintType::Coincident:      return 2;
+    case ConstraintType::Midpoint:        return 2;
+    case ConstraintType::Symmetric:       return 2;
+    case ConstraintType::PointOnCurve:    return 1;
+    case ConstraintType::PointOnMidpoint: return 2;
+    case ConstraintType::Horizontal:      return 1;
+    case ConstraintType::Vertical:        return 1;
+    case ConstraintType::Parallel:        return 1;
+    case ConstraintType::Perpendicular:   return 1;
+    case ConstraintType::Collinear:       return 2;
+    case ConstraintType::EqualLength:     return 1;
+    case ConstraintType::FixedAngle:      return 1;
+    case ConstraintType::Concentric:      return 2;
+    case ConstraintType::EqualRadius:     return 1;
+    case ConstraintType::Tangent:         return 1;
+    case ConstraintType::FixedDistance:   return 1;
+    case ConstraintType::FixedRadius:     return 1;
+    case ConstraintType::FixedX:          return 1;
+    case ConstraintType::FixedY:          return 1;
+    case ConstraintType::FixedAngleDim:   return 1;
+    case ConstraintType::Fixed:           return 999; // all DOF
+    default: return 0;
+    }
+}
+
+QJsonObject SketchConstraint::toJson() const {
+    QJsonObject o;
+    o["uuid"]    = uuid;
+    o["type"]    = static_cast<int>(type);
+    o["value"]   = value;
+    o["driving"] = driving;
+    QJsonArray arr;
+    for (const auto& r : refs) arr.append(r.toJson());
+    o["refs"] = arr;
+    return o;
+}
+
+SketchConstraint SketchConstraint::fromJson(const QJsonObject& j) {
+    SketchConstraint c;
+    c.uuid    = j["uuid"].toString(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    c.type    = static_cast<ConstraintType>(j["type"].toInt());
+    c.value   = j["value"].toDouble(0.0);
+    c.driving = j["driving"].toBool(true);
+    for (const auto& rv : j["refs"].toArray())
+        c.refs.append(GeomRef::fromJson(rv.toObject()));
+    return c;
+}
+
+} // namespace aicad::cad

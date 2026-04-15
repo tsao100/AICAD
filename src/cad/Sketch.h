@@ -7,7 +7,10 @@
 #define AICAD_CAD_SKETCH_ENHANCED_H
 
 #include "Feature.h"
-#include "Plane.h"  // 增強版 Plane
+#include "Plane.h"
+#include "sketch/ConstraintSolver.h"
+#include "sketch/SketchConstraint.h"
+
 #include <QVector>
 #include <QVector2D>
 #include <QJsonObject>
@@ -53,7 +56,7 @@ struct SketchLine : public SketchGeometry {
     QVector2D end;
 
     SketchLine(const QVector2D& p1, const QVector2D& p2)
-        : start(p1), end(p2), SketchGeometry(SketchGeometryType::Line)
+        :SketchGeometry(SketchGeometryType::Line),  start(p1), end(p2)
     {
         points.clear();
         points.append(p1);  // ✅ points[0] = 起點
@@ -224,6 +227,46 @@ public:
      */
     bool fromJson(const QJsonObject& json) override;
 
+    // ══════════════════════════════════════════════
+    // 約束管理
+    // ══════════════════════════════════════════════
+
+    // 加入約束，回傳約束 UUID（失敗回傳空字串）
+    QString addConstraint(const SketchConstraint& c);
+
+    // 移除約束
+    bool removeConstraint(const QString& uuid);
+
+    // 查詢
+    const QList<SketchConstraint>& constraints() const { return m_constraints; }
+    SketchConstraint* findConstraint(const QString& uuid);
+
+    // 根據幾何 UUID 找出所有相關約束
+    QList<SketchConstraint*> constraintsOf(const QString& geomUuid);
+
+    // 移除幾何時，同步清除相關約束
+    void removeConstraintsOf(const QString& geomUuid);
+
+    // 求解：回傳求解結果，成功後觸發 rebuild
+    SolveResult solveConstraints();
+
+    // 只計算 DOF，不求解
+    int degreesOfFreedom() const;
+
+    // 便捷 API（語意清晰）
+    QString constrainCoincident(const GeomRef& a, const GeomRef& b);
+    QString constrainHorizontal(const QString& lineUuid);
+    QString constrainVertical(const QString& lineUuid);
+    QString constrainParallel(const QString& lineA, const QString& lineB);
+    QString constrainPerpendicular(const QString& lineA, const QString& lineB);
+    QString constrainTangent(const QString& geomA, const QString& geomB);
+    QString constrainEqualLength(const QString& lineA, const QString& lineB);
+    QString constrainConcentric(const QString& geomA, const QString& geomB);
+    QString constrainFixed(const QString& geomUuid);
+    QString constrainDistance(const GeomRef& a, const GeomRef& b, double dist);
+    QString constrainRadius(const QString& geomUuid, double radius);
+    QString constrainPointOnCurve(const GeomRef& point, const QString& curveUuid);
+
 Q_SIGNALS:
     /**
      * @brief 平面改變時發出
@@ -237,6 +280,10 @@ Q_SIGNALS:
 
     // ✅ emit after every successful rebuild
     void rebuilt();
+
+    void constraintAdded(const QString& uuid);
+    void constraintRemoved(const QString& uuid);
+    void constraintSolved(SolveResult result);
 
 private Q_SLOTS:
     /**
@@ -295,6 +342,8 @@ private:
     QList<SketchGeometry*> m_geometries;  ///< 幾何元素列表
     QList<TopoDS_Wire> m_wires;           ///< 快取的 Wire 列表
     QList<Handle(AIS_Shape)> m_aisShapes;
+    QList<SketchConstraint> m_constraints;
+    ConstraintSolver        m_solver;
 };
 
 } // namespace cad
