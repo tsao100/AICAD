@@ -188,6 +188,8 @@ win32 {
     mingw: {
         LIBS += -lecl -lgmp -lmpfr
     }
+    # Download from https://eigen.tuxfamily.org/
+    INCLUDEPATH += D:/Git/eigen-5.0.0
 
     # 每次編譯完自動複製 menu.txt 到輸出資料夾
     QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/menu.txt) $$shell_path($$OUT_PWD)
