@@ -142,6 +142,9 @@ CadView::CadView(QWidget* parent)
     setMouseTracking(true);
     setBackgroundRole(QPalette::NoRole);
 
+    // ✅ Force native window creation NOW, before any OCCT calls
+    winId();  // triggers WA_NativeWindow platform window creation
+
     // Create finish sketch button
     m_finishSketchButton = new QPushButton("Finish Sketch", this);
     m_finishSketchButton->setGeometry(width() - 120, 10, 110, 30);
@@ -167,8 +170,8 @@ CadView::CadView(QWidget* parent)
     connect(m_finishSketchButton, &QPushButton::clicked,
             this, &CadView::onFinishSketchClicked);
 
-    // 初始化視圖器
-    initializeViewer();
+    // ✅ Do NOT call initializeViewer() here.
+    // Defer to showEvent so NSView is fully realized.
 
     m_selectionFilter = "all";
 
@@ -187,8 +190,18 @@ void CadView::initializeViewer() {
     WId wid = winId();
     if (wid == 0) {
         qCritical() << "[CadView] winId() == 0, native window not ready!";
+        QTimer::singleShot(100, this, &CadView::initializeViewer);
         return;
     }
+
+#ifdef __APPLE__
+    NSView* nsView = reinterpret_cast<NSView*>(wid);
+    if (!nsView || ![nsView window]) {
+        qCritical() << "[CadView] NSView not yet attached to NSWindow, deferring...";
+        QTimer::singleShot(100, this, &CadView::initializeViewer);
+        return;
+    }
+#endif
 
 // 建立顯示連接
 #if defined(_WIN32) || defined(__APPLE__)
@@ -206,6 +219,8 @@ void CadView::initializeViewer() {
     caps.contextCompatible = Standard_True;   // 允許 compatibility profile
     caps.buffersNoSwap     = Standard_False;
     caps.swapInterval      = 0;               // VMware 下關閉 vsync 同步等待
+    // ✅ VMware: disable features that may not be supported
+    caps.useSystemBuffer    = Standard_True;  // avoid FBO issues in VMware
 #endif
 
     // 建立視圖器
@@ -225,7 +240,17 @@ void CadView::initializeViewer() {
     Handle(Xw_Window) window = new Xw_Window(displayConnection, (Aspect_Drawable)winId());
 #endif
 
-    d->view->SetWindow(window);
+    // ✅ Wrap SetWindow in a try-catch to get a real error message
+    try {
+        d->view->SetWindow(window);
+    } catch (const Standard_Failure& e) {
+        qCritical() << "[CadView] OCCT SetWindow failed:" << e.GetMessageString();
+        return;
+    } catch (...) {
+        qCritical() << "[CadView] OCCT SetWindow failed: unknown exception";
+        return;
+    }
+
     if (!window->IsMapped()) {
         window->Map();
     }
@@ -1495,7 +1520,7 @@ void CadView::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
 
     // ← 新增：首次 show 時才真正初始化 OCCT viewer
-    if (!d->viewer.IsNull() == false) {   // 尚未初始化
+    if (d->viewer.IsNull()) {   // 尚未初始化
         // 用 singleShot 確保 Native Window / NSView 已完全就緒
         QTimer::singleShot(0, this, [this]() {
             initializeViewer();
