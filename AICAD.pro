@@ -69,6 +69,8 @@ macx {
     LIBS += -L$$ECL_PREFIX/lib -lecl
     QMAKE_LFLAGS += -Wl,-rpath,$$ECL_PREFIX/lib
 
+    INCLUDEPATH += /usr/local/Cellar/eigen/5.0.1/include/eigen3
+
     # Copy menu.txt to build directory
     copydata.commands = $(COPY_FILE) $$PWD/menu.txt $$OUT_PWD
     first.depends = $(first) copydata
