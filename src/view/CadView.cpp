@@ -196,7 +196,7 @@ void CadView::initializeViewer() {
 
 #ifdef __APPLE__
     NSView* nsView = reinterpret_cast<NSView*>(wid);
-    if (!nsView || ![nsView window]) {
+    if (!isVisible() || !internalWinId()) {
         qCritical() << "[CadView] NSView not yet attached to NSWindow, deferring...";
         QTimer::singleShot(100, this, &CadView::initializeViewer);
         return;
