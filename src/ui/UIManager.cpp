@@ -29,6 +29,7 @@
 #include "cad/grips/GripManager.h"
 #include "cad/grips/SketchGripProvider.h"
 #include "ui/GripEventFilter.h"
+#include "SketchPanel.h"
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
 
@@ -84,6 +85,7 @@ public:
     core::CommandLineManager* commandLineManager;
     command::CommandAlias* commandAlias;
     AutoCompleteModel* autoCompleteModel;
+    SketchPanel* sketchPanel = nullptr;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -830,6 +832,61 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 d->cadView->snapManager()->setSnapEnabled(v.toBool());
         });
 
+        // ── 建構線（Construction Line） ─────────────────────────────────
+        bus->subscribe("command.create-sketch-construction-line", this,
+                       [this, bus, app](const QVariant& v) {
+                           auto data  = v.toMap();
+                           auto args  = data["args"].toStringList();
+                           auto* sketch = app->activeSketch();
+                           if (!sketch || args.size() < 4) return;
+
+                           bool ok[4]; float c[4];
+                           for (int i = 0; i < 4; ++i) c[i] = args[i].toFloat(&ok[i]);
+                           if (!ok[0]||!ok[1]||!ok[2]||!ok[3]) return;
+
+                           sketch->addConstructionLine(QVector2D(c[0],c[1]), QVector2D(c[2],c[3]));
+                           sketch->rebuild();
+                           bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
+                           setStatusMessage(tr("建構線已加入"), 2000);
+                       });
+
+        // ── 中心線（Centerline） ─────────────────────────────────────────
+        bus->subscribe("command.create-sketch-centerline", this,
+                       [this, bus, app](const QVariant& v) {
+                           auto data  = v.toMap();
+                           auto args  = data["args"].toStringList();
+                           auto* sketch = app->activeSketch();
+                           if (!sketch || args.size() < 4) return;
+
+                           bool ok[4]; float c[4];
+                           for (int i = 0; i < 4; ++i) c[i] = args[i].toFloat(&ok[i]);
+                           if (!ok[0]||!ok[1]||!ok[2]||!ok[3]) return;
+
+                           sketch->addCenterline(QVector2D(c[0],c[1]), QVector2D(c[2],c[3]));
+                           sketch->rebuild();
+                           bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
+                           setStatusMessage(tr("中心線已加入"), 2000);
+                       });
+
+        // ── 建構圓（Construction Circle） ────────────────────────────────
+        bus->subscribe("command.create-sketch-construction-circle", this,
+                       [this, bus, app](const QVariant& v) {
+                           auto data  = v.toMap();
+                           auto args  = data["args"].toStringList();
+                           auto* sketch = app->activeSketch();
+                           if (!sketch || args.size() < 3) return;
+
+                           bool ok1,ok2,ok3;
+                           float cx = args[0].toFloat(&ok1);
+                           float cy = args[1].toFloat(&ok2);
+                           float r  = args[2].toFloat(&ok3);
+                           if (!ok1||!ok2||!ok3) return;
+
+                           sketch->addConstructionCircle(QVector2D(cx,cy), r);
+                           sketch->rebuild();
+                           bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
+                           setStatusMessage(tr("建構圓已加入"), 2000);
+                       });
 
         // ✅ Connect view refresh when features update
         connect(bus, &core::EventBus::eventPublished, this,
@@ -1113,6 +1170,162 @@ void UIManager::connectCommandLineEvents() {
                    });
 }
 
+// 在 setupDefaultUI() 或 initialize() 中，找到 addDockWidget 的位置後加入：
+void UIManager::setupSketchPanel()
+{
+    d->sketchPanel = new SketchPanel(d->mainWindow);
+    d->sketchPanel->setObjectName("SketchPanel");
+    d->mainWindow->addDockWidget(Qt::RightDockWidgetArea, d->sketchPanel);
+    d->sketchPanel->hide();   // 初始隱藏，進入草圖模式才顯示
+
+    // ── 建構幾何信號 ─────────────────────────────────────────────
+    connect(d->sketchPanel, &SketchPanel::requestAddConstructionLine,
+            this, [this] {
+                auto* sketch = core::Application::instance()->activeSketch();
+                if (!sketch) return;
+                // 此處觸發互動式 command（與 LineCommand 相似但強制 Construction）
+                auto* bus = core::Application::instance()->eventBus();
+                bus->publish("command.start-construction-line", QVariant{});
+            });
+
+    connect(d->sketchPanel, &SketchPanel::requestAddCenterline,
+            this, [this] {
+                auto* bus = core::Application::instance()->eventBus();
+                bus->publish("command.start-centerline", QVariant{});
+            });
+
+    connect(d->sketchPanel, &SketchPanel::requestAddConstructionCircle,
+            this, [this] {
+                auto* bus = core::Application::instance()->eventBus();
+                bus->publish("command.start-construction-circle", QVariant{});
+            });
+
+    // ── 約束信號 ─────────────────────────────────────────────────
+    connect(d->sketchPanel, &SketchPanel::requestConstraint,
+            this, [this](cad::ConstraintType type) {
+                auto* sketch = core::Application::instance()->activeSketch();
+                if (!sketch) return;
+
+                // 取得目前選取的幾何 UUID（由 CadView 提供）
+                QStringList selected = d->cadView
+                                           ? d->cadView->selectedGeomUuids()
+                                           : QStringList{};
+
+                applyConstraintToSketch(sketch, type, selected, 0.0);
+            });
+
+    connect(d->sketchPanel, &SketchPanel::requestConstraintWithValue,
+            this, [this](cad::ConstraintType type, double value) {
+                auto* sketch = core::Application::instance()->activeSketch();
+                if (!sketch) return;
+                QStringList selected = d->cadView
+                                           ? d->cadView->selectedGeomUuids()
+                                           : QStringList{};
+                applyConstraintToSketch(sketch, type, selected, value);
+            });
+
+    connect(d->sketchPanel, &SketchPanel::requestRemoveConstraint,
+            this, [this](const QString& uuid) {
+                auto* sketch = core::Application::instance()->activeSketch();
+                if (!sketch) return;
+                sketch->removeConstraint(uuid);
+                sketch->solveConstraints();
+                sketch->rebuild();
+                auto* bus = core::Application::instance()->eventBus();
+                bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
+            });
+
+    connect(d->sketchPanel, &SketchPanel::requestSolve,
+            this, [this] {
+                auto* sketch = core::Application::instance()->activeSketch();
+                if (!sketch) return;
+                auto result = sketch->solveConstraints();
+                sketch->rebuild();
+                qDebug() << "[UIManager] Manual solve: DOF=" << result.dof
+                         << " status=" << static_cast<int>(result.status);
+            });
+}
+
+// 在 UIManager.cpp 加入此 private 方法（同時在 UIManager.h private 宣告）：
+void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
+                                        cad::ConstraintType type,
+                                        const QStringList& selected,
+                                        double value)
+{
+    using CT = cad::ConstraintType;
+    using GH = cad::GeomHandle;
+
+    QString uuid;
+    bool needsTwo  = (type == CT::Parallel || type == CT::Perpendicular
+                     || type == CT::Tangent  || type == CT::EqualLength
+                     || type == CT::EqualRadius || type == CT::Concentric
+                     || type == CT::Coincident   || type == CT::FixedDistance);
+
+    if (needsTwo && selected.size() < 2) {
+        showCommandMessage(tr("請先選取兩個幾何元素，再套用此約束"), "orange");
+        return;
+    }
+    if (!needsTwo && selected.isEmpty()) {
+        showCommandMessage(tr("請先選取一個幾何元素，再套用此約束"), "orange");
+        return;
+    }
+
+    switch (type) {
+    case CT::Coincident:
+        uuid = sketch->constrainCoincident(
+            cad::GeomRef(selected[0], GH::End),
+            cad::GeomRef(selected[1], GH::Start));
+        break;
+    case CT::Horizontal:
+        uuid = sketch->constrainHorizontal(selected[0]);       break;
+    case CT::Vertical:
+        uuid = sketch->constrainVertical(selected[0]);         break;
+    case CT::Parallel:
+        uuid = sketch->constrainParallel(selected[0], selected[1]); break;
+    case CT::Perpendicular:
+        uuid = sketch->constrainPerpendicular(selected[0], selected[1]); break;
+    case CT::Tangent:
+        uuid = sketch->constrainTangent(selected[0], selected[1]); break;
+    case CT::EqualLength:
+        uuid = sketch->constrainEqualLength(selected[0], selected[1]); break;
+    case CT::EqualRadius:
+        uuid = sketch->constrainEqualRadius(selected[0], selected[1]); break;
+    case CT::Concentric:
+        uuid = sketch->constrainConcentric(selected[0], selected[1]); break;
+    case CT::Fixed:
+        uuid = sketch->constrainFixed(selected[0]);            break;
+    case CT::FixedDistance:
+        uuid = sketch->constrainDistance(
+            cad::GeomRef(selected[0], GH::End),
+            cad::GeomRef(selected[1], GH::Start), value);
+        break;
+    case CT::FixedRadius:
+        uuid = sketch->constrainRadius(selected[0], value);    break;
+    case CT::FixedAngleDim:
+        uuid = sketch->addConstraint(
+            cad::SketchConstraint::makeFixedX(
+                cad::GeomRef(selected[0], GH::WholeGeom), value));
+        break;
+    default:
+        showCommandMessage(tr("此約束尚未支援"), "red");
+        return;
+    }
+
+    if (uuid.isEmpty()) {
+        showCommandMessage(tr("約束加入失敗（可能已過度約束）"), "red");
+        return;
+    }
+
+    auto result = sketch->solveConstraints();
+    sketch->rebuild();
+    if (d->cadView) d->cadView->refreshView();
+
+    auto* bus = core::Application::instance()->eventBus();
+    bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
+
+    QString msg = tr("約束已加入 [DOF: %1]").arg(result.dof);
+    showCommandMessage(msg, result.dof == 0 ? "lime" : "cyan");
+}
 // ===== 新增的公開方法 =====
 
 CommandLineWidget* UIManager::commandLine() const {
@@ -1171,6 +1384,13 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         }
     }
 
+    // ✅ 新增：顯示 SketchPanel 並綁定草圖
+    if (d->sketchPanel) {
+        d->sketchPanel->setActiveSketch(sketch);
+        d->sketchPanel->show();
+        d->sketchPanel->raise();
+    }
+
     // 2️⃣ 發事件（讓其他系統同步）
     auto* bus = Application::instance()->eventBus();
     bus->publish("sketch.editStarted", QVariant::fromValue(sketch));
@@ -1183,6 +1403,11 @@ void UIManager::onSketchEditEnded()
         d->cadView->snapManager()->setActivePlane(nullptr);
         d->cadView->snapManager()->setActiveSketch(nullptr);  // ✅ 新增
         d->cadView->snapManager()->clearLastInputPoint();
+    }
+    // ✅ 新增：隱藏 SketchPanel
+    if (d->sketchPanel) {
+        d->sketchPanel->clearSketch();
+        d->sketchPanel->hide();
     }
 
     // 2️⃣ 發事件
@@ -1358,6 +1583,8 @@ void UIManager::setupDefaultUI() {
     QMenu* viewMenu = menuBar->addMenu("&View");
     viewMenu->addAction("&Feature Browser");
     viewMenu->addAction("&Properties");
+
+    setupSketchPanel();
 }
 
 // 新增輔助方法:

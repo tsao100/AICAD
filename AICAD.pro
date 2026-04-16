@@ -277,6 +277,7 @@ SOURCES += \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/PropertyPanel.cpp \
+    src/ui/SketchPanel.cpp \
     src/ui/ToolManager.cpp \
     src/ui/TransientCommandHistory.cpp \
     src/ui/UIManager.cpp \
@@ -367,6 +368,7 @@ HEADERS += \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
     src/ui/PropertyPanel.h \
+    src/ui/SketchPanel.h \
     src/ui/ToolManager.h \
     src/ui/TransientCommandHistory.h \
     src/ui/UIManager.h \

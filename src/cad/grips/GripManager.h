@@ -36,6 +36,7 @@ public:
 
     // ── 選取物件後，載入其 grip ────────────────────────────────
     void attachProvider(IGripProvider* provider);
+    IGripProvider* currentProvider(){return m_provider;}
     void detach();
     bool hasActiveGrips() const { return !m_handles.isEmpty(); }
 

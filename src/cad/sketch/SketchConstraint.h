@@ -67,6 +67,11 @@ enum class ConstraintType {
     Fixed,              ///< 整個幾何元素固定（消耗所有 DOF）
 };
 
+inline uint qHash(const aicad::cad::ConstraintType &key, uint seed = 0)
+{
+    return ::qHash(static_cast<int>(key), seed);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 幾何參考：指向某個 SketchGeometry 的某個子元素
 // ─────────────────────────────────────────────────────────────────────────────

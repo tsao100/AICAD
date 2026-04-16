@@ -12,6 +12,8 @@
 #include "cad/Sketch.h"
 #include "cad/Document.h"
 #include "cad/PlaneManager.h"
+#include "cad/grips/SketchGripProvider.h"
+#include "cad/grips/GripManager.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
@@ -595,6 +597,21 @@ void CadView::clearSectionPlane() {
 
 bool CadView::isSectionActive() const {
     return !d->sectionClipPlane.IsNull();
+}
+
+// CadView.cpp 實作（放在適當位置）：
+QStringList CadView::selectedGeomUuids() const
+{
+    // 從 GripManager 或 AIS SelectionContext 取得選取的幾何
+    QStringList result;
+    if (d->gripManager) {
+        // GripManager 已知目前選取的 provider，從其 SketchGripProvider 取 UUID
+        if (auto* provider = dynamic_cast<SketchGripProvider*>(
+                d->gripManager->currentProvider())) {
+            result = selectedGeomUuids();
+        }
+    }
+    return result;
 }
 
 void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {

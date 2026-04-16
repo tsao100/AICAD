@@ -216,6 +216,11 @@ public:
     void setSectionPlane(const gp_Pln& plane);
     void clearSectionPlane();
     bool isSectionActive() const;
+    /**
+     * @brief 回傳目前選取的草圖幾何 UUID 列表
+     *        供 SketchPanel 的約束按鈕使用
+     */
+    QStringList selectedGeomUuids() const;
 
 public Q_SLOTS:
 

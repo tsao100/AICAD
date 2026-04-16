@@ -19,6 +19,7 @@ namespace aicad {
 namespace cad {
     class Document;
     class Sketch;
+    enum class ConstraintType;
 }
 
 namespace view {
@@ -198,6 +199,12 @@ private:
 
     osnap::OSnapToolbar* m_snapToolbar = nullptr;
 
+    void setupSketchPanel();
+    void connectSketchPanelSignals(cad::Sketch* sketch);
+    void applyConstraintToSketch(cad::Sketch* sketch,
+                                cad::ConstraintType type,
+                                const QStringList& selected,
+                                double value);
     class Private;
     Private* d;
 };

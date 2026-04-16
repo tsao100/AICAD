@@ -281,16 +281,17 @@ public:
     // 便捷 API（語意清晰）
     QString constrainCoincident(const GeomRef& a, const GeomRef& b);
     QString constrainHorizontal(const QString& lineUuid);
-    QString constrainVertical(const QString& lineUuid);
-    QString constrainParallel(const QString& lineA, const QString& lineB);
-    QString constrainPerpendicular(const QString& lineA, const QString& lineB);
-    QString constrainTangent(const QString& geomA, const QString& geomB);
-    QString constrainEqualLength(const QString& lineA, const QString& lineB);
-    QString constrainConcentric(const QString& geomA, const QString& geomB);
-    QString constrainFixed(const QString& geomUuid);
-    QString constrainDistance(const GeomRef& a, const GeomRef& b, double dist);
-    QString constrainRadius(const QString& geomUuid, double radius);
-    QString constrainPointOnCurve(const GeomRef& point, const QString& curveUuid);
+    QString constrainVertical(const QString& lineUuid){}
+    QString constrainParallel(const QString& lineA, const QString& lineB){}
+    QString constrainPerpendicular(const QString& lineA, const QString& lineB){}
+    QString constrainTangent(const QString& geomA, const QString& geomB){}
+    QString constrainEqualLength(const QString& lineA, const QString& lineB){}
+    QString constrainEqualRadius(const QString& lineA, const QString& lineB){}
+    QString constrainConcentric(const QString& geomA, const QString& geomB){}
+    QString constrainFixed(const QString& geomUuid){}
+    QString constrainDistance(const GeomRef& a, const GeomRef& b, double dist){}
+    QString constrainRadius(const QString& geomUuid, double radius){}
+    QString constrainPointOnCurve(const GeomRef& point, const QString& curveUuid){}
 
     // ── 建構線便捷方法 ────────────────────────────────────────────
     void addConstructionLine(const QVector2D& p1, const QVector2D& p2);
