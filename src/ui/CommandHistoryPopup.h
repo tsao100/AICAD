@@ -23,7 +23,7 @@ public:
     void toggle(QWidget* anchor);
     void setContent(const QString& html);
 
-    int  slideHeight() const { return height(); }
+    int  slideHeight() const { return m_slideH; }
     void setSlideHeight(int h);
 
 private slots:
@@ -37,6 +37,7 @@ private:
     QPropertyAnimation* m_anim      = nullptr;
     QWidget*            m_anchor    = nullptr;
     int                 m_targetH   = 200;
+    int                 m_slideH    = 0;
 
     void reposition();
     void buildToolbar();

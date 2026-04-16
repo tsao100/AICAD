@@ -39,8 +39,12 @@ CommandLineWidget::CommandLineWidget(QWidget* cadView, QWidget* parent)
 
     installMouseFilterOnChildren(this);
 
-    if (m_cadView)
+    if (m_cadView) {
         m_cadView->installEventFilter(this);
+        // ↓ 新增：也監聽 CadView 所在的頂層視窗 (MainWindow)
+        if (auto* win = m_cadView->window(); win && win != m_cadView)
+            win->installEventFilter(this);
+    }
 }
 
 CommandLineWidget::~CommandLineWidget() = default;
@@ -335,6 +339,14 @@ bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
 
         default:
             break;
+        }
+    }
+    // ↓ 新增：當 MainWindow 本身移動/縮放時，CadView 不發 QEvent::Move，
+    //   必須獨立監聽 top-level window
+    if (m_cadView && obj == m_cadView->window() && obj != m_cadView) {
+        if ((event->type() == QEvent::Move ||
+             event->type() == QEvent::Resize) && m_initialAlignDone) {
+            alignToCadView();
         }
     }
     return QWidget::eventFilter(obj, event);

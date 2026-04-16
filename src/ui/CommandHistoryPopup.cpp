@@ -27,6 +27,7 @@ CommandHistoryPopup::CommandHistoryPopup(QWidget* parent)
         "font-family:monospace; font-size:12px; "
         "selection-background-color:#264f78; }");
     lay->addWidget(m_textEdit);
+    setMinimumHeight(0);
 
     hide();
 }
@@ -103,7 +104,7 @@ void CommandHistoryPopup::slideIn(QWidget* anchor) {
                this,   &QWidget::hide);
 
     m_anim->stop();
-    m_anim->setStartValue(height());
+    m_anim->setStartValue(m_slideH);
     m_anim->setEndValue(m_targetH);
     show();
     raise();
@@ -114,7 +115,7 @@ void CommandHistoryPopup::slideOut() {
     if (!m_anim) return;
 
     m_anim->stop();
-    m_anim->setStartValue(height());
+    m_anim->setStartValue(m_slideH);
     m_anim->setEndValue(0);
 
     // UniqueConnection 確保不重複，但 slideIn 前會 disconnect 掉
@@ -126,16 +127,27 @@ void CommandHistoryPopup::slideOut() {
 }
 
 void CommandHistoryPopup::setSlideHeight(int h) {
+    m_slideH = h;       // ← 新增：記錄邏輯高度
     if (!m_anchor) return;
 
-    // parent() 是 CommandLineWidget，它是 Qt::Tool top-level
-    // 用 mapToGlobal 確保跨 window 座標正確
     const QPoint ag = m_anchor->mapToGlobal(QPoint(0, 0));
-    setGeometry(ag.x(),
-                ag.y() - h,
-                m_anchor->width(),
-                h);
+
+    // 保持 widget 實際大小不變，位置固定在 anchor 上方 m_targetH 處
+    // ← 改：不再 setGeometry；只做 move + 確保 size 正確
+    if (width() != m_anchor->width() || height() != m_targetH)
+        resize(m_anchor->width(), m_targetH);
+    move(ag.x(), ag.y() - m_targetH);
+
+    // 用 mask 控制可見區域（底部 h 像素），完全繞開最小高度限制
+    if (h <= 0) {
+        setMask(QRegion());                                     // 全遮（看不見）
+    } else if (h >= m_targetH) {
+        clearMask();                                            // 全顯
+    } else {
+        setMask(QRegion(0, m_targetH - h, m_anchor->width(), h)); // 底部 h px
+    }
 }
+
 
 void CommandHistoryPopup::reposition() {
     if (!m_anchor) return;
