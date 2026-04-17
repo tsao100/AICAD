@@ -45,6 +45,8 @@
 #include <Geom_Plane.hxx>
 #include <Graphic3d_ClipPlane.hxx>
 #include <Graphic3d_SequenceOfHClipPlane.hxx>
+#include <Prs3d_Drawer.hxx>
+#include <Graphic3d_AspectLine3d.hxx>
 
 #ifdef _WIN32
 #  include <WNT_Window.hxx>
@@ -264,6 +266,23 @@ void CadView::initializeViewer() {
     // 建立互動上下文
     d->context = new AIS_InteractiveContext(d->viewer);
     d->context->SetDisplayMode(AIS_Shaded, Standard_True);
+
+    // ── 設定選中高亮色（避免與背景色混淆）──────────────────────
+    {
+        // 選中樣式：亮黃色，明顯區別於 GRAY80 背景
+        Handle(Prs3d_Drawer) selStyle = new Prs3d_Drawer();
+        selStyle->SetColor(Quantity_NOC_YELLOW);
+       // selStyle->WireAspect()->SetWidth(3.0);
+       // selStyle->WireAspect()->SetColor(Quantity_NOC_YELLOW);
+        d->context->SetSelectionStyle(selStyle);
+
+        // 預偵測（hover）高亮色：橘色
+        Handle(Prs3d_Drawer) hilightStyle = new Prs3d_Drawer();
+        hilightStyle->SetColor(Quantity_NOC_ORANGE);
+        // hilightStyle->WireAspect()->SetWidth(2.0);
+        // hilightStyle->WireAspect()->SetColor(Quantity_NOC_ORANGE);
+        d->context->SetHighlightStyle(hilightStyle);
+    }
 
     // 建立 ViewCube
     d->viewCube = new AIS_ViewCube();

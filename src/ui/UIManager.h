@@ -18,6 +18,7 @@ namespace aicad {
 // 前向宣告
 namespace cad {
     class Document;
+    class Feature;
     class Sketch;
     enum class ConstraintType;
 }
@@ -205,6 +206,9 @@ private:
                                 cad::ConstraintType type,
                                 const QStringList& selected,
                                 double value);
+
+    void showFeatureProperties(cad::Feature* feature);
+
     class Private;
     Private* d;
 };

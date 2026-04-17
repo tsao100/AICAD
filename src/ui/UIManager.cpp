@@ -26,6 +26,8 @@
 #include "core/MenuParser.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
+#include "cad/Plane.h"
+#include "cad/Extrude.h"
 #include "cad/grips/GripManager.h"
 #include "cad/grips/SketchGripProvider.h"
 #include "ui/GripEventFilter.h"
@@ -921,8 +923,13 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
                     d->gripManager->detach();   // 先清除舊 grips
 
-            cad::Feature* f = docMgr->currentDocument()->findFeature(featureId);
-                    if (!f) return;
+                    cad::Feature* f = docMgr->currentDocument()->findFeature(featureId);
+                    if (!f){
+                        if (d->propertyPanel) d->propertyPanel->clear();
+                        return;
+                    }
+
+                    showFeatureProperties(f);
 
                     if (auto* sketch = qobject_cast<cad::Sketch*>(f)) {
                         // Sketch 使用 SketchGripProvider
@@ -1344,6 +1351,68 @@ void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
     QString msg = tr("約束已加入 [DOF: %1]").arg(result.dof);
     showCommandMessage(msg, result.dof == 0 ? "lime" : "cyan");
 }
+
+void UIManager::showFeatureProperties(cad::Feature* feature) {
+    auto* panel = d->propertyPanel;
+    if (!panel) return;
+
+    panel->clear();
+    if (!feature) return;
+
+    // ── 共用屬性 ──────────────────────────────────────────
+    panel->addProperty(tr("名稱"),     feature->name(),       /*editable*/true);
+    panel->addProperty(tr("類型"),     feature->typeString(), false);
+    panel->addProperty(tr("ID"),       feature->id(),         false);
+    panel->addProperty(tr("可見"),     feature->isVisible() ? tr("是") : tr("否"), false);
+    panel->addProperty(tr("抑制"),     feature->isSuppressed() ? tr("是") : tr("否"), false);
+    if (feature->hasError())
+        panel->addProperty(tr("錯誤"), feature->errorMessage(), false);
+
+    // ── Sketch 專屬 ────────────────────────────────────────
+    if (auto* sketch = qobject_cast<cad::Sketch*>(feature)) {
+        panel->addProperty(tr("平面"),
+                           sketch->plane() ? sketch->plane()->name() : tr("(無)"), false);
+        panel->addProperty(tr("幾何數"),
+                           QString::number(sketch->geometryCount()), false);
+        panel->addProperty(tr("約束數"),
+                           QString::number(sketch->constraints().size()), false);
+        panel->addProperty(tr("自由度"),
+                           QString::number(sketch->degreesOfFreedom()), false);
+        return;
+    }
+
+    // ── Extrude 專屬 ───────────────────────────────────────
+    if (auto* extrude = qobject_cast<cad::Extrude*>(feature)) {
+        panel->addProperty(tr("草圖"),
+                           extrude->sketch() ? extrude->sketch()->name() : tr("(無)"), false);
+        // 顯示表達式（若有）否則顯示數值
+        const QString heightExpr = extrude->heightExpression();
+        panel->addProperty(tr("高度"),
+                           heightExpr.isEmpty()
+                               ? QString::number(extrude->height())
+                               : heightExpr,
+                           /*editable*/true);
+        return;
+    }
+
+    // ── Plane 專屬 ─────────────────────────────────────────
+    if (auto* plane = qobject_cast<cad::Plane*>(feature)) {
+        const auto& o = plane->origin();
+        const auto& n = plane->normal();
+        panel->addProperty(tr("原點"),
+                           QString("(%1, %2, %3)")
+                               .arg(o.x(), 0, 'f', 3)
+                               .arg(o.y(), 0, 'f', 3)
+                               .arg(o.z(), 0, 'f', 3), false);
+        panel->addProperty(tr("法向量"),
+                           QString("(%1, %2, %3)")
+                               .arg(n.x(), 0, 'f', 3)
+                               .arg(n.y(), 0, 'f', 3)
+                               .arg(n.z(), 0, 'f', 3), false);
+        return;
+    }
+}
+
 // ===== 新增的公開方法 =====
 
 CommandLineWidget* UIManager::commandLine() const {
@@ -1717,6 +1786,10 @@ void UIManager::onCurrentDocumentChanged(cad::Document* doc) {
         d->cadView->refreshView();
         d->cadView->fitAll();
     }
+
+    if (d->propertyPanel)
+        d->propertyPanel->clear();   // ← 新增
+
 }
 
 } // namespace ui
