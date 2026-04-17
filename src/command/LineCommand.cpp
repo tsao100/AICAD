@@ -31,6 +31,7 @@ CommandResult LineCommand::execute(const CommandContext& context) {
         QVariantMap request;
         request["commandId"] = "line";
         request["args"] = QVariant::fromValue(context.args);
+        request["role"] = static_cast<int>(m_role);
         bus->publish("command.request-sketch-line", request);
         return CommandResult::Success("Line creation requested");
     }
@@ -103,11 +104,23 @@ void LineCommand::handlePointAcquired(QVector2D point)
         return;
     }
 
+    QString eventName;
+    switch (m_role) {
+    case cad::GeomRole::Construction: eventName = "command.create-sketch-construction-line"; break;
+    case cad::GeomRole::Centerline:   eventName = "command.create-sketch-centerline";        break;
+    default:                          eventName = "command.create-sketch-line";               break;
+    }
+
     // ✅ Request line creation via EventBus
     QVariantMap lineData;
     lineData["startPoint"] = QVariant::fromValue(m_startPoint);
     lineData["endPoint"] = QVariant::fromValue(point);
-    bus->publish("command.create-sketch-line", lineData);
+    // construction handler 也需要的 args 格式
+    lineData["args"] = QStringList{
+        QString::number(m_startPoint.x()), QString::number(m_startPoint.y()),
+        QString::number(point.x()),        QString::number(point.y())
+    };
+    bus->publish(eventName, lineData);
 
     outputMessage(QString("Line created from (%1,%2) to (%3,%4)")
                       .arg(m_startPoint.x()).arg(m_startPoint.y())

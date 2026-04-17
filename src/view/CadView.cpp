@@ -602,15 +602,30 @@ bool CadView::isSectionActive() const {
 // CadView.cpp 實作（放在適當位置）：
 QStringList CadView::selectedGeomUuids() const
 {
-    // 從 GripManager 或 AIS SelectionContext 取得選取的幾何
     QStringList result;
-    if (d->gripManager) {
-        // GripManager 已知目前選取的 provider，從其 SketchGripProvider 取 UUID
-        if (auto* provider = dynamic_cast<SketchGripProvider*>(
-                d->gripManager->currentProvider())) {
-            result = selectedGeomUuids();
-        }
+    if (!d->context || !d->document) return result;
+
+    for (d->context->InitSelected();
+         d->context->MoreSelected();
+         d->context->NextSelected())
+    {
+        Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
+            d->context->SelectedInteractive());
+        if (s.IsNull()) continue;
+
+        QString featureId = d->aisToFeatureId.value(s.get());
+        int     geomIdx   = d->aisToGeomIndex.value(s.get(), -1);
+        if (featureId.isEmpty() || geomIdx < 0) continue;
+
+        auto* feature = d->document->findFeature(featureId);
+        auto* sketch  = dynamic_cast<cad::Sketch*>(feature);
+        if (!sketch) continue;
+
+        const auto& geoms = sketch->geometries();
+        if (geomIdx < geoms.size())
+            result << geoms[geomIdx]->uuid;
     }
+
     return result;
 }
 

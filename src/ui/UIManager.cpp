@@ -32,6 +32,7 @@
 #include "SketchPanel.h"
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
+#include "command/LineCommand.h"
 
 #include <QMenu>
 #include <QMenuBar>
@@ -222,11 +223,17 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         setupCommandLine();
 
         // 建立並加入 OSnap 工具列
-        if (d->cadView && d->cadView->snapManager()) {
-            m_snapToolbar = new osnap::OSnapToolbar(
-                d->cadView->snapManager(), d->mainWindow);
-            d->mainWindow->addToolBar(Qt::BottomToolBarArea, m_snapToolbar);
-        }
+        // 改用信號，等 viewer 初始化完畢再建立 toolbar
+        connect(d->cadView, &view::CadView::viewInitialized,
+                this, [this]() {
+                    if (m_snapToolbar) return;  // 避免重複建立
+                    if (d->cadView && d->cadView->snapManager()) {
+                        m_snapToolbar = new osnap::OSnapToolbar(
+                            d->cadView->snapManager(), d->mainWindow);
+                        d->mainWindow->addToolBar(Qt::BottomToolBarArea, m_snapToolbar);
+                        qDebug() << "[UIManager] OSnapToolbar created after viewInitialized";
+                    }
+                });
 
         if (d->cadView) {
             connect(d->cadView, &view::CadView::sketchFinished,
@@ -1168,6 +1175,17 @@ void UIManager::connectCommandLineEvents() {
                    [this](const QVariant& v) {
                        d->commandLine->appendHistory(v.toString());
                    });
+
+    // UIManager.cpp — connectCommandLineEvents() 或 setupSketchPanel() 加入：
+    bus->subscribe("command.start-construction-line", this, [this](const QVariant&) {
+        core::Application::instance()->commandManager()
+            ->executeCommand("construction-line", QStringList{});
+    });
+
+    bus->subscribe("command.start-centerline", this, [this](const QVariant&) {
+        core::Application::instance()->commandManager()
+            ->executeCommand("centerline", QStringList{});
+    });
 }
 
 // 在 setupDefaultUI() 或 initialize() 中，找到 addDockWidget 的位置後加入：

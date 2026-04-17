@@ -816,6 +816,40 @@ QString Sketch::constrainHorizontal(const QString& uuid) {
     return addConstraint(SketchConstraint::makeHorizontal(uuid));
 }
 
+QString Sketch::constrainVertical(const QString& lineUuid) {
+    return addConstraint(SketchConstraint::makeVertical(lineUuid));
+}
+QString Sketch::constrainParallel(const QString& lineA, const QString& lineB) {
+    return addConstraint(SketchConstraint::makeParallel(lineA, lineB));
+}
+QString Sketch::constrainPerpendicular(const QString& lineA, const QString& lineB) {
+    return addConstraint(SketchConstraint::makePerpendicular(lineA, lineB));
+}
+QString Sketch::constrainTangent(const QString& geomA, const QString& geomB) {
+    return addConstraint(SketchConstraint::makeTangent(geomA, geomB));
+}
+QString Sketch::constrainEqualLength(const QString& lineA, const QString& lineB) {
+    return addConstraint(SketchConstraint::makeEqualLength(lineA, lineB));
+}
+QString Sketch::constrainEqualRadius(const QString& circA, const QString& circB) {
+    return addConstraint(SketchConstraint::makeEqualRadius(circA, circB));
+}
+QString Sketch::constrainConcentric(const QString& geomA, const QString& geomB) {
+    return addConstraint(SketchConstraint::makeConcentric(geomA, geomB));
+}
+QString Sketch::constrainFixed(const QString& geomUuid) {
+    return addConstraint(SketchConstraint::makeFixed(geomUuid));
+}
+QString Sketch::constrainDistance(const GeomRef& a, const GeomRef& b, double dist) {
+    return addConstraint(SketchConstraint::makeFixedDistance(a, b, dist));
+}
+QString Sketch::constrainRadius(const QString& geomUuid, double radius) {
+    return addConstraint(SketchConstraint::makeFixedRadius(geomUuid, radius));
+}
+QString Sketch::constrainPointOnCurve(const GeomRef& point, const QString& curveUuid) {
+    return addConstraint(SketchConstraint::makePointOnCurve(point, curveUuid));
+}
+
 // ============================================================================
 // ✅ 新增：標準平面名稱解析
 //    按 planeName 比對 PlaneManager 中已登記的標準平面

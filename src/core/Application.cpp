@@ -14,6 +14,7 @@
 #include "cad/Sketch.h"
 #include "command/CommandManager.h"
 #include "command/RectCommand.h"
+#include "command/LineCommand.h"
 #include "command/CommandFactory.h"
 #include "command/CommandAlias.h"
 #include "ui/UIManager.h"
@@ -440,6 +441,27 @@ void Application::registerCommandsFromMenu() {
             }
             );
     }
+
+    // 補註冊不在 menu.txt 但需互動式啟動的內建命令
+    auto registerBuiltin = [&](const QString& id, const QStringList& aliases,
+                               std::function<command::Command*()> factory) {
+        if (!d->commandManager->hasCommand(id))
+            d->commandManager->registerCommand(id, aliases, factory);
+    };
+
+    registerBuiltin("construction-line", {},
+                    []() -> command::Command* {
+                        auto* cmd = new command::LineCommand();
+                        cmd->setRole(cad::GeomRole::Construction);
+                        return cmd;
+                    });
+
+    registerBuiltin("centerline", {},
+                    []() -> command::Command* {
+                        auto* cmd = new command::LineCommand();
+                        cmd->setRole(cad::GeomRole::Centerline);
+                        return cmd;
+                    });
 
     qDebug() << "[Application] Registered" << commands.size() << "commands";
 }
