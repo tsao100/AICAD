@@ -19,13 +19,17 @@
 #include "core/DocumentManager.h"
 #include "osnap/OSnapManager.h"
 #include "ui/GripEventFilter.h"
+#include "ui/UIManager.h"
 #include "cad/grips/GripManager.h"
+#include "command/CommandManager.h"
+#include "geometry/GeometryBuilder.h"
 
 #include <QDebug>
 #include <QTimer>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QToolTip>
+#include <QMenu>
 
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -85,6 +89,9 @@ public:
     Handle(Graphic3d_ClipPlane) sectionClipPlane;
     QTimer* viewCubeTimer;
 
+    QMap<QString, Handle(AIS_Shape)> regionAisMap;   ///< regionUuid → AIS face
+    QString                          activeRegionUuid; ///< 目前高亮的 region
+
     // 關聯的文件
     cad::Document* document;
 
@@ -111,6 +118,7 @@ public:
     QSet<int>                              selectedGeomIndices;
     ui::GripEventFilter* gripFilter;
     GripManager*         gripManager;
+    bool commandInProgress = false;
 
     Private()
         : document(nullptr)
@@ -272,8 +280,8 @@ void CadView::initializeViewer() {
         // 選中樣式：亮黃色，明顯區別於 GRAY80 背景
         Handle(Prs3d_Drawer) selStyle = new Prs3d_Drawer();
         selStyle->SetColor(Quantity_NOC_YELLOW);
-       // selStyle->WireAspect()->SetWidth(3.0);
-       // selStyle->WireAspect()->SetColor(Quantity_NOC_YELLOW);
+        // selStyle->WireAspect()->SetWidth(3.0);
+        // selStyle->WireAspect()->SetColor(Quantity_NOC_YELLOW);
         d->context->SetSelectionStyle(selStyle);
 
         // 預偵測（hover）高亮色：橘色
@@ -1012,6 +1020,108 @@ void CadView::onFinishSketchClicked() {
     Q_EMIT sketchFinished();
 }
 
+void CadView::displaySketchRegions(
+    const QVector<cad::SketchRegion>& regions,
+    const cad::Sketch* sketch)
+{
+    clearSketchRegions();
+
+    for (const auto& region : regions) {
+        TopoDS_Face face = geometry::faceFromSketchRegion(sketch, region);
+        if (face.IsNull()) continue;
+
+        Handle(AIS_Shape) aisRegion = new AIS_Shape(face);
+
+        // 半透明青色填色（用於預覽）
+        Graphic3d_MaterialAspect mat(Graphic3d_NOM_PLASTIC);
+        mat.SetColor(Quantity_Color(0.0, 0.8, 0.8, Quantity_TOC_RGB));
+        mat.SetTransparency(0.6f);
+        aisRegion->SetMaterial(mat);
+        aisRegion->SetTransparency(0.6);
+        aisRegion->SetDisplayMode(AIS_Shaded);
+        // 不加入 selection（region 的選取另外處理）
+        d->context->Display(aisRegion, Standard_False);
+        d->context->Deactivate(aisRegion);
+
+        d->regionAisMap[region.uuid] = aisRegion;
+    }
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::clearSketchRegions()
+{
+    for (auto& ais : d->regionAisMap) {
+        if (!ais.IsNull())
+            d->context->Remove(ais, Standard_False);
+    }
+    d->regionAisMap.clear();
+    d->activeRegionUuid.clear();
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::highlightSketchRegion(const QString& uuid)
+{
+    // 取消前一個高亮
+    if (!d->activeRegionUuid.isEmpty()) {
+        auto it = d->regionAisMap.find(d->activeRegionUuid);
+        if (it != d->regionAisMap.end() && !it.value().IsNull()) {
+            d->context->SetColor(*it,
+                                 Quantity_Color(0.0, 0.8, 0.8, Quantity_TOC_RGB),
+                                 Standard_False);
+            d->context->SetTransparency(*it, 0.6, Standard_False);
+        }
+    }
+    // 高亮新選取的 region（不透明黃色）
+    auto it = d->regionAisMap.find(uuid);
+    if (it != d->regionAisMap.end() && !it.value().IsNull()) {
+        d->context->SetColor(*it,
+                             Quantity_Color(1.0, 0.9, 0.0, Quantity_TOC_RGB),
+                             Standard_False);
+        d->context->SetTransparency(*it, 0.2, Standard_False);
+        d->activeRegionUuid = uuid;
+    }
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::showSketchContextMenu(const QPoint& screenPos)
+{
+    cad::Sketch* sketch = Application::instance()->activeSketch();
+    if (!sketch) return;
+
+    QMenu menu(this);
+
+    // ── 偵測區域 ─────────────────────────────────────────────────
+    QAction* actDetect = menu.addAction(tr("偵測區域"));
+    connect(actDetect, &QAction::triggered, this, [this, sketch, screenPos] {
+        auto regions = sketch->detectRegions();
+        if (regions.isEmpty()) {
+            Q_EMIT statusMessageRequested(tr("未找到閉合迴路"), 2000);
+            return;
+        }
+        displaySketchRegions(regions, sketch);
+        Q_EMIT sketchRegionsDetected(regions);
+        Q_EMIT statusMessageRequested(
+            tr("偵測到 %1 個區域，左鍵點擊選取").arg(regions.size()), 0);
+    });
+
+    // ── 若 regionAisMap 非空，提供「清除區域顯示」 ──────────────
+    if (!d->regionAisMap.isEmpty()) {
+        menu.addSeparator();
+        QAction* actClear = menu.addAction(tr("清除區域顯示"));
+        connect(actClear, &QAction::triggered,
+                this, &CadView::clearSketchRegions);
+    }
+
+    menu.addSeparator();
+
+    // ── 完成草圖（原本右鍵功能移至此處） ────────────────────────
+    QAction* actFinish = menu.addAction(tr("完成草圖"));
+    connect(actFinish, &QAction::triggered,
+            this, &CadView::onFinishSketchClicked);
+
+    menu.exec(mapToGlobal(screenPos));
+}
+
 void CadView::updateProjection() {
     if (d->view.IsNull()) {
         return;
@@ -1158,10 +1268,40 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     }
 
     if (event->button() == Qt::RightButton && d->mode == InteractionMode::Sketching) {
-        qDebug() << "[CadView] RMB clicked - finishing command";
-        EventBus* bus = Application::instance()->eventBus();
-        bus->publish(Events::POINT_CANCELLED, QVariant());
+        // 若目前有指令進行中 → 取消指令（原本行為）
+        // 若無指令進行中      → 顯示草圖 context menu
+        Application* app = Application::instance();
+        auto* bus=app->eventBus();
+        command::CommandManager* cmdMgr = app->commandManager();
+        bool commandActive = cmdMgr->hasActiveCommand() ; // 見下方說明
+
+        if (commandActive) {
+            bus->publish(Events::POINT_CANCELLED, QVariant());
+        } else {
+            showSketchContextMenu(event->pos());
+        }
         return;
+    }
+
+    // 在現有的左鍵 Sketching 處理之前插入（緊接在 snap 判斷之前）：
+
+    if (event->button() == Qt::LeftButton &&
+        d->mode == InteractionMode::Sketching &&
+        !d->regionAisMap.isEmpty())
+    {
+        // 先嘗試 region 選取
+        QVector2D planePt = screenToPlane(event->pos());
+        cad::Sketch* sketch = Application::instance()->activeSketch();
+        if (sketch) {
+            auto regions = sketch->detectRegions();
+            for (const auto& region : regions) {
+                if (region.contains(planePt)) {
+                    highlightSketchRegion(region.uuid);
+                    Q_EMIT sketchRegionPicked(region);
+                    return;   // 消耗事件，不進入畫線流程
+                }
+            }
+        }
     }
 
     int x = event->x();

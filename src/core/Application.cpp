@@ -21,6 +21,8 @@
 #include "view/ViewManager.h"
 #include "scripting/LispEngine.h"
 #include "scripting/LispBindings.h"
+#include <optional>
+#include "cad/sketch/SketchRegion.h"
 
 #include <QApplication>
 #include <QFile>
@@ -71,6 +73,7 @@ public:
     // ✅ 新增
     core::CommandLineManager* commandLineManager;
     command::CommandAlias* commandAlias;
+    std::optional<cad::SketchRegion> selectedRegion;
 
     static const QString VERSION;
     static const QString APP_NAME;
@@ -514,6 +517,18 @@ void Application::setActiveSketch(cad::Sketch* sketch) {
     d->activeSketch = sketch;
     qDebug() << "[Application] Active sketch set to:"
              << (sketch ? sketch->name() : "null");
+}
+
+std::optional<cad::SketchRegion> Application::selectedRegion() const {
+    return d->selectedRegion;
+}
+
+void Application::setSelectedRegion(const cad::SketchRegion& region) {
+    d->selectedRegion = region;
+}
+
+void Application::clearSelectedRegion() {
+    d->selectedRegion = std::nullopt;
 }
 
 } // namespace core

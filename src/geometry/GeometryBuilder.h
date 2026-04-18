@@ -24,12 +24,17 @@
 #include <QVector3D>
 #include <QString>
 
+#include "cad/sketch/SketchRegion.h"
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Edge.hxx>
+
 namespace aicad {
 
 // 前向宣告
 namespace cad {
     class Plane;
     class Sketch;
+    struct SketchGeometry;
 }
 
 namespace geometry {
@@ -285,6 +290,14 @@ public:
 private:
     GeometryBuilder() = delete;  // 靜態類別，不可實例化
 };
+
+/** 從草圖幾何元素建立 OCCT Edge */
+TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
+                                   const cad::SketchGeometry* g);
+
+/** 從 SketchRegion 建立含洞的 TopoDS_Face（供 Extrude / CadView 共用）*/
+TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
+                                 const cad::SketchRegion& region);
 
 } // namespace geometry
 } // namespace aicad

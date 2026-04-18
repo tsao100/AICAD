@@ -179,6 +179,8 @@ public:
      * @brief 檢查是否有命令正在執行
      */
     bool isCommandRunning() const;
+
+    bool hasActiveCommand() const;
     
 Q_SIGNALS:
     /**

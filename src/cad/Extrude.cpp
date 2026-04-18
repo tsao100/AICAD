@@ -5,6 +5,8 @@
  * @date 2025-01-08
  */
 
+#include "core/Application.h"
+#include "geometry/GeometryBuilder.h"
 #include "Extrude.h"
 #include "Sketch.h"
 #include "Document.h"
@@ -12,6 +14,8 @@
 
 #include <QJsonObject>
 #include <QDebug>
+
+#include <BRepBuilderAPI_MakeFace.hxx>
 
 namespace aicad {
 namespace cad {
@@ -109,7 +113,25 @@ bool Extrude::rebuild() {
         setError(error);
         return false;
     }
-    
+    // 在 Extrude::rebuild() 中
+    TopoDS_Shape profile;
+
+    if (auto reg = core::Application::instance()->selectedRegion()) {
+        // 用選取的 region 建立 face（含洞）
+        profile = geometry::faceFromSketchRegion(m_sketch, *reg);
+    } else if (m_sketch->hasClosedProfile()) {
+        // 原本的全輪廓 extrude 行為
+        BRepBuilderAPI_MakeFace faceMaker(m_sketch->mainWire(),
+                                          Standard_True);
+        if (faceMaker.IsDone())
+            profile = faceMaker.Face();
+    }
+
+    if (profile.IsNull()) {
+        setError("No valid profile for extrude");
+        return false;
+    }
+
     try {
         // 計算實際高度
         double actualHeight = m_heightExpr.cachedValue;

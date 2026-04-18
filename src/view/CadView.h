@@ -250,6 +250,16 @@ public Q_SLOTS:
 
     void onFinishSketchClicked();
 
+    /** 顯示偵測到的 region（半透明填色面） */
+    void displaySketchRegions(
+        const QVector<aicad::cad::SketchRegion>& regions,
+        const cad::Sketch* sketch);
+
+    /** 清除所有 region 高亮 */
+    void clearSketchRegions();
+
+    /** 高亮選取的 region */
+    void highlightSketchRegion(const QString& regionUuid);
 Q_SIGNALS:
     /**
      * @brief 視圖類型改變時發出
@@ -311,6 +321,14 @@ Q_SIGNALS:
      * @brief Sketch editing finished
      */
     void sketchFinished();
+
+    /** 草圖模式下偵測到區域，提供高亮與選取 */
+    void sketchRegionsDetected(const QVector<aicad::cad::SketchRegion>& regions);
+
+    /** 使用者在草圖模式點選了某個 region */
+    void sketchRegionPicked(const aicad::cad::SketchRegion& region);
+
+    void statusMessageRequested(const QString& msg, int timeoutMs);
 
 protected:
     /**
@@ -393,6 +411,7 @@ private:
 
     void showFinishSketchButton();
     void hideFinishSketchButton();
+    void showSketchContextMenu(const QPoint& screenPos);
 
     // ── Object Snap ──────────────────────────────────────────
     aicad::osnap::OSnapManager* m_snapManager = nullptr;

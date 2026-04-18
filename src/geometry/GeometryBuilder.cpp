@@ -37,6 +37,12 @@
 #include <BRepBndLib.hxx>
 #include <Precision.hxx>
 #include <ShapeAnalysis_Wire.hxx>
+#include "cad/Sketch.h"
+#include "cad/sketch/SketchRegion.h"
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <GC_MakeArcOfCircle.hxx>
 
 #include <QDebug>
 #include <cmath>
@@ -573,6 +579,70 @@ gp_Dir GeometryBuilder::toGpDir(const QVector3D& v) {
 
 QVector3D GeometryBuilder::fromGpPnt(const gp_Pnt& p) {
     return QVector3D(p.X(), p.Y(), p.Z());
+}
+
+TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
+                                   const cad::SketchGeometry* g)
+{
+    using namespace aicad::cad;
+    if (!g) return {};
+
+    switch (g->type) {
+    case SketchGeometryType::Line: {
+        auto* l = static_cast<const SketchLine*>(g);
+        QVector3D p1 = sketch->planeToWorld(l->start);
+        QVector3D p2 = sketch->planeToWorld(l->end);
+        return BRepBuilderAPI_MakeEdge(
+            gp_Pnt(p1.x(), p1.y(), p1.z()),
+            gp_Pnt(p2.x(), p2.y(), p2.z()));
+    }
+    case SketchGeometryType::Arc: {
+        auto* a = static_cast<const SketchArc*>(g);
+        QVector3D p1 = sketch->planeToWorld(a->points[0]);
+        QVector3D p2 = sketch->planeToWorld(a->points[1]);
+        QVector3D p3 = sketch->planeToWorld(a->points[2]);
+        GC_MakeArcOfCircle maker(
+            gp_Pnt(p1.x(), p1.y(), p1.z()),
+            gp_Pnt(p2.x(), p2.y(), p2.z()),
+            gp_Pnt(p3.x(), p3.y(), p3.z()));
+        if (!maker.IsDone()) return {};
+        return BRepBuilderAPI_MakeEdge(maker.Value());
+    }
+    default:
+        return {};
+    }
+}
+
+TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
+                                 const cad::SketchRegion& region)
+{
+    // ── outer wire ───────────────────────────────────────────────
+    BRepBuilderAPI_MakeWire outerWire;
+    for (const QString& uuid : region.outerLoop.edgeUuids) {
+        for (const cad::SketchGeometry* g : sketch->geometries()) {
+            if (g->uuid != uuid) continue;
+            TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);
+            if (!e.IsNull()) outerWire.Add(e);
+        }
+    }
+    if (!outerWire.IsDone()) return {};
+
+    BRepBuilderAPI_MakeFace faceMaker(outerWire.Wire(), Standard_True);
+
+    // ── holes ────────────────────────────────────────────────────
+    for (const auto& hole : region.holes) {
+        BRepBuilderAPI_MakeWire holeWire;
+        for (const QString& uuid : hole.edgeUuids) {
+            for (const cad::SketchGeometry* g : sketch->geometries()) {
+                if (g->uuid != uuid) continue;
+                TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);
+                if (!e.IsNull()) holeWire.Add(e);
+            }
+        }
+        if (holeWire.IsDone()) faceMaker.Add(holeWire.Wire());
+    }
+
+    return faceMaker.IsDone() ? faceMaker.Face() : TopoDS_Face();
 }
 
 } // namespace geometry

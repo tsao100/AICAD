@@ -8,6 +8,9 @@
 #ifndef AICAD_CORE_APPLICATION_H
 #define AICAD_CORE_APPLICATION_H
 
+#include <cad/sketch/SketchRegion.h>
+#include <optional>
+
 #include <QObject>
 #include <QString>
 
@@ -148,6 +151,10 @@ public:
      */
     cad::Sketch* activeSketch() const;
     void setActiveSketch(cad::Sketch* sketch);
+
+    std::optional<cad::SketchRegion> selectedRegion() const;
+    void setSelectedRegion(const cad::SketchRegion& region);
+    void clearSelectedRegion();
 
 Q_SIGNALS:
     /**

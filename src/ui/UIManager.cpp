@@ -43,6 +43,12 @@
 #include <QtMath>
 #include <QDebug>
 
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+
 using namespace aicad::core;
 using namespace aicad::cad;
 
@@ -1269,6 +1275,151 @@ void UIManager::setupSketchPanel()
                 qDebug() << "[UIManager] Manual solve: DOF=" << result.dof
                          << " status=" << static_cast<int>(result.status);
             });
+
+    connect(d->sketchPanel, &SketchPanel::regionDetectionRequested,
+            this, [this] {
+        Sketch* sketch = currentActiveSketch();  // 取得目前正在編輯的草圖
+                if (!sketch) return;
+
+                auto regions = sketch->detectRegions();
+                if (regions.isEmpty()) {
+                    setStatusMessage(tr("未找到閉合迴路"), 2000);
+                    return;
+                }
+
+                // 在 3D 視圖中高亮顯示偵測到的區域（使用 TopoDS_Face）
+                for (const auto& region : regions) {
+                    TopoDS_Face face = buildFaceFromRegion(sketch, region); // 見下方
+                    if (!face.IsNull())
+                        highlightRegionFace(face, d->cadView->context());  // 自訂高亮函式
+                }
+
+                setStatusMessage(
+                    tr("偵測到 %1 個區域，點擊選取").arg(regions.size()), 0);
+            });
+
+    // 在 UIManager 的 connectSignals 或 setupConnections 中加入：
+
+    // ── region 偵測結果 → 狀態欄 ─────────────────────────────────────
+    connect(d->cadView, &view::CadView::sketchRegionsDetected,
+            this, [this](const QVector<cad::SketchRegion>& regions) {
+                setStatusMessage(
+                    tr("偵測到 %1 個區域").arg(regions.size()), 3000);
+            });
+
+    // ── region 被選取 → 狀態欄 + 觸發後續動作（如 Extrude profile 設定）
+    connect(d->cadView, &view::CadView::sketchRegionPicked,
+            this, [this](const cad::SketchRegion& region) {
+                setStatusMessage(
+                    tr("已選取區域（%1 個邊，%2 個洞）")
+                        .arg(region.outerLoop.edgeUuids.size())
+                        .arg(region.holes.size()), 0);
+
+                // 將選取的 region 存入 Application，供後續 Extrude 使用
+                Application::instance()->setSelectedRegion(region);  // 見下方
+            });
+
+    // ── status message from CadView ───────────────────────────────────
+    connect(d->cadView, &view::CadView::statusMessageRequested,
+            this, &UIManager::setStatusMessage);
+
+}
+
+TopoDS_Face buildFaceFromRegion(
+    const Sketch* sketch,
+    const cad::SketchRegion& region)
+{
+    // 1. 用 region.outerLoop.edgeUuids 從 sketch 取出對應的 Wire
+    BRepBuilderAPI_MakeWire outerWireMaker;
+    for (const QString& uuid : region.outerLoop.edgeUuids) {
+        // 找到對應 geometry 並轉為 Edge
+        for (const SketchGeometry* g : sketch->geometries()) {
+            if (g->uuid == uuid) {
+                TopoDS_Edge edge = makeEdgeFromGeometry(sketch, g);
+                if (!edge.IsNull())
+                    outerWireMaker.Add(edge);
+            }
+        }
+    }
+    if (!outerWireMaker.IsDone()) return TopoDS_Face();
+
+    BRepBuilderAPI_MakeFace faceMaker(outerWireMaker.Wire(),
+                                      /*onlyplane=*/Standard_True);
+
+    // 2. 逐一加入 hole
+    for (const auto& hole : region.holes) {
+        BRepBuilderAPI_MakeWire holeWireMaker;
+        for (const QString& uuid : hole.edgeUuids) {
+            for (const SketchGeometry* g : sketch->geometries()) {
+                if (g->uuid == uuid) {
+                    TopoDS_Edge edge = makeEdgeFromGeometry(sketch, g);
+                    if (!edge.IsNull())
+                        holeWireMaker.Add(edge);
+                }
+            }
+        }
+        if (holeWireMaker.IsDone())
+            faceMaker.Add(holeWireMaker.Wire());
+    }
+
+    return faceMaker.IsDone() ? faceMaker.Face() : TopoDS_Face();
+}
+
+void highlightRegionFace(const TopoDS_Face& face,
+                                const Handle(AIS_InteractiveContext)& context)
+{
+    Handle(AIS_Shape) aisFace = new AIS_Shape(face);
+
+    aisFace->SetColor(Quantity_NOC_YELLOW);
+    aisFace->SetTransparency(0.5);
+
+    context->Display(aisFace, Standard_True);
+    context->Deactivate(aisFace);
+}
+
+TopoDS_Edge makeEdgeFromGeometry(
+    const aicad::cad::Sketch* sketch,
+    const aicad::cad::SketchGeometry* g)
+{
+    using namespace aicad::cad;
+
+    if (!g) return TopoDS_Edge();
+
+    switch (g->type)
+    {
+    case SketchGeometryType::Line:
+    {
+        auto geom = static_cast<const SketchLine*>(g);
+        QVector3D p1 = sketch->planeToWorld(geom->points[0]);
+        QVector3D p2 = sketch->planeToWorld(geom->points[1]);
+
+
+        return BRepBuilderAPI_MakeEdge(
+            gp_Pnt(p1.x(), p1.y(), p1.z()),
+            gp_Pnt(p2.x(), p2.y(), p2.z()));
+    }
+
+    case SketchGeometryType::Arc:
+    {
+        auto arc = static_cast<const SketchArc*>(g);
+        QVector3D p1 = sketch->planeToWorld(arc->points[0]);
+        QVector3D p2 = sketch->planeToWorld(arc->points[1]);
+        QVector3D p3 = sketch->planeToWorld(arc->points[2]);
+
+        gp_Pnt _p1 = gp_Pnt(p1.x(), p1.y(), p1.z());
+        gp_Pnt _p2 = gp_Pnt(p2.x(), p2.y(), p2.z());
+        gp_Pnt _p3 = gp_Pnt(p3.x(), p3.y(), p3.z());
+
+        GC_MakeArcOfCircle arcMaker(_p1, _p2, _p3);
+        if (!arcMaker.IsDone())
+            return TopoDS_Edge();
+
+        return BRepBuilderAPI_MakeEdge(arcMaker.Value());
+    }
+
+    default:
+        return TopoDS_Edge();
+    }
 }
 
 // 在 UIManager.cpp 加入此 private 方法（同時在 UIManager.h private 宣告）：
@@ -1442,6 +1593,10 @@ void UIManager::showCommandWarning(const QString& warning) {
         d->commandLine->appendHistory("Warning: " + warning);
 }
 
+cad::Sketch* UIManager::currentActiveSketch(){
+    return m_currentActiveSketch;
+}
+
 void UIManager::showMainWindow() {
     if (!d->mainWindow) {
         qWarning() << "[UIManager] MainWindow not created";
@@ -1456,6 +1611,8 @@ void UIManager::showMainWindow() {
 void UIManager::onSketchEditStarted(Sketch* sketch)
 {
     if (!sketch) return;
+
+    m_currentActiveSketch = sketch;
 
     // 1️⃣ 設定 OSnap 平面
     if (d->cadView && d->cadView->snapManager()) {

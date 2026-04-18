@@ -221,6 +221,8 @@ SOURCES += \
     src/cad/grips/SketchGripProvider.cpp \
     src/cad/sketch/ConstraintSolver.cpp \
     src/cad/sketch/SketchConstraint.cpp \
+    src/cad/sketch/SketchLoopFinder.cpp \
+    src/cad/sketch/SketchRegion.cpp \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
@@ -314,6 +316,8 @@ HEADERS += \
     src/cad/grips/SketchGripProvider.h \
     src/cad/sketch/ConstraintSolver.h \
     src/cad/sketch/SketchConstraint.h \
+    src/cad/sketch/SketchLoopFinder.h \
+    src/cad/sketch/SketchRegion.h \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
     src/command/CommandAlias.h \

@@ -12,6 +12,9 @@
 #include <QString>
 #include <QMainWindow>
 #include "osnap/OSnapToolbar.h"
+#include "cad/sketch/SketchRegion.h"
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Edge.hxx>
 
 namespace aicad {
 
@@ -20,7 +23,9 @@ namespace cad {
     class Document;
     class Feature;
     class Sketch;
+    class SketchGeometry;
     enum class ConstraintType;
+    struct SketchRegion;
 }
 
 namespace view {
@@ -45,6 +50,16 @@ class ToolManager;
 class CommandLineWidget;
 class TransientCommandHistory;
 class AutoCompleteModel;     // ✅ 新增
+
+TopoDS_Face buildFaceFromRegion(
+    const cad::Sketch* sketch,
+    const cad::SketchRegion& region);
+
+void highlightRegionFace(const TopoDS_Face& face,
+                         const Handle(AIS_InteractiveContext)& context);
+
+TopoDS_Edge makeEdgeFromGeometry(const aicad::cad::Sketch* sketch,
+                                 const aicad::cad::SketchGeometry* g);
 
 /**
  * @brief UI 管理器
@@ -173,6 +188,8 @@ public:
      */
     void showCommandWarning(const QString& warning);
 
+    cad::Sketch* currentActiveSketch();
+
 Q_SIGNALS:
     /**
      * @brief UI 初始化完成時發出
@@ -199,6 +216,7 @@ private:
     void connectCommandLineEvents();
 
     osnap::OSnapToolbar* m_snapToolbar = nullptr;
+    cad::Sketch* m_currentActiveSketch = nullptr;
 
     void setupSketchPanel();
     void connectSketchPanelSignals(cad::Sketch* sketch);

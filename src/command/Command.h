@@ -28,7 +28,8 @@ enum class CommandState {
     Running,
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+    WaitingInput
 };
 
 /**

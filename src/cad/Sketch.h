@@ -10,7 +10,9 @@
 #include "Plane.h"
 #include "sketch/ConstraintSolver.h"
 #include "sketch/SketchConstraint.h"
+#include "sketch/SketchRegion.h"
 
+#include <optional>
 #include <QVector>
 #include <QVector2D>
 #include <QJsonObject>
@@ -239,6 +241,23 @@ public:
     void eraseFromContext(const Handle(AIS_InteractiveContext)& context);
     TopoDS_Wire mainWire() const;
     bool hasClosedProfile() const;
+
+    // ==================== 2D Region（剖面/面域）====================
+
+    /**
+     * @brief 偵測草圖中的所有閉合迴路，建立 2D region 列表
+     *
+     * 每次呼叫時重新計算（非快取），
+     * 結果依 region 大小降序排列（最大外輪廓在前）。
+     */
+    QVector<SketchRegion> detectRegions() const;
+
+    /**
+     * @brief 根據 2D 點（草圖座標），選取包含該點的 region
+     * @return 包含該點的 region，若無則回傳 std::nullopt
+     */
+    std::optional<SketchRegion>
+    pickRegion(const QVector2D& sketchPt) const;
 
     // ==================== 序列化 ====================
 

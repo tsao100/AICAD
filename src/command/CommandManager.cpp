@@ -426,6 +426,11 @@ bool CommandManager::isCommandRunning() const {
     return d->currentCommand != nullptr;
 }
 
+bool CommandManager::hasActiveCommand() const {
+    return d->currentCommand != nullptr &&
+           d->currentCommand->state() == CommandState::WaitingInput;
+}
+
 void CommandManager::addToHistory(const QString& commandName, 
                                   const QStringList& args)
 {

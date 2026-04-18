@@ -50,6 +50,9 @@ Q_SIGNALS:
     // ── Solver ──────────────────────────────────────────────────
     void requestSolve();
 
+    void regionDetectionRequested();  // 使用者點選「偵測區域」
+    void regionSelected(const QString& regionUuid);
+
 private Q_SLOTS:
     void onConstraintAdded(const QString& uuid);
     void onConstraintRemoved(const QString& uuid);

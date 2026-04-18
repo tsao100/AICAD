@@ -6,6 +6,8 @@
 #include "Sketch.h"
 #include "Document.h"
 #include "PlaneManager.h"
+#include "sketch/SketchLoopFinder.h"
+
 #include <QDebug>
 #include <QtMath>
 #include <TopoDS.hxx>
@@ -1065,6 +1067,31 @@ bool Sketch::hasClosedProfile() const {
         if (!wire.IsNull() && wire.Closed()) return true;
     }
     return false;
+}
+
+QVector<SketchRegion> Sketch::detectRegions() const
+{
+    SketchLoopFinder finder;
+    QVector<SketchRegion> regions = finder.findRegions(this);
+
+    // 按 outer loop 頂點數量（近似面積）降序排列
+    std::sort(regions.begin(), regions.end(),
+              [](const SketchRegion& a,
+                 const SketchRegion& b) {
+                  return a.outerLoop.edgeUuids.size() >
+                         b.outerLoop.edgeUuids.size();
+              });
+    return regions;
+}
+
+std::optional<SketchRegion>
+Sketch::pickRegion(const QVector2D& sketchPt) const
+{
+    for (const auto& region : detectRegions()) {
+        if (region.contains(sketchPt))
+            return region;
+    }
+    return std::nullopt;
 }
 
 } // namespace cad
