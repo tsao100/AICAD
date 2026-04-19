@@ -67,8 +67,7 @@ enum class ConstraintType {
     Fixed,              ///< 整個幾何元素固定（消耗所有 DOF）
 };
 
-inline uint qHash(const aicad::cad::ConstraintType &key, uint seed = 0)
-{
+inline size_t qHash(const aicad::cad::ConstraintType &key, size_t seed = 0) noexcept {
     return ::qHash(static_cast<int>(key), seed);
 }
 

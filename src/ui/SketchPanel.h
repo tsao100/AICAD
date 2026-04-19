@@ -53,6 +53,9 @@ Q_SIGNALS:
     void regionDetectionRequested();  // 使用者點選「偵測區域」
     void regionSelected(const QString& regionUuid);
 
+    void requestSelectMode();    // 使用者按指標工具
+    void requestDrawMode();      // 使用者按繪圖工具（返回繪圖狀態）
+
 private Q_SLOTS:
     void onConstraintAdded(const QString& uuid);
     void onConstraintRemoved(const QString& uuid);
@@ -64,6 +67,7 @@ private Q_SLOTS:
 
 private:
     void setupUI();
+    void setupSelectGroup(QWidget*, QVBoxLayout* layout);
     void setupConstructionGroup(QWidget* parent, QVBoxLayout* layout);
     void setupConstraintGroup(QWidget* parent, QVBoxLayout* layout);
     void setupSolverGroup(QWidget* parent, QVBoxLayout* layout);
@@ -72,6 +76,9 @@ private:
     QString constraintTypeName(cad::ConstraintType t) const;
 
     cad::Sketch* m_sketch = nullptr;
+
+    // Select按鈕
+    QToolButton* m_btnSelect = nullptr;
 
     // 建構幾何按鈕
     QToolButton* m_btnConstrLine    = nullptr;

@@ -163,6 +163,47 @@ public:
     void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
 };
 
+class EqualRadiusEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
+class FixedXEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
+};
+
+class FixedYEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
+};
+
+// Fixed = 用多條 FixedX/Y 方程式固定整個幾何
+class FixedEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override;  // 依幾何類型決定（2~5）
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+
+    void setSnapshot(const QVector<double>& snap, int offset, int dof) {
+        m_snap = snap; m_offset = offset; m_dof = dof;
+    }
+private:
+    QVector<double> m_snap;
+    int m_offset = 0;
+    int m_dof = 0;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 求解器主體：Newton-Raphson 疊代
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,7 +257,8 @@ private:
      */
     QList<ConstraintEquation*> buildEquations(
         const QList<SketchConstraint>& constraints,
-        const QHash<QString, GeomVarLayout>& layout) const;
+        const QHash<QString, GeomVarLayout>& layout,
+        const QVector<double>& vars) const;
 
     /**
      * Newton-Raphson 一次疊代：

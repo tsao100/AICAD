@@ -66,7 +66,7 @@ SketchConstraint SketchConstraint::makeFixedDistance(const GeomRef& a, const Geo
 }
 SketchConstraint SketchConstraint::makeFixedRadius(const QString& uuid, double r) {
     SketchConstraint c; c.type = ConstraintType::FixedRadius;
-    c.refs = { GeomRef(uuid, GeomHandle::Center) }; c.value = r; return c;
+    c.refs = { GeomRef(uuid, GeomHandle::RadiusValue) }; c.value = r; return c;
 }
 SketchConstraint SketchConstraint::makeFixedX(const GeomRef& pt, double x) {
     SketchConstraint c; c.type = ConstraintType::FixedX;

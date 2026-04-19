@@ -17,19 +17,19 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
     if (!m_sketch || !m_sketch->plane()) return grips;
 
     Plane* plane = m_sketch->plane();
-    const auto& geoms = m_sketch->geometries();
 
+    // ✅ 用 normalGeometries() 讓 gi 與 aisToGeomIndex 對齊
+    const auto geoms = m_sketch->normalGeometries();
 
     for (int gi = 0; gi < geoms.size(); ++gi) {
 
-        // ✅ Skip if not in selection (empty set = include all)
         if (!m_geomIndices.isEmpty() && !m_geomIndices.contains(gi))
             continue;
 
         const SketchGeometry* geom = geoms[gi];
         if (!geom) continue;
 
-        // ── Polyline / Line: Vertex grips + Midpoint grips ─────
+        // ── Line ───────────────────────────────────────────────────────
         if (geom->type == SketchGeometryType::Line ||
             geom->type == SketchGeometryType::Polyline)
         {
@@ -40,20 +40,18 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                 gp.id       = QString("g%1_v%2").arg(gi).arg(pi);
                 gp.position = gp_Pnt(w.x(), w.y(), w.z());
                 gp.type     = GripType::Vertex;
-
-                // 閉合拖拉 lambda
-                gp.onDrag = [this, gi, pi](const gp_Pnt& np, bool /*snapped*/) {
-                    auto& pts = m_sketch->geometries()[gi]->points;
-                    QVector2D local = m_sketch->plane()->toPlane(
+                gp.onDrag   = [this, gi, pi](const gp_Pnt& np, bool) {
+                    // ✅ 用 normalGeometries() 保持索引一致
+                    auto* g = m_sketch->normalGeometries()[gi];
+                    g->points[pi] = m_sketch->plane()->toPlane(
                         QVector3D(np.X(), np.Y(), np.Z()));
-                    pts[pi] = local;
-                    m_sketch->rebuild();
+                    // ✅ 輕量更新：僅重建 shape，不走 Document 路徑
+                    m_sketch->rebuildShapesOnly();
                 };
-
                 grips.append(gp);
             }
 
-            // 中點 grip（移動整條邊）
+            // 中點 grip
             int segments = (geom->type == SketchGeometryType::Polyline &&
                             static_cast<const SketchPolyline*>(geom)->closed)
                                ? geom->points.size()
@@ -68,28 +66,38 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                 gp.id       = QString("g%1_mid%2").arg(gi).arg(si);
                 gp.position = gp_Pnt(midW.x(), midW.y(), midW.z());
                 gp.type     = GripType::Midpoint;
-
+                gp.onDrag   = [this, gi, si](const gp_Pnt& np, bool) {
+                    auto* g = m_sketch->normalGeometries()[gi];
+                    int   ni = (si + 1) % g->points.size();
+                    QVector2D newMid = m_sketch->plane()->toPlane(
+                        QVector3D(np.X(), np.Y(), np.Z()));
+                    QVector2D delta = newMid -
+                                      (g->points[si] + g->points[ni]) * 0.5f;
+                    g->points[si] += delta;
+                    g->points[ni] += delta;
+                    m_sketch->rebuildShapesOnly();
+                };
                 grips.append(gp);
             }
         }
 
-        // ── Circle: center + 4 quadrant grips ──────────────────
+        // ── Circle ────────────────────────────────────────────────────
         else if (geom->type == SketchGeometryType::Circle) {
             const auto* circle = static_cast<const SketchCircle*>(geom);
 
             // Center grip → Move
-            QVector3D cW = plane->toWorld(circle->center.x(),
-                                          circle->center.y());
+            QVector3D cW = plane->toWorld(circle->center.x(), circle->center.y());
             GripPoint cGrip;
             cGrip.id       = QString("g%1_center").arg(gi);
             cGrip.position = gp_Pnt(cW.x(), cW.y(), cW.z());
             cGrip.type     = GripType::Center;
             cGrip.onDrag   = [this, gi](const gp_Pnt& np, bool) {
                 auto* c = static_cast<SketchCircle*>(
-                    m_sketch->geometries()[gi]);
-                // c->center = m_sketch->plane()->toPlane(
-                //     QVector3D(np.X(), np.Y(), np.Z()));
-                m_sketch->rebuild();
+                    m_sketch->normalGeometries()[gi]);
+                // ✅ 取消 comment，實際更新 center
+                c->center = m_sketch->plane()->toPlane(
+                    QVector3D(np.X(), np.Y(), np.Z()));
+                m_sketch->rebuildShapesOnly();
             };
             grips.append(cGrip);
 
@@ -107,11 +115,11 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                 qGrip.type     = GripType::Quadrant;
                 qGrip.onDrag   = [this, gi](const gp_Pnt& np, bool) {
                     auto* c = static_cast<SketchCircle*>(
-                        m_sketch->geometries()[gi]);
+                        m_sketch->normalGeometries()[gi]);
                     QVector2D local = m_sketch->plane()->toPlane(
                         QVector3D(np.X(), np.Y(), np.Z()));
                     c->radius = (local - c->center).length();
-                    m_sketch->rebuild();
+                    m_sketch->rebuildShapesOnly();
                 };
                 grips.append(qGrip);
             }
@@ -142,11 +150,15 @@ void SketchGripProvider::onGripDragEnd(const QString& gripId,
                                        const gp_Pnt& startPos,
                                        const gp_Pnt& endPos)
 {
-    qDebug() << "[SketchGripProvider] Grip committed:"
-             << gripId
-             << "from" << startPos.X() << startPos.Y() << startPos.Z()
-             << "to"   << endPos.X()   << endPos.Y()   << endPos.Z();
-    // TODO: 推入 UndoStack（GripMoveCommand）
+    Q_UNUSED(startPos)
+    qDebug() << "[SketchGripProvider] Grip committed:" << gripId
+             << "to" << endPos.X() << endPos.Y() << endPos.Z();
+
+    // ✅ 拖動結束：重新求解約束，然後走完整 Document 路徑更新
+    if (m_sketch) {
+        m_sketch->solveConstraints();  // 套用現有約束
+        Q_EMIT m_sketch->rebuildRequested();  // 通知 Document 更新
+    }
 }
 
 } // namespace aicad::cad

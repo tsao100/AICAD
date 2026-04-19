@@ -564,14 +564,35 @@ void Document::rebuildAll() {
 }
 
 void Document::rebuildFeature(Feature* feature) {
-    if (!feature) {
-        return;
-    }
+    if (!feature || feature->isSuppressed()) return;
 
     qDebug() << "[Document] Rebuilding feature:" << feature->name();
 
-    if (!feature->isSuppressed()) {
-        feature->rebuild();
+    Sketch* sketch = qobject_cast<Sketch*>(feature);
+
+    // ① 先 erase 舊的 AIS shapes（rebuild 前 m_aisShapes 仍是舊 Handle）
+    if (sketch && !m_aisContext.IsNull()) {
+        sketch->eraseFromContext(m_aisContext);
+    }
+
+    // ② rebuild：清空並重建 m_aisShapes，emit rebuilt()
+    //    → CadView::onSketchRebuilt 會在這裡更新 aisToFeatureId mapping
+    feature->rebuild();
+
+    // ③ display 新的 AIS shapes
+    if (sketch && !m_aisContext.IsNull()) {
+        if (sketch->isVisible())
+            sketch->displayInContext(m_aisContext);
+        m_aisContext->UpdateCurrentViewer();
+    } else if (!m_aisContext.IsNull()) {
+        // 非 Sketch feature
+        for (auto& entry : m_featureAisShapes) {
+            if (entry.first == feature) {
+                m_aisContext->Redisplay(entry.second, Standard_False);
+                break;
+            }
+        }
+        m_aisContext->UpdateCurrentViewer();
     }
 }
 

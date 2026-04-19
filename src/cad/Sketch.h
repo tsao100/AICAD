@@ -145,7 +145,7 @@ struct SketchPolygon : public SketchGeometry {
  * @brief 草圖圓
  */
 struct SketchCircle : public SketchGeometry {
-    const QVector2D center;
+    QVector2D center;
     double radius;
 
     SketchCircle(const QVector2D& c, double r,
@@ -160,7 +160,7 @@ struct SketchCircle : public SketchGeometry {
  * @brief 草圖橢圓
  */
 struct SketchEllipse : public SketchGeometry {
-    const QVector2D center;
+    QVector2D center;
     double majorRadius;
     double minorRadius;
     double angle;
@@ -194,6 +194,7 @@ public:
 
     FeatureType type() const override { return FeatureType::Sketch; }
     bool rebuild() override;
+    bool rebuildShapesOnly();  // ✅ 拖動用：只更新 AIS shape 不走 Document 路徑
 
     // ==================== 平面管理 ====================
 
@@ -325,6 +326,9 @@ public:
     QList<SketchGeometry*> normalGeometries() const;        ///< 只回傳 Normal
     QList<SketchGeometry*> constructionGeometries() const;  ///< 只回傳建構線
 
+    // geometries 查詢輔助
+    SketchGeometry* findGeometry(const QString& uuid) const;
+
 Q_SIGNALS:
     /**
      * @brief 平面改變時發出
@@ -403,6 +407,7 @@ private:
     QList<SketchConstraint> m_constraints;
     QList<Handle(AIS_Shape)>  m_constructionShapes;
     ConstraintSolver        m_solver;
+    Handle(AIS_InteractiveContext) m_aisContext;
 
     void applyConstructionStyle(Handle(AIS_Shape)& shape, GeomRole role);
 };

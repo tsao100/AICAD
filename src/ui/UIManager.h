@@ -219,7 +219,6 @@ private:
     cad::Sketch* m_currentActiveSketch = nullptr;
 
     void setupSketchPanel();
-    void connectSketchPanelSignals(cad::Sketch* sketch);
     void applyConstraintToSketch(cad::Sketch* sketch,
                                 cad::ConstraintType type,
                                 const QStringList& selected,

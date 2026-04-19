@@ -280,6 +280,7 @@ void CadView::initializeViewer() {
         // 選中樣式：亮黃色，明顯區別於 GRAY80 背景
         Handle(Prs3d_Drawer) selStyle = new Prs3d_Drawer();
         selStyle->SetColor(Quantity_NOC_YELLOW);
+        selStyle->SetupOwnShadingAspect();
         // selStyle->WireAspect()->SetWidth(3.0);
         // selStyle->WireAspect()->SetColor(Quantity_NOC_YELLOW);
         d->context->SetSelectionStyle(selStyle);
@@ -287,6 +288,7 @@ void CadView::initializeViewer() {
         // 預偵測（hover）高亮色：橘色
         Handle(Prs3d_Drawer) hilightStyle = new Prs3d_Drawer();
         hilightStyle->SetColor(Quantity_NOC_ORANGE);
+        hilightStyle->SetupOwnShadingAspect();
         // hilightStyle->WireAspect()->SetWidth(2.0);
         // hilightStyle->WireAspect()->SetColor(Quantity_NOC_ORANGE);
         d->context->SetHighlightStyle(hilightStyle);
@@ -648,11 +650,12 @@ QStringList CadView::selectedGeomUuids() const
         auto* sketch  = dynamic_cast<cad::Sketch*>(feature);
         if (!sketch) continue;
 
-        const auto& geoms = sketch->geometries();
+        // ✅ 用 normalGeometries() 而非 geometries()
+        //    m_aisShapes 只對應一般幾何，索引必須一致
+        const auto& geoms = sketch->normalGeometries();
         if (geomIdx < geoms.size())
             result << geoms[geomIdx]->uuid;
     }
-
     return result;
 }
 
@@ -1308,24 +1311,72 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     int y = event->y();
 
     if (event->button() == Qt::LeftButton) {
-        if (d->mode == InteractionMode::Sketching) {
-            // ── OSnap 優先：有鎖定點則使用 snap 座標，直接 return ──────────────
-            // snapConfirmed signal → CadView lambda 會發布正確格式的 POINT_ACQUIRED
-            if (m_snapManager && m_snapManager->onMousePress(x, y)) {
+
+        // ── 繪圖模式：交給 snap → 發布 POINT_ACQUIRED ────────────────────────
+        if (d->mode == InteractionMode::Sketching ||
+            d->mode == InteractionMode::GetPoint)
+        {
+            if (m_snapManager && m_snapManager->onMousePress(x, y))
                 return;
-            }
 
-            // ── 無 snap：使用原始滑鼠座標 ─────────────────────────────────────
             QVector2D planePt = screenToPlane(event->pos());
-
             EventBus* bus = Application::instance()->eventBus();
-
             QVariantMap data;
-            data["point"] = QVariant::fromValue(planePt);
+            data["point"]     = QVariant::fromValue(planePt);
             data["screenPos"] = event->pos();
-
             bus->publish(Events::POINT_ACQUIRED, data);
             Q_EMIT pointAcquired(planePt);
+            return;
+        }
+
+        // ── 選取模式 ──────────────────────────────────────────────────────────
+        if (d->mode == InteractionMode::Selecting ||
+            d->mode == InteractionMode::Idle)
+        {
+            if (d->gripFilter && d->gripFilter->isCapturing())
+                return;
+
+            // 跳過 viewCube
+            if (d->context->HasDetected()) {
+                Handle(AIS_InteractiveObject) det =
+                    d->context->DetectedInteractive();
+                if (!det.IsNull() && det == d->viewCube)
+                    return;
+            }
+
+            // ✅ 只呼叫一次 SelectDetected
+            bool additive = (event->modifiers() & Qt::ShiftModifier);
+            d->context->SelectDetected(
+                additive ? AIS_SelectionScheme_Add
+                         : AIS_SelectionScheme_Replace);
+
+            // ✅ 收集選取結果並發布正確事件
+            QMap<QString, QSet<int>> selMap;
+            for (d->context->InitSelected();
+                 d->context->MoreSelected();
+                 d->context->NextSelected())
+            {
+                Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
+                    d->context->SelectedInteractive());
+                if (s.IsNull()) continue;
+                QString fid   = d->aisToFeatureId.value(s.get());
+                int     gidx  = d->aisToGeomIndex.value(s.get(), -1);
+                if (!fid.isEmpty() && gidx >= 0)
+                    selMap[fid].insert(gidx);
+            }
+
+            EventBus* bus = Application::instance()->eventBus();
+            if (!selMap.isEmpty()) {
+                QString     fid     = selMap.firstKey();
+                QVariantList idxList;
+                for (int i : selMap[fid]) idxList.append(i);
+                QVariantMap data;
+                data["featureId"]   = fid;
+                data["geomIndices"] = idxList;
+                bus->publish("selection.featureSelected", data);   // ✅ 正確事件名
+            } else {
+                bus->publish("selection.cleared", QVariant());
+            }
             return;
         }
     }
@@ -1370,7 +1421,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         }
 
         // ✅ Shift = add to selection, otherwise replace
-        bool additive = (!d->aisToGeomIndex.empty());
+        bool additive = (event->modifiers() & Qt::ShiftModifier);
 
         // ② Tell OCCT to perform selection at this pixel
         d->context->SelectDetected(

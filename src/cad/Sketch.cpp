@@ -220,6 +220,12 @@ QList<SketchGeometry*> Sketch::constructionGeometries() const {
     return result;
 }
 
+SketchGeometry* Sketch::findGeometry(const QString& uuid) const {
+    for (auto* g : m_geometries)
+        if (g->uuid == uuid) return g;
+    return nullptr;
+}
+
 bool Sketch::rebuild() {
     qDebug() << "[Sketch]" << name() << "rebuilding with"
              << m_geometries.size() << "geometries on plane"
@@ -450,6 +456,26 @@ bool Sketch::rebuild() {
         setError(error);
         return false;
     }
+}
+
+bool Sketch::rebuildShapesOnly()
+{
+    if (!hasValidPlane()) return false;
+
+    // 重新生成 TopoDS shapes 並更新每個現有 AIS_Shape 的幾何
+    // 不 erase/display，只用 RecomputePrsOnly 更新顯示
+    if (!rebuild()) return false;   // 重建 m_aisShapes（內含新 TopoDS）
+
+    if (!m_aisContext.IsNull()) {
+        for (const Handle(AIS_Shape)& s : m_aisShapes)
+            if (!s.IsNull())
+                m_aisContext->RecomputePrsOnly(s, Standard_False);
+        for (const Handle(AIS_Shape)& s : m_constructionShapes)
+            if (!s.IsNull())
+                m_aisContext->RecomputePrsOnly(s, Standard_False);
+        m_aisContext->UpdateCurrentViewer();
+    }
+    return true;
 }
 
 // 加在 Sketch.cpp 匿名 namespace 或 private 方法中
@@ -1032,6 +1058,7 @@ QList<Handle(AIS_Shape)> Sketch::aisShapes() const {
 
 QList<Handle(AIS_Shape)> Sketch::displayInContext(
     const Handle(AIS_InteractiveContext)& context) {
+    m_aisContext = context;
     if (context.IsNull()) return {};
 
     for (const Handle(AIS_Shape)& s : m_aisShapes)

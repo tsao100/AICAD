@@ -6,6 +6,7 @@
 
 #include <Geom_Circle.hxx>
 #include <Geom_TrimmedCurve.hxx>
+#include <Eigen/Dense>
 
 namespace aicad::cad {
 
@@ -272,6 +273,59 @@ void PointOnCurveEquation::jacobian(const QVector<double>& v, int r0,
     J[r0][itL->offset+2] =  (py-y1); J[r0][itL->offset+3] = -(px-x1);
 }
 
+// ── EqualRadius：F = [r_a - r_b] ─────────────────────────────────────────
+void EqualRadiusEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    auto itA = layout().find(constraint().refs[0].geomUuid);
+    auto itB = layout().find(constraint().refs[1].geomUuid);
+    if (itA==layout().end()||itB==layout().end()){out[0]=0;return;}
+    out[0] = v[itA->offset+2] - v[itB->offset+2];
+}
+void EqualRadiusEquation::jacobian(const QVector<double>&, int r0,
+                                   QVector<QVector<double>>& J) const {
+    auto itA = layout().find(constraint().refs[0].geomUuid);
+    auto itB = layout().find(constraint().refs[1].geomUuid);
+    if (itA==layout().end()||itB==layout().end()) return;
+    J[r0][itA->offset+2] =  1.0;
+    J[r0][itB->offset+2] = -1.0;
+}
+
+// ── FixedX：F = [x - value] ──────────────────────────────────────────────
+void FixedXEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    int ix = varIdx(constraint().refs[0]);
+    if (ix < 0){out[0]=0;return;}
+    out[0] = v[ix] - constraint().value;
+}
+void FixedXEquation::jacobian(const QVector<double>&, int r0,
+                              QVector<QVector<double>>& J) const {
+    int ix = varIdx(constraint().refs[0]);
+    if (ix >= 0) J[r0][ix] = 1.0;
+}
+
+// ── FixedY：F = [y - value] ──────────────────────────────────────────────
+void FixedYEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    int ix = varIdx(constraint().refs[0]);
+    if (ix < 0){out[0]=0;return;}
+    out[0] = v[ix+1] - constraint().value;   // +1 = y
+}
+void FixedYEquation::jacobian(const QVector<double>&, int r0,
+                              QVector<QVector<double>>& J) const {
+    int ix = varIdx(constraint().refs[0]);
+    if (ix >= 0) J[r0][ix+1] = 1.0;
+}
+
+// ── Fixed：固定所有 DOF（將每個變數鎖在初始值）──────────────────────────
+int FixedEquation::equationCount() const { return m_dof; }
+
+void FixedEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    for (int i = 0; i < m_dof; ++i)
+        out[i] = v[m_offset + i] - m_snap[i];
+}
+void FixedEquation::jacobian(const QVector<double>&, int r0,
+                             QVector<QVector<double>>& J) const {
+    for (int i = 0; i < m_dof; ++i)
+        J[r0+i][m_offset+i] = 1.0;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // ConstraintSolver
 // ════════════════════════════════════════════════════════════════════════════
@@ -358,8 +412,7 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
         }
         case SketchGeometryType::Circle: {
             auto* c = static_cast<SketchCircle*>(g);
-            // center 是 const 成員，需 const_cast（或改 Sketch.h 為 non-const）
-            const_cast<QVector2D&>(c->center) = QVector2D(vars[off+0], vars[off+1]);
+            c->center = QVector2D(vars[off+0], vars[off+1]);  // 直接賦值，不再 const_cast
             c->radius = vars[off+2];
             break;
         }
@@ -375,7 +428,7 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
         }
         case SketchGeometryType::Ellipse: {
             auto* e = static_cast<SketchEllipse*>(g);
-            const_cast<QVector2D&>(e->center) = QVector2D(vars[off+0], vars[off+1]);
+            e->center = QVector2D(vars[off+0], vars[off+1]);
             e->majorRadius = vars[off+2];
             e->minorRadius = vars[off+3];
             e->angle       = vars[off+4];
@@ -392,7 +445,8 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
 // ── 建立方程式物件 ─────────────────────────────────────────────────────────
 QList<ConstraintEquation*> ConstraintSolver::buildEquations(
     const QList<SketchConstraint>& constraints,
-    const QHash<QString, GeomVarLayout>& layout) const
+    const QHash<QString, GeomVarLayout>& layout,
+    const QVector<double>& vars) const
 {
     QList<ConstraintEquation*> eqs;
     for (const SketchConstraint& c : constraints) {
@@ -410,6 +464,24 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
         case ConstraintType::EqualLength:   eq = new EqualLengthEquation(c, &layout);   break;
         case ConstraintType::FixedRadius:   eq = new FixedRadiusEquation(c, &layout);   break;
         case ConstraintType::PointOnCurve:  eq = new PointOnCurveEquation(c, &layout);  break;
+        case ConstraintType::EqualRadius:
+            eq = new EqualRadiusEquation(c, &layout); break;
+        case ConstraintType::FixedX:
+            eq = new FixedXEquation(c, &layout); break;
+        case ConstraintType::FixedY:
+            eq = new FixedYEquation(c, &layout); break;
+        case ConstraintType::Fixed: {
+            // Fixed：從 layout 取出 offset+dof，記錄 snapshot
+            auto it = layout.find(c.refs[0].geomUuid);
+            if (it != layout.end()) {
+                auto* feq = new FixedEquation(c, &layout);
+                QVector<double> snap;
+                for (int i = 0; i < it->dof; ++i) snap << vars[it->offset+i];
+                feq->setSnapshot(snap, it->offset, it->dof);
+                eqs.append(feq);
+            }
+            continue;   // 跳過下面的 if(eq) eqs.append(eq)
+        }
         // FixedX / FixedY 轉換成 Coincident（固定虛擬點）
         // TODO: 其他類型
         default: break;
@@ -422,71 +494,26 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
 // ── QR 最小二乘求解（Householder） ─────────────────────────────────────────
 bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
                                      const QVector<double>& F,
-                                     QVector<double>& dx) {
+                                     QVector<double>& dx)
+{
     int m = J.size();
     if (m == 0) return false;
     int n = J[0].size();
-    dx.fill(0.0, n);
+    if (n == 0) return false;
 
-    // Augmented matrix [J | -F]，做 QR 分解
-    // 使用簡化版：若 m>=n，最小二乘；若 m<n，最小範數
-    // 這裡實作 column-pivoting Householder QR（適合奇異/接近奇異情形）
-
-    // 複製到 2D array
-    QVector<QVector<double>> A(m, QVector<double>(n+1));
-    for (int i=0; i<m; ++i) {
-        for (int j=0; j<n; ++j) A[i][j] = J[i][j];
-        A[i][n] = -F[i];
+    Eigen::MatrixXd A(m, n);
+    Eigen::VectorXd b(m);
+    for (int i = 0; i < m; ++i) {
+        b(i) = -F[i];
+        for (int j = 0; j < n; ++j)
+            A(i, j) = J[i][j];
     }
 
-    QVector<int> piv(n);
-    std::iota(piv.begin(), piv.end(), 0);
-    int rank = 0;
+    Eigen::VectorXd x =
+        A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
 
-    for (int k = 0; k < qMin(m,n); ++k) {
-        // Column pivoting
-        int maxCol = k;
-        double maxNorm = 0;
-        for (int j=k; j<n; ++j) {
-            double norm=0;
-            for (int i=k; i<m; ++i) norm += A[i][j]*A[i][j];
-            if (norm > maxNorm) { maxNorm=norm; maxCol=j; }
-        }
-        if (maxNorm < 1e-14) break;
-        if (maxCol != k) {
-            std::swap(piv[k], piv[maxCol]);
-            for (int i=0; i<m; ++i) std::swap(A[i][k], A[i][maxCol]);
-        }
-        // Householder reflector
-        double sigma = 0;
-        for (int i=k; i<m; ++i) sigma += A[i][k]*A[i][k];
-        double alpha = -std::copysign(qSqrt(sigma), A[k][k]);
-        double u0 = A[k][k] - alpha;
-        if (qAbs(u0) < 1e-14) { rank++; continue; }
-        for (int i=k+1; i<m; ++i) A[i][k] /= u0;
-        A[k][k] = alpha;
-        // Apply to remaining columns + RHS
-        for (int j=k+1; j<=n; ++j) {
-            double s = A[k][j];
-            for (int i=k+1; i<m; ++i) s += A[i][k]*A[i][j];
-            s /= (-u0 / alpha);   // tau denominator
-            // simplified—use standard tau
-            double tau = -u0/alpha;
-            A[k][j] -= tau*s;
-            for (int i=k+1; i<m; ++i) A[i][j] -= tau*A[i][k]*s/A[k][k]*A[k][k];
-        }
-        rank++;
-    }
-
-    // Back substitution（只解 rank 個變數）
-    QVector<double> y(rank, 0.0);
-    for (int i=rank-1; i>=0; --i) {
-        y[i] = A[i][n];
-        for (int j=i+1; j<rank; ++j) y[i] -= A[i][j]*y[j];
-        if (qAbs(A[i][i]) > 1e-14) y[i] /= A[i][i];
-    }
-    // Unpivot
-    for (int i=0; i<rank; ++i) dx[piv[i]] = y[i];
+    dx.resize(n);
+    for (int j = 0; j < n; ++j) dx[j] = x(j);
     return true;
 }
 
@@ -545,7 +572,7 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
     QVector<double> vars;
     packVariables(geoms, layout, vars);
 
-    auto eqs = buildEquations(constraints, layout);
+    auto eqs = buildEquations(constraints, layout, vars);
 
     int dof = computeDOF(geoms, constraints);
     result.dof = dof;

@@ -230,6 +230,9 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // 設置命令列系統（在 CadView 創建後）
         setupCommandLine();
 
+        // ✅ 在這裡呼叫，d->mainWindow 和 d->cadView 都已存在
+        setupSketchPanel();
+
         // 建立並加入 OSnap 工具列
         // 改用信號，等 viewer 初始化完畢再建立 toolbar
         connect(d->cadView, &view::CadView::viewInitialized,
@@ -1041,7 +1044,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // 在 cadView 設定完成後：
         connect(d->cadView, &view::CadView::sketchFinished,
-                this, &UIManager::onSketchEditEnded);
+                this, &UIManager::onSketchEditEnded,
+                Qt::UniqueConnection);
 
         d->initialized = true;
         qDebug() << "[UIManager] Initialization completed";
@@ -1259,21 +1263,19 @@ void UIManager::setupSketchPanel()
             this, [this](const QString& uuid) {
                 auto* sketch = core::Application::instance()->activeSketch();
                 if (!sketch) return;
+                // removeConstraint 內部已呼叫 solveConstraints() + emit rebuildRequested
+                // → Document::rebuildFeature 會自動 erase+rebuild+display
                 sketch->removeConstraint(uuid);
-                sketch->solveConstraints();
-                sketch->rebuild();
-                auto* bus = core::Application::instance()->eventBus();
-                bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
+                if (d->cadView) d->cadView->refreshView();
             });
 
     connect(d->sketchPanel, &SketchPanel::requestSolve,
             this, [this] {
                 auto* sketch = core::Application::instance()->activeSketch();
                 if (!sketch) return;
-                auto result = sketch->solveConstraints();
-                sketch->rebuild();
-                qDebug() << "[UIManager] Manual solve: DOF=" << result.dof
-                         << " status=" << static_cast<int>(result.status);
+                // solveConstraints 內部已 emit rebuildRequested → Document 自動 rebuild
+                sketch->solveConstraints();
+                if (d->cadView) d->cadView->refreshView();
             });
 
     connect(d->sketchPanel, &SketchPanel::regionDetectionRequested,
@@ -1322,6 +1324,15 @@ void UIManager::setupSketchPanel()
     // ── status message from CadView ───────────────────────────────────
     connect(d->cadView, &view::CadView::statusMessageRequested,
             this, &UIManager::setStatusMessage);
+
+    connect(d->sketchPanel, &SketchPanel::requestSelectMode, this, [this] {
+        if (d->cadView)
+            d->cadView->setMode(view::InteractionMode::Selecting);
+    });
+    connect(d->sketchPanel, &SketchPanel::requestDrawMode, this, [this] {
+        if (d->cadView)
+            d->cadView->setMode(view::InteractionMode::Sketching);
+    });
 
 }
 
@@ -1432,10 +1443,10 @@ void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
     using GH = cad::GeomHandle;
 
     QString uuid;
-    bool needsTwo  = (type == CT::Parallel || type == CT::Perpendicular
+    bool needsTwo = (type == CT::Parallel || type == CT::Perpendicular
                      || type == CT::Tangent  || type == CT::EqualLength
                      || type == CT::EqualRadius || type == CT::Concentric
-                     || type == CT::Coincident   || type == CT::FixedDistance);
+                     || type == CT::Coincident  || type == CT::FixedDistance);
 
     if (needsTwo && selected.size() < 2) {
         showCommandMessage(tr("請先選取兩個幾何元素，再套用此約束"), "orange");
@@ -1447,41 +1458,41 @@ void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
     }
 
     switch (type) {
-    case CT::Coincident:
-        uuid = sketch->constrainCoincident(
-            cad::GeomRef(selected[0], GH::End),
-            cad::GeomRef(selected[1], GH::Start));
+    case CT::Coincident: {
+        // ✅ 依幾何類型決定 handle：圓/弧用 Concentric，線用 End-Start
+        auto* gA = sketch->findGeometry(selected[0]);
+        auto* gB = sketch->findGeometry(selected[1]);
+        bool aCircular = gA && (gA->type == cad::SketchGeometryType::Circle
+                                || gA->type == cad::SketchGeometryType::Arc);
+        bool bCircular = gB && (gB->type == cad::SketchGeometryType::Circle
+                                || gB->type == cad::SketchGeometryType::Arc);
+        if (aCircular || bCircular)
+            uuid = sketch->constrainConcentric(selected[0], selected[1]);
+        else
+            uuid = sketch->constrainCoincident(
+                cad::GeomRef(selected[0], GH::End),
+                cad::GeomRef(selected[1], GH::Start));
         break;
-    case CT::Horizontal:
-        uuid = sketch->constrainHorizontal(selected[0]);       break;
-    case CT::Vertical:
-        uuid = sketch->constrainVertical(selected[0]);         break;
-    case CT::Parallel:
-        uuid = sketch->constrainParallel(selected[0], selected[1]); break;
-    case CT::Perpendicular:
-        uuid = sketch->constrainPerpendicular(selected[0], selected[1]); break;
-    case CT::Tangent:
-        uuid = sketch->constrainTangent(selected[0], selected[1]); break;
-    case CT::EqualLength:
-        uuid = sketch->constrainEqualLength(selected[0], selected[1]); break;
-    case CT::EqualRadius:
-        uuid = sketch->constrainEqualRadius(selected[0], selected[1]); break;
-    case CT::Concentric:
-        uuid = sketch->constrainConcentric(selected[0], selected[1]); break;
-    case CT::Fixed:
-        uuid = sketch->constrainFixed(selected[0]);            break;
+    }
+    case CT::Horizontal:    uuid = sketch->constrainHorizontal(selected[0]);             break;
+    case CT::Vertical:      uuid = sketch->constrainVertical(selected[0]);               break;
+    case CT::Parallel:      uuid = sketch->constrainParallel(selected[0], selected[1]);  break;
+    case CT::Perpendicular: uuid = sketch->constrainPerpendicular(selected[0], selected[1]); break;
+    case CT::Tangent:       uuid = sketch->constrainTangent(selected[0], selected[1]);   break;
+    case CT::EqualLength:   uuid = sketch->constrainEqualLength(selected[0], selected[1]); break;
+    case CT::EqualRadius:   uuid = sketch->constrainEqualRadius(selected[0], selected[1]); break;
+    case CT::Concentric:    uuid = sketch->constrainConcentric(selected[0], selected[1]); break;
+    case CT::Fixed:         uuid = sketch->constrainFixed(selected[0]);                  break;
     case CT::FixedDistance:
         uuid = sketch->constrainDistance(
             cad::GeomRef(selected[0], GH::End),
             cad::GeomRef(selected[1], GH::Start), value);
         break;
-    case CT::FixedRadius:
-        uuid = sketch->constrainRadius(selected[0], value);    break;
+    case CT::FixedRadius:   uuid = sketch->constrainRadius(selected[0], value);          break;
     case CT::FixedAngleDim:
-        uuid = sketch->addConstraint(
-            cad::SketchConstraint::makeFixedX(
-                cad::GeomRef(selected[0], GH::WholeGeom), value));
-        break;
+        // ✅ 角度約束尚未實作方程式，顯示提示
+        showCommandMessage(tr("角度約束尚未實作"), "orange");
+        return;
     default:
         showCommandMessage(tr("此約束尚未支援"), "red");
         return;
@@ -1492,15 +1503,15 @@ void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
         return;
     }
 
-    auto result = sketch->solveConstraints();
-    sketch->rebuild();
+    // ✅ addConstraint 內部已自動呼叫 solveConstraints() + emit rebuildRequested
+    //    → Document::rebuildFeature → erase + rebuild + display + UpdateCurrentViewer
+    //    不需要再呼叫 sketch->solveConstraints() 或 sketch->rebuild()
     if (d->cadView) d->cadView->refreshView();
 
-    auto* bus = core::Application::instance()->eventBus();
-    bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
-
-    QString msg = tr("約束已加入 [DOF: %1]").arg(result.dof);
-    showCommandMessage(msg, result.dof == 0 ? "lime" : "cyan");
+    // 從最近一次 solve 結果取得 DOF（透過 SketchPanel 的 onConstraintSolved slot）
+    int dof = sketch->degreesOfFreedom();
+    QString msg = tr("約束已加入 [DOF: %1]").arg(dof);
+    showCommandMessage(msg, dof == 0 ? "lime" : "cyan");
 }
 
 void UIManager::showFeatureProperties(cad::Feature* feature) {
@@ -1828,7 +1839,6 @@ void UIManager::setupDefaultUI() {
     viewMenu->addAction("&Feature Browser");
     viewMenu->addAction("&Properties");
 
-    setupSketchPanel();
 }
 
 // 新增輔助方法:
