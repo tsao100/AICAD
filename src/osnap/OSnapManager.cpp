@@ -104,6 +104,12 @@ void OSnapManager::setSnapTypeEnabled(SnapType type, bool enabled) {
     } else {
         m_settings.enabledTypes &= ~SnapTypes(type);
     }
+
+    // ✅ Grid 類型需要同步更新 gridSnapEnabled 旗標
+    if (type == SnapType::Grid) {
+        m_settings.gridSnapEnabled = enabled;
+    }
+
     m_detector.setSettings(m_settings);
 
     qDebug() << "[OSnapManager] SnapType" << snapTypeName(type)

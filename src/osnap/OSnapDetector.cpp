@@ -125,7 +125,7 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     // Grid snap（不依賴 shape）
     if (m_settings.gridSnapEnabled &&
         m_settings.enabledTypes.testFlag(SnapType::Grid)) {
-        detectGridPoint(view, mouseWorldPt, candidates);
+        detectGridPoint(view, mouseWorldPt, mouseX, mouseY, candidates);
     }
 
     // ── Step 4: 過濾掉超過 pickRadius 的候選 ──────────────────────────────────
@@ -296,6 +296,9 @@ void OSnapDetector::detectOnShape(
     }
     if (enabled.testFlag(SnapType::Extension))
         detectExtension(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
+
+    if (enabled.testFlag(SnapType::Parallel) && m_hasLastPoint)
+        detectParallel(shape, aisObj, mouseWorldPt, view, mouseX, mouseY, candidates);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -438,6 +441,15 @@ void OSnapDetector::detectQuadrants(
     int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
+    // ① 取得四分點基準方向：優先草圖平面軸，否則世界 X/Y 軸
+    gp_Dir refX(1,0,0), refY(0,1,0);
+    if (m_activePlane) {
+        QVector3D qx = m_activePlane->xAxis();
+        QVector3D qy = m_activePlane->yAxis();
+        refX = gp_Dir(qx.x(), qx.y(), qx.z());
+        refY = gp_Dir(qy.x(), qy.y(), qy.z());
+    }
+
     TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
     for (; edgeExp.More(); edgeExp.Next()) {
         TopoDS_Edge edge = TopoDS::Edge(edgeExp.Current());
@@ -454,20 +466,59 @@ void OSnapDetector::detectQuadrants(
         Handle(Geom_Circle) circle = Handle(Geom_Circle)::DownCast(curve);
         if (circle.IsNull()) continue;
 
-        const gp_Ax2& ax2 = circle->Position();
-        double r = circle->Radius();
+        const gp_Circ& circ = circle->Circ();
+        const gp_Pnt   center = circle->Location();
+        const double   r      = circle->Radius();
 
-        // 四個四分點（用 ElCLib 確保在圓的座標系中）
-        static const double angles[4] = { 0.0, M_PI*0.5, M_PI, M_PI*1.5 };
-        for (double angle : angles) {
-            // 檢查此角度是否在弧段範圍內
-            double normAngle = ElCLib::InPeriod(angle, first, last);
+        // ✅ Bug 1 修正：完整圓時完全跳過範圍檢查
+        bool isFullCircle = (last - first >= 2.0 * M_PI - 1e-7);
 
-            // ✅ 修正：使用寬鬆容差比較，避免浮點邊界誤判
-            const double tol = 1e-7;
-            if (normAngle < first - tol || normAngle > last + tol) continue;
+        // ② 將基準方向投影到圓所在平面（去除法線分量後正規化）
+        // ✅ Bug 2 修正：以草圖座標軸而非參數角計算四分點
+        gp_Dir circNormal = circ.Axis().Direction();
 
-            gp_Pnt qpt = ElCLib::Value(normAngle, circle->Circ());
+        auto projectOntoCircPlane = [&](const gp_Dir& d) -> gp_Vec {
+            gp_Vec v(d);
+            double dot = v.Dot(gp_Vec(circNormal));
+            v = v - gp_Vec(circNormal) * dot;
+            if (v.Magnitude() < 1e-10) return gp_Vec(0,0,0);
+            v.Normalize();
+            return v;
+        };
+
+        gp_Vec px = projectOntoCircPlane(refX);
+        gp_Vec py = projectOntoCircPlane(refY);
+
+        // 若投影後趨近零向量（基準軸與圓法線平行），退而使用圓自身軸
+        if (px.Magnitude() < 0.5) px = gp_Vec(circ.XAxis().Direction());
+        if (py.Magnitude() < 0.5) py = gp_Vec(circ.YAxis().Direction());
+
+        // ③ 四個四分點（+X, -X, +Y, -Y）
+        const gp_Vec quadDirs[4] = { px, -px, py, -py };
+
+        for (const gp_Vec& d : quadDirs) {
+            gp_Pnt qpt(center.X() + d.X() * r,
+                       center.Y() + d.Y() * r,
+                       center.Z() + d.Z() * r);
+
+            if (!isFullCircle) {
+                // ④ 取得此點在圓上的參數
+                double param     = ElCLib::Parameter(circ, qpt);
+                // 正規化到 [first, first+2π)
+                double normParam = ElCLib::InPeriod(param, first, first + 2.0 * M_PI);
+
+                // ⑤ 嚴格排除端點（端點由 Endpoint snap 負責，避免重疊顯示）
+                double margin = std::max(1e-6, (last - first) * 1e-4);
+                if (normParam < first + margin || normParam > last - margin)
+                    continue;
+
+                // ⑥ 世界座標距離雙重保護（對抗浮點誤差）
+                gp_Pnt arcStart = ElCLib::Value(first, circ);
+                gp_Pnt arcEnd   = ElCLib::Value(last,  circ);
+                if (qpt.Distance(arcStart) < r * 1e-3 ||
+                    qpt.Distance(arcEnd)   < r * 1e-3)
+                    continue;
+            }
 
             SnapCandidate c;
             c.type        = SnapType::Quadrant;
@@ -475,8 +526,8 @@ void OSnapDetector::detectQuadrants(
             c.sourceShape = shape;
             c.sourceEdge  = edge;
             c.sourceAIS   = aisObj;
-            c.paramOnEdge = normAngle;
-            c.screenDist   = screenDistance(view, qpt, mouseX, mouseY);
+            c.paramOnEdge = ElCLib::Parameter(circ, qpt);
+            c.screenDist  = screenDistance(view, qpt, mouseX, mouseY);
             c.isValid     = true;
             out.append(c);
         }
@@ -490,45 +541,50 @@ void OSnapDetector::detectQuadrants(
 // ──────────────────────────────────────────────────────────────────────────────
 void OSnapDetector::detectIntersections(
     const QVector<TopoDS_Shape>& shapes,
-     const QVector<Handle(AIS_InteractiveObject)>& aisObjects,
-     const Handle(V3d_View)& view,
-     const gp_Pnt& mousePt,
-     int mouseX, int mouseY,
-     QVector<SnapCandidate>& out)
+    const QVector<Handle(AIS_InteractiveObject)>& aisObjects,
+    const Handle(V3d_View)& view,
+    const gp_Pnt& mousePt,
+    int mouseX, int mouseY,
+    QVector<SnapCandidate>& out)
 {
-    // 收集所有邊
-    QVector<TopoDS_Edge> allEdges;
-    for (const TopoDS_Shape& shape : shapes) {
-        TopExp_Explorer exp(shape, TopAbs_EDGE);
+    // ✅ 建立邊→AIS 的對應表（修正原本用邊索引去查 shape 陣列的越界問題）
+    QVector<TopoDS_Edge>                   allEdges;
+    QVector<Handle(AIS_InteractiveObject)> edgeAIS;
+
+    for (int si = 0; si < shapes.size(); ++si) {
+        TopExp_Explorer exp(shapes[si], TopAbs_EDGE);
         for (; exp.More(); exp.Next()) {
             allEdges.append(TopoDS::Edge(exp.Current()));
+            edgeAIS.append(aisObjects[si]);   // ← 與邊同步，不會越界
         }
     }
 
-    const double tol = 0.1;  // 模型單位交點容差
+    const double tol = 0.1;
 
-    // 兩兩比對（O(n²)，但因為 collectCandidateShapes 已限制 shape 數量，不會太慢）
     for (int i = 0; i < allEdges.size(); ++i) {
         for (int j = i + 1; j < allEdges.size(); ++j) {
-            BRepExtrema_DistShapeShape dist(allEdges[i], allEdges[j]);
-            if (!dist.IsDone()) continue;
-            if (dist.Value() > tol) continue;
+            try {
+                BRepExtrema_DistShapeShape dist(allEdges[i], allEdges[j]);
+                if (!dist.IsDone()) continue;
+                if (dist.Value() > tol) continue;
 
-            // 取最近點的中點作為交點
-            gp_Pnt pt1 = dist.PointOnShape1(1);
-            gp_Pnt pt2 = dist.PointOnShape2(1);
-            gp_Pnt intersect((pt1.X()+pt2.X())*0.5,
-                             (pt1.Y()+pt2.Y())*0.5,
-                             (pt1.Z()+pt2.Z())*0.5);
+                gp_Pnt pt1 = dist.PointOnShape1(1);
+                gp_Pnt pt2 = dist.PointOnShape2(1);
+                gp_Pnt intersect((pt1.X()+pt2.X())*0.5,
+                                 (pt1.Y()+pt2.Y())*0.5,
+                                 (pt1.Z()+pt2.Z())*0.5);
 
-            SnapCandidate c;
-            c.type       = SnapType::Intersection;
-            c.worldPoint = intersect;
-            c.sourceEdge = allEdges[i];
-            c.screenDist = screenDistance(view, intersect, mouseX, mouseY);
-            c.sourceAIS  = aisObjects[i];
-            c.isValid    = true;
-            out.append(c);
+                SnapCandidate c;
+                c.type       = SnapType::Intersection;
+                c.worldPoint = intersect;
+                c.sourceEdge = allEdges[i];
+                c.sourceAIS  = edgeAIS[i];   // ← 使用對應表，不越界
+                c.screenDist = screenDistance(view, intersect, mouseX, mouseY);
+                c.isValid    = true;
+                out.append(c);
+            } catch (const Standard_Failure&) {
+                continue;  // 忽略不相容的邊組合
+            }
         }
     }
 }
@@ -617,16 +673,13 @@ void OSnapDetector::detectTangent(
 
         // 建立圓上兩個切點
         for (double sign : {+1.0, -1.0}) {
-            // 旋轉 fromDir 90° ± alpha（在圓平面內）
-            // 使用 gp_Vec 旋轉（Rodrigues formula in circle plane）
             gp_Ax1 rotAxis(center, gp_Dir(zAxis));
-            gp_Vec rotDir = fromDir.Reversed();
+            gp_Vec rotDir = fromDir;   // ✅ 修正：不 Reversed()
             rotDir.Rotate(rotAxis, sign * (M_PI * 0.5 - alpha));
             gp_Pnt tangPt(center.X() + rotDir.X() * r,
                           center.Y() + rotDir.Y() * r,
                           center.Z() + rotDir.Z() * r);
 
-            // 驗證切線：(切點-圓心)·(切點-起點) ≈ 0
             gp_Vec v1(center, tangPt);
             gp_Vec v2(m_lastInputPoint, tangPt);
             if (std::abs(v1.Dot(v2)) > 0.01 * r) continue;
@@ -637,7 +690,7 @@ void OSnapDetector::detectTangent(
             c.sourceShape = shape;
             c.sourceEdge  = edge;
             c.sourceAIS   = aisObj;
-            c.screenDist   = screenDistance(view, tangPt, mouseX, mouseY);
+            c.screenDist  = screenDistance(view, tangPt, mouseX, mouseY);
             c.isValid     = true;
             out.append(c);
         }
@@ -656,40 +709,96 @@ void OSnapDetector::detectNearest(
     int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
-    // 建立滑鼠位置的頂點 shape
     TopoDS_Vertex mouseVertex = BRepBuilderAPI_MakeVertex(mousePt);
 
     TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
     for (; edgeExp.More(); edgeExp.Next()) {
         TopoDS_Edge edge = TopoDS::Edge(edgeExp.Current());
 
-        BRepExtrema_DistShapeShape dist(mouseVertex, edge);
-        if (!dist.IsDone()) continue;
+        // ✅ 防止退化邊或不相容形狀拋出 BRepExtrema_UnCompatibleShape
+        try {
+            BRepExtrema_DistShapeShape dist(mouseVertex, edge);
+            if (!dist.IsDone()) continue;
 
-        gp_Pnt nearPt = dist.PointOnShape2(1);
+            gp_Pnt nearPt = dist.PointOnShape2(1);
 
-        // 避免與 Endpoint/Midpoint 重複（若接近端點，讓 Endpoint 優先）
-        double first, last;
-        Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
-        if (!curve.IsNull()) {
-            Standard_Real param = 0.0;
-            dist.ParOnEdgeS2(1, param);
-            double relParam = (param - first) / (last - first + 1e-12);
-            // 若接近端點或中點，跳過（讓更高優先的 snap 覆蓋）
-            if (relParam < 0.02 || relParam > 0.98 ||
-                std::abs(relParam - 0.5) < 0.02) {
-                continue;
+            double first, last;
+            Handle(Geom_Curve) curve = BRep_Tool::Curve(edge, first, last);
+            if (!curve.IsNull()) {
+                Standard_Real param = 0.0;
+                dist.ParOnEdgeS2(1, param);
+                double relParam = (param - first) / (last - first + 1e-12);
+                if (relParam < 0.02 || relParam > 0.98 ||
+                    std::abs(relParam - 0.5) < 0.02) {
+                    continue;
+                }
             }
+
+            SnapCandidate c;
+            c.type        = SnapType::Nearest;
+            c.worldPoint  = nearPt;
+            c.sourceShape = shape;
+            c.sourceEdge  = edge;
+            c.sourceAIS   = aisObj;
+            c.worldDist   = dist.Value();
+            c.screenDist  = screenDistance(view, nearPt, mouseX, mouseY);
+            c.isValid     = true;
+            out.append(c);
+        } catch (const Standard_Failure&) {
+            continue;  // ✅ 捕捉所有 OCCT 例外，包含 BRepExtrema_UnCompatibleShape
         }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+//  Parallel：從上一個輸入點，沿與已有直線平行的方向吸附
+// ──────────────────────────────────────────────────────────────────────────────
+void OSnapDetector::detectParallel(
+    const TopoDS_Shape& shape,
+    const Handle(AIS_InteractiveObject)& aisObj,
+    const gp_Pnt& mousePt,
+    const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
+    QVector<SnapCandidate>& out)
+{
+    if (!m_hasLastPoint) return;
+
+    TopExp_Explorer edgeExp(shape, TopAbs_EDGE);
+    for (; edgeExp.More(); edgeExp.Next()) {
+        TopoDS_Edge edge = TopoDS::Edge(edgeExp.Current());
+        double first, last;
+        Handle(Geom_Curve) baseCurve = BRep_Tool::Curve(edge, first, last);
+        if (baseCurve.IsNull()) continue;
+
+        // 只對直線段求平行
+        Handle(Geom_Line) gline;
+        Handle(Geom_TrimmedCurve) tc = Handle(Geom_TrimmedCurve)::DownCast(baseCurve);
+        if (!tc.IsNull())
+            gline = Handle(Geom_Line)::DownCast(tc->BasisCurve());
+        else
+            gline = Handle(Geom_Line)::DownCast(baseCurve);
+        if (gline.IsNull()) continue;
+
+        gp_Dir dir = gline->Lin().Direction();
+
+        // 過 m_lastInputPoint，方向平行於 dir 的直線
+        // 將 mousePt 投影到此平行線上
+        gp_Vec toMouse(m_lastInputPoint, mousePt);
+        double t = toMouse.Dot(gp_Vec(dir));
+        gp_Pnt snapPt(m_lastInputPoint.X() + dir.X() * t,
+                      m_lastInputPoint.Y() + dir.Y() * t,
+                      m_lastInputPoint.Z() + dir.Z() * t);
+
+        // snapPt 與 mousePt 的螢幕距離：距離越小表示滑鼠越靠近平行方向
+        double sd = screenDistance(view, snapPt, mouseX, mouseY);
 
         SnapCandidate c;
-        c.type        = SnapType::Nearest;
-        c.worldPoint  = nearPt;
+        c.type        = SnapType::Parallel;
+        c.worldPoint  = snapPt;
         c.sourceShape = shape;
         c.sourceEdge  = edge;
         c.sourceAIS   = aisObj;
-        c.worldDist   = dist.Value();
-        c.screenDist = screenDistance(view, nearPt, mouseX, mouseY);
+        c.screenDist  = sd;
         c.isValid     = true;
         out.append(c);
     }
@@ -701,6 +810,7 @@ void OSnapDetector::detectNearest(
 void OSnapDetector::detectGridPoint(
     const Handle(V3d_View)& view,
     const gp_Pnt& mousePt,
+    int mouseX, int mouseY,    // ✅ 新增
     QVector<SnapCandidate>& out)
 {
     const double g = m_settings.gridSpacing;
@@ -710,13 +820,9 @@ void OSnapDetector::detectGridPoint(
     if (m_activePlane) {
         plane = m_activePlane->toGpPln();
     } else {
-        // 預設 XY 平面
         plane = gp_Pln(gp_Ax3());
     }
 
-    // 投影滑鼠點到平面
-    gp_Pnt projPt = mousePt;
-    // 取得平面上最近的網格點
     double u, v;
     ElSLib::Parameters(plane, mousePt, u, v);
     double ug = std::round(u / g) * g;
@@ -726,6 +832,7 @@ void OSnapDetector::detectGridPoint(
     SnapCandidate c;
     c.type       = SnapType::Grid;
     c.worldPoint = gridPt;
+    c.screenDist = screenDistance(view, gridPt, mouseX, mouseY);  // ✅ 必須設定，否則被 magnetRadius 過濾
     c.isValid    = true;
     out.append(c);
 }

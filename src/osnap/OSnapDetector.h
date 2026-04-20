@@ -160,15 +160,21 @@ private:
 
     void detectGridPoint   (const Handle(V3d_View)&,
                          const gp_Pnt& mousePt,
+                         int mouseX, int mouseY,
                          QVector<SnapCandidate>&);
 
     void detectExtension(const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
                          const gp_Pnt& mousePt, const Handle(V3d_View)&,
                          int mouseX, int mouseY, QVector<SnapCandidate>&);
 
-    void detectParallel (const TopoDS_Shape&, const Handle(AIS_InteractiveObject)&,
-                        const gp_Pnt& mousePt, const Handle(V3d_View)&,
-                        int mouseX, int mouseY, QVector<SnapCandidate>&);
+    void detectParallel(
+        const TopoDS_Shape& shape,
+        const Handle(AIS_InteractiveObject)& aisObj,
+        const gp_Pnt& mousePt,
+        const Handle(V3d_View)& view,
+        int mouseX, int mouseY,
+        QVector<SnapCandidate>& out);
+
     // ── 工具函數 ──────────────────────────────────────────────────────────────
 
     /// 世界座標 → 螢幕座標

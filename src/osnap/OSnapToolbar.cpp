@@ -78,7 +78,8 @@ void OSnapToolbar::setupUI() {
                   "Node (NODe)\nSnap to sketch geometry nodes");
     addSnapButton(SnapType::Extension,     ":/icons/osnap/OSNEXT.ico",
                   "Extension (EXTension)\nSnap on extension of edge");
-
+    addSnapButton(SnapType::Parallel,     ":/icons/osnap/OSNPAR.ico",
+                  "Parallel (PARallel)\nSnap to point along parallel direction");
     addSeparator();
 
     addSnapButton(SnapType::Grid,          ":/icons/osnap/OSNGRID.ico",
