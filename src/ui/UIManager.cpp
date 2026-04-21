@@ -1481,6 +1481,56 @@ TopoDS_Edge makeEdgeFromGeometry(
     }
 }
 
+// 在 applyConstraintToSketch 前，新增輔助函式：
+
+// 取得幾何元素的端點列表（2D 草圖座標）
+static QVector<QPair<QVector2D, GeomHandle>>
+geomEndpoints(const cad::SketchGeometry* g)
+{
+    using GH = cad::GeomHandle;
+    QVector<QPair<QVector2D, GH>> pts;
+    if (!g) return pts;
+    switch (g->type) {
+    case cad::SketchGeometryType::Line:
+        pts << qMakePair(g->points[0], GH::Start)
+            << qMakePair(g->points[1], GH::End);
+        break;
+    case cad::SketchGeometryType::Arc:
+        if (g->points.size() >= 2) {
+            pts << qMakePair(g->points[0], GH::Start)
+                << qMakePair(g->points.last(), GH::End);
+        }
+        break;
+    default:
+        if (!g->points.isEmpty()) {
+            pts << qMakePair(g->points.first(), GH::Start)
+                << qMakePair(g->points.last(),  GH::End);
+        }
+        break;
+    }
+    return pts;
+}
+
+// 找兩幾何距離最近的端點對
+static QPair<GeomHandle, GeomHandle>
+closestEndpointPair(const cad::SketchGeometry* gA,
+                    const cad::SketchGeometry* gB)
+{
+    using GH = cad::GeomHandle;
+    auto ptsA = geomEndpoints(gA);
+    auto ptsB = geomEndpoints(gB);
+
+    GeomHandle bestA = GH::End, bestB = GH::Start;
+    float bestDist = std::numeric_limits<float>::max();
+    for (auto& [posA, hA] : ptsA) {
+        for (auto& [posB, hB] : ptsB) {
+            float d = (posA - posB).lengthSquared();
+            if (d < bestDist) { bestDist = d; bestA = hA; bestB = hB; }
+        }
+    }
+    return {bestA, bestB};
+}
+
 // 在 UIManager.cpp 加入此 private 方法（同時在 UIManager.h private 宣告）：
 void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
                                         cad::ConstraintType type,
@@ -1507,19 +1557,42 @@ void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
 
     switch (type) {
     case CT::Coincident: {
-        // ✅ 依幾何類型決定 handle：圓/弧用 Concentric，線用 End-Start
         auto* gA = sketch->findGeometry(selected[0]);
         auto* gB = sketch->findGeometry(selected[1]);
         bool aCircular = gA && (gA->type == cad::SketchGeometryType::Circle
                                 || gA->type == cad::SketchGeometryType::Arc);
         bool bCircular = gB && (gB->type == cad::SketchGeometryType::Circle
                                 || gB->type == cad::SketchGeometryType::Arc);
-        if (aCircular || bCircular)
+
+        if (aCircular && bCircular) {
+            // 兩個圓/弧 → 同心
             uuid = sketch->constrainConcentric(selected[0], selected[1]);
-        else
+        } else if (aCircular || bCircular) {
+            // 一個圓弧 + 一個線 → Center 對 Start/End
+            auto* circGeom = aCircular ? gA : gB;
+            auto* lineGeom = aCircular ? gB : gA;
+            auto linePts = geomEndpoints(lineGeom);
+            QVector2D circCenter = circGeom->points.isEmpty()
+                                       ? QVector2D(0,0) : circGeom->points[0]; // circle stores center in points[0]? depends
+            GH lineHandle = GH::Start;
+            float best = std::numeric_limits<float>::max();
+            for (auto& [pos, h] : linePts) {
+                float d = (pos - circCenter).lengthSquared();
+                if (d < best) { best = d; lineHandle = h; }
+            }
+            QString circUuid = aCircular ? selected[0] : selected[1];
+            QString lineUuid = aCircular ? selected[1] : selected[0];
+            GH lineH  = aCircular ? lineHandle : lineHandle;
             uuid = sketch->constrainCoincident(
-                cad::GeomRef(selected[0], GH::End),
-                cad::GeomRef(selected[1], GH::Start));
+                cad::GeomRef(circUuid, GH::Center),
+                cad::GeomRef(lineUuid, lineH));
+        } else {
+            // 兩條線 → 找最近端點對
+            auto [hA, hB] = closestEndpointPair(gA, gB);
+            uuid = sketch->constrainCoincident(
+                cad::GeomRef(selected[0], hA),
+                cad::GeomRef(selected[1], hB));
+        }
         break;
     }
     case CT::Horizontal:    uuid = sketch->constrainHorizontal(selected[0]);             break;

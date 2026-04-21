@@ -112,7 +112,7 @@ public:
     // ✅ FIX: 追蹤中間鍵是否正在按壓
     bool middleButtonPressed;
     QMap<AIS_InteractiveObject*, QString>  aisToFeatureId;
-    QMap<AIS_InteractiveObject*, int>      aisToGeomIndex;
+    QMap<AIS_InteractiveObject*, QString>  aisToGeomUuid;
     QHash<cad::Sketch*, QString>           sketchFeatureIds;
 
     QSet<int>                              selectedGeomIndices;
@@ -422,7 +422,6 @@ void CadView::initializeViewer() {
                                    for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
                                        if (!s.IsNull()) {
                                            d->aisToFeatureId.remove(s.get());
-                                           d->aisToGeomIndex.remove(s.get());
                                        }
                                    }
 
@@ -441,22 +440,6 @@ void CadView::initializeViewer() {
                                            it = d->aisToFeatureId.erase(it);
                                        else
                                            ++it;
-                                   }
-                                   for (auto it = d->aisToGeomIndex.begin();
-                                        it != d->aisToGeomIndex.end(); ) {
-                                       if (!d->aisToFeatureId.contains(it.key()))
-                                           it = d->aisToGeomIndex.erase(it);
-                                       else
-                                           ++it;
-                                   }
-
-                                   // 重新註冊
-                                   int idx = 0;
-                                   for (const Handle(AIS_Shape)& s : shapes) {
-                                       if (!s.IsNull()) {
-                                           d->aisToFeatureId[s.get()] = itemId;
-                                           d->aisToGeomIndex[s.get()] = idx++;
-                                       }
                                    }
 
                                    d->sketchFeatureIds[sketch] = itemId;
@@ -642,19 +625,9 @@ QStringList CadView::selectedGeomUuids() const
             d->context->SelectedInteractive());
         if (s.IsNull()) continue;
 
-        QString featureId = d->aisToFeatureId.value(s.get());
-        int     geomIdx   = d->aisToGeomIndex.value(s.get(), -1);
-        if (featureId.isEmpty() || geomIdx < 0) continue;
-
-        auto* feature = d->document->findFeature(featureId);
-        auto* sketch  = dynamic_cast<cad::Sketch*>(feature);
-        if (!sketch) continue;
-
-        // ✅ 用 normalGeometries() 而非 geometries()
-        //    m_aisShapes 只對應一般幾何，索引必須一致
-        const auto& geoms = sketch->normalGeometries();
-        if (geomIdx < geoms.size())
-            result << geoms[geomIdx]->uuid;
+        QString uuid = d->aisToGeomUuid.value(s.get());  // ← 直接取 UUID
+        if (!uuid.isEmpty())
+            result << uuid;
     }
     return result;
 }
@@ -745,7 +718,6 @@ void CadView::displayAllFeatures() {
     d->context->RemoveAll(Standard_False);
     d->context->Display(d->viewCube, Standard_False);
     d->aisToFeatureId.clear();  // ✅ 全部重建
-    d->aisToGeomIndex.clear();
 
     for (Feature* feature : d->document->features()) {
         if (!feature) continue;
@@ -756,11 +728,12 @@ void CadView::displayAllFeatures() {
                 // ✅ visible: 正常顯示並註冊
                 QList<Handle(AIS_Shape)> shapes =
                     sketch->displayInContext(d->context);
-                int idx = 0;
-                for (const Handle(AIS_Shape)& s : shapes) {
+                const QList<QString>& uuids = sketch->aisShapeUuids();
+                for (int i = 0; i < shapes.size(); ++i) {
+                    const auto& s = shapes[i];
                     if (!s.IsNull()) {
                         d->aisToFeatureId[s.get()] = feature->id();
-                        d->aisToGeomIndex[s.get()] = idx++;
+                        d->aisToGeomUuid[s.get()] = (i < uuids.size()) ? uuids[i] : QString();
                     }
                 }
             } else {
@@ -768,11 +741,12 @@ void CadView::displayAllFeatures() {
                 //    讓 map 有條目，之後 setVisible(true) 時 display 即生效
                 sketch->rebuild();
                 // 不呼叫 displayInContext，shapes 存在但不顯示
-                int idx = 0;
-                for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
+                const QList<QString>& uuids = sketch->aisShapeUuids();
+                for (int i = 0; i < sketch->aisShapes().size(); ++i) {
+                    const auto& s = sketch->aisShapes()[i];
                     if (!s.IsNull()) {
                         d->aisToFeatureId[s.get()] = feature->id();
-                        d->aisToGeomIndex[s.get()] = idx++;
+                        d->aisToGeomUuid[s.get()] = (i < uuids.size()) ? uuids[i] : QString();
                     }
                 }
             }
@@ -941,17 +915,18 @@ void CadView::onSketchRebuilt()
         else
             ++it;
     }
-    for (auto it = d->aisToGeomIndex.begin(); it != d->aisToGeomIndex.end(); ) {
+    for (auto it = d->aisToGeomUuid.begin(); it != d->aisToGeomUuid.end(); ) {
         if (!d->aisToFeatureId.contains(it.key()))
-            it = d->aisToGeomIndex.erase(it);
+            it = d->aisToGeomUuid.erase(it);
         else
             ++it;
     }
-    int idx = 0;
-    for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
-        if (!s.IsNull()) {
-            d->aisToFeatureId[s.get()] = fid;
-            d->aisToGeomIndex[s.get()] = idx++;
+    const QList<QString>& uuids = sketch->aisShapeUuids();
+    const QList<Handle(AIS_Shape)>& shapes = sketch->aisShapes();
+    for (int i = 0; i < shapes.size(); ++i) {
+        if (!shapes[i].IsNull()) {
+            d->aisToFeatureId[shapes[i].get()] = fid;
+            d->aisToGeomUuid[shapes[i].get()] = (i < uuids.size()) ? uuids[i] : QString();
         }
     }
 }
@@ -1360,9 +1335,6 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                     d->context->SelectedInteractive());
                 if (s.IsNull()) continue;
                 QString fid   = d->aisToFeatureId.value(s.get());
-                int     gidx  = d->aisToGeomIndex.value(s.get(), -1);
-                if (!fid.isEmpty() && gidx >= 0)
-                    selMap[fid].insert(gidx);
             }
 
             EventBus* bus = Application::instance()->eventBus();
@@ -1373,10 +1345,25 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 QVariantMap data;
                 data["featureId"]   = fid;
                 data["geomIndices"] = idxList;
-                bus->publish("selection.featureSelected", data);   // ✅ 正確事件名
+                bus->publish("selection.featureSelected", data);
             } else {
                 bus->publish("selection.cleared", QVariant());
             }
+
+            // 獨立計數：只要是已登記的 AIS 物件就計入，不依賴 aisToGeomIndex
+            int count = 0;
+            for (d->context->InitSelected();
+                 d->context->MoreSelected();
+                 d->context->NextSelected())
+            {
+                Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
+                    d->context->SelectedInteractive());
+                if (!s.IsNull() && d->aisToFeatureId.contains(s.get()))
+                    ++count;
+            }
+            Q_EMIT statusMessageRequested(
+                count > 0 ? tr("已選取 %1 個元素").arg(count) : tr("無選取"),
+                count > 0 ? 0 : 2000);
             return;
         }
     }
@@ -1440,11 +1427,6 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             if (s.IsNull()) continue;
 
             QString featureId = d->aisToFeatureId.value(s.get());
-            int     geomIdx   = d->aisToGeomIndex.value(s.get(), -1);
-
-            if (!featureId.isEmpty() && geomIdx >= 0) {
-                selectionMap[featureId].insert(geomIdx);
-            }
         }
 
         if (!selectionMap.isEmpty()) {

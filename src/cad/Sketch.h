@@ -238,6 +238,7 @@ public:
 
     QList<TopoDS_Wire> wires() const;
     QList<Handle(AIS_Shape)> aisShapes() const;
+    const QList<QString>& aisShapeUuids() const;
     QList<Handle(AIS_Shape)> displayInContext(const Handle(AIS_InteractiveContext)& context);
     void eraseFromContext(const Handle(AIS_InteractiveContext)& context);
     TopoDS_Wire mainWire() const;
@@ -406,6 +407,7 @@ private:
     QList<SketchGeometry*> m_geometries;  ///< 幾何元素列表
     QList<TopoDS_Wire> m_wires;           ///< 快取的 Wire 列表
     QList<Handle(AIS_Shape)> m_aisShapes;
+    QList<QString>            m_aisShapeUuids;
     QList<SketchConstraint> m_constraints;
     QList<Handle(AIS_Shape)>  m_constructionShapes;
     ConstraintSolver        m_solver;

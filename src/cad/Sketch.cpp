@@ -244,6 +244,7 @@ bool Sketch::rebuild() {
     try {
         m_wires.clear();
         m_aisShapes.clear();
+        m_aisShapeUuids.clear();
         m_constructionShapes.clear();
 
         if (m_geometries.isEmpty()) {
@@ -437,6 +438,7 @@ bool Sketch::rebuild() {
                     aisShape->SetDisplayMode(AIS_WireFrame);
                     m_wires.append(wire);
                     m_aisShapes.append(aisShape);
+                    m_aisShapeUuids.append(geom->uuid);
                 }
             }
         }
@@ -1058,6 +1060,10 @@ QList<TopoDS_Wire> Sketch::wires() const {
 
 QList<Handle(AIS_Shape)> Sketch::aisShapes() const {
     return m_aisShapes;
+}
+
+const QList<QString>& Sketch::aisShapeUuids() const {
+    return m_aisShapeUuids;
 }
 
 QList<Handle(AIS_Shape)> Sketch::displayInContext(
