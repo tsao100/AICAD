@@ -18,6 +18,9 @@
 #include <gp_Dir.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Pln.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <TopExp_Explorer.hxx>
 
 #include <QVector>
 #include <QVector2D>
@@ -289,6 +292,12 @@ public:
 
 private:
     GeometryBuilder() = delete;  // 靜態類別，不可實例化
+
+    static BuildResult extrudeFromMultipleWires(
+        const QList<TopoDS_Wire>& wires,
+        const gp_Vec& direction,
+        const gp_Pln& sketchPlane);
+
 };
 
 /** 從草圖幾何元素建立 OCCT Edge */

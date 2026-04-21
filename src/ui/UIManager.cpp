@@ -405,6 +405,54 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            // Could update coordinate display here
                        });
 
+        // ── Extrude 建立 ─────────────────────────────────────────────
+        bus->subscribe("command.create-extrude", this,
+                       [this](const QVariant& data) {
+                           QVariantMap map = data.toMap();
+                           QString sketchId = map["sketchId"].toString();
+                           double height    = map["height"].toDouble();
+
+                           core::Application* app = core::Application::instance();
+                           cad::Document* doc = app->documentManager()->currentDocument();
+                           if (!doc) return;
+
+                           cad::Feature* feat = doc->findFeature(sketchId);
+                           cad::Sketch* sketch = qobject_cast<cad::Sketch*>(feat);
+                           if (!sketch) {
+                               app->eventBus()->publish(core::Events::COMMAND_ERROR,
+                                                        "Sketch not found for extrude");
+                               return;
+                           }
+
+                           cad::Extrude* extrude = doc->createExtrude(sketch, height);
+                           if (!extrude) {
+                               app->eventBus()->publish(core::Events::COMMAND_ERROR,
+                                                        "Failed to create extrude");
+                               return;
+                           }
+
+                           // 切回 3D 視圖
+                           QVariantMap viewData;
+                           viewData["mode"] = "3d";
+                           app->eventBus()->publish("command.request-view-setup", viewData);
+
+                           // 通知 FeatureBrowser 刷新
+                           QVariantMap featureData;
+                           featureData["featureId"]   = extrude->id();
+                           featureData["featureName"] = extrude->name();
+                           app->eventBus()->publish(core::Events::FEATURE_CREATED, featureData);
+                           app->eventBus()->publish(core::Events::COMMAND_LOG,
+                                                    QString("Extrude '%1' created (h=%2)").arg(extrude->name()).arg(height));
+
+                           app->setActiveSketch(nullptr);
+                           QVariantMap viewData1;
+                           viewData1["mode"] = "iso";
+                           app->eventBus()->publish("command.request-view-setup", viewData1);
+
+                           // 重繪
+                           if (d->cadView) d->cadView->update();
+                       });
+
         // ✅ Handle sketch line creation requests
         bus->subscribe("command.create-sketch-line", this,
                        [this, bus](const QVariant& data) {

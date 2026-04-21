@@ -107,8 +107,10 @@ bool Extrude::rebuild() {
         return false;
     }
     
-    if (!m_sketch->hasValidShape()) {
-        QString error = "Sketch has no valid shape";
+    if (!m_sketch->hasValidShape() || !m_sketch->hasExtrudableProfile()) {
+        QString error = m_sketch->hasValidShape()
+                            ? "Sketch has no closed profile for extrude"
+                            : "Sketch has no valid shape";
         qWarning() << "[Extrude]" << name() << error;
         setError(error);
         return false;

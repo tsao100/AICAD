@@ -260,6 +260,8 @@ public:
     std::optional<SketchRegion>
     pickRegion(const QVector2D& sketchPt) const;
 
+    bool hasExtrudableProfile() const;
+
     // ==================== 序列化 ====================
 
     /**

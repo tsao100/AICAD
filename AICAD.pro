@@ -45,7 +45,8 @@ macx {
             -lTKXCAF \
             -lTKBin \
             -lTKBinL \
-            -lTKBinXCAF
+            -lTKBinXCAF \
+            -lTKShHealing
 
     # macOS 系統 framework（Cocoa 視窗 + OpenGL）
     LIBS += -framework Cocoa \
@@ -119,7 +120,8 @@ unix:!macx {
             -lTKXCAF \
             -lTKBin \
             -lTKBinL \
-            -lTKBinXCAF
+            -lTKBinXCAF \
+            -lTKShHealing
 
     # Link X11 (required for OpenGL context on Linux)
     LIBS += -lX11 -lXext
@@ -189,7 +191,8 @@ win32 {
             -lTKXCAF \
             -lTKBin \
             -lTKBinL \
-            -lTKBinXCAF
+            -lTKBinXCAF \
+            -lTKShHealing
 
     # ECL paths - ADJUST THESE TO YOUR ECL INSTALLATION
     INCLUDEPATH += D:/Git/ecl/v24.5.10/vc143-x64
@@ -226,6 +229,7 @@ SOURCES += \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
+    src/command/ExtrudeCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
     src/command/InputParser.cpp \
@@ -321,6 +325,7 @@ HEADERS += \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
     src/command/CommandAlias.h \
+    src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
     src/core/CommandHistory.h \
     src/command/EllipseCommand.h \

@@ -43,6 +43,11 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
 
 #include <QDebug>
 #include <cmath>
@@ -354,32 +359,68 @@ BuildResult GeometryBuilder::extrude(const TopoDS_Wire& wire,
     }
 }
 
+
 BuildResult GeometryBuilder::extrudeSketch(cad::Sketch* sketch, double height) {
-    if (!sketch) {
+    if (!sketch)
         return BuildResult::error("Sketch is null");
-    }
-    
-    if (std::abs(height) < Precision::Confusion()) {
+    if (std::abs(height) < Precision::Confusion())
         return BuildResult::error("Height is too small");
-    }
-    
+    if (!sketch->hasValidPlane())
+        return BuildResult::error("Sketch has no valid plane");
+
     try {
-        // 取得主要輪廓
-        TopoDS_Wire wire = sketch->mainWire();
-        if (wire.IsNull()) {
-            return BuildResult::error("Sketch has no valid wire");
-        }
-        
-        // 計算擠出方向
         cad::Plane* plane = sketch->plane();
-        QVector3D normal = plane->normal();
-        gp_Vec direction = toGpVec(normal * height);
-        
-        // 執行擠出
-        return extrude(wire, direction, true);
-        
+        gp_Vec direction  = toGpVec(plane->normal() * height);
+        gp_Pln gpPlane    = plane->toGpPln();
+
+        QList<TopoDS_Wire> wires = sketch->wires();
+        if (wires.isEmpty())
+            return BuildResult::error("Sketch has no geometry");
+
+        // ── 情況 1：單一封閉 wire（圓、封閉 polyline、矩形）──────────
+        if (wires.size() == 1 && wires.first().Closed()) {
+            auto faceResult = makeFace(wires.first(), gpPlane);
+            if (!faceResult) return faceResult;
+            return extrude(TopoDS::Face(faceResult.shape), direction);
+        }
+
+        // ── 情況 2：多條或非封閉 wire → 嘗試連接成封閉輪廓 ──────────
+        Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape;
+        for (const TopoDS_Wire& w : wires) {
+            TopExp_Explorer exp(w, TopAbs_EDGE);
+            for (; exp.More(); exp.Next())
+                edges->Append(exp.Current());
+        }
+
+        Handle(TopTools_HSequenceOfShape) closedWires = new TopTools_HSequenceOfShape;
+        Handle(TopTools_HSequenceOfShape) openWires   = new TopTools_HSequenceOfShape;
+        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(
+            edges, Precision::Confusion(), Standard_False, closedWires);
+
+        if (closedWires->IsEmpty())
+            return BuildResult::error(
+                "Sketch edges do not form a closed contour. "
+                "Please ensure the profile is fully closed.");
+
+        // 多輪廓（含孔洞）：第一條為外輪廓，其餘為孔
+        TopoDS_Wire outerWire = TopoDS::Wire(closedWires->Value(1));
+        BRepBuilderAPI_MakeFace faceBuilder(gpPlane, outerWire);
+        if (!faceBuilder.IsDone())
+            return BuildResult::error("Failed to build face from closed contour");
+
+        for (int i = 2; i <= closedWires->Length(); ++i) {
+            TopoDS_Wire inner = TopoDS::Wire(closedWires->Value(i));
+            faceBuilder.Add(inner);
+        }
+
+        if (!faceBuilder.IsDone())
+            return BuildResult::error("Failed to build face with holes");
+
+        return extrude(faceBuilder.Face(), direction);
+
     } catch (const Standard_Failure& e) {
-        return BuildResult::error(QString("OCCT error: %1").arg(e.GetMessageString()));
+        return BuildResult::error(
+            QString("OCCT error: %1").arg(e.GetMessageString()));
     }
 }
 
@@ -644,6 +685,8 @@ TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
 
     return faceMaker.IsDone() ? faceMaker.Face() : TopoDS_Face();
 }
+
+
 
 } // namespace geometry
 } // namespace aicad

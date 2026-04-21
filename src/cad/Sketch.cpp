@@ -29,6 +29,10 @@
 #include <GC_MakeArcOfCircle.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <TopExp_Explorer.hxx>
+
 #include <QJsonArray>
 
 namespace aicad {
@@ -1119,6 +1123,26 @@ Sketch::pickRegion(const QVector2D& sketchPt) const
             return region;
     }
     return std::nullopt;
+}
+
+// Sketch.cpp 新增實作
+bool Sketch::hasExtrudableProfile() const {
+    if (m_wires.isEmpty()) return false;
+    if (hasClosedProfile()) return true;
+
+    // 嘗試連接所有 edge，看能否形成封閉輪廓
+    Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape;
+    for (const TopoDS_Wire& w : m_wires) {
+        TopExp_Explorer exp(w, TopAbs_EDGE);
+        for (; exp.More(); exp.Next())
+            edges->Append(exp.Current());
+    }
+    if (edges->IsEmpty()) return false;
+
+    Handle(TopTools_HSequenceOfShape) closed = new TopTools_HSequenceOfShape;
+    ShapeAnalysis_FreeBounds::ConnectEdgesToWires(
+        edges, Precision::Confusion(), Standard_False, closed);
+    return !closed->IsEmpty();
 }
 
 } // namespace cad
