@@ -172,6 +172,65 @@ void UIManager::initGripSystem()
             this, [this]() {
                 d->gripManager->detach();
             });
+    // ── D) command.started → 切換至「繪圖模式」─────────────────────────────
+    bus->subscribe(core::Events::COMMAND_STARTED, this,
+                   [this](const QVariant&) {
+                       // OSnap ON（point 輸入需要 snap）
+                       if (d->cadView && d->cadView->snapManager())
+                           d->cadView->snapManager()->setSnapEnabled(true);
+                       // Grips OFF（讓出滑鼠）
+                       if (d->gripFilter) d->gripFilter->setEnabled(false);
+                       if (d->gripManager) d->gripManager->setEnabled(false);
+                       // 清除殘留的幾何選取高亮
+                       if (d->cadView) d->cadView->clearSketchGeomSelection();
+                   });
+
+    // ── E) command 結束 → 自動回到「選取模式」────────────────────────────────
+    auto onCommandEnd = [this](const QVariant&) {
+        if (!d->cadView) return;
+        const bool inSketch =
+            (d->cadView->mode() == view::InteractionMode::Sketching);
+        // OSnap OFF（無 point 需要 snap）
+        if (d->cadView->snapManager())
+            d->cadView->snapManager()->setSnapEnabled(false);
+        // Grips ON（可選取幾何）
+        if (inSketch) {
+            if (d->gripFilter) d->gripFilter->setEnabled(true);
+            if (d->gripManager) d->gripManager->setEnabled(true);
+        }
+    };
+    bus->subscribe(core::Events::COMMAND_EXECUTED,  this, onCommandEnd);
+    bus->subscribe(core::Events::COMMAND_CANCELLED, this, onCommandEnd);
+    bus->subscribe(core::Events::COMMAND_FAILED,    this, onCommandEnd);
+
+    // ── F) Sketch 進入 → 完整啟動（Grips / OSnap / Selection） ──
+    bus->subscribe(core::Events::SKETCH_ENTERED, this,
+                   [this](const QVariant&) {
+                       // Selection mode → Sketching（允許幾何選取）
+                       if (d->cadView)
+                           d->cadView->setMode(view::InteractionMode::Sketching);
+                       // Grip Filter 啟動
+                       if (d->gripFilter) d->gripFilter->setEnabled(true);
+                       // 此時 GripManager 的 provider 由 selection.featureSelected 設定
+                   });
+
+    // ── G) Sketch 退出 → 完整關閉（Grips / OSnap / Selection） ──
+    bus->subscribe(core::Events::SKETCH_EXITED, this,
+                   [this](const QVariant&) {
+                       // Grip Filter & GripManager 完全關閉
+                       if (d->gripFilter) d->gripFilter->setEnabled(false);
+                       if (d->gripManager) d->gripManager->detach(); // 清除 provider
+                       // OSnap 關閉
+                       if (d->cadView && d->cadView->snapManager()) {
+                           d->cadView->snapManager()->setSnapEnabled(false);
+                           d->cadView->snapManager()->setActivePlane(nullptr);
+                           d->cadView->snapManager()->setActiveSketch(nullptr);
+                           d->cadView->snapManager()->clearLastInputPoint();
+                       }
+                       // Selection mode → Idle
+                       if (d->cadView)
+                           d->cadView->setMode(view::InteractionMode::Idle);
+                   });
 }
 
 bool UIManager::initialize(core::MenuParser* menuParser) {
@@ -1288,15 +1347,16 @@ void UIManager::setupSketchPanel()
             this, [this](cad::ConstraintType type) {
                 auto* sketch = core::Application::instance()->activeSketch();
                 if (!sketch) return;
-
-                // 取得目前選取的幾何 UUID（由 CadView 提供）
                 QStringList selected = d->cadView
                                            ? d->cadView->selectedGeomUuids()
                                            : QStringList{};
-
                 applyConstraintToSketch(sketch, type, selected, 0.0);
+
+                // 清除選取高亮（已在選取模式，OSnap/Grip 狀態由 lifecycle 管理）
+                if (d->cadView) d->cadView->clearSketchGeomSelection();
             });
 
+    // requestConstraintWithValue 同樣處理
     connect(d->sketchPanel, &SketchPanel::requestConstraintWithValue,
             this, [this](cad::ConstraintType type, double value) {
                 auto* sketch = core::Application::instance()->activeSketch();
@@ -1305,6 +1365,9 @@ void UIManager::setupSketchPanel()
                                            ? d->cadView->selectedGeomUuids()
                                            : QStringList{};
                 applyConstraintToSketch(sketch, type, selected, value);
+
+                // 清除選取高亮（已在選取模式，OSnap/Grip 狀態由 lifecycle 管理）
+                if (d->cadView) d->cadView->clearSketchGeomSelection();
             });
 
     connect(d->sketchPanel, &SketchPanel::requestRemoveConstraint,
@@ -1372,15 +1435,6 @@ void UIManager::setupSketchPanel()
     // ── status message from CadView ───────────────────────────────────
     connect(d->cadView, &view::CadView::statusMessageRequested,
             this, &UIManager::setStatusMessage);
-
-    connect(d->sketchPanel, &SketchPanel::requestSelectMode, this, [this] {
-        if (d->cadView)
-            d->cadView->setMode(view::InteractionMode::Selecting);
-    });
-    connect(d->sketchPanel, &SketchPanel::requestDrawMode, this, [this] {
-        if (d->cadView)
-            d->cadView->setMode(view::InteractionMode::Sketching);
-    });
 
 }
 
@@ -1743,52 +1797,48 @@ void UIManager::showMainWindow() {
 void UIManager::onSketchEditStarted(Sketch* sketch)
 {
     if (!sketch) return;
-
     m_currentActiveSketch = sketch;
 
-    // 1️⃣ 設定 OSnap 平面
+    auto* bus = core::Application::instance()->eventBus();
+
+    // OSnap 平面設定（必須在 SKETCH_ENTERED 發布前完成）
     if (d->cadView && d->cadView->snapManager()) {
         d->cadView->snapManager()->setActivePlane(sketch->plane());
-        d->cadView->snapManager()->setActiveSketch(sketch);   // ✅ 新增
-        d->cadView->snapManager()->setSnapEnabled(true);
-        // ✅ grid snap spacing 同步（配合問題十的修復）
-        if (d->cadView->grid()) {
-            osnap::OSnapSettings s = d->cadView->snapManager()->settings();
-            s.gridSnapEnabled = d->cadView->isGridEnabled();
-            s.gridSpacing     = static_cast<double>(d->cadView->grid()->spacing());
-            d->cadView->snapManager()->setSettings(s);
-        }
+        d->cadView->snapManager()->setActiveSketch(sketch);
+        // ← OSnap 初始 OFF：等 command.started 才開啟
+        //   無 command = 選取模式，OCCT hover highlight 就夠
+        d->cadView->snapManager()->setSnapEnabled(false);
     }
 
-    // ✅ 新增：顯示 SketchPanel 並綁定草圖
+    // SketchPanel
     if (d->sketchPanel) {
         d->sketchPanel->setActiveSketch(sketch);
         d->sketchPanel->show();
         d->sketchPanel->raise();
     }
 
-    // 2️⃣ 發事件（讓其他系統同步）
-    auto* bus = Application::instance()->eventBus();
-    bus->publish("sketch.editStarted", QVariant::fromValue(sketch));
+    // 統一發布 SKETCH_ENTERED → 由 initGripSystem 的訂閱接管
+    // setMode(Sketching)、gripFilter::setEnabled(true) 都在那裡執行
+    bus->publish(core::Events::SKETCH_ENTERED, QVariant::fromValue(sketch));
+    bus->publish("sketch.editStarted", QVariant::fromValue(sketch)); // 保留向下相容
 }
 
 void UIManager::onSketchEditEnded()
 {
-    // 1️⃣ 清掉 snap 狀態
-    if (d->cadView && d->cadView->snapManager()) {
-        d->cadView->snapManager()->setActivePlane(nullptr);
-        d->cadView->snapManager()->setActiveSketch(nullptr);  // ✅ 新增
-        d->cadView->snapManager()->clearLastInputPoint();
-    }
-    // ✅ 新增：隱藏 SketchPanel
+    m_currentActiveSketch = nullptr;
+
+    auto* bus = core::Application::instance()->eventBus();
+
+    // SketchPanel
     if (d->sketchPanel) {
         d->sketchPanel->clearSketch();
         d->sketchPanel->hide();
     }
 
-    // 2️⃣ 發事件
-    auto* bus = Application::instance()->eventBus();
-    bus->publish("sketch.editEnded", QVariant{});
+    // 統一發布 SKETCH_EXITED → 由 initGripSystem 的訂閱執行完整清理
+    // (OSnap 關閉、Grips detach、setMode(Idle) 都在那裡)
+    bus->publish(core::Events::SKETCH_EXITED, QVariant{});
+    bus->publish("sketch.editEnded", QVariant{});  // 保留向下相容
 }
 
 MainWindow* UIManager::mainWindow() const {

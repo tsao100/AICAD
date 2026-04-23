@@ -26,6 +26,9 @@ public:
     void setSketchPlane(cad::Plane* plane) { m_sketchPlane = plane; }
     void clearSketchPlane()                { m_sketchPlane = nullptr; }
 
+    void setEnabled(bool enabled) { m_enabled = enabled; }
+    bool isEnabled() const        { return m_enabled; }
+
 private:
     gp_Pnt screenToWorld(int x, int y) const;
 
@@ -33,7 +36,8 @@ private:
     Handle(V3d_View)   m_view;
     cad::Plane*        m_sketchPlane  = nullptr;
     bool               m_gripCaptured = false;
-    bool m_lastHovered = false;
+    bool m_lastHovered = false;    
+    bool m_enabled = false;
 };
 
 } // namespace aicad::ui

@@ -48,30 +48,6 @@ SketchPanel::SketchPanel(QWidget* parent)
 
 SketchPanel::~SketchPanel() = default;
 
-void SketchPanel::setupSelectGroup(QWidget*, QVBoxLayout* layout)
-{
-    auto* grp  = new QGroupBox(tr("模式"), this);
-    auto* hbox = new QHBoxLayout(grp);
-    hbox->setSpacing(4);
-
-    m_btnSelect = makeToolBtn(tr("▶ 選取"), tr("切換為選取模式，點選幾何元素"), grp);
-    m_btnSelect->setCheckable(true);
-    m_btnSelect->setChecked(false);
-
-    hbox->addWidget(m_btnSelect);
-    hbox->addStretch();
-
-    connect(m_btnSelect, &QToolButton::clicked, this, [this] {
-        // 取消所有繪圖按鈕 checked
-        for (auto* b : {m_btnConstrLine, m_btnCenterline, m_btnConstrCircle})
-            if (b) b->setChecked(false);
-        m_btnSelect->setChecked(true);
-        Q_EMIT requestSelectMode();
-    });
-
-    layout->addWidget(grp);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 void SketchPanel::setupUI()
 {
@@ -84,7 +60,6 @@ void SketchPanel::setupUI()
     layout->setSpacing(6);
     layout->setContentsMargins(6, 6, 6, 6);
 
-    setupSelectGroup(root, layout);
     setupConstructionGroup(root, layout);
     setupConstraintGroup(root, layout);
     setupSolverGroup(root, layout);
@@ -115,14 +90,6 @@ void SketchPanel::setupConstructionGroup(QWidget*, QVBoxLayout* layout)
             &SketchPanel::requestAddCenterline);
     connect(m_btnConstrCircle, &QToolButton::clicked, this,
             &SketchPanel::requestAddConstructionCircle);
-
-    auto uncheckSelect = [this] {
-        if (m_btnSelect) m_btnSelect->setChecked(false);
-        Q_EMIT requestDrawMode();
-    };
-    connect(m_btnConstrLine,   &QToolButton::clicked, this, uncheckSelect);
-    connect(m_btnCenterline,   &QToolButton::clicked, this, uncheckSelect);
-    connect(m_btnConstrCircle, &QToolButton::clicked, this, uncheckSelect);
 
     layout->addWidget(grp);
 }

@@ -222,6 +222,8 @@ public:
      */
     QStringList selectedGeomUuids() const;
 
+    void clearSketchGeomSelection();
+
 public Q_SLOTS:
 
     void onSketchRebuilt();
@@ -417,8 +419,7 @@ private:
     aicad::osnap::OSnapManager* m_snapManager = nullptr;
 
     /// 從 snap 取得目前座標（優先 snap，退而其次用 mouse pick）
-    gp_Pnt currentInputPoint(int mouseX, int mouseY) const;
-
+    gp_Pnt currentInputPoint(int mouseX, int mouseY) const;    
 
     class Private;
     Private* d;

@@ -84,6 +84,22 @@ void GripManager::hideGrips()
     m_handles.clear();
 }
 
+void GripManager::setEnabled(bool enabled)
+{
+    if (m_enabled == enabled) return;
+    m_enabled = enabled;
+    if (!enabled) {
+        // 視覺隱藏，但保留 provider / m_grips，可供後續 refreshGrips()
+        hideGrips();
+        // 中止懸掛的 hover 狀態
+        m_hoveredGripId.clear();
+    } else {
+        // 重新顯示（provider 還在）
+        refreshGrips();
+    }
+    qDebug() << "[GripManager] Grips" << (enabled ? "enabled" : "disabled");
+}
+
 void GripManager::refreshGrips()
 {
     if (!m_provider) return;
@@ -145,7 +161,7 @@ SnapResult GripManager::computeSnap(const gp_Pnt& rawPos) const
 // ── 滑鼠事件 ─────────────────────────────────────────────────────────
 bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos)
 {
-    if (m_handles.isEmpty()) return false;
+    if (!m_enabled || m_handles.isEmpty()) return false;
 
     if (m_isDragging && !m_activeGripId.isEmpty()) {
         // ── 正在拖拉 ──────────────────────────────────────────────
@@ -192,7 +208,7 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos)
 
 bool GripManager::mousePressEvent(const gp_Pnt& worldPos)
 {
-    if (m_handles.isEmpty()) return false;
+    if (!m_enabled || m_handles.isEmpty()) return false;
 
     QString hitId = hitTestGrip(worldPos);
     if (hitId.isEmpty()) return false;
@@ -212,7 +228,7 @@ bool GripManager::mousePressEvent(const gp_Pnt& worldPos)
 
 bool GripManager::mouseReleaseEvent(const gp_Pnt& worldPos)
 {
-    if (!m_isDragging) return false;
+    if (!m_enabled && !m_isDragging) return false;
 
     SnapResult snap = computeSnap(worldPos);
 

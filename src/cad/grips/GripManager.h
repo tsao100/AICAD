@@ -55,6 +55,10 @@ public:
     void refreshGrips();
     void hideGrips();
 
+    /// Command 執行期間暫停 Grip 輸入，但保留 provider 不清除
+    void setEnabled(bool enabled);
+    bool isEnabled() const { return m_enabled; }
+
 Q_SIGNALS:
     void gripDragStarted(const QString& gripId);
     void gripDragging(const QString& gripId, const gp_Pnt& pos);
@@ -92,6 +96,7 @@ private:
     double      m_gridSize     = 5.0;
     bool        m_snapEndpoint = true;
     bool        m_snapMidpoint = true;
+    bool        m_enabled = true;
 };
 
 } // namespace aicad::cad

@@ -427,8 +427,9 @@ bool CommandManager::isCommandRunning() const {
 }
 
 bool CommandManager::hasActiveCommand() const {
-    return d->currentCommand != nullptr &&
-           d->currentCommand->state() == CommandState::WaitingInput;
+    return d->currentCommand != nullptr &&(
+           d->currentCommand->state() == CommandState::WaitingInput ||
+                                            d->currentCommand->state() == CommandState::Running );
 }
 
 void CommandManager::addToHistory(const QString& commandName, 

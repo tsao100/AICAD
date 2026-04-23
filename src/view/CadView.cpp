@@ -632,6 +632,14 @@ QStringList CadView::selectedGeomUuids() const
     return result;
 }
 
+void CadView::clearSketchGeomSelection()
+{
+    if (!d->context.IsNull())
+        d->context->ClearSelected(Standard_True);
+    if (auto* bus = Application::instance()->eventBus())
+        bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
+}
+
 void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
     d->gripManager = mgr;
     d->gripFilter  = filter;
@@ -1285,87 +1293,44 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     int x = event->x();
     int y = event->y();
 
-    if (event->button() == Qt::LeftButton) {
+    if (event->button() == Qt::LeftButton &&
+        (d->mode == InteractionMode::Sketching ||
+         d->mode == InteractionMode::GetPoint))
+    {
+        auto* cmdMgr = Application::instance()->commandManager();
+        const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
 
-        // ── 繪圖模式：交給 snap → 發布 POINT_ACQUIRED ────────────────────────
-        if (d->mode == InteractionMode::Sketching ||
-            d->mode == InteractionMode::GetPoint)
-        {
-            if (m_snapManager && m_snapManager->onMousePress(x, y))
-                return;
-
-            QVector2D planePt = screenToPlane(event->pos());
-            EventBus* bus = Application::instance()->eventBus();
-            QVariantMap data;
-            data["point"]     = QVariant::fromValue(planePt);
-            data["screenPos"] = event->pos();
-            bus->publish(Events::POINT_ACQUIRED, data);
-            Q_EMIT pointAcquired(planePt);
-            return;
-        }
-
-        // ── 選取模式 ──────────────────────────────────────────────────────────
-        if (d->mode == InteractionMode::Selecting ||
-            d->mode == InteractionMode::Idle)
-        {
-            if (d->gripFilter && d->gripFilter->isCapturing())
-                return;
-
-            // 跳過 viewCube
-            if (d->context->HasDetected()) {
-                Handle(AIS_InteractiveObject) det =
-                    d->context->DetectedInteractive();
-                if (!det.IsNull() && det == d->viewCube)
-                    return;
-            }
-
-            // ✅ 只呼叫一次 SelectDetected
+        if (!hasCmd) {
+            // ── 無 command：草圖幾何選取 ─────────────────────────────
             bool additive = (event->modifiers() & Qt::ShiftModifier);
             d->context->SelectDetected(
                 additive ? AIS_SelectionScheme_Add
                          : AIS_SelectionScheme_Replace);
 
-            // ✅ 收集選取結果並發布正確事件
-            QMap<QString, QSet<int>> selMap;
-            for (d->context->InitSelected();
-                 d->context->MoreSelected();
-                 d->context->NextSelected())
-            {
-                Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
-                    d->context->SelectedInteractive());
-                if (s.IsNull()) continue;
-                QString fid   = d->aisToFeatureId.value(s.get());
-            }
-
-            EventBus* bus = Application::instance()->eventBus();
-            if (!selMap.isEmpty()) {
-                QString     fid     = selMap.firstKey();
-                QVariantList idxList;
-                for (int i : selMap[fid]) idxList.append(i);
+            QStringList uuids = selectedGeomUuids();
+            auto* bus = Application::instance()->eventBus();
+            if (!uuids.isEmpty()) {
                 QVariantMap data;
-                data["featureId"]   = fid;
-                data["geomIndices"] = idxList;
-                bus->publish("selection.featureSelected", data);
+                data["uuids"] = QVariant::fromValue(uuids);
+                bus->publish(Events::SKETCH_GEOM_SELECTED, data);
             } else {
-                bus->publish("selection.cleared", QVariant());
+                bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
             }
-
-            // 獨立計數：只要是已登記的 AIS 物件就計入，不依賴 aisToGeomIndex
-            int count = 0;
-            for (d->context->InitSelected();
-                 d->context->MoreSelected();
-                 d->context->NextSelected())
-            {
-                Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
-                    d->context->SelectedInteractive());
-                if (!s.IsNull() && d->aisToFeatureId.contains(s.get()))
-                    ++count;
-            }
-            Q_EMIT statusMessageRequested(
-                count > 0 ? tr("已選取 %1 個元素").arg(count) : tr("無選取"),
-                count > 0 ? 0 : 2000);
             return;
         }
+
+        // ── 有 command：snap → POINT_ACQUIRED ────────────────────────
+        if (m_snapManager && m_snapManager->onMousePress(x, y))
+            return;
+
+        QVector2D planePt = screenToPlane(event->pos());
+        EventBus* bus = Application::instance()->eventBus();
+        QVariantMap data;
+        data["point"]     = QVariant::fromValue(planePt);
+        data["screenPos"] = event->pos();
+        bus->publish(Events::POINT_ACQUIRED, data);
+        Q_EMIT pointAcquired(planePt);
+        return;
     }
 
     if (!d->context.IsNull() && !d->view.IsNull()) {

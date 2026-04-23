@@ -171,6 +171,13 @@ constexpr const char* OPTIONS_CLEARED = "options.cleared";
 // 歷史記錄
 constexpr const char* HISTORY_UPDATED = "history.updated";
 
+// 草圖生命週期
+constexpr const char* SKETCH_ENTERED = "sketch.entered";
+constexpr const char* SKETCH_EXITED  = "sketch.exited";
+
+// 草圖幾何選取（與 selection.featureSelected 分離）
+constexpr const char* SKETCH_GEOM_SELECTED = "sketch.geometrySelected";
+constexpr const char* SKETCH_GEOM_CLEARED  = "sketch.geometryCleared";
 }
 
 } // namespace core

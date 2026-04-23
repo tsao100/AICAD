@@ -66,6 +66,7 @@ gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
 
 bool GripEventFilter::eventFilter(QObject* /*obj*/, QEvent* event)
 {
+    if (!m_enabled) return false;
     if (m_view.IsNull() || !m_gripManager) return false;
 
     switch (event->type()) {
