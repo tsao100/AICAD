@@ -1052,7 +1052,15 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     showFeatureProperties(f);
 
                     if (auto* sketch = qobject_cast<cad::Sketch*>(f)) {
-                        // Sketch 使用 SketchGripProvider
+                        // ✅ 補設草圖平面，否則 GripFilter 用錯誤的 plane 投影
+                        if (sketch->plane()) {
+                            QVector3D qx = sketch->plane()->xAxis();
+                            QVector3D qy = sketch->plane()->yAxis();
+                            d->gripFilter->setSketchPlane(sketch->plane());
+                            d->gripManager->setPlaneAxes(
+                                gp_Dir(qx.x(), qx.y(), qx.z()),
+                                gp_Dir(qy.x(), qy.y(), qy.z()));
+                        }
                         auto* provider = new SketchGripProvider(sketch);
                         d->gripManager->attachProvider(provider);
                     }
@@ -1814,6 +1822,21 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         d->cadView->snapManager()->setSnapEnabled(false);
     }
 
+    // ✅ 預先設定 GripFilter 的草圖平面與 GripManager 的平面軸向
+    // （不等 selection.featureSelected，讓第一次 hover/click 就有正確投影）
+    if (sketch->plane()) {
+        QVector3D qx = sketch->plane()->xAxis();
+        QVector3D qy = sketch->plane()->yAxis();
+
+        if (d->gripFilter)
+            d->gripFilter->setSketchPlane(sketch->plane());
+
+        if (d->gripManager)
+            d->gripManager->setPlaneAxes(
+                gp_Dir(qx.x(), qx.y(), qx.z()),
+                gp_Dir(qy.x(), qy.y(), qy.z()));
+    }
+
     // SketchPanel
     if (d->sketchPanel) {
         d->sketchPanel->setActiveSketch(sketch);
@@ -2037,6 +2060,12 @@ void UIManager::onViewReady() {
     core::Application* app = core::Application::instance();
     core::DocumentManager* docMgr = app->documentManager();
     cad::Document* doc = docMgr->currentDocument();
+
+    // ✅ 現在 view/context 已就緒，補上 GripManager/Filter 初始化
+    if (d->gripManager && d->cadView)
+        d->gripManager->setContext(d->cadView->context());
+    if (d->gripFilter && d->cadView)
+        d->gripFilter->setView(d->cadView->view());
 
     if (doc) {
         initializeReferenceGeometry();

@@ -94,40 +94,58 @@ void OSnapIndicator::Compute(const Handle(PrsMgr_PresentationManager)& /*mgr*/,
         new Graphic3d_AspectLine3d(color, Aspect_TOL_SOLID, 2.0f);
     grp->SetGroupPrimitivesAspect(lineAsp);
 
+    // ✅ 用視圖相機軸向取代 hardcoded 世界 XY，確保符號在任何草圖平面都正確顯示
+    gp_Vec axX(m_planeX), axY(m_planeY);
+    if (!m_view.IsNull()) {
+        double vx, vy, vz;
+        m_view->Up(vx, vy, vz);
+        gp_Vec up(vx, vy, vz);
+
+        double ex, ey, ez, atx, aty, atz;
+        m_view->Eye(ex, ey, ez);
+        m_view->At(atx, aty, atz);
+        gp_Vec viewDir(atx - ex, aty - ey, atz - ez);
+        if (viewDir.Magnitude() > 1e-10) {
+            viewDir.Normalize();
+            axX = viewDir.Crossed(up).Normalized();
+            axY = up.Normalized();
+        }
+    }
+
     // 根據 snap 類型繪製對應符號
     switch (m_candidate.type) {
     case SnapType::Endpoint:
-        drawEndpointSymbol(grp, p, s);
+        drawEndpointSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Midpoint:
-        drawMidpointSymbol(grp, p, s);
+        drawMidpointSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Center:
-        drawCenterSymbol(grp, p, s);
+        drawCenterSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Quadrant:
-        drawQuadrantSymbol(grp, p, s);
+        drawQuadrantSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Intersection:
-        drawIntersectSymbol(grp, p, s);
+        drawIntersectSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Perpendicular:
-        drawPerpendSymbol(grp, p, s);
+        drawPerpendSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Tangent:
-        drawTangentSymbol(grp, p, s);
+        drawTangentSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Nearest:
-        drawNearestSymbol(grp, p, s);
+        drawNearestSymbol(grp, p, s, axX, axY);
         break;
     case SnapType::Extension:
-        drawExtensionSymbol(grp, p, s);  // 虛線標示
+        drawExtensionSymbol(grp, p, s, axX, axY);  // 虛線標示
         break;
     case SnapType::Node:
-        drawEndpointSymbol(grp, p, s);  // 重用端點符號
+        drawEndpointSymbol(grp, p, s, axX, axY);  // 重用端點符號
         break;
     default:
-        drawNearestSymbol(grp, p, s);
+        drawNearestSymbol(grp, p, s, axX, axY);
         break;
     }
 }
@@ -142,43 +160,45 @@ void OSnapIndicator::ComputeSelection(const Handle(SelectMgr_Selection)& /*sel*/
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**  □  Endpoint：空心方框 */
+// OSnapIndicator.cpp - drawEndpointSymbol 實作改為：
 void OSnapIndicator::drawEndpointSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
+    gp_Vec dx = axX * s, dy = axY * s;
     std::vector<gp_Pnt> pts = {
-        gp_Pnt(p.X()-s, p.Y()-s, p.Z()),
-        gp_Pnt(p.X()+s, p.Y()-s, p.Z()),
-        gp_Pnt(p.X()+s, p.Y()+s, p.Z()),
-        gp_Pnt(p.X()-s, p.Y()+s, p.Z())
+        p.Translated(-dx - dy),
+        p.Translated( dx - dy),
+        p.Translated( dx + dy),
+        p.Translated(-dx + dy),
     };
     grp->AddPrimitiveArray(makePolyline(pts, true));
 }
 
 /**  △  Midpoint：等邊三角形 */
 void OSnapIndicator::drawMidpointSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
-    const double h = s * 1.732;  // sqrt(3)
+    gp_Vec dx = axX * s, dy = axY * s;
     std::vector<gp_Pnt> pts = {
-        gp_Pnt(p.X(),   p.Y()+h*0.667, p.Z()),   // 頂點
-        gp_Pnt(p.X()-s, p.Y()-h*0.333, p.Z()),   // 左下
-        gp_Pnt(p.X()+s, p.Y()-h*0.333, p.Z())    // 右下
+        p.Translated(-dx - dy),
+        p.Translated( dx - dy),
+        p.Translated(        dy),  // top center
     };
     grp->AddPrimitiveArray(makePolyline(pts, true));
 }
 
 /**  ○  Center：空心圓（16段近似） */
 void OSnapIndicator::drawCenterSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
-    constexpr int N = 24;
+    const int N = 16;
     std::vector<gp_Pnt> pts;
-    pts.reserve(N);
     for (int i = 0; i < N; ++i) {
         double a = 2.0 * M_PI * i / N;
-        pts.emplace_back(p.X() + s * std::cos(a),
-                         p.Y() + s * std::sin(a),
-                         p.Z());
+        pts.push_back(p.Translated(axX * (s * std::cos(a)) + axY * (s * std::sin(a))));
     }
     grp->AddPrimitiveArray(makePolyline(pts, true));
 
@@ -195,37 +215,37 @@ void OSnapIndicator::drawCenterSymbol(
 
 /**  ◇  Quadrant：旋轉 45° 的菱形 */
 void OSnapIndicator::drawQuadrantSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
+    gp_Vec dx = axX * s, dy = axY * s;
     std::vector<gp_Pnt> pts = {
-        gp_Pnt(p.X(),   p.Y()+s, p.Z()),
-        gp_Pnt(p.X()+s, p.Y(),   p.Z()),
-        gp_Pnt(p.X(),   p.Y()-s, p.Z()),
-        gp_Pnt(p.X()-s, p.Y(),   p.Z())
+        p.Translated(-dx),
+        p.Translated(-dy),
+        p.Translated( dx),
+        p.Translated( dy),
     };
     grp->AddPrimitiveArray(makePolyline(pts, true));
 }
 
 /**  ×  Intersection：兩條斜線交叉 */
 void OSnapIndicator::drawIntersectSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
-    Handle(Graphic3d_ArrayOfPolylines) lines =
-        new Graphic3d_ArrayOfPolylines(4, 2);
-    lines->AddVertex(gp_Pnt(p.X()-s, p.Y()-s, p.Z()));
-    lines->AddVertex(gp_Pnt(p.X()+s, p.Y()+s, p.Z()));
-    lines->AddBound(2);
-    lines->AddVertex(gp_Pnt(p.X()+s, p.Y()-s, p.Z()));
-    lines->AddVertex(gp_Pnt(p.X()-s, p.Y()+s, p.Z()));
-    grp->AddPrimitiveArray(lines);
-
-    // 外框小圓
-    drawCenterSymbol(grp, p, s * 0.8);
+    gp_Vec dx = axX * s, dy = axY * s;
+    // line 1:
+    auto l1 = makePolyline({ p.Translated(-dx - dy), p.Translated(dx + dy) });
+    // line 2: /
+    auto l2 = makePolyline({ p.Translated( dx - dy), p.Translated(-dx + dy) });
+    grp->AddPrimitiveArray(l1);
+    grp->AddPrimitiveArray(l2);
 }
 
 /**  ⊥  Perpendicular：L 形垂直符號 */
 void OSnapIndicator::drawPerpendSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
     Handle(Graphic3d_ArrayOfPolylines) lines =
         new Graphic3d_ArrayOfPolylines(5, 2);
@@ -242,7 +262,8 @@ void OSnapIndicator::drawPerpendSymbol(
 
 /**  切線符號：小圓 + 切線 */
 void OSnapIndicator::drawTangentSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
     // 小圓
     constexpr int N = 16;
@@ -268,17 +289,10 @@ void OSnapIndicator::drawTangentSymbol(
 
 /**  Nearest：X 記號（與 Intersection 不同：無外圓） */
 void OSnapIndicator::drawNearestSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
-    const double h = s * 0.7;
-    Handle(Graphic3d_ArrayOfPolylines) lines =
-        new Graphic3d_ArrayOfPolylines(4, 2);
-    lines->AddVertex(gp_Pnt(p.X()-h, p.Y()-h, p.Z()));
-    lines->AddVertex(gp_Pnt(p.X()+h, p.Y()+h, p.Z()));
-    lines->AddBound(2);
-    lines->AddVertex(gp_Pnt(p.X()+h, p.Y()-h, p.Z()));
-    lines->AddVertex(gp_Pnt(p.X()-h, p.Y()+h, p.Z()));
-    grp->AddPrimitiveArray(lines);
+    drawIntersectSymbol(grp, p, s * 0.7, axX, axY);
 }
 
 /**
@@ -302,7 +316,8 @@ void OSnapIndicator::drawNearestSymbol(
  *    dir = 延伸方向單位向量（從邊切線推導，指向 snap 點方向）
  */
 void OSnapIndicator::drawExtensionSymbol(
-    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s)
+    const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+    const gp_Vec& axX, const gp_Vec& axY)
 {
     // ── Step 1：推導延伸方向 ──────────────────────────────────────────────────
     //

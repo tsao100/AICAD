@@ -128,6 +128,16 @@ void OSnapManager::setSettings(const OSnapSettings& s) {
 // ──────────────────────────────────────────────────────────────────────────────
 void OSnapManager::setActivePlane(cad::Plane* plane) {
     m_detector.setActivePlane(plane);
+
+    // ✅ 同步更新 indicator 的平面軸向
+    if (!m_indicator.IsNull() && plane) {
+        QVector3D qx = plane->xAxis();
+        QVector3D qy = plane->yAxis();
+        m_indicator->setPlaneAxes(
+            gp_Dir(qx.x(), qx.y(), qx.z()),
+            gp_Dir(qy.x(), qy.y(), qy.z()));
+    }
+
     qDebug() << "[OSnapManager] Active plane:"
              << (plane ? plane->displayName() : "none");
 }
@@ -182,10 +192,10 @@ void OSnapManager::onMouseMove(int mouseX, int mouseY) {
         return;
     }
     // drag 中：m_enabled 可能為 false（無 command），但仍需偵測
-    if (!m_initialized || (!m_enabled && !m_gripDragging))
-        return;
+    if (!m_initialized) return;
 
-    if (!m_initialized || !m_enabled) {
+    // ✅ 修正：grip drag 中即使 m_enabled=false 也要偵測
+    if (!m_enabled && !m_gripDragging) {
         if (m_currentSnap.has_value()) {
             m_currentSnap.reset();
             updateIndicator(std::nullopt);

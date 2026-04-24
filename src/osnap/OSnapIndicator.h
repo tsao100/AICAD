@@ -62,6 +62,11 @@ public:
 
     void setView(const Handle(V3d_View)& view) { m_view = view; }
 
+    void setPlaneAxes(const gp_Dir& axX, const gp_Dir& axY) {
+        m_planeX = axX;
+        m_planeY = axY;
+    }
+
 protected:
     /// AIS_InteractiveObject 必要覆寫
     virtual void Compute(const Handle(PrsMgr_PresentationManager)& mgr,
@@ -72,15 +77,24 @@ protected:
                                   const Standard_Integer mode) override;
 
 private:
-    void drawEndpointSymbol   (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawMidpointSymbol   (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawCenterSymbol     (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawQuadrantSymbol   (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawIntersectSymbol  (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawPerpendSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawTangentSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawNearestSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
-    void drawExtensionSymbol  (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s);
+    void drawEndpointSymbol   (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                            const gp_Vec& axX, const gp_Vec& axY);
+    void drawMidpointSymbol   (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                            const gp_Vec& axX, const gp_Vec& axY);
+    void drawCenterSymbol     (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                          const gp_Vec& axX, const gp_Vec& axY);
+    void drawQuadrantSymbol   (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                            const gp_Vec& axX, const gp_Vec& axY);
+    void drawIntersectSymbol  (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                             const gp_Vec& axX, const gp_Vec& axY);
+    void drawPerpendSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                           const gp_Vec& axX, const gp_Vec& axY);
+    void drawTangentSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                           const gp_Vec& axX, const gp_Vec& axY);
+    void drawNearestSymbol    (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                           const gp_Vec& axX, const gp_Vec& axY);
+    void drawExtensionSymbol  (const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
+                             const gp_Vec& axX, const gp_Vec& axY);
 
     /// 建立多段線（閉合或開放）的 Graphic3d_ArrayOfPolylines
     Handle(Graphic3d_ArrayOfPolylines) makePolyline(
@@ -90,6 +104,8 @@ private:
     bool          m_hasCandidate = false;
     double        m_screenSize   = 14.0;  ///< 符號大小（像素）
     Handle(V3d_View) m_view;
+    gp_Dir m_planeX = gp_Dir(1,0,0);
+    gp_Dir m_planeY = gp_Dir(0,1,0);
 };
 
 } // namespace osnap

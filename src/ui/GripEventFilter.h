@@ -28,6 +28,7 @@ public:
 
     void setEnabled(bool enabled) { m_enabled = enabled; }
     bool isEnabled() const        { return m_enabled; }
+    void setView(const Handle(V3d_View)& view) { m_view = view; }
 
 private:
     gp_Pnt screenToWorld(int x, int y) const;
