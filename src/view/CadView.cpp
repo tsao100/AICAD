@@ -113,6 +113,7 @@ public:
     bool middleButtonPressed;
     QMap<AIS_InteractiveObject*, QString>  aisToFeatureId;
     QMap<AIS_InteractiveObject*, QString>  aisToGeomUuid;
+    QMap<AIS_InteractiveObject*, int>     aisToGeomIndex;
     QHash<cad::Sketch*, QString>           sketchFeatureIds;
 
     QSet<int>                              selectedGeomIndices;
@@ -742,6 +743,7 @@ void CadView::displayAllFeatures() {
                     if (!s.IsNull()) {
                         d->aisToFeatureId[s.get()] = feature->id();
                         d->aisToGeomUuid[s.get()] = (i < uuids.size()) ? uuids[i] : QString();
+                        d->aisToGeomIndex[s.get()] = i;
                     }
                 }
             } else {
@@ -755,6 +757,7 @@ void CadView::displayAllFeatures() {
                     if (!s.IsNull()) {
                         d->aisToFeatureId[s.get()] = feature->id();
                         d->aisToGeomUuid[s.get()] = (i < uuids.size()) ? uuids[i] : QString();
+                        d->aisToGeomIndex[s.get()] = i;
                     }
                 }
             }
@@ -929,12 +932,21 @@ void CadView::onSketchRebuilt()
         else
             ++it;
     }
+    // 同步清除 aisToGeomIndex 中已失效的條目
+    for (auto it = d->aisToGeomIndex.begin(); it != d->aisToGeomIndex.end(); ) {
+        if (!d->aisToFeatureId.contains(it.key()))
+            it = d->aisToGeomIndex.erase(it);
+        else
+            ++it;
+    }
+
     const QList<QString>& uuids = sketch->aisShapeUuids();
     const QList<Handle(AIS_Shape)>& shapes = sketch->aisShapes();
     for (int i = 0; i < shapes.size(); ++i) {
         if (!shapes[i].IsNull()) {
             d->aisToFeatureId[shapes[i].get()] = fid;
             d->aisToGeomUuid[shapes[i].get()] = (i < uuids.size()) ? uuids[i] : QString();
+            d->aisToGeomIndex[shapes[i].get()] = i;
         }
     }
 }
@@ -1301,20 +1313,57 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
 
         if (!hasCmd) {
-            // ── 無 command：草圖幾何選取 ─────────────────────────────
             bool additive = (event->modifiers() & Qt::ShiftModifier);
             d->context->SelectDetected(
                 additive ? AIS_SelectionScheme_Add
                          : AIS_SelectionScheme_Replace);
 
-            QStringList uuids = selectedGeomUuids();
             auto* bus = Application::instance()->eventBus();
+
+            // ── 同一個迴圈同時收集 UUID（給 Sketch 高亮）和 geomIndex（給 Grips）──
+            QStringList uuids;
+            QMap<QString, QSet<int>> selectionMap;
+
+            for (d->context->InitSelected();
+                 d->context->MoreSelected();
+                 d->context->NextSelected())
+            {
+                Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
+                    d->context->SelectedInteractive());
+                if (s.IsNull()) continue;
+
+                QString uuid = d->aisToGeomUuid.value(s.get());
+                if (!uuid.isEmpty()) uuids << uuid;
+
+                QString featureId = d->aisToFeatureId.value(s.get());
+                if (featureId.isEmpty()) continue;
+
+                int geomIndex = d->aisToGeomIndex.value(s.get(), -1);
+                if (geomIndex >= 0)
+                    selectionMap[featureId].insert(geomIndex);
+                else
+                    selectionMap[featureId];  // 確保 key 存在
+            }
+
             if (!uuids.isEmpty()) {
+                // ① 通知 Sketch 高亮選取的幾何
                 QVariantMap data;
                 data["uuids"] = QVariant::fromValue(uuids);
                 bus->publish(Events::SKETCH_GEOM_SELECTED, data);
+
+                // ② 觸發 GripManager 附加 Provider（這是之前完全缺漏的步驟）
+                if (!selectionMap.isEmpty()) {
+                    QString featureId = selectionMap.firstKey();
+                    QVariantList indexList;
+                    for (int idx : selectionMap[featureId]) indexList.append(idx);
+                    QVariantMap selData;
+                    selData["featureId"]   = featureId;
+                    selData["geomIndices"] = indexList;
+                    bus->publish("selection.featureSelected", selData);
+                }
             } else {
                 bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
+                bus->publish("selection.cleared", QVariant());  // 同步清除 Grips
             }
             return;
         }
@@ -1392,6 +1441,13 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             if (s.IsNull()) continue;
 
             QString featureId = d->aisToFeatureId.value(s.get());
+            if (featureId.isEmpty()) continue;
+
+            int geomIndex = d->aisToGeomIndex.value(s.get(), -1);
+            if (geomIndex >= 0)
+                selectionMap[featureId].insert(geomIndex);   // ← 指定幾何的 grip
+            else
+                selectionMap[featureId];                     // ← 確保 key 存在（非 sketch feature）
         }
 
         if (!selectionMap.isEmpty()) {

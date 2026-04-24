@@ -1038,10 +1038,13 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->cadView->setGripManager(d->gripManager, d->gripFilter);
 
         // ── 當使用者選取 Feature 時，掛載對應 provider ───────────────────────
+        // 修改後：
         connect(d->featureBrowser, &FeatureBrowser::featureSelectedById,
                 this, [this, docMgr](const QString& featureId) {
 
-                    d->gripManager->detach();   // 先清除舊 grips
+                    // Feature Browser 選取時只清除舊 grips、顯示屬性
+                    // 不在此附加 provider，grips 只在 Sketching mode 幾何被選取時才顯示
+                    d->gripManager->detach();
 
                     cad::Feature* f = docMgr->currentDocument()->findFeature(featureId);
                     if (!f){
@@ -1050,21 +1053,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     }
 
                     showFeatureProperties(f);
-
-                    if (auto* sketch = qobject_cast<cad::Sketch*>(f)) {
-                        // ✅ 補設草圖平面，否則 GripFilter 用錯誤的 plane 投影
-                        if (sketch->plane()) {
-                            QVector3D qx = sketch->plane()->xAxis();
-                            QVector3D qy = sketch->plane()->yAxis();
-                            d->gripFilter->setSketchPlane(sketch->plane());
-                            d->gripManager->setPlaneAxes(
-                                gp_Dir(qx.x(), qx.y(), qx.z()),
-                                gp_Dir(qy.x(), qy.y(), qy.z()));
-                        }
-                        auto* provider = new SketchGripProvider(sketch);
-                        d->gripManager->attachProvider(provider);
-                    }
-                    // 其他 Feature 類型可在此擴展（ExtrudeGripProvider 等）
                 });
 
         // ── 編輯草圖 ──────────────────────────────────────────────────────────────
