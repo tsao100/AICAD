@@ -73,7 +73,8 @@ bool GripEventFilter::eventFilter(QObject* /*obj*/, QEvent* event)
     case QEvent::MouseMove: {
         auto* e = static_cast<QMouseEvent*>(event);
         gp_Pnt wp = screenToWorld(e->x(), e->y());
-        bool handled = m_gripManager->mouseMoveEvent(wp);
+        // ← 傳 screen coords，讓 GripManager 在 drag 時可呼叫 OSnapManager
+        bool handled = m_gripManager->mouseMoveEvent(wp, e->x(), e->y());
         // 在 mouseMoveEvent 處理中，當 grip hover 狀態改變時發布事件：
         bool wasHovered = m_lastHovered;
 
@@ -96,7 +97,7 @@ bool GripEventFilter::eventFilter(QObject* /*obj*/, QEvent* event)
         auto* e = static_cast<QMouseEvent*>(event);
         if (e->button() != Qt::LeftButton) break;
         gp_Pnt wp = screenToWorld(e->x(), e->y());
-        m_gripCaptured = m_gripManager->mousePressEvent(wp);
+        m_gripCaptured = m_gripManager->mousePressEvent(wp, e->x(), e->y());
         return m_gripCaptured;
     }
 

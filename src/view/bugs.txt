@@ -1,3 +1,7 @@
 選取跟施加Constraint的geometry似乎對映錯誤, 如畫了線、弧、線, 選了兩條線加重合Constraint，結果弧也受到影響。請檢討修改相關程式碼，不用列出完整的式碼, 僅需列出需要更新或新增的程式碼即可。
 
 sketchPanel->setSketchSelection(n, lines, arcs) not well connected.
+
+Grips not show.
+
+Snap and grips ON. need to check later.

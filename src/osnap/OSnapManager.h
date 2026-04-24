@@ -67,7 +67,7 @@ public:
 
     // ── Snap 模式控制 ─────────────────────────────────────────────────────────
     void setSnapEnabled(bool enabled);
-    bool isSnapEnabled() const { return m_enabled && !m_gripActive; }
+    bool isSnapEnabled() const { return m_enabled && !m_gripHovered; }
 
     void setSnapTypeEnabled(SnapType type, bool enabled);
     bool isSnapTypeEnabled(SnapType type) const {
@@ -121,6 +121,11 @@ public:
     OSnapDetector& detector() { return m_detector; }
     void refreshIndicator() { updateIndicator(m_currentSnap); }
 
+    void onGripDragStarted();
+    void onGripDragEnded();
+
+    std::optional<gp_Pnt> snapPoint3D() const;
+
 Q_SIGNALS:
     /// 有新的 snap 點鎖定
     void snapLocked(const SnapCandidate& candidate);
@@ -154,8 +159,10 @@ private:
 
     bool m_enabled     = true;
     bool m_initialized = false;
-    bool m_gripActive  = false;   ///< Grip 系統活躍中，OSnap 讓步
+    bool m_gripHovered  = false;  ///< Grip hover 中（游標在 handle 上）→ 抑制 OSnap 指示器
+    bool m_gripDragging = false;  ///< Grip drag 中 → OSnap 應作用
     bool m_eventBusConnected = false;
+
 };
 
 } // namespace osnap

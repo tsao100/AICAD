@@ -1028,6 +1028,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->gripManager->setContext(d->cadView->context());
         d->gripManager->setGridSnap(true, 5.0);
 
+        // 在 d->gripManager 初始化之後加：
+        if (d->cadView && d->cadView->snapManager())
+            d->gripManager->setSnapManager(d->cadView->snapManager());
+
         // 安裝事件攔截器到 CadView widget
         d->gripFilter = new GripEventFilter(d->gripManager, d->cadView->view(), this);
         d->cadView->installEventFilter(d->gripFilter);

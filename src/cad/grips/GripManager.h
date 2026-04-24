@@ -4,6 +4,7 @@
 #include "GripPoint.h"
 #include "AIS_GripHandle.h"
 #include "GripProvider.h"
+#include "osnap/OSnapManager.h"
 
 #include <QObject>
 #include <QMap>
@@ -46,10 +47,15 @@ public:
     void setEndpointSnap(bool on) { m_snapEndpoint = on; }
     void setMidpointSnap(bool on) { m_snapMidpoint = on; }
 
+    void setSnapManager(osnap::OSnapManager* mgr) { m_snapManager = mgr; }
+
     // ── 滑鼠事件（由 GripEventFilter 呼叫）──────────────────────
-    bool mouseMoveEvent(const gp_Pnt& worldPos);   // returns true if grip active
-    bool mousePressEvent(const gp_Pnt& worldPos);
+    //bool mouseMoveEvent(const gp_Pnt& worldPos);   // returns true if grip active
+   // bool mousePressEvent(const gp_Pnt& worldPos);
     bool mouseReleaseEvent(const gp_Pnt& worldPos);
+
+    bool mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy);
+    bool mousePressEvent(const gp_Pnt& worldPos, int sx, int sy);
 
     // ── 視覺更新 ──────────────────────────────────────────────
     void refreshGrips();
@@ -97,6 +103,7 @@ private:
     bool        m_snapEndpoint = true;
     bool        m_snapMidpoint = true;
     bool        m_enabled = true;
+    osnap::OSnapManager* m_snapManager = nullptr;
 };
 
 } // namespace aicad::cad

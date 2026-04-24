@@ -159,32 +159,54 @@ SnapResult GripManager::computeSnap(const gp_Pnt& rawPos) const
 }
 
 // ── 滑鼠事件 ─────────────────────────────────────────────────────────
-bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos)
+bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
 {
-    if (!m_enabled || m_handles.isEmpty()) return false;
+    if (m_handles.isEmpty()) return false;
 
     if (m_isDragging && !m_activeGripId.isEmpty()) {
-        // ── 正在拖拉 ──────────────────────────────────────────────
-        SnapResult snap = computeSnap(worldPos);
-        Q_EMIT snapOccurred(snap);
+
+        // ── OSnap 優先 ──────────────────────────────────────────
+        gp_Pnt snapPos = worldPos;
+        bool   snapped = false;
+        QString snapDesc;
+
+        if (m_snapManager) {
+            m_snapManager->onMouseMove(sx, sy);      // 驅動偵測
+            auto pt3d = m_snapManager->snapPoint3D();
+            if (pt3d.has_value()) {
+                snapPos   = *pt3d;
+                snapped   = true;
+                //snapDesc  = m_snapManager->currentSnapDescription(); // 可選
+            }
+        }
+
+        // ── OSnap 無結果時退回 grip-to-grip / grid snap ─────────
+        if (!snapped) {
+            SnapResult fallback = computeSnap(worldPos);
+            snapPos  = fallback.point;
+            snapped  = fallback.snapped;
+            snapDesc = fallback.description;
+        }
+
+        SnapResult result{ snapped, snapPos, snapDesc };
+        Q_EMIT snapOccurred(result);
 
         // 更新 AIS handle 位置
         Handle(AIS_GripHandle) h = m_handles.value(m_activeGripId);
         if (!h.IsNull()) {
-            h->SetPosition(snap.point);
+            h->SetPosition(snapPos);
             m_context->RecomputePrsOnly(h, Standard_False);
             m_context->UpdateCurrentViewer();
         }
 
-        // 呼叫 provider 即時更新幾何
         for (GripPoint& gp : m_grips) {
             if (gp.id == m_activeGripId && gp.onDrag) {
-                gp.onDrag(snap.point, snap.snapped);
+                gp.onDrag(snapPos, snapped);
                 break;
             }
         }
 
-        Q_EMIT gripDragging(m_activeGripId, snap.point);
+        Q_EMIT gripDragging(m_activeGripId, snapPos);
         return true;
     }
 
@@ -206,10 +228,9 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos)
     return !hoverId.isEmpty();
 }
 
-bool GripManager::mousePressEvent(const gp_Pnt& worldPos)
+bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int sx, int sy)
 {
-    if (!m_enabled || m_handles.isEmpty()) return false;
-
+    if (m_handles.isEmpty()) return false;
     QString hitId = hitTestGrip(worldPos);
     if (hitId.isEmpty()) return false;
 
@@ -217,29 +238,35 @@ bool GripManager::mousePressEvent(const gp_Pnt& worldPos)
     m_isDragging   = true;
     m_dragStartPos = worldPos;
 
-    updateHandleColor(hitId, GripState::Active);
+    // 通知 OSnapManager 進入 drag 模式
+    if (m_snapManager) m_snapManager->onGripDragStarted();
 
+    updateHandleColor(hitId, GripState::Active);
     if (m_provider) m_provider->onGripDragBegin(hitId);
     Q_EMIT gripDragStarted(hitId);
-
-    qDebug() << "[GripManager] Drag started:" << hitId;
     return true;
 }
 
 bool GripManager::mouseReleaseEvent(const gp_Pnt& worldPos)
 {
-    if (!m_enabled && !m_isDragging) return false;
+    if (!m_isDragging) return false;
 
-    SnapResult snap = computeSnap(worldPos);
-
-    if (m_provider) {
-        m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, snap.point);
+    // 用最後一次 snap 結果做最終位置
+    gp_Pnt finalPos = worldPos;
+    if (m_snapManager) {
+        auto pt3d = m_snapManager->snapPoint3D();
+        if (pt3d.has_value()) finalPos = *pt3d;
+        m_snapManager->onGripDragEnded();             // 清除 drag 狀態
     }
 
-    Q_EMIT gripDragFinished(m_activeGripId, m_dragStartPos, snap.point);
+    bool didSnap = finalPos.Distance(worldPos) > Precision::Confusion();
+    SnapResult snap{ didSnap, finalPos, QString{} };
+
+    if (m_provider)
+        m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, finalPos);
+    Q_EMIT gripDragFinished(m_activeGripId, m_dragStartPos, finalPos);
 
     updateHandleColor(m_activeGripId, GripState::Normal);
-
     m_isDragging   = false;
     m_activeGripId.clear();
 

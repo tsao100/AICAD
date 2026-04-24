@@ -172,7 +172,20 @@ std::optional<QVector2D> OSnapManager::snapPoint2D() const {
 //  滑鼠事件處理
 // ──────────────────────────────────────────────────────────────────────────────
 void OSnapManager::onMouseMove(int mouseX, int mouseY) {
-    if (!m_initialized || !m_enabled || m_gripActive) {
+    // hover 中：OSnap 讓步給 grip handle 游標
+    if (m_gripHovered) {
+        if (m_currentSnap.has_value()) {
+            m_currentSnap.reset();
+            updateIndicator(std::nullopt);
+            Q_EMIT snapCleared();
+        }
+        return;
+    }
+    // drag 中：m_enabled 可能為 false（無 command），但仍需偵測
+    if (!m_initialized || (!m_enabled && !m_gripDragging))
+        return;
+
+    if (!m_initialized || !m_enabled) {
         if (m_currentSnap.has_value()) {
             m_currentSnap.reset();
             updateIndicator(std::nullopt);
@@ -249,20 +262,25 @@ void OSnapManager::hideIndicator() {
 //  Grip 系統協同
 // ──────────────────────────────────────────────────────────────────────────────
 void OSnapManager::onGripHovered() {
-    if (!m_gripActive) {
-        m_gripActive = true;
-        // Grip 活躍時隱藏 snap 指示器
-        m_currentSnap.reset();
-        updateIndicator(std::nullopt);
-        qDebug() << "[OSnapManager] Grip active, OSnap suspended";
-    }
+    m_gripHovered = true;
+    m_currentSnap.reset();
+    updateIndicator(std::nullopt);
 }
 
 void OSnapManager::onGripReleased() {
-    if (m_gripActive) {
-        m_gripActive = false;
-        qDebug() << "[OSnapManager] Grip released, OSnap resumed";
-    }
+    m_gripHovered  = false;
+    m_gripDragging = false;   // 防禦性清除
+}
+
+void OSnapManager::onGripDragStarted() {
+    m_gripHovered  = false;   // hover 解除（handle 已被捕捉）
+    m_gripDragging = true;
+}
+
+void OSnapManager::onGripDragEnded() {
+    m_gripDragging = false;
+    m_currentSnap.reset();
+    updateIndicator(std::nullopt);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -354,6 +372,14 @@ void OSnapManager::connectEventBus() {
     });
 
     qDebug() << "[OSnapManager] EventBus connected";
+}
+
+
+std::optional<gp_Pnt> OSnapManager::snapPoint3D() const {
+    if (!m_currentSnap.has_value()) return std::nullopt;
+    // m_currentSnap 是 2D sketch 平面座標，需投影回 3D
+    // 若 m_activePlane 存在則做投影，否則直接用原始 3D hit
+    return m_currentSnap->worldPoint;  // 假設 OSnapResult 已存 3D 點
 }
 
 } // namespace osnap
