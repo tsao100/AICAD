@@ -197,6 +197,8 @@ public:
      * @param height 擠出高度
      */
     static BuildResult extrudeSketch(cad::Sketch* sketch, double height);
+
+    static BuildResult extrudeShape(const TopoDS_Shape& profile, double height);
     
     /**
      * @brief 旋轉成 Solid

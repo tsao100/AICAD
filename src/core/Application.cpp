@@ -73,7 +73,6 @@ public:
     // ✅ 新增
     core::CommandLineManager* commandLineManager;
     command::CommandAlias* commandAlias;
-    std::optional<cad::SketchRegion> selectedRegion;
 
     static const QString VERSION;
     static const QString APP_NAME;
@@ -519,16 +518,20 @@ void Application::setActiveSketch(cad::Sketch* sketch) {
              << (sketch ? sketch->name() : "null");
 }
 
-std::optional<cad::SketchRegion> Application::selectedRegion() const {
-    return d->selectedRegion;
+std::optional<aicad::cad::SketchRegion> Application::selectedRegion() const {
+    return m_selectedRegion;
 }
 
-void Application::setSelectedRegion(const cad::SketchRegion& region) {
-    d->selectedRegion = region;
+void Application::setSelectedRegion(
+    const std::optional<aicad::cad::SketchRegion>& region)
+{
+    m_selectedRegion = region;
+    Q_EMIT selectedRegionChanged();
 }
 
 void Application::clearSelectedRegion() {
-    d->selectedRegion = std::nullopt;
+    m_selectedRegion = std::nullopt;
+    Q_EMIT selectedRegionChanged();
 }
 
 } // namespace core

@@ -1309,7 +1309,27 @@ void UIManager::connectCommandLineEvents() {
     bus->subscribe("command.start-centerline", this, [this](const QVariant&) {
         core::Application::instance()->commandManager()
             ->executeCommand("centerline", QStringList{});
-    });
+    });    
+
+    bus->subscribe("command.show-sketch-regions", this,
+                   [this](const QVariant& data) {
+                       QVariantMap map = data.toMap();
+                       QString sketchId = map["sketchId"].toString();
+                       cad::Document* doc = core::Application::instance()
+                                                ->documentManager()->currentDocument();
+                       if (!doc) return;
+                       cad::Feature* feat = doc->findFeature(sketchId);
+                       cad::Sketch* sketch = qobject_cast<cad::Sketch*>(feat);
+                       if (!sketch || !d->cadView) return;
+                       auto regions = sketch->detectRegions();
+                       d->cadView->displaySketchRegions(regions, sketch);
+                   });
+
+    bus->subscribe("command.clear-sketch-regions", this,
+                   [this](const QVariant&) {
+                       if (d->cadView)
+                           d->cadView->clearSketchRegions();
+                   });
 }
 
 // 在 setupDefaultUI() 或 initialize() 中，找到 addDockWidget 的位置後加入：

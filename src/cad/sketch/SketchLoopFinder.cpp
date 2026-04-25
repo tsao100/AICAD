@@ -102,7 +102,7 @@ QVector<SketchRegion> SketchLoopFinder::findRegions(const Sketch* sketch) const
 
     // 1. 從 Normal 幾何取出線段端點，建半邊
     for (const SketchGeometry* g : sketch->geometries()) {
-        if (g->isConstruction()) continue;
+        if (g->role != GeomRole::Normal) continue;
 
         QVector<QVector2D> pts;
         switch (g->type) {

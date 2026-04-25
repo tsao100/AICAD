@@ -153,7 +153,7 @@ public:
     void setActiveSketch(cad::Sketch* sketch);
 
     std::optional<cad::SketchRegion> selectedRegion() const;
-    void setSelectedRegion(const cad::SketchRegion& region);
+    void setSelectedRegion(const std::optional<cad::SketchRegion>& region);
     void clearSelectedRegion();
 
 Q_SIGNALS:
@@ -172,6 +172,8 @@ Q_SIGNALS:
      * @param message 錯誤訊息
      */
     void errorOccurred(const QString& message);
+
+    void selectedRegionChanged();
     
 private:
     /**
@@ -182,7 +184,9 @@ private:
     /**
      * @brief 解構子
      */
-    ~Application() override;
+    ~Application() override;    
+
+    std::optional<aicad::cad::SketchRegion> m_selectedRegion;
     
     // 禁用複製
     Q_DISABLE_COPY(Application)

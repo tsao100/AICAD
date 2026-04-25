@@ -424,6 +424,25 @@ BuildResult GeometryBuilder::extrudeSketch(cad::Sketch* sketch, double height) {
     }
 }
 
+
+BuildResult GeometryBuilder::extrudeShape(const TopoDS_Shape& profile,
+                                          double height)
+{
+    if (profile.IsNull())
+        return BuildResult::error("Profile is null");
+
+    gp_Vec direction(0.0, 0.0, height);
+    try {
+        BRepPrimAPI_MakePrism prism(profile, direction);
+        if (prism.IsDone())
+            return BuildResult(prism.Shape());          // ← 用既有建構子
+        return BuildResult::error("BRepPrimAPI_MakePrism failed"); // ← 用 static error()
+    } catch (const Standard_Failure& e) {
+        return BuildResult::error(
+            QString("OCCT error: %1").arg(e.GetMessageString()));
+    }
+}
+
 BuildResult GeometryBuilder::revolve(const TopoDS_Shape& profile,
                                      const gp_Pnt& axisPoint,
                                      const gp_Dir& axisDir,
@@ -654,15 +673,15 @@ TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
     }
 }
 
+
 TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
                                  const cad::SketchRegion& region)
 {
-    // ── outer wire ───────────────────────────────────────────────
     BRepBuilderAPI_MakeWire outerWire;
     for (const QString& uuid : region.outerLoop.edgeUuids) {
         for (const cad::SketchGeometry* g : sketch->geometries()) {
             if (g->uuid != uuid) continue;
-            TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);
+            TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);  // ← 正確函式名
             if (!e.IsNull()) outerWire.Add(e);
         }
     }
@@ -670,13 +689,12 @@ TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
 
     BRepBuilderAPI_MakeFace faceMaker(outerWire.Wire(), Standard_True);
 
-    // ── holes ────────────────────────────────────────────────────
     for (const auto& hole : region.holes) {
         BRepBuilderAPI_MakeWire holeWire;
         for (const QString& uuid : hole.edgeUuids) {
             for (const cad::SketchGeometry* g : sketch->geometries()) {
                 if (g->uuid != uuid) continue;
-                TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);
+                TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);  // ← 正確函式名
                 if (!e.IsNull()) holeWire.Add(e);
             }
         }
@@ -685,8 +703,6 @@ TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
 
     return faceMaker.IsDone() ? faceMaker.Face() : TopoDS_Face();
 }
-
-
 
 } // namespace geometry
 } // namespace aicad

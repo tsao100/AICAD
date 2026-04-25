@@ -116,17 +116,21 @@ bool Extrude::rebuild() {
         return false;
     }
     // 在 Extrude::rebuild() 中
+    TopoDS_Face face;
     TopoDS_Shape profile;
-
     if (auto reg = core::Application::instance()->selectedRegion()) {
-        // 用選取的 region 建立 face（含洞）
-        profile = geometry::faceFromSketchRegion(m_sketch, *reg);
-    } else if (m_sketch->hasClosedProfile()) {
-        // 原本的全輪廓 extrude 行為
-        BRepBuilderAPI_MakeFace faceMaker(m_sketch->mainWire(),
-                                          Standard_True);
-        if (faceMaker.IsDone())
-            profile = faceMaker.Face();
+        face = geometry::faceFromSketchRegion(m_sketch, *reg);
+        profile = face;
+    } else {
+        // 自動選第一個 region（若有）
+        auto regions = m_sketch->detectRegions();
+        if (!regions.isEmpty())
+            profile = geometry::faceFromSketchRegion(m_sketch, regions.first());
+        else if (m_sketch->hasClosedProfile()) {
+            BRepBuilderAPI_MakeFace faceMaker(m_sketch->mainWire(), Standard_True);
+            if (faceMaker.IsDone())
+                profile = faceMaker.Face();
+        }
     }
 
     if (profile.IsNull()) {
@@ -134,38 +138,12 @@ bool Extrude::rebuild() {
         return false;
     }
 
-    try {
-        // 計算實際高度
-        double actualHeight = m_heightExpr.cachedValue;
-        if (m_reversed) {
-            actualHeight = -actualHeight;
-        }
-        
-        // 使用 GeometryBuilder 執行擠出
-        auto result = geometry::GeometryBuilder::extrudeSketch(m_sketch, actualHeight);
-        
-        if (result) {
-            setShape(result.shape);
-            clearError();
-            qDebug() << "[Extrude]" << name() << "rebuilt successfully";
-            return true;
-        } else {
-            qWarning() << "[Extrude]" << name() << "build failed:" << result.errorMessage;
-            setError(result.errorMessage);
-            return false;
-        }
-        
-    } catch (const Standard_Failure& e) {
-        QString error = QString("OCCT error: %1").arg(e.GetMessageString());
-        qCritical() << "[Extrude]" << name() << error;
-        setError(error);
-        return false;
-    } catch (...) {
-        QString error = "Unknown error during rebuild";
-        qCritical() << "[Extrude]" << name() << error;
-        setError(error);
-        return false;
-    }
+    double actualHeight = m_heightExpr.cachedValue;
+    if (m_reversed) actualHeight = -actualHeight;
+
+    // 直接用 profile 擠出，不再重新從 sketch 推導
+    auto result = geometry::GeometryBuilder::extrudeShape(face, actualHeight);
+    // （需要在 GeometryBuilder 新增 extrudeShape(TopoDS_Shape, double)）
 }
 
 void Extrude::setHeight(double h) {

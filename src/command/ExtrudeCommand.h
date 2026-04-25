@@ -2,6 +2,7 @@
 #define AICAD_COMMAND_EXTRUDECOMMAND_H
 
 #include "Command.h"
+#include "cad/Sketch.h"
 
 namespace aicad {
 namespace command {
@@ -15,6 +16,8 @@ public:
     void cleanup() override;
 
 private:
+    void promptForRegion(int regionCount);   // ← 移除 sketch* 參數（改用 Qt signal）
+    void promptForHeight();
     void handleHeightInput(const QString& input);
     QString m_sketchId;
 };
