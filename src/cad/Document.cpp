@@ -585,12 +585,23 @@ void Document::rebuildFeature(Feature* feature) {
             sketch->displayInContext(m_aisContext);
         m_aisContext->UpdateCurrentViewer();
     } else if (!m_aisContext.IsNull()) {
-        // 非 Sketch feature
+        // ✅ 先查是否已有 AIS handle（既有 feature 的 rebuild）
+        bool found = false;
         for (auto& entry : m_featureAisShapes) {
             if (entry.first == feature) {
-                m_aisContext->Redisplay(entry.second, Standard_False);
+                if (!feature->shape().IsNull()) {
+                    entry.second->SetShape(feature->shape());
+                    m_aisContext->Redisplay(entry.second, Standard_False);
+                } else {
+                    m_aisContext->Erase(entry.second, Standard_False);
+                }
+                found = true;
                 break;
             }
+        }
+        // ✅ 新建 feature：第一次出現，呼叫 displayFeature 建立 AIS handle 並加入 cache
+        if (!found && !feature->shape().IsNull() && feature->isVisible()) {
+            displayFeature(feature, m_aisContext);
         }
         m_aisContext->UpdateCurrentViewer();
     }

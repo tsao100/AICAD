@@ -33,13 +33,12 @@ CommandResult ExtrudeCommand::execute(const CommandContext& context) {
 
     m_sketchId = sketch->id();
 
-    // 非互動模式（命令列直接帶高度參數）
+    // 非互動模式
     if (!context.args.isEmpty()) {
         bool ok;
         double height = context.args[0].toDouble(&ok);
         if (!ok || height <= 0.0)
             return CommandResult::Failure("Invalid height value");
-
         QVariantMap data;
         data["sketchId"] = m_sketchId;
         data["height"]   = height;
@@ -49,22 +48,21 @@ CommandResult ExtrudeCommand::execute(const CommandContext& context) {
         return CommandResult::Success();
     }
 
-    // 互動模式
-    setState(CommandState::Running);
-    app->clearSelectedRegion();   // ← 確保舊的 region 選取被清除
+    // ✅ 修正：先做所有前置檢查，確認可以繼續，再 setState(Running)
+    app->clearSelectedRegion();
 
     auto regions = sketch->detectRegions();
     if (regions.isEmpty())
         return CommandResult::Failure("Sketch has no closed region to extrude");
 
-    // 通知 CadView 顯示所有可選 region（半透明預覽）
-    // UIManager 訂閱此事件後呼叫 cadView->displaySketchRegions()
+    // ✅ 所有檢查通過才設為 Running
+    setState(CommandState::Running);
+
     QVariantMap regionData;
     regionData["sketchId"] = m_sketchId;
     bus->publish("command.show-sketch-regions", regionData);
 
     if (regions.size() == 1) {
-        // 只有一個區域，直接選取並等待使用者確認（或自動進入高度輸入）
         app->setSelectedRegion(regions.first());
         bus->publish(Events::COMMAND_PROMPT,
                      "One region found, auto-selected. Enter extrude height:");

@@ -131,6 +131,12 @@ QVector<SketchRegion> SketchLoopFinder::findRegions(const Sketch* sketch) const
         default:
             if (g->points.size() >= 2) {
                 pts = g->points;
+                // ✅ 閉合多段線：補上最後一點回到起點，讓迴圈能建出閉合邊
+                if (g->type == SketchGeometryType::Polyline) {
+                    const auto* pl = static_cast<const SketchPolyline*>(g);
+                    if (pl->closed && !pts.isEmpty())
+                        pts.append(pts.first());
+                }
             } else continue;
         }
 

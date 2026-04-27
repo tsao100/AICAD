@@ -668,6 +668,12 @@ TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
         if (!maker.IsDone()) return {};
         return BRepBuilderAPI_MakeEdge(maker.Value());
     }
+    case SketchGeometryType::Polyline: {
+        // Polyline 不能只回傳單一 edge；此 case 僅供 fallback 偵錯，
+        // 正常路徑應從 faceFromSketchRegion 展開
+        qWarning() << "[edgeFromSketchGeometry] Polyline should be handled by faceFromSketchRegion";
+        return {};
+    }
     default:
         return {};
     }
@@ -678,11 +684,30 @@ TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
                                  const cad::SketchRegion& region)
 {
     BRepBuilderAPI_MakeWire outerWire;
+    QSet<QString> processedUuids; // ← 防止同一 Polyline uuid 處理 N 次
+
     for (const QString& uuid : region.outerLoop.edgeUuids) {
         for (const cad::SketchGeometry* g : sketch->geometries()) {
             if (g->uuid != uuid) continue;
-            TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);  // ← 正確函式名
-            if (!e.IsNull()) outerWire.Add(e);
+
+            if (g->type == cad::SketchGeometryType::Polyline) {
+                if (processedUuids.contains(uuid)) break; // ← 只展開一次
+                processedUuids.insert(uuid);
+                const auto* pl = static_cast<const cad::SketchPolyline*>(g);
+                int nSeg = pl->closed ? pl->points.size() : pl->points.size() - 1;
+                for (int i = 0; i < nSeg; ++i) {
+                    QVector3D p1 = sketch->planeToWorld(pl->points[i]);
+                    QVector3D p2 = sketch->planeToWorld(pl->points[(i + 1) % pl->points.size()]);
+                    BRepBuilderAPI_MakeEdge e(
+                        gp_Pnt(p1.x(), p1.y(), p1.z()),
+                        gp_Pnt(p2.x(), p2.y(), p2.z()));
+                    if (e.IsDone()) outerWire.Add(e.Edge());
+                }
+            } else {
+                TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);
+                if (!e.IsNull()) outerWire.Add(e);
+            }
+            break;
         }
     }
     if (!outerWire.IsDone()) return {};

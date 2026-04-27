@@ -99,51 +99,58 @@ void Extrude::setDraftAngle(double angle) {
 
 bool Extrude::rebuild() {
     qDebug() << "[Extrude]" << name() << "rebuilding...";
-    
-    if (!m_sketch) {
-        QString error = "No sketch specified";
-        qWarning() << "[Extrude]" << name() << error;
-        setError(error);
-        return false;
-    }
-    
+
+    if (!m_sketch) { setError("No sketch specified"); return false; }
     if (!m_sketch->hasValidShape() || !m_sketch->hasExtrudableProfile()) {
-        QString error = m_sketch->hasValidShape()
-                            ? "Sketch has no closed profile for extrude"
-                            : "Sketch has no valid shape";
-        qWarning() << "[Extrude]" << name() << error;
-        setError(error);
+        setError(m_sketch->hasValidShape()
+                     ? "Sketch has no closed profile for extrude"
+                     : "Sketch has no valid shape");
         return false;
     }
-    // 在 Extrude::rebuild() 中
-    TopoDS_Face face;
-    TopoDS_Shape profile;
+
+    // ✅ 只用一個變數 profile（修正：移除多餘的 face 變數）
+    TopoDS_Face profile;
     if (auto reg = core::Application::instance()->selectedRegion()) {
-        face = geometry::faceFromSketchRegion(m_sketch, *reg);
-        profile = face;
+        profile = geometry::faceFromSketchRegion(m_sketch, *reg);
     } else {
-        // 自動選第一個 region（若有）
         auto regions = m_sketch->detectRegions();
         if (!regions.isEmpty())
             profile = geometry::faceFromSketchRegion(m_sketch, regions.first());
         else if (m_sketch->hasClosedProfile()) {
-            BRepBuilderAPI_MakeFace faceMaker(m_sketch->mainWire(), Standard_True);
-            if (faceMaker.IsDone())
-                profile = faceMaker.Face();
+            BRepBuilderAPI_MakeFace fm(m_sketch->mainWire(), Standard_True);
+            if (fm.IsDone()) profile = fm.Face();
         }
     }
 
+    // Path 3: 直接從 sketch wire 建面（Polyline / Rectangle fallback）
     if (profile.IsNull()) {
-        setError("No valid profile for extrude");
-        return false;
+        for (const TopoDS_Wire& wire : m_sketch->wires()) {
+            if (wire.IsNull()) continue;
+            BRepBuilderAPI_MakeFace fm(wire, Standard_True);
+            if (fm.IsDone()) { profile = fm.Face(); break; }
+        }
     }
+
+    if (profile.IsNull()) { setError("No valid profile for extrude"); return false; }
 
     double actualHeight = m_heightExpr.cachedValue;
     if (m_reversed) actualHeight = -actualHeight;
 
-    // 直接用 profile 擠出，不再重新從 sketch 推導
-    auto result = geometry::GeometryBuilder::extrudeShape(face, actualHeight);
-    // （需要在 GeometryBuilder 新增 extrudeShape(TopoDS_Shape, double)）
+    // ✅ 修正：從草圖平面法向量算擠出方向，不再寫死 Z 軸
+    const cad::Plane* plane = m_sketch->plane();
+    if (!plane) { setError("Sketch has no valid plane"); return false; }
+
+    QVector3D n = plane->normal().normalized();
+    gp_Vec direction(n.x() * actualHeight,
+                     n.y() * actualHeight,
+                     n.z() * actualHeight);
+
+    // ✅ 修正：傳入 profile（TopoDS_Face）和正確方向
+    auto result = geometry::GeometryBuilder::extrude(profile, direction);
+    if (!result.success) { setError(result.errorMessage); return false; }
+
+    setShape(result.shape);
+    return true;
 }
 
 void Extrude::setHeight(double h) {

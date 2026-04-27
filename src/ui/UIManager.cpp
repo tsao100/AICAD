@@ -15,6 +15,7 @@
 #include "command/CommandAlias.h"        // ✅ 新增
 #include "view/ViewManager.h"  // ✅ 添加
 #include "view/CadView.h"      // ✅ 添加
+#include "view/RubberBand.h"
 #include "view/ViewGrid.h"      // ✅ 添加
 #include <QShortcut>
 #include "CommandLineWidget.h"
@@ -388,6 +389,21 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 }
             });
         
+        // ✅ 新增：處理 extrude 完成後的視圖切換請求
+        bus->subscribe("command.request-view-setup", this,
+                       [this](const QVariant& data) {
+                           if (!d->cadView) return;
+                           QVariantMap map = data.toMap();
+                           QString mode = map["mode"].toString();
+                           if (mode == "iso" || mode == "3d") {
+                               d->cadView->setMode(view::InteractionMode::Navigation);
+                               d->cadView->setViewType(view::ViewType::Isometric);
+                               QTimer::singleShot(50, [this]() {
+                                   if (d->cadView) d->cadView->fitAll();
+                               });
+                           }
+                       });
+
         // 7. 連接 DocumentManager 信號
         connect(docMgr, &core::DocumentManager::documentCreated,
                 this, [this](cad::Document* doc) {
@@ -454,6 +470,35 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         bus->subscribe(core::Events::FEATURE_CREATED, this, [this](const QVariant& data) {
             updateFeatureTree();
         });
+
+        // 處理 rubber band 更新請求（RectCommand 互動時）
+        bus->subscribe("command.update-rubber-band", this,
+                       [this](const QVariant& data) {
+                           if (!d->cadView) return;
+                           auto* rb = d->cadView->rubberBand();
+                           if (!rb) return;
+                           QVariantMap map = data.toMap();
+                           QString action = map["action"].toString();
+                           if (action == "clearAndAdd") {
+                               rb->clearPoints();
+                               QVector2D pt = map["point"].value<QVector2D>();
+                               rb->addPoint(pt);
+                           } else if (action == "clear") {
+                               rb->clearPoints();
+                               rb->clear();
+                           }
+                       });
+
+        bus->subscribe("command.request-cleanup", this,
+                       [this](const QVariant& data) {
+                           QVariantMap map = data.toMap();
+                           if (map["clearRubberBand"].toBool() && d->cadView) {
+                               if (auto* rb = d->cadView->rubberBand()) {
+                                   rb->clearPoints();
+                                   rb->clear();
+                               }
+                           }
+                       });
 
         // ✅ Monitor user interactions for debugging/logging
         bus->subscribe(core::Events::POINT_ACQUIRED, this,
