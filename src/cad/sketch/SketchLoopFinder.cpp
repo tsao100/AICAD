@@ -99,6 +99,7 @@ QVector<SketchRegion> SketchLoopFinder::findRegions(const Sketch* sketch) const
 {
     QVector<Vertex>   verts;
     QVector<HalfEdge> halfEdges;
+    QVector<SketchRegion> circleRegions;
 
     // 1. 從 Normal 幾何取出線段端點，建半邊
     for (const SketchGeometry* g : sketch->geometries()) {
@@ -112,20 +113,31 @@ QVector<SketchRegion> SketchLoopFinder::findRegions(const Sketch* sketch) const
             break;
         }
         case SketchGeometryType::Arc: {
-            // 弧端點近似（僅端點用於拓撲，曲率在 Wire 建立時保留）
-            auto* a = static_cast<const SketchArc*>(g);
-            pts = a->points;
+            const auto* a = static_cast<const SketchArc*>(g);
+            if (a->curve.IsNull()) continue;                         // ← 修正：用 curve 不用 points
+            gp_Pnt sp = a->curve->StartPoint();
+            gp_Pnt ep = a->curve->EndPoint();
+            const cad::Plane* pl = sketch->plane();
+            if (!pl) continue;
+            auto toLocal = [&](const gp_Pnt& p) -> QVector2D {
+                QVector3D v(p.X() - pl->origin().x(),
+                            p.Y() - pl->origin().y(),
+                            p.Z() - pl->origin().z());
+                return QVector2D(QVector3D::dotProduct(v, pl->xAxis()),
+                                 QVector3D::dotProduct(v, pl->yAxis()));
+            };
+            pts = { toLocal(sp), toLocal(ep) };
             break;
         }
         case SketchGeometryType::Circle:
             // 圓：自成一個封閉 loop，跳過端點建表
             {
                 SketchRegion r;
-                r.uuid = g->uuid;
+                r.uuid             = g->uuid;
                 r.outerLoop.edgeUuids = { g->uuid };
-                r.outerLoop.isOuter = true;
-                // 圓的 region 直接回傳（稍後合併）
-                // （簡化：先略過圓的 containment 計算）
+                r.outerLoop.isOuter   = true;
+                circleRegions.append(r);   // ← 修正：實際存入，不再是 local 變數
+                continue;
             }
             continue;
         default:
@@ -234,6 +246,7 @@ QVector<SketchRegion> SketchLoopFinder::findRegions(const Sketch* sketch) const
         regions.append(sr);
     }
 
+    regions.append(circleRegions);
     return regions;
 }
 

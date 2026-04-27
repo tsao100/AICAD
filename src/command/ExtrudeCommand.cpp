@@ -52,22 +52,18 @@ CommandResult ExtrudeCommand::execute(const CommandContext& context) {
     app->clearSelectedRegion();
 
     auto regions = sketch->detectRegions();
-    if (regions.isEmpty())
+    // ← 修正：圓 / arc+line 可能 detectRegions 為空但仍可擠出
+    if (regions.isEmpty() && !sketch->hasExtrudableProfile())
         return CommandResult::Failure("Sketch has no closed region to extrude");
 
-    // ✅ 所有檢查通過才設為 Running
     setState(CommandState::Running);
 
-    QVariantMap regionData;
-    regionData["sketchId"] = m_sketchId;
-    bus->publish("command.show-sketch-regions", regionData);
-
-    if (regions.size() == 1) {
-        app->setSelectedRegion(regions.first());
+    if (regions.size() == 1 || (regions.isEmpty() && sketch->hasExtrudableProfile())) {
+        // 單一 region 或直接可擠出的輪廓（圓等）
+        if (!regions.isEmpty())
+            app->setSelectedRegion(regions.first());
         bus->publish(Events::COMMAND_PROMPT,
-                     "One region found, auto-selected. Enter extrude height:");
-        bus->publish(Events::COMMAND_LOG,
-                     "One region found, auto-selected. Enter extrude height:");
+                     "Profile found. Enter extrude height:");
         promptForHeight();
     } else {
         promptForRegion(regions.size());

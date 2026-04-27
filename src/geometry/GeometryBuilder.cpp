@@ -657,16 +657,20 @@ TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
             gp_Pnt(p2.x(), p2.y(), p2.z()));
     }
     case SketchGeometryType::Arc: {
-        auto* a = static_cast<const SketchArc*>(g);
-        QVector3D p1 = sketch->planeToWorld(a->points[0]);
-        QVector3D p2 = sketch->planeToWorld(a->points[1]);
-        QVector3D p3 = sketch->planeToWorld(a->points[2]);
-        GC_MakeArcOfCircle maker(
-            gp_Pnt(p1.x(), p1.y(), p1.z()),
-            gp_Pnt(p2.x(), p2.y(), p2.z()),
-            gp_Pnt(p3.x(), p3.y(), p3.z()));
-        if (!maker.IsDone()) return {};
-        return BRepBuilderAPI_MakeEdge(maker.Value());
+        const auto* a = static_cast<const cad::SketchArc*>(g);
+        if (a->curve.IsNull()) return {};
+        BRepBuilderAPI_MakeEdge e(a->curve);          // ← 修正
+        return e.IsDone() ? e.Edge() : TopoDS_Edge();
+    }
+
+    case SketchGeometryType::Circle: {
+        const auto* c = static_cast<const cad::SketchCircle*>(g);
+        QVector3D ctr = sketch->planeToWorld(c->center);
+        QVector3D n   = sketch->plane()->normal();
+        gp_Ax2 ax2(gp_Pnt(ctr.x(), ctr.y(), ctr.z()),
+                   gp_Dir(n.x(),   n.y(),   n.z()));
+        BRepBuilderAPI_MakeEdge e(gp_Circ(ax2, c->radius));
+        return e.IsDone() ? e.Edge() : TopoDS_Edge();
     }
     case SketchGeometryType::Polyline: {
         // Polyline 不能只回傳單一 edge；此 case 僅供 fallback 偵錯，
