@@ -24,6 +24,8 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
+#include <ShapeFix_Shape.hxx>
+#include <BRepLib.hxx>
 
 #include <GC_MakeSegment.hxx>
 #include <GC_MakeCircle.hxx>
@@ -323,11 +325,20 @@ BuildResult GeometryBuilder::extrude(const TopoDS_Face& face,
     
     try {
         BRepPrimAPI_MakePrism prismBuilder(face, direction);
-        if (prismBuilder.IsDone()) {
-            return BuildResult(prismBuilder.Shape());
-        } else {
+        if (!prismBuilder.IsDone())
             return BuildResult::error("Failed to extrude face");
-        }
+
+        TopoDS_Shape result = prismBuilder.Shape();
+
+        // ✅ 修正面法向量 / 拓撲一致性，避免重繪後某些面消失
+        ShapeFix_Shape fixer(result);
+        fixer.Perform();
+        result = fixer.Shape();
+
+        // ✅ 確保所有曲線精度一致（避免 B-rep 邊界不吻合）
+        BRepLib::BuildCurves3d(result);
+
+        return BuildResult(result);
     } catch (const Standard_Failure& e) {
         return BuildResult::error(QString("OCCT error: %1").arg(e.GetMessageString()));
     }

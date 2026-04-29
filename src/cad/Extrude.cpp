@@ -54,8 +54,8 @@ void Extrude::setSketch(Sketch* sketch) {
         connect(m_sketch, &Sketch::geometryChanged,
                 this, &Extrude::rebuildRequested);
         
-        // 設定父子關係
-        setParent(m_sketch);
+        // ✅ 移除：setParent(m_sketch);
+        //    QObject 所有權應保持在 Document，不應轉移給 Sketch
     }
     
     qDebug() << "[Extrude]" << name() << "sketch changed to"
@@ -180,6 +180,18 @@ QSet<QString> Extrude::featureDependencies() const {
     return {};
 }
 
+void Extrude::resolveReferences(Document* doc) {
+    if (m_pendingSketchId.isEmpty()) return;
+    Feature* f = doc->findFeature(m_pendingSketchId);
+    if (auto* sk = qobject_cast<Sketch*>(f)) {
+        setSketch(sk);
+        m_pendingSketchId.clear();
+    } else {
+        qWarning() << "[Extrude]" << name()
+                   << "Cannot resolve sketchId:" << m_pendingSketchId;
+    }
+}
+
 // toJson：儲存表達式而非計算值
 QJsonObject Extrude::toJson() const {
     QJsonObject obj = Feature::toJson();
@@ -201,6 +213,8 @@ bool Extrude::fromJson(const QJsonObject& json) {
     m_reversed   = json["reversed"].toBool(false);
     m_symmetric  = json["symmetric"].toBool(false);
     m_draftAngle = json["draftAngle"].toDouble(0.0);
+    m_pendingSketchId = json["sketchId"].toString();
+
     return true;
 }
 

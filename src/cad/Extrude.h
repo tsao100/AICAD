@@ -94,6 +94,8 @@ public:
     // ← 新增：覆寫依賴宣告
     QSet<QString> featureDependencies() const override;
 
+    void resolveReferences(Document* doc);
+
 Q_SIGNALS:
     /**
      * @brief 高度改變時發出
@@ -116,6 +118,7 @@ private:
     bool m_reversed;            ///< 是否反向
     bool m_symmetric;           ///< 是否對稱
     double m_draftAngle;        ///< 拔模角度（未來實作）
+    QString m_pendingSketchId;
 };
 
 } // namespace cad

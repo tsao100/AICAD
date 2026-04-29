@@ -200,29 +200,35 @@ bool Document::load(const QString& fileName) {
         if (docJson.contains("features")) {
             QJsonArray featuresArray = docJson["features"].toArray();
 
+            // ── 第一階段：建立所有 feature 物件並解析 JSON（不 rebuild）
             for (const QJsonValue& val : featuresArray) {
                 QJsonObject featureJson = val.toObject();
                 QString typeStr = featureJson["type"].toString();
 
                 Feature* feature = nullptr;
-
-                if (typeStr == "Sketch") {
-                    feature = new Sketch(this);
-                } else if (typeStr == "Extrude") {
-                    feature = new Extrude(this);
-                }
+                if (typeStr == "Sketch")  feature = new Sketch(this);
+                else if (typeStr == "Extrude") feature = new Extrude(this);
 
                 if (feature) {
                     if (feature->fromJson(featureJson)) {
-                        // ✅ 先加入 feature list（不 emit featureAdded，
-                        //    等 rebuild 完再統一更新 tree 和顯示）
                         addFeatureInternal(feature);
-                        feature->rebuild();
                     } else {
                         qWarning() << "[Document] Failed to load feature from JSON";
                         delete feature;
                     }
                 }
+            }
+
+            // ── 第二階段：解析跨 feature 的參照（Extrude → Sketch）
+            for (Feature* feature : m_features) {
+                if (auto* ext = qobject_cast<Extrude*>(feature))
+                    ext->resolveReferences(this);
+            }
+
+            // ── 第三階段：依拓撲順序 rebuild
+            for (Feature* feature : m_features) {
+                if (feature && !feature->isSuppressed())
+                    feature->rebuild();
             }
         }
 
@@ -268,7 +274,13 @@ void Document::addFeatureInternal(Feature* feature) {
         }
     });
 
-    Q_EMIT featureAdded(feature);
+    connect(feature, &Feature::nameChanged,
+            this, &Document::onFeatureChanged);
+    connect(feature, &Feature::shapeChanged,
+            this, &Document::onFeatureChanged);
+    connect(feature, &Feature::rebuildRequested,
+            this, &Document::onFeatureRebuildRequested);
+
     Q_EMIT featureCountChanged(m_features.size());
 }
 
