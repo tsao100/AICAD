@@ -193,8 +193,12 @@ bool Document::load(const QString& fileName) {
 
         QJsonObject docJson = jsonDoc.object();
 
-        if (docJson.contains("parameters"))
+        if (docJson.contains("parameters")){
+            // ✅ 阻斷 parameterChanged 在載入期間觸發 rebuildAll
+            m_parameterStore->blockSignals(true);
             m_parameterStore->fromJson(docJson["parameters"].toObject());
+            m_parameterStore->blockSignals(false);
+        }
 
         // ✅ 載入特徵
         if (docJson.contains("features")) {
@@ -365,6 +369,17 @@ void Document::addFeature(Feature* feature) {
     }
 
     m_features.append(feature);
+
+    // ✅ 新增：與 addFeatureInternal 一致，向依賴圖登記
+    m_depGraph.ensureNode(feature->id());
+    for (const QString& depId : feature->featureDependencies())
+        m_depGraph.addDependency(feature->id(), depId);
+
+    connect(feature, &Feature::dirtyStateChanged, this, [this, feature]() {
+        for (const QString& affectedId : m_depGraph.affectedBy(feature->id()))
+            if (Feature* f = findFeature(affectedId))
+                f->markDirty();
+    });
 
     connect(feature, &Feature::nameChanged,
             this, &Document::onFeatureChanged);
@@ -604,6 +619,7 @@ void Document::rebuildFeature(Feature* feature) {
                 if (!feature->shape().IsNull()) {
                     entry.second->SetShape(feature->shape());
                     m_aisContext->Redisplay(entry.second, Standard_False);
+                    m_aisContext->SetDisplayMode(entry.second, AIS_Shaded, Standard_False);
                 } else {
                     m_aisContext->Erase(entry.second, Standard_False);
                 }
@@ -899,7 +915,10 @@ void Document::displayFeature(Feature* feature,
 
     if (!feature->shape().IsNull()) {
         Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
-        context->Display(aisShape, Standard_False);
+        // ✅ 新增：設定 Shaded 模式並使用材質，避免面消失
+        aisShape->SetDisplayMode(AIS_Shaded);
+        aisShape->SetMaterial(Graphic3d_NameOfMaterial_Silver);
+        context->Display(aisShape, AIS_Shaded, -1, Standard_False);
         m_featureAisShapes.append({ feature, aisShape }); // ✅ cache it
     }
 }

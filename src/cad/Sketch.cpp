@@ -530,6 +530,7 @@ QJsonObject Sketch::toJson() const {
         QJsonObject geomJson;
         geomJson["type"] = static_cast<int>(geom->type);        
         geomJson["role"] = static_cast<int>(geom->role);
+        geomJson["uuid"] = geom->uuid;
 
         QJsonArray pointsArray;
         for (const QVector2D& pt : geom->points) {
@@ -691,6 +692,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                     addLine(points[0], points[1]);
                 }
                 // 通用：在每個 case 的 addXxx() 之後加：
+                if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
+                    m_geometries.last()->uuid = geomJson["uuid"].toString();
                 if (geomJson.contains("role") && !m_geometries.isEmpty())
                     m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
@@ -699,6 +702,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 if (points.size() >= 2) {
                     addPolyline(points, closed);
                 }
+                if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
+                    m_geometries.last()->uuid = geomJson["uuid"].toString();
                 if (geomJson.contains("role") && !m_geometries.isEmpty())
                     m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
@@ -711,6 +716,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 if (radius > 0.0) {
                     addCircle(center, radius);
                 }
+                if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
+                    m_geometries.last()->uuid = geomJson["uuid"].toString();
                 if (geomJson.contains("role") && !m_geometries.isEmpty())
                     m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
@@ -725,6 +732,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                     qWarning() << "[Sketch]" << name()
                                << "Spline skipped: need >= 3 points, got" << points.size();
                 }
+                if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
+                    m_geometries.last()->uuid = geomJson["uuid"].toString();
                 if (geomJson.contains("role") && !m_geometries.isEmpty())
                     m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
@@ -746,6 +755,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                     qWarning() << "[Sketch]" << name()
                                << "Arc skipped: no key points in JSON";
                 }
+                if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
+                    m_geometries.last()->uuid = geomJson["uuid"].toString();
                 if (geomJson.contains("role") && !m_geometries.isEmpty())
                     m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
@@ -759,6 +770,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 if (major > 0.0 && minor > 0.0) {
                     addEllipse(center, major, minor, angle);
                 }
+                if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
+                    m_geometries.last()->uuid = geomJson["uuid"].toString();
                 if (geomJson.contains("role") && !m_geometries.isEmpty())
                     m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
