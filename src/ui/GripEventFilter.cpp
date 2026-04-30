@@ -3,6 +3,7 @@
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "GripEventFilter.h"
+#include <QWidget>
 #include <QMouseEvent>
 #include <V3d_View.hxx>
 #include <AIS_InteractiveContext.hxx>
@@ -64,18 +65,29 @@ gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
         );
 }
 
-bool GripEventFilter::eventFilter(QObject* /*obj*/, QEvent* event)
+bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
 {
     if (!m_enabled) return false;
     if (m_view.IsNull() || !m_gripManager) return false;
 
+    // ✅ 取得 DPR，Qt6/Windows HiDPI 必須
+    const qreal dpr = qobject_cast<QWidget*>(obj)
+                          ? qobject_cast<QWidget*>(obj)->devicePixelRatio()
+                          : 1.0;
+
+    auto toPhys = [dpr](const QPointF& lp, int& px, int& py) {
+        px = static_cast<int>(lp.x() * dpr);
+        py = static_cast<int>(lp.y() * dpr);
+    };
+
     switch (event->type()) {
     case QEvent::MouseMove: {
         auto* e = static_cast<QMouseEvent*>(event);
-        gp_Pnt wp = screenToWorld(e->x(), e->y());
-        // ← 傳 screen coords，讓 GripManager 在 drag 時可呼叫 OSnapManager
-        bool handled = m_gripManager->mouseMoveEvent(wp, e->x(), e->y());
-        // 在 mouseMoveEvent 處理中，當 grip hover 狀態改變時發布事件：
+        int px, py;
+        toPhys(e->pos(), px, py);               // ✅ physical pixels
+        gp_Pnt wp = screenToWorld(px, py);
+        bool handled = m_gripManager->mouseMoveEvent(wp, px, py);
+            // 在 mouseMoveEvent 處理中，當 grip hover 狀態改變時發布事件：
         bool wasHovered = m_lastHovered;
 
         if (handled != wasHovered) {
@@ -96,8 +108,10 @@ bool GripEventFilter::eventFilter(QObject* /*obj*/, QEvent* event)
     case QEvent::MouseButtonPress: {
         auto* e = static_cast<QMouseEvent*>(event);
         if (e->button() != Qt::LeftButton) break;
-        gp_Pnt wp = screenToWorld(e->x(), e->y());
-        m_gripCaptured = m_gripManager->mousePressEvent(wp, e->x(), e->y());
+        int px, py;
+        toPhys(e->pos(), px, py);               // ✅
+        gp_Pnt wp = screenToWorld(px, py);
+        m_gripCaptured = m_gripManager->mousePressEvent(wp, px, py);
         return m_gripCaptured;
     }
 
@@ -105,7 +119,9 @@ bool GripEventFilter::eventFilter(QObject* /*obj*/, QEvent* event)
         auto* e = static_cast<QMouseEvent*>(event);
         if (e->button() != Qt::LeftButton) break;
         if (m_gripCaptured) {
-            gp_Pnt wp = screenToWorld(e->x(), e->y());
+            int px, py;
+            toPhys(e->pos(), px, py);               // ✅
+            gp_Pnt wp = screenToWorld(px, py);
             m_gripManager->mouseReleaseEvent(wp);
             m_gripCaptured = false;
             return true;

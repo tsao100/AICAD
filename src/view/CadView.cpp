@@ -1487,7 +1487,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     // 注意：Grip 系統已透過 EventBus 設定 m_snapManager 的 m_gripActive 旗標，
     //       所以這裡不需要額外判斷。
     if (m_snapManager && m_snapManager->isSnapEnabled()) {
-        m_snapManager->onMouseMove(x, y);
+        m_snapManager->onMouseMove(xp, yp);
     }
 
     // ✅ FIX: 中間鍵拖曳 → 執行 Pan
