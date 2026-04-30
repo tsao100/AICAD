@@ -231,8 +231,10 @@ bool Document::load(const QString& fileName) {
 
             // ── 第三階段：依拓撲順序 rebuild
             for (Feature* feature : m_features) {
-                if (feature && !feature->isSuppressed())
+                if (feature && !feature->isSuppressed()){
                     feature->rebuild();
+                    feature->clearDirty();
+                }
             }
         }
 
@@ -396,12 +398,9 @@ void Document::addFeature(Feature* feature) {
 }
 
 void Document::removeFeature(Feature* feature) {
-    m_depGraph.removeNode(feature->id());
-    m_features.removeOne(feature);
-    if (!feature) {
-        return;
-    }
+    if (!feature) return;
 
+    // ✅ 修正：先檢查存在，再移除；把多餘的第一個 removeOne 刪掉
     if (!m_features.contains(feature)) {
         qWarning() << "[Document] Feature not in document:" << feature->name();
         return;
@@ -409,24 +408,35 @@ void Document::removeFeature(Feature* feature) {
 
     qDebug() << "[Document] Removing feature:" << feature->name();
 
+    m_depGraph.removeNode(feature->id());
+
+    // ✅ 從 AIS cache 移除並從 context 消除
+    if (!m_aisContext.IsNull()) {
+        for (int i = 0; i < m_featureAisShapes.size(); ++i) {
+            if (m_featureAisShapes[i].first == feature) {
+                m_aisContext->Erase(m_featureAisShapes[i].second, Standard_False);
+                m_featureAisShapes.removeAt(i);
+                break;
+            }
+        }
+        m_aisContext->UpdateCurrentViewer();
+    }
+
     Q_EMIT featureAboutToBeRemoved(feature);
 
     m_features.removeOne(feature);
 
-    // ✅ 同步移除 tree item
     m_treeItems.erase(
         std::remove_if(m_treeItems.begin(), m_treeItems.end(),
                        [&](const ui::FeatureTreeItem& item) {
                            return item.id == feature->id();
                        }),
-        m_treeItems.end()
-        );
+        m_treeItems.end());
 
     disconnect(feature, nullptr, this, nullptr);
     feature->deleteLater();
 
     setModified(true);
-
     Q_EMIT featureRemoved();
     Q_EMIT featureCountChanged(m_features.size());
     Q_EMIT treeStructureChanged();
@@ -434,6 +444,16 @@ void Document::removeFeature(Feature* feature) {
 
 void Document::clearFeatures() {
     qDebug() << "[Document] Clearing all features";
+
+    // ✅ 先從 AIS context 移除所有 feature 的 AIS shape
+    if (!m_aisContext.IsNull()) {
+        for (auto& entry : m_featureAisShapes)
+            if (!entry.second.IsNull())
+                m_aisContext->Erase(entry.second, Standard_False);
+        if (!m_featureAisShapes.isEmpty())
+            m_aisContext->UpdateCurrentViewer();
+    }
+    m_featureAisShapes.clear();   // ✅ 清空 cache
 
     while (!m_features.isEmpty()) {
         Feature* feature = m_features.takeLast();
@@ -520,18 +540,17 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     Extrude* extrude = new Extrude(this);
     extrude->setSketch(sketch);
     extrude->setHeight(height);
-
-    // ✅ Auto-hide sketch and set parent relationship
-    sketch->setParent(extrude);
-    sketch->setVisible(false);  // hide sketch when it becomes child of extrude
-
-    QString extrudeName = name;
-    if (extrudeName.isEmpty()) {
-        extrudeName = QString("Extrude %1").arg(m_nextFeatureNumber++);
-    }
+    // ✅ 修正：先 addFeature 再建立 Feature 層父子關係，避免 Extrude 被刪時帶走 Sketch
+    QString extrudeName = name.isEmpty()
+                              ? QString("Extrude %1").arg(m_nextFeatureNumber++)
+                              : name;
     extrude->setName(extrudeName);
 
+    sketch->setVisible(false);  // hide sketch when it becomes child of extrude
+
     addFeature(extrude);
+    // ✅ 改用 setFeatureParent：只影響 Feature 樹狀結構，不動 QObject 所有權
+    sketch->setFeatureParent(extrude);
 
     // ✅ 加入 tree item
     ui::FeatureTreeItem extrudeItem;

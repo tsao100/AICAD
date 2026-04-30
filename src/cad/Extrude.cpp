@@ -55,7 +55,10 @@ void Extrude::setSketch(Sketch* sketch) {
                 this, &Extrude::rebuildRequested);
         
         // ✅ 移除：setParent(m_sketch);
-        //    QObject 所有權應保持在 Document，不應轉移給 Sketch
+        //    原本這行呼叫的是 QObject::setParent，
+        //    把 Extrude 的擁有權轉給 Sketch，導致 Sketch 析構時連帶刪除 Extrude。
+        //    Feature 層的父子關係改由 Document::createExtrude 呼叫
+        //    sketch->setFeatureParent(extrude) 建立。
     }
     
     qDebug() << "[Extrude]" << name() << "sketch changed to"
@@ -185,6 +188,8 @@ void Extrude::resolveReferences(Document* doc) {
     Feature* f = doc->findFeature(m_pendingSketchId);
     if (auto* sk = qobject_cast<Sketch*>(f)) {
         setSketch(sk);
+        // ✅ 恢復 Feature 層的父子關係（setSketch 不再自動呼叫 setParent）
+        sk->setFeatureParent(this);
         m_pendingSketchId.clear();
     } else {
         qWarning() << "[Extrude]" << name()

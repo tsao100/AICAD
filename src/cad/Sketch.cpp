@@ -654,6 +654,9 @@ bool Sketch::fromJson(const QJsonObject& json) {
         }
     }
 
+    // ✅ 阻斷信號，避免每個 addGeometry 觸發 N 次 rebuild
+    blockSignals(true);
+
     // ── 最終 fallback ────────────────────────────────────────────────
     if (resolvedPlane) {
         setPlane(resolvedPlane);
@@ -784,6 +787,10 @@ bool Sketch::fromJson(const QJsonObject& json) {
             }
         }
     }
+
+    blockSignals(false);
+    // ✅ 載入完畢後只 emit 一次
+    Q_EMIT geometryChanged();
 
     qDebug() << "[Sketch]" << name() << "fromJson complete:"
              << m_geometries.size() << "geometries on plane"

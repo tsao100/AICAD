@@ -134,6 +134,12 @@ public:
     Feature* parent() const { return m_parent; }
     void setParent(Feature* parent);
 
+    /** 僅建立 Feature 層的父子邏輯關係，不影響 QObject 所有權。
+     *  用於 Sketch 成為 Extrude 子節點時，取代原本錯誤的
+     *  QObject::setParent(extrude) 呼叫。
+     */
+    void setFeatureParent(Feature* featureParent);
+
     QList<Feature*> children() const { return m_children; }
     void addChild(Feature* child);
     void removeChild(Feature* child);

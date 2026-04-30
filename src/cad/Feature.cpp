@@ -137,6 +137,27 @@ void Feature::setParent(Feature* parent) {
              << (parent ? parent->name() : "null");
 }
 
+void Feature::setFeatureParent(Feature* featureParent) {
+    if (m_parent == featureParent)
+        return;
+
+    // 從舊父節點的 children 列表移除
+    if (m_parent)
+        m_parent->removeChild(this);
+
+    m_parent = featureParent;
+
+    // 加入新父節點的 children 列表
+    if (m_parent)
+        m_parent->addChild(this);
+
+    qDebug() << "[Feature]" << m_name
+             << "feature-parent set to"
+             << (featureParent ? featureParent->name() : "null");
+
+    // ✅ 不呼叫 QObject::setParent()，QObject 所有權保持在 Document
+}
+
 void Feature::addChild(Feature* child) {
     if (!child || m_children.contains(child)) {
         return;
