@@ -614,6 +614,9 @@ bool Sketch::fromJson(const QJsonObject& json) {
         return false;
     }
 
+    // ✅ blockSignals 涵蓋平面解析到幾何載入全程
+    blockSignals(true);
+
     // ================================================================
     // ✅ 平面恢復：四階段 fallback
     //   1. 用 UUID 直接查 PlaneManager（同 session 重用時有效）
@@ -654,8 +657,6 @@ bool Sketch::fromJson(const QJsonObject& json) {
         }
     }
 
-    // ✅ 阻斷信號，避免每個 addGeometry 觸發 N 次 rebuild
-    blockSignals(true);
 
     // ── 最終 fallback ────────────────────────────────────────────────
     if (resolvedPlane) {
@@ -788,9 +789,6 @@ bool Sketch::fromJson(const QJsonObject& json) {
         }
     }
 
-    blockSignals(false);
-    // ✅ 載入完畢後只 emit 一次
-    Q_EMIT geometryChanged();
 
     qDebug() << "[Sketch]" << name() << "fromJson complete:"
              << m_geometries.size() << "geometries on plane"
@@ -801,6 +799,10 @@ bool Sketch::fromJson(const QJsonObject& json) {
         for (const QJsonValue& v : json["constraints"].toArray())
             m_constraints.append(SketchConstraint::fromJson(v.toObject()));
     }
+
+    blockSignals(false);
+    // ✅ 載入完畢後只 emit 一次
+//    Q_EMIT geometryChanged();
 
     // ✅ 新增：載入完後求解一次，使幾何符合約束
     if (!m_constraints.isEmpty())

@@ -140,6 +140,12 @@ bool Extrude::rebuild() {
     double actualHeight = m_heightExpr.cachedValue;
     if (m_reversed) actualHeight = -actualHeight;
 
+    // ✅ 新增：防止零高度
+    if (qAbs(actualHeight) < 1e-6) {
+        setError("Extrude height is zero or too small");
+        return false;
+    }
+
     // ✅ 修正：從草圖平面法向量算擠出方向，不再寫死 Z 軸
     const cad::Plane* plane = m_sketch->plane();
     if (!plane) { setError("Sketch has no valid plane"); return false; }

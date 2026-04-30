@@ -774,7 +774,10 @@ void CadView::displayAllFeatures() {
 
         } else if (!feature->shape().IsNull()) {
             Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
-            aisShape->SetColor(Quantity_NOC_YELLOW);
+            // ✅ 修正：使用 Shaded 模式並設定合理的非選取色（淺藍灰）
+            aisShape->SetDisplayMode(AIS_Shaded);
+            aisShape->SetMaterial(Graphic3d_NameOfMaterial_Silver);
+            aisShape->SetColor(Quantity_NOC_CADETBLUE);   // 不與選取黃色衝突
             if (feature->isVisible())
                 d->context->Display(aisShape, Standard_False);
             d->aisToFeatureId[aisShape.get()] = feature->id();

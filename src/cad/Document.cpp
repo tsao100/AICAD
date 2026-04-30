@@ -116,11 +116,21 @@ bool Document::save(const QString& fileName) {
         docJson["version"] = "1.0";
         docJson["fileName"] = QFileInfo(saveFileName).fileName();
 
+        // ✅ 修正：依拓撲順序（被依賴者先）序列化，確保 load 時順序正確
         QJsonArray featuresArray;
+        bool cycle;
+        QList<QString> order = m_depGraph.topologicalOrder(&cycle);
+
+        // 先輸出有拓撲順序的
+        QSet<QString> written;
+        for (const QString& id : order) {
+            Feature* f = findFeature(id);
+            if (f) { featuresArray.append(f->toJson()); written.insert(id); }
+        }
+        // 再輸出不在依賴圖中的孤立 feature（如純 Sketch）
         for (Feature* feature : m_features) {
-            if (feature) {
+            if (feature && !written.contains(feature->id()))
                 featuresArray.append(feature->toJson());
-            }
         }
 
         docJson["parameters"] = m_parameterStore->toJson();
@@ -295,8 +305,6 @@ void Document::addFeatureInternal(Feature* feature) {
             this, &Document::onFeatureChanged);
     connect(feature, &Feature::rebuildRequested,
             this, &Document::onFeatureRebuildRequested);
-
-    Q_EMIT featureCountChanged(m_features.size());
 }
 
 // ✅ 根據目前 m_features 重建 tree items（保留 origin 資料夾）
