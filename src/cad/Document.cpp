@@ -240,7 +240,16 @@ bool Document::load(const QString& fileName) {
 
         setFileName(fileName);
         setModified(false);
-        m_nextFeatureNumber = m_features.size() + 1;
+
+        // ✅ 修正：掃描所有 feature name 中的最大數字，避免命名衝突
+        int maxNum = 0;
+        QRegularExpression re(R"(\d+)");
+        for (Feature* f : m_features) {
+            auto it = re.globalMatch(f->name());
+            while (it.hasNext())
+                maxNum = qMax(maxNum, it.next().captured().toInt());
+        }
+        m_nextFeatureNumber = maxNum + 1;
 
         // ✅ 載入完成後：重建 tree items 並通知所有監聽者
         rebuildFeatureTreeItems();
@@ -312,7 +321,9 @@ void Document::rebuildFeatureTreeItems() {
         ui::FeatureTreeItem treeItem;
         treeItem.id        = feature->id();
         treeItem.name      = feature->name();
-        treeItem.parentId  = "";          // 頂層
+        // ✅ 若 Feature 層有父特徵，將 parentId 設為父特徵的 ID，讓 FeatureBrowser
+        //    能正確地把此 tree item 掛在父節點下（例如草圖掛在擠出下）。
+        treeItem.parentId  = feature->parent() ? feature->parent()->id() : QString();
         treeItem.visible   = feature->isVisible();
         treeItem.selectable = true;
         treeItem.data      = QVariant::fromValue(feature);
@@ -563,6 +574,15 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     extrudeItem.data      = QVariant::fromValue(extrude);
 
     m_treeItems.append(extrudeItem);
+
+    // ✅ 將草圖的 tree item 重新設為 extrude 的子節點
+    //    （草圖在 createSketch 時以 parentId="" 加入，現在要修正它的父項目）
+    for (ui::FeatureTreeItem& item : m_treeItems) {
+        if (item.id == sketch->id()) {
+            item.parentId = extrude->id();
+            break;
+        }
+    }
 
     Q_EMIT treeStructureChanged();
 
