@@ -16,6 +16,7 @@
 #include <QDebug>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 
 namespace aicad {
 namespace cad {
@@ -148,11 +149,28 @@ bool Extrude::rebuild() {
                      n.y() * actualHeight,
                      n.z() * actualHeight);
 
-    // ✅ 修正：傳入 profile（TopoDS_Face）和正確方向
-    auto result = geometry::GeometryBuilder::extrude(profile, direction);
-    if (!result.success) { setError(result.errorMessage); return false; }
+    TopoDS_Shape resultShape;
 
-    setShape(result.shape);
+    if (m_symmetric) {
+        // ✅ 對稱擠出：沿法向偏移 profile 半個高度，再擠出全高
+        gp_Vec halfVec = direction * 0.5;
+        // 將 profile 沿反方向移動 half
+        gp_Trsf offset;
+        offset.SetTranslation(-halfVec);
+        BRepBuilderAPI_Transform mover(profile, offset, Standard_True);
+        if (!mover.IsDone()) { setError("Symmetric offset failed"); return false; }
+        TopoDS_Face movedProfile = TopoDS::Face(mover.Shape());
+
+        auto result = geometry::GeometryBuilder::extrude(movedProfile, direction);
+        if (!result.success) { setError(result.errorMessage); return false; }
+        resultShape = result.shape;
+    } else {
+        auto result = geometry::GeometryBuilder::extrude(profile, direction);
+        if (!result.success) { setError(result.errorMessage); return false; }
+        resultShape = result.shape;
+    }
+
+    setShape(resultShape);
     return true;
 }
 

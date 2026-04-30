@@ -949,6 +949,12 @@ void Document::displayAllFeatures(const Handle(AIS_InteractiveContext)& context)
         return;
     }
 
+    // ✅ 先移除 context 中所有舊的 feature AIS shapes（避免 load 後重複顯示）
+    for (auto& entry : m_featureAisShapes)
+        if (!entry.second.IsNull())
+            context->Erase(entry.second, Standard_False);
+    m_featureAisShapes.clear();
+
     for (Feature* feature : m_features) {
         if (feature && feature->isVisible() && !feature->isSuppressed()) {
             displayFeature(feature, context);

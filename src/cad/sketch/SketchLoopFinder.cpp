@@ -42,22 +42,20 @@ void SketchLoopFinder::buildNextPointers(QVector<Vertex>& verts,
     for (int v = 0; v < verts.size(); ++v) {
         auto& outEdges = verts[v].outEdges;
         // 按角度排序
+        // ✅ 修正：outEdges 中每條邊 he[e].from == v 恆成立，直接計算方向向量
         std::sort(outEdges.begin(), outEdges.end(), [&](int a, int b) {
-            auto da = he[a].from == v
-                          ? verts[he[a].to].pos - verts[v].pos
-                          : verts[he[a].from].pos - verts[v].pos;
-            auto db = he[b].from == v
-                          ? verts[he[b].to].pos - verts[v].pos
-                          : verts[he[b].from].pos - verts[v].pos;
+            auto da = verts[he[a].to].pos - verts[v].pos;
+            auto db = verts[he[b].to].pos - verts[v].pos;
             return std::atan2(da.y(), da.x()) < std::atan2(db.y(), db.x());
         });
+
         // twin(outEdges[i]).next = outEdges[(i+1) % n]（最右轉）
         int n = outEdges.size();
         for (int i = 0; i < n; ++i) {
             int e    = outEdges[i];
             int twin = he[e].twin;
             if (twin >= 0)
-                he[twin].next = outEdges[(i + 1) % n];
+                he[twin].next = outEdges[(i - 1 + n) % n];
         }
     }
 }
@@ -139,7 +137,6 @@ QVector<SketchRegion> SketchLoopFinder::findRegions(const Sketch* sketch) const
                 circleRegions.append(r);   // ← 修正：實際存入，不再是 local 變數
                 continue;
             }
-            continue;
         default:
             if (g->points.size() >= 2) {
                 pts = g->points;

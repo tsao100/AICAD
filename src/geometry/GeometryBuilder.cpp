@@ -727,7 +727,33 @@ TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
     }
     if (!outerWire.IsDone()) return {};
 
-    BRepBuilderAPI_MakeFace faceMaker(outerWire.Wire(), Standard_True);
+    TopoDS_Wire wire = outerWire.Wire();
+
+    // ✅ 若 region 由單一圓組成，直接用 gp_Circ 建面，不走 MakeFace(wire)
+    if (region.outerLoop.edgeUuids.size() == 1) {
+        for (const cad::SketchGeometry* g : sketch->geometries()) {
+            if (g->uuid != region.outerLoop.edgeUuids.first()) continue;
+            if (g->type == cad::SketchGeometryType::Circle) {
+                const auto* c = static_cast<const cad::SketchCircle*>(g);
+                QVector3D ctr = sketch->planeToWorld(c->center);
+                QVector3D n   = sketch->plane()->normal();
+                gp_Ax2 ax2(gp_Pnt(ctr.x(), ctr.y(), ctr.z()),
+                           gp_Dir(n.x(), n.y(), n.z()));
+                // ✅ 修正：gp_Circ → MakeEdge → MakeWire → MakeFace
+                BRepBuilderAPI_MakeEdge edgeMaker(gp_Circ(ax2, c->radius));
+                if (!edgeMaker.IsDone()) return {};
+
+                BRepBuilderAPI_MakeWire wireMaker(edgeMaker.Edge());
+                if (!wireMaker.IsDone()) return {};
+
+                BRepBuilderAPI_MakeFace fm(wireMaker.Wire(), Standard_True);
+                return fm.IsDone() ? fm.Face() : TopoDS_Face();
+            }
+            break;
+        }
+    }
+
+    BRepBuilderAPI_MakeFace faceMaker(wire, Standard_True);
 
     for (const auto& hole : region.holes) {
         BRepBuilderAPI_MakeWire holeWire;
