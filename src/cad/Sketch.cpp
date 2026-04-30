@@ -802,6 +802,10 @@ bool Sketch::fromJson(const QJsonObject& json) {
             m_constraints.append(SketchConstraint::fromJson(v.toObject()));
     }
 
+    // ✅ 新增：載入完後求解一次，使幾何符合約束
+    if (!m_constraints.isEmpty())
+        solveConstraints();
+
     return true;
 }
 
@@ -846,14 +850,18 @@ void Sketch::removeConstraintsOf(const QString& geomUuid) {
 }
 
 SolveResult Sketch::solveConstraints() {
-    auto result = m_solver.solve(m_geometries, m_constraints);
+    gp_Dir normal(0, 0, 1);
+    if (m_plane) {
+        QVector3D n = m_plane->normal();
+        normal = gp_Dir(n.x(), n.y(), n.z());
+    }
+    auto result = m_solver.solve(m_geometries, m_constraints, normal);
     Q_EMIT constraintSolved(result);
     if (result.status != SolveStatus::Conflict &&
         result.status != SolveStatus::SolverError) {
         // 求解後幾何已被修改，觸發重建
         markDirty();
         Q_EMIT geometryChanged();
-        Q_EMIT rebuildRequested();
     }
     return result;
 }

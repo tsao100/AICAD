@@ -2,6 +2,7 @@
 #include "SketchConstraint.h"
 #include <QHash>
 #include <Eigen/Dense>   // 或自行用 QVector<double>
+#include <gp_Dir.hxx>
 
 namespace aicad::cad {
 
@@ -226,7 +227,8 @@ public:
      * @return 求解結果（含 DOF、殘差、收斂狀態）
      */
     SolveResult solve(QList<SketchGeometry*>& geometries,
-                      const QList<SketchConstraint>& constraints);
+                      const QList<SketchConstraint>& constraints,
+                      const gp_Dir& planeNormal = gp_Dir(0, 0, 1));
 
     /**
      * 純 DOF 計數（不求解，用於 UI 提示）
@@ -250,7 +252,8 @@ private:
      */
     void unpackVariables(const QVector<double>& vars,
                          const QHash<QString, GeomVarLayout>& layout,
-                         QList<SketchGeometry*>& geoms) const;
+                         QList<SketchGeometry*>& geoms,
+                         const gp_Dir& planeNormal) const;
 
     /**
      * 將 SketchConstraint 轉換為具體的方程式物件

@@ -421,18 +421,6 @@ void Document::removeFeature(Feature* feature) {
 
     m_depGraph.removeNode(feature->id());
 
-    // ✅ 從 AIS cache 移除並從 context 消除
-    if (!m_aisContext.IsNull()) {
-        for (int i = 0; i < m_featureAisShapes.size(); ++i) {
-            if (m_featureAisShapes[i].first == feature) {
-                m_aisContext->Erase(m_featureAisShapes[i].second, Standard_False);
-                m_featureAisShapes.removeAt(i);
-                break;
-            }
-        }
-        m_aisContext->UpdateCurrentViewer();
-    }
-
     Q_EMIT featureAboutToBeRemoved(feature);
 
     m_features.removeOne(feature);
@@ -455,16 +443,6 @@ void Document::removeFeature(Feature* feature) {
 
 void Document::clearFeatures() {
     qDebug() << "[Document] Clearing all features";
-
-    // ✅ 先從 AIS context 移除所有 feature 的 AIS shape
-    if (!m_aisContext.IsNull()) {
-        for (auto& entry : m_featureAisShapes)
-            if (!entry.second.IsNull())
-                m_aisContext->Erase(entry.second, Standard_False);
-        if (!m_featureAisShapes.isEmpty())
-            m_aisContext->UpdateCurrentViewer();
-    }
-    m_featureAisShapes.clear();   // ✅ 清空 cache
 
     while (!m_features.isEmpty()) {
         Feature* feature = m_features.takeLast();
@@ -650,27 +628,9 @@ void Document::rebuildFeature(Feature* feature) {
         if (sketch->isVisible())
             sketch->displayInContext(m_aisContext);
         m_aisContext->UpdateCurrentViewer();
-    } else if (!m_aisContext.IsNull()) {
-        // ✅ 先查是否已有 AIS handle（既有 feature 的 rebuild）
-        bool found = false;
-        for (auto& entry : m_featureAisShapes) {
-            if (entry.first == feature) {
-                if (!feature->shape().IsNull()) {
-                    entry.second->SetShape(feature->shape());
-                    m_aisContext->Redisplay(entry.second, Standard_False);
-                    m_aisContext->SetDisplayMode(entry.second, AIS_Shaded, Standard_False);
-                } else {
-                    m_aisContext->Erase(entry.second, Standard_False);
-                }
-                found = true;
-                break;
-            }
-        }
-        // ✅ 新建 feature：第一次出現，呼叫 displayFeature 建立 AIS handle 並加入 cache
-        if (!found && !feature->shape().IsNull() && feature->isVisible()) {
-            displayFeature(feature, m_aisContext);
-        }
-        m_aisContext->UpdateCurrentViewer();
+    } else {
+        // ✅ 修正：不再自己管 AIS cache，改發事件讓 CadView 統一重繪
+        Q_EMIT featureShapeUpdated(feature);   // ← 新增信號，見 Document.h
     }
 }
 
@@ -958,7 +918,6 @@ void Document::displayFeature(Feature* feature,
         aisShape->SetDisplayMode(AIS_Shaded);
         aisShape->SetMaterial(Graphic3d_NameOfMaterial_Silver);
         context->Display(aisShape, AIS_Shaded, -1, Standard_False);
-        m_featureAisShapes.append({ feature, aisShape }); // ✅ cache it
     }
 }
 
@@ -968,12 +927,6 @@ void Document::displayAllFeatures(const Handle(AIS_InteractiveContext)& context)
         qWarning() << "[Document] displayAllFeatures: context is null";
         return;
     }
-
-    // ✅ 先移除 context 中所有舊的 feature AIS shapes（避免 load 後重複顯示）
-    for (auto& entry : m_featureAisShapes)
-        if (!entry.second.IsNull())
-            context->Erase(entry.second, Standard_False);
-    m_featureAisShapes.clear();
 
     for (Feature* feature : m_features) {
         if (feature && feature->isVisible() && !feature->isSuppressed()) {
@@ -1087,18 +1040,11 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
         return;
     }
 
-    for (auto& entry : m_featureAisShapes) {
-        if (entry.first == feature) {
-            if (visible)
-                m_aisContext->Display(entry.second, Standard_False);
-            else
-                m_aisContext->Erase(entry.second, Standard_False);
-            m_aisContext->UpdateCurrentViewer();
+    // ✅ 對非 Sketch feature（Extrude 等），通知 CadView 重繪
+    //    CadView::displayAllFeatures 會讀取 feature->isVisible() 決定是否顯示
+    Q_EMIT featureShapeUpdated(feature);
+    Q_EMIT treeStructureChanged();
 
-            Q_EMIT treeStructureChanged();  // ✅ sync checkbox
-            return;
-        }
-    }
 }
 
 void Document::initializeOrigin(const Handle(AIS_InteractiveContext)& context) {

@@ -396,7 +396,8 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
 // ── 回寫變數向量 ──────────────────────────────────────────────────────────
 void ConstraintSolver::unpackVariables(const QVector<double>& vars,
                                        const QHash<QString, GeomVarLayout>& layout,
-                                       QList<SketchGeometry*>& geoms) const {
+                                       QList<SketchGeometry*>& geoms,
+                                       const gp_Dir& planeNormal) const {
     for (SketchGeometry* g : geoms) {
         auto it = layout.find(g->uuid);
         if (it == layout.end()) continue;
@@ -421,11 +422,12 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
             auto* a = static_cast<SketchArc*>(g);
             double cx=vars[off],cy=vars[off+1],r=vars[off+2];
             double t0=vars[off+3], t1=vars[off+4];
-            gp_Ax2 ax2(gp_Pnt(cx,cy,0), gp_Dir(0,0,1));
+            // ✅ 修正：使用草圖平面法向量，不再寫死 Z 軸
+            gp_Ax2 ax2(gp_Pnt(cx, cy, 0), planeNormal);
             Handle(Geom_Circle) circ = new Geom_Circle(ax2, r);
             a->curve = new Geom_TrimmedCurve(circ, t0, t1);
             break;
-        }
+         }
         case SketchGeometryType::Ellipse: {
             auto* e = static_cast<SketchEllipse*>(g);
             e->center = QVector2D(vars[off+0], vars[off+1]);
@@ -564,7 +566,8 @@ bool ConstraintSolver::newtonStep(QVector<double>& vars,
 
 // ── 主求解入口 ─────────────────────────────────────────────────────────────
 SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
-                                    const QList<SketchConstraint>& constraints)
+                                    const QList<SketchConstraint>& constraints,
+                                    const gp_Dir& planeNormal)
 {
     SolveResult result;
 
@@ -595,14 +598,14 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
     result.residual = residual;
 
     if (converged) {
-        unpackVariables(vars, layout, geoms);
+        unpackVariables(vars, layout, geoms, planeNormal);
         result.status = (dof == 0) ? SolveStatus::FullyConstrained
                                    : SolveStatus::UnderConstrained;
     } else if (residual > 1.0) {
         result.status = SolveStatus::Conflict;
     } else {
         result.status = SolveStatus::UnderConstrained;
-        unpackVariables(vars, layout, geoms);
+        unpackVariables(vars, layout, geoms, planeNormal);
     }
 
     qDeleteAll(eqs);

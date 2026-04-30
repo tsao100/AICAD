@@ -330,6 +330,8 @@ Q_SIGNALS:
 
     void originReinitializationNeeded();   // ✅ UIManager will call initializeOrigin()
 
+    void featureShapeUpdated(Feature* feature);
+
 private Q_SLOTS:
     /**
      * @brief 處理特徵重建請求
@@ -385,8 +387,6 @@ private:
 
     QString m_pendingLoadData;
     QString m_pendingLoadFile;
-
-    QList<QPair<Feature*, Handle(AIS_Shape)>> m_featureAisShapes;
 
     aicad::core::ParameterStore* m_parameterStore;
     DependencyGraph              m_depGraph;

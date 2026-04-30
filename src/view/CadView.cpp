@@ -367,6 +367,11 @@ void CadView::initializeViewer() {
             });
 
 
+    connect(d->document, &cad::Document::featureShapeUpdated,
+            this, [this](cad::Feature*) {
+                displayAllFeatures();   // 統一重繪
+            }, Qt::QueuedConnection);
+
     // 延遲初始化
     QTimer::singleShot(0, this, [this]() {
         if (!d->view.IsNull()) {
