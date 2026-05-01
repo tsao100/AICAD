@@ -120,6 +120,7 @@ public:
     ui::GripEventFilter* gripFilter;
     GripManager*         gripManager;
     bool commandInProgress = false;
+    bool isDisplayingAllFeatures = false;
 
     Private()
         : document(nullptr)
@@ -369,6 +370,7 @@ void CadView::initializeViewer() {
 
     connect(d->document, &cad::Document::featureShapeUpdated,
             this, [this](cad::Feature*) {
+                if (d->isDisplayingAllFeatures) return;  // 防重入
                 displayAllFeatures();   // 統一重繪
             }, Qt::QueuedConnection);
 
@@ -728,6 +730,9 @@ RubberBand* CadView::rubberBand() const {
 
 void CadView::displayAllFeatures() {
     if (!d->document || d->context.IsNull()) return;
+    if (d->isDisplayingAllFeatures) return;  // ✅ 防重入
+
+    d->isDisplayingAllFeatures = true;
 
     d->context->RemoveAll(Standard_False);
     d->context->Display(d->viewCube, Standard_False);
@@ -752,9 +757,8 @@ void CadView::displayAllFeatures() {
                     }
                 }
             } else {
-                // ✅ invisible: rebuild 但不 display，只建立 aisShapes
-                //    讓 map 有條目，之後 setVisible(true) 時 display 即生效
-                sketch->rebuild();
+                // ✅ 修正：invisible Sketch 只讀取已建立的 aisShapes，絕對不呼叫 rebuild()
+                //    rebuild() 會 emit shapeChanged → featureShapeUpdated → displayAllFeatures 死循環
                 // 不呼叫 displayInContext，shapes 存在但不顯示
                 const QList<QString>& uuids = sketch->aisShapeUuids();
                 for (int i = 0; i < sketch->aisShapes().size(); ++i) {
@@ -785,6 +789,8 @@ void CadView::displayAllFeatures() {
     }
 
     d->context->UpdateCurrentViewer();
+
+    d->isDisplayingAllFeatures = false;
 }
 
 // ── Reverse lookup ────────────────────────────────────────────────────
