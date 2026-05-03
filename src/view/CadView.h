@@ -224,6 +224,9 @@ public:
 
     void clearSketchGeomSelection();
 
+    QJsonObject saveViewState() const;
+    void restoreViewState(const QJsonObject& state);
+
 public Q_SLOTS:
 
     void onSketchRebuilt();

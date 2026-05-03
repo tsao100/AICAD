@@ -367,13 +367,6 @@ void CadView::initializeViewer() {
                 QToolTip::hideText();
             });
 
-
-    connect(d->document, &cad::Document::featureShapeUpdated,
-            this, [this](cad::Feature*) {
-                if (d->isDisplayingAllFeatures) return;  // 防重入
-                displayAllFeatures();   // 統一重繪
-            }, Qt::QueuedConnection);
-
     // 延遲初始化
     QTimer::singleShot(0, this, [this]() {
         if (!d->view.IsNull()) {
@@ -658,12 +651,25 @@ void CadView::setDocument(cad::Document* document) {
         return;
     }
 
+    // ✅ 斷開舊 document 的連接
+    if (d->document) {
+        disconnect(d->document, nullptr, this, nullptr);
+    }
+
     d->document = document;
 
     qDebug() << "[CadView] Document set";
 
     if (document) {
-        displayAllFeatures();
+        // ✅ 在這裡連接，確保 document 非 null
+        connect(document, &cad::Document::featureShapeUpdated,
+                this, [this](cad::Feature*) {
+                    if (d->isDisplayingAllFeatures) return;
+                    displayAllFeatures();
+                }, Qt::QueuedConnection);
+
+        // ✅ 延遲一幀確保 OCCT context 穩定後再顯示
+        QTimer::singleShot(0, this, &CadView::displayAllFeatures);
     }
 }
 
@@ -816,6 +822,37 @@ void CadView::fitAll() {
 
     d->view->FitAll();
     d->view->ZFitAll();
+    update();
+}
+
+QJsonObject CadView::saveViewState() const {
+    QJsonObject state;
+    if (d->view.IsNull()) return state;
+
+    Standard_Real xe, ye, ze;
+    d->view->Eye(xe, ye, ze);
+    Standard_Real xa, ya, za;
+    d->view->At(xa, ya, za);
+    Standard_Real xu, yu, zu;
+    d->view->Up(xu, yu, zu);
+    Standard_Real scale = d->view->Scale();
+
+    state["eyeX"] = xe; state["eyeY"] = ye; state["eyeZ"] = ze;
+    state["atX"]  = xa; state["atY"]  = ya; state["atZ"]  = za;
+    state["upX"]  = xu; state["upY"]  = yu; state["upZ"]  = zu;
+    state["scale"] = scale;
+    state["viewType"] = static_cast<int>(d->viewType);
+    return state;
+}
+
+void CadView::restoreViewState(const QJsonObject& state) {
+    if (d->view.IsNull() || state.isEmpty()) return;
+
+    d->view->SetEye(state["eyeX"].toDouble(), state["eyeY"].toDouble(), state["eyeZ"].toDouble());
+    d->view->SetAt (state["atX"].toDouble(),  state["atY"].toDouble(),  state["atZ"].toDouble());
+    d->view->SetUp (state["upX"].toDouble(),  state["upY"].toDouble(),  state["upZ"].toDouble());
+    d->view->SetScale(state["scale"].toDouble(1.0));
+    d->view->Redraw();
     update();
 }
 

@@ -137,6 +137,10 @@ bool Document::save(const QString& fileName) {
 
         docJson["features"] = featuresArray;
 
+        // ✅ 儲存視圖狀態
+        if (!m_viewState.isEmpty())
+            docJson["viewState"] = m_viewState;
+
         QFile file(saveFileName);
         if (!file.open(QIODevice::WriteOnly)) {
             qWarning() << "[Document] Cannot open file for writing:" << saveFileName;
@@ -239,14 +243,32 @@ bool Document::load(const QString& fileName) {
                     ext->resolveReferences(this);
             }
 
-            // ── 第三階段：依拓撲順序 rebuild
-            for (Feature* feature : m_features) {
-                if (feature && !feature->isSuppressed()){
-                    feature->rebuild();
-                    feature->clearDirty();
+            // ── 第三階段：依拓撲順序 rebuild（Sketch 必須先於 Extrude）
+            bool cycle;
+            QList<QString> topoOrder = m_depGraph.topologicalOrder(&cycle);
+            QSet<QString> rebuilt;
+
+            // 先 rebuild 有拓撲順序的（被依賴者先）
+            for (const QString& id : topoOrder) {
+                Feature* f = findFeature(id);
+                if (f && !f->isSuppressed()) {
+                    f->rebuild();
+                    f->clearDirty();
+                    rebuilt.insert(id);
+                }
+            }
+            // 再 rebuild 不在依賴圖中的（孤立 Sketch 等）
+            for (Feature* f : m_features) {
+                if (f && !f->isSuppressed() && !rebuilt.contains(f->id())) {
+                    f->rebuild();
+                    f->clearDirty();
                 }
             }
         }
+
+        // ✅ 讀取視圖狀態
+        if (docJson.contains("viewState"))
+            m_viewState = docJson["viewState"].toObject();
 
         setFileName(fileName);
         setModified(false);
@@ -264,9 +286,6 @@ bool Document::load(const QString& fileName) {
         // ✅ 載入完成後：重建 tree items 並通知所有監聽者
         rebuildFeatureTreeItems();
         Q_EMIT treeStructureChanged();
-
-        // ✅ 通知 UIManager 重新顯示所有 feature
-        Q_EMIT allFeaturesLoaded();
 
         qDebug() << "[Document] Loaded successfully," << m_features.size() << "features";
         return true;
@@ -548,6 +567,9 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     addFeature(extrude);
     // ✅ 改用 setFeatureParent：只影響 Feature 樹狀結構，不動 QObject 所有權
     sketch->setFeatureParent(extrude);
+
+    // ✅ addFeature 已連接 rebuildRequested，現在明確執行一次 rebuild
+    extrude->rebuild();
 
     // ✅ 加入 tree item
     ui::FeatureTreeItem extrudeItem;

@@ -355,11 +355,23 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         bus->subscribe(core::Events::DOCUMENT_OPENED, this,
                        [this](const QVariant& data) {
                            cad::Document* doc = qvariant_cast<cad::Document*>(data);
-                           if (doc && d->cadView) {
-                               d->cadView->setDocument(doc);
-                               onDocumentCreated();
-                           }
-                       });
+                                if (!doc || !d->cadView) return;
+
+                                d->cadView->setDocument(doc);
+
+                                if (!doc->viewState().isEmpty()) {
+                                    // ✅ 有儲存的 viewState：只初始化參考幾何，不 setViewType / fitAll
+                                    initializeReferenceGeometry();
+                                    // ✅ 等 displayAllFeatures 完成後再還原，用比所有 timer 更晚的時間點
+                                    QTimer::singleShot(200, this, [this, doc]() {
+                                        if (d->cadView)
+                                            d->cadView->restoreViewState(doc->viewState());
+                                    });
+                                } else {
+                                    // ✅ 新文件或無 viewState：走原本流程
+                                    onDocumentCreated();
+                                }
+                           });
 
         bus->subscribe(core::Events::DOCUMENT_CLOSED, this,
             [this](const QVariant& data) {
@@ -387,6 +399,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         d->cadView->setMode(view::InteractionMode::Sketching);
                     }
                 }
+                // ✅ 不在這裡呼叫 displayAllFeatures()，
+                //    featureShapeUpdated 信號鏈已統一處理
             });
         
         // ✅ 新增：處理 extrude 完成後的視圖切換請求
@@ -554,8 +568,9 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            app->eventBus()->publish("command.request-view-setup", viewData1);
 
                            // 重繪
-                           if (d->cadView) d->cadView->update();
-                       });
+                            if (d->cadView)
+                                QTimer::singleShot(0, d->cadView, &view::CadView::displayAllFeatures);
+                        });
 
         // ✅ Handle sketch line creation requests
         bus->subscribe("command.create-sketch-line", this,
@@ -2102,6 +2117,11 @@ void UIManager::onOpenDocument() {
 }
 
 void UIManager::onSaveDocument() {
+    // ✅ 儲存 camera 狀態到 document
+    if (d->cadView) {
+        if (auto* doc = d->cadView->document())
+            doc->setViewState(d->cadView->saveViewState());
+    }
     executeCommand("save");
 }
 
@@ -2197,23 +2217,19 @@ void UIManager::onDocumentCreated() {
 
 // ✅ 當前文件改變時的處理
 void UIManager::onCurrentDocumentChanged(cad::Document* doc) {
-    qDebug() << "[UIManager] Current document changed:"
-             << (doc ? doc->fileName() : "null");
-
     if (doc && d->cadView && d->cadView->isViewInitialized()) {
-        // 為新的當前文件初始化參考幾何（如果還沒有）
-        if (doc->referenceGeometries().isEmpty()) {
+        if (doc->referenceGeometries().isEmpty())
             initializeReferenceGeometry();
-        }
 
-        // 刷新視圖
         d->cadView->refreshView();
-        d->cadView->fitAll();
+
+        // ✅ 有 viewState 時不 fitAll，由 DOCUMENT_OPENED 的 timer 負責還原
+        if (doc->viewState().isEmpty())
+            d->cadView->fitAll();
     }
 
     if (d->propertyPanel)
-        d->propertyPanel->clear();   // ← 新增
-
+        d->propertyPanel->clear();
 }
 
 } // namespace ui

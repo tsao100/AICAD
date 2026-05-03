@@ -808,6 +808,10 @@ bool Sketch::fromJson(const QJsonObject& json) {
     if (!m_constraints.isEmpty())
         solveConstraints();
 
+    // ✅ 載入幾何後必須 rebuild 一次，讓 m_wires / shape() 有效，
+    //    否則後續 Extrude::rebuild() 的 hasValidShape() 檢查會失敗
+    rebuild();
+
     return true;
 }
 

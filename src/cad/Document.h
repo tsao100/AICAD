@@ -15,6 +15,7 @@
 #include <QObject>
 #include <QString>
 #include <QList>
+#include <QJsonObject>
 #include <TDocStd_Document.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_InteractiveObject.hxx>
@@ -265,6 +266,10 @@ public:
      */
     void rebuildFrom(Feature* changedFeature);
 
+    // ✅ View state save/load
+    void setViewState(const QJsonObject& state) { m_viewState = state; }
+    QJsonObject viewState() const { return m_viewState; }
+
     // 復原/重做（未來實作）
     // bool canUndo() const;
     // bool canRedo() const;
@@ -390,6 +395,7 @@ private:
 
     aicad::core::ParameterStore* m_parameterStore;
     DependencyGraph              m_depGraph;
+    QJsonObject m_viewState;   // ✅ 儲存視圖狀態（camera eye/at/up/scale）
 
     Q_DISABLE_COPY(Document)
 };
