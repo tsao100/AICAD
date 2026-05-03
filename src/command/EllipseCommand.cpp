@@ -45,7 +45,6 @@ CommandResult EllipseCommand::execute(const CommandContext& context) {
     bus->publish("command.request-view-setup", viewSetup);
 
     bus->publish(Events::COMMAND_PROMPT, "Specify center point:");
-    bus->publish(Events::COMMAND_LOG, "Specify center point:");
 
     // ✅ Subscribe with Qt::QueuedConnection for safety
     bus->subscribe(Events::POINT_ACQUIRED, this,

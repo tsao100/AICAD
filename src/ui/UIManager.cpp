@@ -559,7 +559,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            featureData["featureId"]   = extrude->id();
                            featureData["featureName"] = extrude->name();
                            app->eventBus()->publish(core::Events::FEATURE_CREATED, featureData);
-                           app->eventBus()->publish(core::Events::COMMAND_LOG,
+                           app->eventBus()->publish(core::Events::COMMAND_PROMPT,
                                                     QString("Extrude '%1' created (h=%2)").arg(extrude->name()).arg(height));
 
                            app->setActiveSketch(nullptr);
@@ -1197,14 +1197,14 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                       .arg(to.X() - from.X())
                                       .arg(to.Y() - from.Y())
                                       .arg(to.Z() - from.Z());
-                    bus->publish(Events::COMMAND_LOG, msg);
+                    bus->publish(Events::COMMAND_PROMPT, msg);
                 });
 
         // ── Snap 指示（顯示在 status bar）──────────────────────────────────────
         connect(d->gripManager, &GripManager::snapOccurred,
                 this, [bus](const SnapResult& s) {
                     if (s.snapped)
-                        bus->publish(Events::COMMAND_LOG, "Snap: " + s.description);
+                        bus->publish(Events::COMMAND_PROMPT, "Snap: " + s.description);
                 });
 
         initGripSystem();
@@ -1355,7 +1355,7 @@ void UIManager::connectCommandLineEvents() {
                    });
 
     // ── 命令 log（一般訊息）────────────────────────────────────────
-    bus->subscribe(core::Events::COMMAND_LOG, this,
+    bus->subscribe(core::Events::COMMAND_PROMPT, this,
                    [this](const QVariant& v) {
                        d->commandLine->appendHistory(v.toString());
                    });

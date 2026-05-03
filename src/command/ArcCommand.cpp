@@ -52,7 +52,6 @@ CommandResult ArcCommand::execute(const CommandContext& context) {
     bus->publish("command.request-view-setup", viewSetup);
 
     bus->publish(Events::COMMAND_PROMPT, "Specify arc start point:");
-    bus->publish(Events::COMMAND_LOG,    "Specify arc start point:");
 
     // 訂閱點輸入事件
     bus->subscribe(Events::POINT_ACQUIRED, this,

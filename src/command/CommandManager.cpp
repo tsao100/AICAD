@@ -189,7 +189,6 @@ CommandResult CommandManager::executeCommand(
     if (canonicalName.isEmpty()) {
         auto* bus = core::Application::instance()->eventBus();
         bus->publish(Events::COMMAND_PROMPT, "Unknown command");
-        bus->publish(Events::COMMAND_LOG, "Unknown command");
 
         return CommandResult::Failure(
             QString("Unknown command: %1").arg(commandName));
@@ -270,7 +269,6 @@ void CommandManager::onCommandFinished(const CommandResult& result)
     if (result.success) {
         auto* bus = core::Application::instance()->eventBus();
         bus->publish(Events::COMMAND_PROMPT, "");
-        bus->publish(Events::COMMAND_LOG, "OK");
         addToHistory(name, QStringList());
     }
 

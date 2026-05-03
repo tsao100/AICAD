@@ -47,7 +47,6 @@ CommandResult LineCommand::execute(const CommandContext& context) {
     bus->publish("command.request-view-setup", viewSetup);
 
     bus->publish(Events::COMMAND_PROMPT, "Specify first point:");
-    bus->publish(Events::COMMAND_LOG, "Specify first point:");
 
 
     // ✅ Subscribe with Qt::QueuedConnection for safety

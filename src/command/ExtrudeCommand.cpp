@@ -79,9 +79,6 @@ void ExtrudeCommand::promptForRegion(int regionCount) {
     bus->publish(Events::COMMAND_PROMPT,
                  QString("Found %1 regions. Click inside a region to select it:")
                      .arg(regionCount));
-    bus->publish(Events::COMMAND_LOG,
-                 QString("Found %1 regions. Click inside a region to select it:")
-                     .arg(regionCount));
 
     // CadView 的 mousePressEvent 在 regionAisMap 非空時：
     //   1. 呼叫 highlightSketchRegion()
@@ -118,7 +115,6 @@ void ExtrudeCommand::promptForHeight() {
     bus->publish("command.clear-sketch-regions", QVariant());
 
     bus->publish(Events::COMMAND_PROMPT, "Enter extrude height:");
-    bus->publish(Events::COMMAND_LOG,    "Enter extrude height:");
 
     CommandLineManager::instance()->waitForInput(InputType::Number);
 
@@ -146,7 +142,7 @@ void ExtrudeCommand::handleHeightInput(const QString& input) {
     bool ok;
     double height = input.toDouble(&ok);
     if (!ok || height <= 0.0) {
-        bus->publish(Events::COMMAND_LOG,
+        bus->publish(Events::COMMAND_PROMPT,
                      "Invalid height. Please enter a positive number:");
         CommandLineManager::instance()->waitForInput(InputType::Number);
         return;

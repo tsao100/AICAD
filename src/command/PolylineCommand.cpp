@@ -56,7 +56,6 @@ CommandResult PolylineCommand::execute(const CommandContext& context) {
     bus->publish("command.request-view-setup", viewSetup);
 
     bus->publish(Events::COMMAND_PROMPT, "Specify first point:");
-    bus->publish(Events::COMMAND_LOG,    "Specify first point:");
 
     // Subscribe to point / cancel events
     bus->subscribe(Events::POINT_ACQUIRED, this,

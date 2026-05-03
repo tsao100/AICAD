@@ -44,7 +44,6 @@ CommandResult CircleCommand::execute(const CommandContext& context) {
     bus->publish("command.request-view-setup", viewSetup);
 
     bus->publish(Events::COMMAND_PROMPT, "Specify center point:");
-    bus->publish(Events::COMMAND_LOG, "Specify center point:");
 
     // Subscribe to point and cancel events
     bus->subscribe(Events::POINT_ACQUIRED, this,

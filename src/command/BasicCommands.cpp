@@ -168,8 +168,7 @@ private:
         qDebug() << "[SketchCommand] Sketch created:" << name
                  << "on" << m_selectedPlane->name();
 
-        bus->publish(Events::COMMAND_PROMPT, "");
-        bus->publish(Events::COMMAND_LOG,"Sketch created on " +
+        bus->publish(Events::COMMAND_PROMPT,"Sketch created on " +
                                               m_selectedPlane->name());
 
         // 發布事件通知其他模組

@@ -43,7 +43,6 @@ CommandResult RectCommand::execute(const CommandContext& context) {
     bus->publish("command.request-view-setup", viewSetup);
 
     bus->publish(Events::COMMAND_PROMPT, "Specify first corner:");
-    bus->publish(Events::COMMAND_LOG,   "Specify first corner:");
 
     // 訂閱點輸入事件
     bus->subscribe(Events::POINT_ACQUIRED, this,
