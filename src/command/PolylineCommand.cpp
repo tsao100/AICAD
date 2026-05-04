@@ -76,7 +76,6 @@ CommandResult PolylineCommand::execute(const CommandContext& context) {
 
     setState(CommandState::Running);
 
-    outputMessage("Specify first point:");
     return CommandResult::Success("Waiting for input");
 }
 
@@ -102,12 +101,12 @@ void PolylineCommand::handlePointAcquired(QVector2D point) {
     bus->publish("command.update-rubber-band", rubberUpdate);
 
     if (isFirstPoint) {
-        outputMessage(QString("First point: (%1, %2). Specify next point:")
-                          .arg(point.x()).arg(point.y()));
-        bus->publish(Events::COMMAND_PROMPT,
-                     "Specify next point or press ESC to finish:");
         return;
     }
+    bus->publish(Events::COMMAND_PROMPT,
+                 QString("Specify next point or press ESC to finish [%1 pts]:")
+                     .arg(m_points.size()));
+
 
     // We now have at least 2 points – draw the latest segment for live preview
     QVariantMap segData;
@@ -115,13 +114,6 @@ void PolylineCommand::handlePointAcquired(QVector2D point) {
     segData["endPoint"]   = QVariant::fromValue(point);
     bus->publish("command.preview-sketch-segment", segData);
 
-    outputMessage(QString("Point %1: (%2, %3). Specify next point or press ESC to finish:")
-                      .arg(m_points.size())
-                      .arg(point.x()).arg(point.y()));
-
-    bus->publish(Events::COMMAND_PROMPT,
-                 QString("Specify next point or press ESC to finish [%1 pts]:")
-                     .arg(m_points.size()));
 }
 
 // ---------------------------------------------------------------------------

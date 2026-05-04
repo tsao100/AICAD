@@ -1308,7 +1308,9 @@ void UIManager::connectCommandLineEvents() {
     // ── 命令發出提示（prompt）───────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_PROMPT, this,
                    [this](const QVariant& v) {
-                       d->commandLine->appendHistory(v.toString(), /*isPrompt=*/true);
+                       if (!v.toString().isEmpty()) {          // 空字串(清除)不寫入歷程
+                           d->commandLine->appendHistory(v.toString(), /*isPrompt=*/true);
+                       }
                        d->commandLine->inputEdit()->setPlaceholderText(v.toString());
                        // TransientCommandHistory 自動在 appendHistory 觸發
                    });
@@ -1316,8 +1318,6 @@ void UIManager::connectCommandLineEvents() {
     // ── 命令完成 ────────────────────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_EXECUTED, this,
                    [this](const QVariant& v) {
-                       if (!v.toString().isEmpty())
-                           d->commandLine->appendHistory(v.toString());
                        // 命令結束 → transient history 淡出
                        d->commandLine->transientHistory()->beginFadeOut();
                        d->commandLine->clearCommandOptions();
@@ -1352,12 +1352,6 @@ void UIManager::connectCommandLineEvents() {
                    [this](const QVariant& v) {
                        QStringList opts = v.toStringList();
                        d->commandLine->setCommandOptions(opts);
-                   });
-
-    // ── 命令 log（一般訊息）────────────────────────────────────────
-    bus->subscribe(core::Events::COMMAND_PROMPT, this,
-                   [this](const QVariant& v) {
-                       d->commandLine->appendHistory(v.toString());
                    });
 
     // UIManager.cpp — connectCommandLineEvents() 或 setupSketchPanel() 加入：

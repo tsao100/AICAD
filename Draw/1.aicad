@@ -5,6 +5,67 @@
             ],
             "geometries": [
                 {
+                    "centerX": -9.243993759155273,
+                    "centerY": 11.676623344421387,
+                    "points": [
+                    ],
+                    "radius": 25.16919708251953,
+                    "role": 0,
+                    "type": 2,
+                    "uuid": "57192f23-f3cf-4eb1-bc4d-d69548f9704b"
+                }
+            ],
+            "id": "{50e0b5af-98a4-41e4-84d1-9a21fff6235e}",
+            "name": "Sketch 1",
+            "parentId": "{858abc95-904b-43bf-a0e5-84ad7d786617}",
+            "planeData": {
+                "createdTime": "2026-05-03T20:22:41",
+                "geometry": {
+                    "normal": [
+                        0,
+                        0,
+                        1
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        1,
+                        0,
+                        0
+                    ]
+                },
+                "id": "066853c1-10e6-4e79-a130-838823153f31",
+                "isLocked": true,
+                "modifiedTime": "2026-05-03T20:22:41",
+                "name": "XY",
+                "type": 0
+            },
+            "planeId": "066853c1-10e6-4e79-a130-838823153f31",
+            "planeName": "XY",
+            "suppressed": false,
+            "type": "Sketch",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "15",
+            "id": "{16e9abea-4258-4849-b777-f2e90c9b6bc9}",
+            "name": "Extrude 4",
+            "reversed": false,
+            "sketchId": "{b85caeb6-cd3d-4042-9de4-fcb1ada89400}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
+            "visible": false
+        },
+        {
+            "constraints": [
+            ],
+            "geometries": [
+                {
                     "closed": true,
                     "points": [
                         {
@@ -33,7 +94,7 @@
             "name": "Sketch 11",
             "parentId": "{3355472f-9502-4f3c-955f-81e703d1c9bc}",
             "planeData": {
-                "createdTime": "2026-05-02T07:44:04",
+                "createdTime": "2026-05-03T20:22:41",
                 "geometry": {
                     "normal": [
                         0,
@@ -51,153 +112,16 @@
                         0
                     ]
                 },
-                "id": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+                "id": "066853c1-10e6-4e79-a130-838823153f31",
                 "isLocked": true,
-                "modifiedTime": "2026-05-02T07:44:04",
+                "modifiedTime": "2026-05-03T20:22:41",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+            "planeId": "066853c1-10e6-4e79-a130-838823153f31",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "30",
-            "id": "{276cf931-cfb7-41be-8c8c-3a7ba4660f76}",
-            "name": "Extrude 8",
-            "reversed": false,
-            "sketchId": "{c639e8bb-86c6-4613-85ac-440278532a48}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "20",
-            "id": "{3355472f-9502-4f3c-955f-81e703d1c9bc}",
-            "name": "Extrude 9",
-            "reversed": false,
-            "sketchId": "{544e6e9f-303c-40f1-a9c0-8b6e79d9a715}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "30",
-            "id": "{858abc95-904b-43bf-a0e5-84ad7d786617}",
-            "name": "Extrude 1",
-            "reversed": false,
-            "sketchId": "{50e0b5af-98a4-41e4-84d1-9a21fff6235e}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "300",
-            "id": "{4aef0cc6-e1b8-4530-9c0c-f4212148b744}",
-            "name": "Extrude 12",
-            "reversed": false,
-            "sketchId": "{ff60dace-9635-44b7-94d5-991b96b3a299}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": true
-        },
-        {
-            "constraints": [
-            ],
-            "geometries": [
-                {
-                    "endPt": {
-                        "x": 29.206928253173828,
-                        "y": 20.834619522094727
-                    },
-                    "midPt": {
-                        "x": -18.847347259521484,
-                        "y": 18.547847747802734
-                    },
-                    "points": [
-                    ],
-                    "role": 0,
-                    "startPt": {
-                        "x": -41.597259521484375,
-                        "y": -23.84182357788086
-                    },
-                    "type": 1,
-                    "uuid": "f5fe058d-c7e0-427c-a1a3-ba7610e2c597"
-                },
-                {
-                    "endPt": {
-                        "x": -41.597259521484375,
-                        "y": -23.84182357788086
-                    },
-                    "midPt": {
-                        "x": 15.70305347442627,
-                        "y": -36.208370208740234
-                    },
-                    "points": [
-                    ],
-                    "role": 0,
-                    "startPt": {
-                        "x": 29.206928253173828,
-                        "y": 20.834619522094727
-                    },
-                    "type": 1,
-                    "uuid": "53bd1f05-9cdc-4acd-87ee-f1db789215ec"
-                }
-            ],
-            "id": "{c639e8bb-86c6-4613-85ac-440278532a48}",
-            "name": "Sketch 9",
-            "parentId": "{276cf931-cfb7-41be-8c8c-3a7ba4660f76}",
-            "planeData": {
-                "createdTime": "2026-05-02T07:44:04",
-                "geometry": {
-                    "normal": [
-                        0,
-                        0,
-                        1
-                    ],
-                    "origin": [
-                        0,
-                        0,
-                        0
-                    ],
-                    "xAxis": [
-                        1,
-                        0,
-                        0
-                    ]
-                },
-                "id": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
-                "isLocked": true,
-                "modifiedTime": "2026-05-02T07:44:04",
-                "name": "XY",
-                "type": 0
-            },
-            "planeId": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
-            "planeName": "XY",
-            "suppressed": false,
-            "type": "Sketch",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "20",
-            "id": "{35c29d86-2c5b-4eeb-96fd-efd548e05351}",
-            "name": "Extrude 7",
-            "reversed": false,
-            "sketchId": "{ea164a2b-ddf7-448a-b34a-a503243a8e24}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
             "visible": false
         },
         {
@@ -267,7 +191,7 @@
             "name": "Sketch 7",
             "parentId": "{35c29d86-2c5b-4eeb-96fd-efd548e05351}",
             "planeData": {
-                "createdTime": "2026-05-02T07:44:04",
+                "createdTime": "2026-05-03T20:22:41",
                 "geometry": {
                     "normal": [
                         0,
@@ -285,13 +209,13 @@
                         0
                     ]
                 },
-                "id": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+                "id": "066853c1-10e6-4e79-a130-838823153f31",
                 "isLocked": true,
-                "modifiedTime": "2026-05-02T07:44:04",
+                "modifiedTime": "2026-05-03T20:22:41",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+            "planeId": "066853c1-10e6-4e79-a130-838823153f31",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
@@ -355,7 +279,7 @@
             "name": "Sketch 5",
             "parentId": "{16e9abea-4258-4849-b777-f2e90c9b6bc9}",
             "planeData": {
-                "createdTime": "2026-05-02T07:44:04",
+                "createdTime": "2026-05-03T20:22:41",
                 "geometry": {
                     "normal": [
                         1,
@@ -373,16 +297,64 @@
                         0
                     ]
                 },
-                "id": "8b137897-9db5-4c56-a253-7fd8328c5774",
+                "id": "19166729-049f-4ed3-a1aa-cf1247cb4caa",
                 "isLocked": true,
-                "modifiedTime": "2026-05-02T07:44:04",
+                "modifiedTime": "2026-05-03T20:22:41",
                 "name": "YZ",
                 "type": 1
             },
-            "planeId": "8b137897-9db5-4c56-a253-7fd8328c5774",
+            "planeId": "19166729-049f-4ed3-a1aa-cf1247cb4caa",
             "planeName": "YZ",
             "suppressed": false,
             "type": "Sketch",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "30",
+            "id": "{858abc95-904b-43bf-a0e5-84ad7d786617}",
+            "name": "Extrude 1",
+            "reversed": false,
+            "sketchId": "{50e0b5af-98a4-41e4-84d1-9a21fff6235e}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "20",
+            "id": "{3355472f-9502-4f3c-955f-81e703d1c9bc}",
+            "name": "Extrude 9",
+            "reversed": false,
+            "sketchId": "{544e6e9f-303c-40f1-a9c0-8b6e79d9a715}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "300",
+            "id": "{4aef0cc6-e1b8-4530-9c0c-f4212148b744}",
+            "name": "Extrude 12",
+            "reversed": false,
+            "sketchId": "{ff60dace-9635-44b7-94d5-991b96b3a299}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "30",
+            "id": "{276cf931-cfb7-41be-8c8c-3a7ba4660f76}",
+            "name": "Extrude 8",
+            "reversed": false,
+            "sketchId": "{c639e8bb-86c6-4613-85ac-440278532a48}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
             "visible": false
         },
         {
@@ -439,7 +411,7 @@
             "name": "Sketch 3",
             "parentId": "{c40c0bc7-2cd8-482d-88ac-e721e261c157}",
             "planeData": {
-                "createdTime": "2026-05-02T07:44:04",
+                "createdTime": "2026-05-03T20:22:41",
                 "geometry": {
                     "normal": [
                         0,
@@ -457,40 +429,16 @@
                         1
                     ]
                 },
-                "id": "02d2b4f2-9226-4db9-9c29-b9359c99530b",
+                "id": "edd4747d-a7c9-4951-b6bc-6d82a913edef",
                 "isLocked": true,
-                "modifiedTime": "2026-05-02T07:44:04",
+                "modifiedTime": "2026-05-03T20:22:41",
                 "name": "XZ",
                 "type": 3
             },
-            "planeId": "02d2b4f2-9226-4db9-9c29-b9359c99530b",
+            "planeId": "edd4747d-a7c9-4951-b6bc-6d82a913edef",
             "planeName": "XZ",
             "suppressed": false,
             "type": "Sketch",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "30",
-            "id": "{c40c0bc7-2cd8-482d-88ac-e721e261c157}",
-            "name": "Extrude 3",
-            "reversed": false,
-            "sketchId": "{95b0bf92-0169-4e8c-abcd-5b86936a92eb}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "15",
-            "id": "{16e9abea-4258-4849-b777-f2e90c9b6bc9}",
-            "name": "Extrude 4",
-            "reversed": false,
-            "sketchId": "{b85caeb6-cd3d-4042-9de4-fcb1ada89400}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
             "visible": false
         },
         {
@@ -534,7 +482,7 @@
             "name": "Sketch 13",
             "parentId": "{4aef0cc6-e1b8-4530-9c0c-f4212148b744}",
             "planeData": {
-                "createdTime": "2026-05-02T07:44:04",
+                "createdTime": "2026-05-03T20:22:41",
                 "geometry": {
                     "normal": [
                         0,
@@ -552,16 +500,28 @@
                         0
                     ]
                 },
-                "id": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+                "id": "066853c1-10e6-4e79-a130-838823153f31",
                 "isLocked": true,
-                "modifiedTime": "2026-05-02T07:44:04",
+                "modifiedTime": "2026-05-03T20:22:41",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+            "planeId": "066853c1-10e6-4e79-a130-838823153f31",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "20",
+            "id": "{35c29d86-2c5b-4eeb-96fd-efd548e05351}",
+            "name": "Extrude 7",
+            "reversed": false,
+            "sketchId": "{ea164a2b-ddf7-448a-b34a-a503243a8e24}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
             "visible": false
         },
         {
@@ -569,21 +529,49 @@
             ],
             "geometries": [
                 {
-                    "centerX": -9.243993759155273,
-                    "centerY": 11.676623344421387,
+                    "endPt": {
+                        "x": 29.206928253173828,
+                        "y": 20.834619522094727
+                    },
+                    "midPt": {
+                        "x": -18.847347259521484,
+                        "y": 18.547847747802734
+                    },
                     "points": [
                     ],
-                    "radius": 25.16919708251953,
                     "role": 0,
-                    "type": 2,
-                    "uuid": "57192f23-f3cf-4eb1-bc4d-d69548f9704b"
+                    "startPt": {
+                        "x": -41.597259521484375,
+                        "y": -23.84182357788086
+                    },
+                    "type": 1,
+                    "uuid": "f5fe058d-c7e0-427c-a1a3-ba7610e2c597"
+                },
+                {
+                    "endPt": {
+                        "x": -41.597259521484375,
+                        "y": -23.84182357788086
+                    },
+                    "midPt": {
+                        "x": 15.70305347442627,
+                        "y": -36.208370208740234
+                    },
+                    "points": [
+                    ],
+                    "role": 0,
+                    "startPt": {
+                        "x": 29.206928253173828,
+                        "y": 20.834619522094727
+                    },
+                    "type": 1,
+                    "uuid": "53bd1f05-9cdc-4acd-87ee-f1db789215ec"
                 }
             ],
-            "id": "{50e0b5af-98a4-41e4-84d1-9a21fff6235e}",
-            "name": "Sketch 1",
-            "parentId": "{858abc95-904b-43bf-a0e5-84ad7d786617}",
+            "id": "{c639e8bb-86c6-4613-85ac-440278532a48}",
+            "name": "Sketch 9",
+            "parentId": "{276cf931-cfb7-41be-8c8c-3a7ba4660f76}",
             "planeData": {
-                "createdTime": "2026-05-02T07:44:04",
+                "createdTime": "2026-05-03T20:22:41",
                 "geometry": {
                     "normal": [
                         0,
@@ -601,16 +589,28 @@
                         0
                     ]
                 },
-                "id": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+                "id": "066853c1-10e6-4e79-a130-838823153f31",
                 "isLocked": true,
-                "modifiedTime": "2026-05-02T07:44:04",
+                "modifiedTime": "2026-05-03T20:22:41",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "997e5c20-24d1-4bae-bfa0-528f121d5a9a",
+            "planeId": "066853c1-10e6-4e79-a130-838823153f31",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "30",
+            "id": "{c40c0bc7-2cd8-482d-88ac-e721e261c157}",
+            "name": "Extrude 3",
+            "reversed": false,
+            "sketchId": "{95b0bf92-0169-4e8c-abcd-5b86936a92eb}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
             "visible": false
         }
     ],
