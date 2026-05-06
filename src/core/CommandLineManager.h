@@ -1,8 +1,6 @@
 #ifndef COMMANDLINEMANAGER_H
 #define COMMANDLINEMANAGER_H
 
-#include "PromptStep.h"
-
 #include <QObject>
 #include <QString>
 #include <QStringList>
