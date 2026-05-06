@@ -1258,6 +1258,9 @@ void UIManager::setupCommandLine() {
     connect(shortcutF2, &QShortcut::activated,
             d->commandLine, &CommandLineWidget::onHistoryButtonClicked);
 
+    connect(d->commandLineManager, &core::CommandLineManager::promptOptionsChanged,
+            d->commandLine, &CommandLineWidget::onPromptOptionsChanged);
+
     // ── 訂閱 VIEW_READY，初次對齊延後到 CadView 真正就緒 ──
     auto* bus = core::Application::instance()->eventBus();
     bus->subscribe(core::Events::VIEW_READY, d->commandLine,
@@ -1295,6 +1298,9 @@ void UIManager::connectCommandLineEvents() {
     // ── 使用者選了選項按鈕 ──────────────────────────────────────────
     connect(d->commandLine, &CommandLineWidget::optionSelected,
             d->commandLineManager, &core::CommandLineManager::onOptionSelected);
+
+    connect(d->commandLine->inputEdit(), &CommandInputEdit::escapePressed,
+            d->commandLineManager, &core::CommandLineManager::onEscapePressed);
 
     // ── COMMAND_EXECUTE_REQUEST → CommandManager ──
     bus->subscribe(core::Events::COMMAND_EXECUTE_REQUEST, this,
@@ -1343,6 +1349,7 @@ void UIManager::connectCommandLineEvents() {
                    [this](const QVariant&) {
                        auto* cmdMgr = core::Application::instance()->commandManager();
                        if (cmdMgr) cmdMgr->cancelCurrentCommand();
+                       d->commandLine->clearCommandOptions();
                        d->commandLine->inputEdit()->setPlaceholderText(
                            tr("輸入指令或 LISP..."));
                    });

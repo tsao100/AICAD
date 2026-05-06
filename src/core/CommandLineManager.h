@@ -70,6 +70,7 @@ signals:
     void commandStarted(const QString& cmd);
     void commandFinished(const QString& cmd, bool success);
     void commandCancelled();
+    void promptOptionsChanged(const QStringList& options);
 
 public slots:
     void onCommandInput(const QString& input);

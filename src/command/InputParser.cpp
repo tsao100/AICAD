@@ -250,6 +250,30 @@ QString InputParser::formatAngle(double degrees, int precision) {
     return QString::number(degrees, 'f', precision) + "°";
 }
 
+InputParser::ParsedPrompt InputParser::parsePrompt(const QString& promptText) {
+    ParsedPrompt result;
+    static QRegularExpression re(R"(\[([^\]]+)\])");
+    auto m = re.match(promptText);
+    if (!m.hasMatch()) return result;
+    result.options = m.captured(1).split(
+        QRegularExpression(R"([/\s]+)"), Qt::SkipEmptyParts);
+    return result;
+}
+
+QString InputParser::matchOption(const QString& input,
+                                 const QStringList& options) {
+    if (input.isEmpty()) return {};
+    const QString up = input.toUpper();
+    // 1. 完整名稱
+    for (const QString& opt : options)
+        if (opt.toUpper() == up) return opt;
+    // 2. 首字母（單字元輸入）
+    if (input.length() == 1)
+        for (const QString& opt : options)
+            if (!opt.isEmpty() && opt[0].toUpper() == up[0]) return opt;
+    return {};
+}
+
 double InputParser::degreesToRadians(double degrees) {
     return degrees * M_PI / 180.0;
 }

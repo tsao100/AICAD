@@ -2,6 +2,7 @@
 #include "CommandInputEdit.h"
 #include "TransientCommandHistory.h"
 #include "CommandHistoryPopup.h"
+#include "core/CommandLineManager.h"
 #include <QApplication>
 #include <QWindow>
 #include <QCursor>
@@ -10,6 +11,7 @@
 #include <QMouseEvent>
 #include <QScreen>
 #include <QScrollBar>
+#include <QRegularExpression>
 
 namespace aicad {
 namespace ui {
@@ -36,6 +38,13 @@ CommandLineWidget::CommandLineWidget(QWidget* cadView, QWidget* parent)
     buildSingleRow();
     //buildMultiRow();
     //alignToCadView(); CadView 尚未就緒
+
+    connect(m_inputEdit, &CommandInputEdit::optionChipClicked,
+            this, &CommandLineWidget::optionSelected);
+
+    using CLM = core::CommandLineManager;
+    connect(CLM::instance(), &CLM::promptOptionsChanged,
+            this, &CommandLineWidget::onPromptOptionsChanged);
 
     installMouseFilterOnChildren(this);
 
@@ -708,6 +717,12 @@ void CommandLineWidget::onHistoryButtonClicked() {
     emit historyPopupRequested();
 }
 
+void CommandLineWidget::onPromptOptionsChanged(const QStringList& options) {
+    setCommandOptions(options);
+    if (!options.isEmpty())
+        m_inputEdit->setFocus();   // 確保鍵盤輸入仍有效
+}
+
 void CommandLineWidget::appendHistory(const QString& text, bool isPrompt) {
     m_fullHistory.append(text);
 
@@ -730,22 +745,21 @@ void CommandLineWidget::appendHistory(const QString& text, bool isPrompt) {
 }
 
 void CommandLineWidget::setCommandOptions(const QStringList& options) {
-    // 清除舊按鈕
-    QLayoutItem* item;
-    while ((item = m_optionsLayout->takeAt(0)) != nullptr) {
-        if (item->widget()) item->widget()->deleteLater();
-        delete item;
+    if (options.isEmpty()) {
+        m_inputEdit->clearPromptOptions();
+        return;
     }
-    for (const QString& opt : options) {
-        auto* btn = new QToolButton(m_optionsBar);
-        btn->setText(opt);
-        connect(btn, &QToolButton::clicked, this, [this, opt](){
-            emit optionSelected(opt);
-        });
-        m_optionsLayout->addWidget(btn);
-    }
-    m_optionsLayout->addStretch();
-    m_optionsBar->setVisible(!options.isEmpty());
+    // 從最新 prompt 截取 "[...]" 前的 prefix，僅保留 "or" 起的部分
+    QString prefix = m_lastPrompt;
+    static QRegularExpression reBracket(R"(\s*\[.*$)");
+    prefix.remove(reBracket);
+    const int orIdx = prefix.indexOf(QRegularExpression(R"(\bor\b)", QRegularExpression::CaseInsensitiveOption));
+    if (orIdx != -1)
+        prefix = prefix.mid(orIdx).trimmed();   // "or"
+
+    m_inputEdit->setPromptOptions(prefix, options);
+    m_inputEdit->setFocus();
+    m_optionsBar->setVisible(false);   // 舊 bar 隱藏
 }
 
 void CommandLineWidget::clearCommandOptions() {

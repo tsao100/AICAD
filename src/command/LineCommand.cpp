@@ -68,6 +68,18 @@ CommandResult LineCommand::execute(const CommandContext& context) {
                        }, Qt::QueuedConnection);
                    });
 
+    bus->subscribe(Events::OPTION_SELECTED, this,
+                   [this](const QVariant& data) {
+                       const QString opt = data.toString();
+                       QMetaObject::invokeMethod(this, [this, opt]() {
+                           if (opt.compare("Undo", Qt::CaseInsensitive) == 0) {
+                               handleUndo();
+                           } else if (opt.compare("Close", Qt::CaseInsensitive) == 0) {
+                               handleClose();
+                           }
+                       }, Qt::QueuedConnection);
+                   });
+
     setState(CommandState::Running);  // 關鍵一行
 
     outputMessage("Specify first point:");
@@ -99,7 +111,8 @@ void LineCommand::handlePointAcquired(QVector2D point)
         outputMessage(QString("First point: (%1, %2). Specify next point:")
                           .arg(point.x()).arg(point.y()));
 
-        bus->publish(Events::COMMAND_PROMPT, "Specify next point or press ESC to finish");
+        bus->publish(Events::COMMAND_PROMPT,
+                     tr("Specify next point or [Undo/Close]:"));
         return;
     }
 
@@ -132,8 +145,8 @@ void LineCommand::handlePointAcquired(QVector2D point)
     bus->publish("command.update-rubber-band", rubberUpdate);
 
     m_startPoint = point;
-    bus->publish(Events::COMMAND_PROMPT, "Specify next point or press ESC to finish");
-
+    bus->publish(Events::COMMAND_PROMPT,
+                 tr("Specify next point or [Undo/Close]:"));
 }
 
 // ✅ Renamed from onCancelled
@@ -144,6 +157,24 @@ void LineCommand::handleCancelled() {
 
     // ✅ Just emit finished with current state
     Q_EMIT finished(CommandResult::Success("Line command completed"));
+}
+
+void LineCommand::handleUndo() {
+    if (!m_hasStartPoint) return;
+    // 回退到起點等待狀態
+    m_hasStartPoint = false;
+    Application::instance()->eventBus()->publish(
+        "command.undo-last-segment", QVariant());
+    Application::instance()->eventBus()->publish(
+        Events::COMMAND_PROMPT, tr("Specify first point:"));
+}
+
+void LineCommand::handleClose() {
+    if (!m_hasStartPoint) return;
+    // 發出封閉事件後結束命令
+    Application::instance()->eventBus()->publish(
+        "command.close-line-loop", QVariant());
+    Q_EMIT finished(CommandResult::Success("Line closed"));
 }
 
 void LineCommand::cleanup() {

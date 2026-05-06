@@ -36,6 +36,11 @@ struct ParsedInput {
 };
 
 class InputParser {
+
+    struct ParsedPrompt {
+        QStringList options;  // ["Arc","Halfwidth","Length","Undo","Width"]
+    };
+
 public:
     // 主解析方法
     static ParsedInput parse(const QString& input, InputType expectedType = InputType::Unknown);
@@ -58,6 +63,10 @@ public:
     static QString formatCoordinate(const QVector2D& point, int precision = 4);
     static QString formatNumber(double value, int precision = 4);
     static QString formatAngle(double degrees, int precision = 2);
+
+    static ParsedPrompt parsePrompt(const QString& promptText);
+    static QString      matchOption(const QString& input,
+                               const QStringList& options);
 
 private:
     static QVector2D parseAbsoluteCoord(const QString& input);

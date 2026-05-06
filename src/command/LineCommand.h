@@ -26,6 +26,8 @@ private:
     // ✅ Renamed methods (not slots - using EventBus)
     void handlePointAcquired(QVector2D point);
     void handleCancelled();
+    void handleUndo();
+    void handleClose();
     void cleanup() override;
 
     QVector2D m_startPoint;

@@ -1,6 +1,7 @@
 #include "CommandLineManager.h"
 #include "Application.h"
 #include "EventBus.h"
+#include "command/InputParser.h"
 #include <QTimer>
 #include <QDebug>
 
@@ -61,6 +62,21 @@ void CommandLineManager::processCommand(const QString& cmd) {
 void CommandLineManager::processInput(const QString& input) {
     qDebug() << "[CommandLineManager] Processing input:" << input
              << "Type:" << static_cast<int>(m_expectedInputType);
+
+    // ── 優先：比對 prompt 內的選項 ──────────────────────────────
+    if (!m_currentOptions.isEmpty()) {
+        QString matched = command::InputParser::matchOption(
+            input, m_currentOptions);
+        if (!matched.isEmpty()) {
+            m_isWaitingForInput = false;
+            m_expectedInputType = InputType::None;
+            m_currentOptions.clear();
+            emit promptOptionsChanged({});          // 清空按鈕列
+            auto* bus = Application::instance()->eventBus();
+            bus->publish(Events::OPTION_SELECTED, matched);
+            return;
+        }
+    }
 
     // 根據期望的輸入類型處理
     auto* bus = Application::instance()->eventBus();
@@ -127,6 +143,7 @@ void CommandLineManager::cancelCommand() {
     m_expectedInputType = InputType::None;
     m_currentPrompt.clear();
     m_currentOptions.clear();
+    emit promptOptionsChanged({});
 
     auto* bus = Application::instance()->eventBus();
     bus->publish(Events::COMMAND_CANCELLED, QVariant());
@@ -137,9 +154,13 @@ void CommandLineManager::cancelCommand() {
 void CommandLineManager::showPrompt(const QString& prompt) {
     m_currentPrompt = prompt;
 
+    // 解析 prompt 內的 [Arc/Undo/...] → 更新按鈕列
+    auto parsed = command::InputParser::parsePrompt(prompt);
+    m_currentOptions = parsed.options;
+    emit promptOptionsChanged(m_currentOptions);   // ← 新增
+
     auto* bus = Application::instance()->eventBus();
     bus->publish(Events::COMMAND_PROMPT, prompt);
-
     emit promptChanged(prompt);
 }
 
@@ -218,7 +239,7 @@ void CommandLineManager::onCommandInput(const QString& input) {
 }
 
 void CommandLineManager::onOptionSelected(const QString& option) {
-    if (m_isWaitingForInput && m_expectedInputType == InputType::Option) {
+    if (m_isWaitingForInput) {
         processInput(option);
     }
 }

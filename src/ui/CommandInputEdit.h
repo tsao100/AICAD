@@ -3,6 +3,8 @@
 
 #include <QLineEdit>
 #include <QStringList>
+#include <QTextDocument>
+#include <QAbstractTextDocumentLayout>
 
 namespace aicad {
 namespace ui {
@@ -16,17 +18,36 @@ public:
 
     void setHistory(const QStringList& history);
     void addToHistory(const QString& cmd);
+    void setPromptOptions(const QString& promptPrefix,
+                          const QStringList& options);
+    void clearPromptOptions();
 
 signals:
     void commandSubmitted(const QString& text);  // Enter 或空白鍵
+    void optionChipClicked(const QString& optionKey);
+    void escapePressed();
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    void paintEvent(QPaintEvent* event)    override;
+    void mousePressEvent(QMouseEvent* e)   override;
+    void mouseMoveEvent(QMouseEvent* e)    override;
+    void leaveEvent(QEvent* e)             override;
+    void resizeEvent(QResizeEvent* e)      override;
 
 private:
     void historyUp();
     void historyDown();
     void repeatLastCommand();
+    void    rebuildDocument();
+    QString anchorAtPos(const QPoint& pos) const; // 轉換座標後呼叫 anchorAt
+    void    updateLeftMargin();
+
+    QTextDocument* m_promptDoc   = nullptr;
+    QString        m_promptPrefix;
+    QStringList    m_options;
+    QString        m_hoveredAnchor;   // 目前 hover 的 href 值
+    int            m_docWidth = 0;    // chips 區塊實際寬度，用於 setTextMargins
 
     QStringList m_history;
     int         m_historyIndex = -1;   // -1 = 目前輸入

@@ -60,6 +60,7 @@ signals:
 
 public slots:
     void onHistoryButtonClicked();
+    void onPromptOptionsChanged(const QStringList& options);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -138,6 +139,8 @@ private:
     // 指令選項列（命令進行時）
     QWidget*    m_optionsBar      = nullptr;
     QHBoxLayout* m_optionsLayout  = nullptr;
+
+    QString m_lastPrompt;
 
     // Transient history（命令進行中浮動在上）
     TransientCommandHistory* m_transientHistory = nullptr;
