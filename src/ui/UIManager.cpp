@@ -1316,14 +1316,16 @@ void UIManager::connectCommandLineEvents() {
     bus->subscribe(core::Events::COMMAND_PROMPT, this,
                    [this](const QVariant& v) {
                        const QString prompt = v.toString();
-                       if (!prompt.isEmpty()) {
+                       if (!prompt.isEmpty())
                            d->commandLine->appendHistory(prompt, /*isPrompt=*/true);
-                       }
-                       d->commandLine->inputEdit()->setPlaceholderText(prompt);
 
-                       // ★ 新增：解析 prompt 中的 [選項]，更新 chips
+                       // ★ 解析 options 並更新 chips
                        auto parsed = command::InputParser::parsePrompt(prompt);
-                       d->commandLine->setCommandOptions(parsed.options);  // 空時自動 clear
+                       d->commandLine->setCommandOptions(parsed.options);
+
+                       // ★ 用 setPromptText 取代 setPlaceholderText
+                       d->commandLine->inputEdit()->setPromptText(prompt);
+                       d->commandLine->setLastPrompt(prompt);
                    });
 
     // ── 命令完成 ────────────────────────────────────────────────────

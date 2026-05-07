@@ -38,9 +38,16 @@ void CommandInputEdit:: setPromptOptions(const QString& prefix,
     rebuildDocument();
 }
 
+void CommandInputEdit::setPromptText(const QString& text) {
+    m_promptText = text;
+    if (m_options.isEmpty())
+        rebuildDocument();
+}
+
 void CommandInputEdit::clearPromptOptions() {
     m_options.clear();
     m_promptPrefix.clear();
+    m_promptText.clear();
     m_promptDoc->clear();
     m_docWidth = 0;
     setTextMargins(0, 0, 0, 0);
@@ -110,13 +117,16 @@ void CommandInputEdit::repeatLastCommand() {
 }
 
 void CommandInputEdit::rebuildDocument() {
-    if (m_options.isEmpty()) { clearPromptOptions(); return; }
-
     // 組合 HTML
     QString html;
     if (!m_promptPrefix.isEmpty())
         html += QString("<span class='prefix'>%1 [</span>")
                     .arg(m_promptPrefix.toHtmlEscaped());
+
+    if (m_options.isEmpty())
+        html += QString("<span class='prefix'>%1</span>")
+                    .arg(m_promptText.toHtmlEscaped());
+
 
     for (const auto& po : m_options) {
         const bool isChinese = !po.label.isEmpty() &&
@@ -150,12 +160,14 @@ void CommandInputEdit::rebuildDocument() {
     if (!m_promptPrefix.isEmpty())
         html += QString("<span class='prefix'>]: </span>");
 
+
     m_promptDoc->setHtml(html);
     m_promptDoc->setTextWidth(-1);          // 先不限寬，取得自然寬
     m_docWidth = int(m_promptDoc->idealWidth()) + 8;
     updateLeftMargin();
     setPlaceholderText({});
     update();
+    return;
 }
 
 void CommandInputEdit::updateLeftMargin() {
@@ -174,8 +186,6 @@ QString CommandInputEdit::anchorAtPos(const QPoint& pos) const {
 
 void CommandInputEdit::paintEvent(QPaintEvent* event) {
     QLineEdit::paintEvent(event);   // 原生邊框 + 游標 + 使用者輸入文字
-
-    if (m_options.isEmpty() || m_docWidth == 0) return;
 
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);

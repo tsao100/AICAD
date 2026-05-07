@@ -21,6 +21,7 @@ public:
     void addToHistory(const QString& cmd);    
     void setPromptOptions(const QString& prefix,
                           const QList<command::InputParser::ParsedOption>& options);
+    void setPromptText(const QString& text);
     void clearPromptOptions();
 
 signals:
@@ -46,6 +47,7 @@ private:
 
     QTextDocument* m_promptDoc   = nullptr;
     QString        m_promptPrefix;
+    QString m_promptText;
     QList<command::InputParser::ParsedOption> m_options;
     QString        m_hoveredAnchor;   // 目前 hover 的 href 值
     int            m_docWidth = 0;    // chips 區塊實際寬度，用於 setTextMargins

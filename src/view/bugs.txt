@@ -6,6 +6,8 @@ NG:
 
     Snap and grips ON. need to check later.
 
+    inputEdit options ok. but the input text need to check.
+
 Solved:
 
     Grips not show.
