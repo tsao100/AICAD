@@ -160,7 +160,6 @@ void CommandInputEdit::rebuildDocument() {
     if (!m_promptPrefix.isEmpty())
         html += QString("<span class='prefix'>]: </span>");
 
-
     m_promptDoc->setHtml(html);
     m_promptDoc->setTextWidth(-1);          // 先不限寬，取得自然寬
     m_docWidth = int(m_promptDoc->idealWidth()) + 8;
