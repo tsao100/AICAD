@@ -3,6 +3,8 @@
 
 #include "Command.h"
 #include "cad/Sketch.h"
+#include "manipulator/ExtrudeManipulator.h"
+
 
 namespace aicad {
 namespace command {
@@ -19,7 +21,10 @@ private:
     void promptForRegion(int regionCount);   // ← 移除 sketch* 參數（改用 Qt signal）
     void promptForHeight();
     void handleHeightInput(const QString& input);
+    void launchManipulator(cad::Extrude* extrude);
+
     QString m_sketchId;
+    manipulator::ExtrudeManipulator* m_manipulator = nullptr;
 };
 
 } // namespace command

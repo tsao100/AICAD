@@ -268,6 +268,8 @@ SOURCES += \
     src/geometry/GeometryBuilder.cpp \
     \
     # UI Module (James - 用戶界面)
+    src/manipulator/AIS_ExtrudeManipulator.cpp \
+    src/manipulator/ExtrudeManipulator.cpp \
     src/osnap/OSnapDetector.cpp \
     src/osnap/OSnapIndicator.cpp \
     src/osnap/OSnapManager.cpp \
@@ -361,6 +363,8 @@ HEADERS += \
     src/geometry/GeometryBuilder.h \
     \
     # UI Module (James)
+    src/manipulator/AIS_ExtrudeManipulator.h \
+    src/manipulator/ExtrudeManipulator.h \
     src/osnap/OSnapDetector.h \
     src/osnap/OSnapIndicator.h \
     src/osnap/OSnapManager.h \

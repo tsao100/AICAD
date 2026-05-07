@@ -270,6 +270,8 @@ public:
     void setViewState(const QJsonObject& state) { m_viewState = state; }
     QJsonObject viewState() const { return m_viewState; }
 
+    cad::Extrude* lastExtrude() const;
+
     // 復原/重做（未來實作）
     // bool canUndo() const;
     // bool canRedo() const;

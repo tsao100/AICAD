@@ -4,6 +4,7 @@
 #include "core/DocumentManager.h"
 #include "core/EventBus.h"
 #include "core/CommandLineManager.h"
+#include "ui/UIManager.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "cad/Extrude.h"
@@ -108,58 +109,124 @@ void ExtrudeCommand::promptForRegion(int regionCount) {
                     });
 }
 
-void ExtrudeCommand::promptForHeight() {
-    EventBus* bus = core::Application::instance()->eventBus();
+void ExtrudeCommand::promptForHeight()
+{
+    Application* app = Application::instance();
+    EventBus*    bus = app->eventBus();
 
-    // 取消 region 的視覺顯示，進入高度輸入階段
     bus->publish("command.clear-sketch-regions", QVariant());
 
-    bus->publish(Events::COMMAND_PROMPT, "Enter extrude height:");
+    // ── 先用預設高度建立 Extrude（0 height = placeholder）──────────
+    QVariantMap createData;
+    createData["sketchId"] = m_sketchId;
+    createData["height"]   = 10.0;  // 初始預覽高度
+    bus->publish("command.create-extrude", createData);
 
-    CommandLineManager::instance()->waitForInput(core::InputType::Number);
+    // 等 Document 建立 Extrude 後，取得最新的 feature
+    cad::Document* doc = app->documentManager()->currentDocument();
+    if (!doc) {
+        complete(CommandResult::Failure("No document"));
+        return;
+    }
 
-    bus->subscribe(Events::NUMBER_INPUT, this,
-                   [this](const QVariant& data) {
-                       QMetaObject::invokeMethod(this, [this, data]() {
-                           this->handleHeightInput(data.toString());
-                       }, Qt::QueuedConnection);
-                   });
+    cad::Extrude* extrude = doc->lastExtrude();   // 需在 Document 新增此方法
+    if (!extrude) {
+        complete(CommandResult::Failure("Failed to create extrude"));
+        return;
+    }
 
-    // POINT_CANCELLED 可能已訂閱（多 region 路徑），subscribe 重複無害；
-    // 單 region 路徑在此補上
-    bus->subscribe(Events::POINT_CANCELLED, this,
-                   [this](const QVariant&) {
-                       QMetaObject::invokeMethod(this, [this]() {
-                           complete(CommandResult::Failure("Extrude cancelled"));
-                       }, Qt::QueuedConnection);
-                   });
+    launchManipulator(extrude);
 }
 
-void ExtrudeCommand::handleHeightInput(const QString& input) {
+void ExtrudeCommand::handleHeightInput(const QString& input)
+{
     Application* app = Application::instance();
-    EventBus* bus = app->eventBus();
-
     bool ok;
     double height = input.toDouble(&ok);
     if (!ok || height <= 0.0) {
-        bus->publish(Events::COMMAND_PROMPT,
-                     "Invalid height. Please enter a positive number:");
+        app->eventBus()->publish(Events::COMMAND_LOG,
+                                 "Invalid height. Enter a positive number:");
         CommandLineManager::instance()->waitForInput(core::InputType::Number);
         return;
     }
 
-    QVariantMap data;
-    data["sketchId"] = m_sketchId;
-    data["height"]   = height;
-    bus->publish("command.create-extrude", data);
+    // 如果 Manipulator 存在，同步高度後直接 complete
+    if (m_manipulator) {
+        // Extrude 的 height 已由 Manipulator 即時更新，這裡只做最終確認
+        m_manipulator->hide();
+    } else {
+        // 降級文字輸入路徑（同原本邏輯）
+        QVariantMap data;
+        data["sketchId"] = m_sketchId;
+        data["height"]   = height;
+        app->eventBus()->publish("command.create-extrude", data);
+    }
 
     app->clearSelectedRegion();
-
     complete(CommandResult::Success(
-        QString("Extrude created with height %1").arg(height)));
+        QString("Extrude height: %1 mm").arg(height)));
+}
+
+void ExtrudeCommand::launchManipulator(cad::Extrude* extrude)
+{
+    Application* app = Application::instance();
+
+    ui::UIManager* uiMgr = app->uiManager();
+    view::CadView* cadView = uiMgr->cadView();
+
+    if (!cadView) {
+        // fallback：降級為純文字輸入
+        app->eventBus()->publish(Events::COMMAND_PROMPT, "Enter extrude height:");
+        CommandLineManager::instance()->waitForInput(core::InputType::Number);
+        app->eventBus()->subscribe(Events::NUMBER_INPUT, this,
+                                   [this](const QVariant& data) {
+                                       QMetaObject::invokeMethod(this, [this, data]() {
+                                           handleHeightInput(data.toString());
+                                       }, Qt::QueuedConnection);
+                                   });
+        return;
+    }
+
+    setState(CommandState::Running);
+
+    m_manipulator = new manipulator::ExtrudeManipulator(extrude, cadView, this);
+    m_manipulator->show();
+
+    app->eventBus()->publish(Events::COMMAND_PROMPT,
+                             "拖曳箭頭調整高度，或輸入數值後按 Enter 確認（Shift+點翻轉箭頭=對稱）");
+
+    // height confirmed → complete command
+    connect(m_manipulator, &manipulator::ExtrudeManipulator::heightConfirmed,
+            this, [this, extrude](double h) {
+                core::Application::instance()->eventBus()->publish(
+                    Events::COMMAND_LOG,
+                    QString("Extrude height set to %1 mm").arg(h, 0, 'f', 2));
+                // 按 Enter 才真正 complete
+            });
+
+    // 監聽 Enter（從 CommandLine）確認完成
+    core::Application::instance()->eventBus()->subscribe(
+        Events::NUMBER_INPUT, this,
+        [this](const QVariant& data) {
+            QMetaObject::invokeMethod(this, [this, data]() {
+                handleHeightInput(data.toString());
+            }, Qt::QueuedConnection);
+        });
+
+    connect(m_manipulator, &manipulator::ExtrudeManipulator::cancelled,
+            this, [this]() {
+                QMetaObject::invokeMethod(this, [this]() {
+                    complete(CommandResult::Failure("Extrude cancelled"));
+                }, Qt::QueuedConnection);
+            });
 }
 
 void ExtrudeCommand::cleanup() {
+    if (m_manipulator) {
+        m_manipulator->hide();
+        m_manipulator->deleteLater();
+        m_manipulator = nullptr;
+    }
     // 清除 region 視覺顯示
     core::Application::instance()->eventBus()
         ->publish("command.clear-sketch-regions", QVariant());

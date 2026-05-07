@@ -990,6 +990,16 @@ void Document::rebuildFrom(Feature* changedFeature) {
     }
 }
 
+
+cad::Extrude* Document::lastExtrude() const
+{
+    for (auto it = m_features.rbegin(); it != m_features.rend(); ++it) {
+        if (auto* e = qobject_cast<cad::Extrude*>(*it))
+            return e;
+    }
+    return nullptr;
+}
+
 void Document::showAllReferenceGeometry() {
     for (const ReferenceGeometry& refGeom : m_referenceGeometries) {
         if (!refGeom.aisObject.IsNull()) {
