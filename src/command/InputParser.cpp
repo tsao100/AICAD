@@ -255,8 +255,34 @@ InputParser::ParsedPrompt InputParser::parsePrompt(const QString& promptText) {
     static QRegularExpression re(R"(\[([^\]]+)\])");
     auto m = re.match(promptText);
     if (!m.hasMatch()) return result;
-    result.options = m.captured(1).split(
-        QRegularExpression(R"([/\s]+)"), Qt::SkipEmptyParts);
+
+    const QStringList tokens = m.captured(1).split('/', Qt::SkipEmptyParts);
+
+    // ★ 宣告移到 loop 外
+    static QRegularExpression rePre(R"(\(([^)]*)\)(.+))");   // (U)ndo
+    static QRegularExpression rePost(R"(^(.+)\(([^)]*)\)$)"); // 退回(U)
+
+    for (const QString& token : tokens) {
+        QString opt = token.trimmed();
+        ParsedOption po;
+
+        auto mPost = rePost.match(opt);
+        if (mPost.hasMatch()) {
+            po.label    = mPost.captured(1).trimmed();
+            po.shortcut = mPost.captured(2).trimmed().toUpper();
+        } else {
+            auto mPre = rePre.match(opt);
+            if (mPre.hasMatch()) {
+                po.shortcut = mPre.captured(1).trimmed().toUpper();
+                po.label    = po.shortcut + mPre.captured(2).trimmed();
+            } else {
+                po.label    = opt;
+                po.shortcut = opt.isEmpty() ? QString() : QString(opt[0].toUpper());
+            }
+        }
+        if (!po.label.isEmpty())
+            result.options.append(po);
+    }
     return result;
 }
 

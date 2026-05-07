@@ -2,6 +2,7 @@
 #define INPUTPARSER_H
 
 #include <QString>
+#include <QList>
 #include <QVector2D>
 #include <QVariant>
 
@@ -36,12 +37,18 @@ struct ParsedInput {
 };
 
 class InputParser {
+public:
 
-    struct ParsedPrompt {
-        QStringList options;  // ["Arc","Halfwidth","Length","Undo","Width"]
+    struct ParsedOption {
+        QString label;    // 顯示名：「退回」或「Undo」
+        QString shortcut; // 快捷鍵：「U」
     };
 
-public:
+    struct ParsedPrompt {
+        QString prefix;
+        QList<ParsedOption> options;
+    };
+
     // 主解析方法
     static ParsedInput parse(const QString& input, InputType expectedType = InputType::Unknown);
 

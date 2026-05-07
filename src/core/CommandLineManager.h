@@ -1,6 +1,7 @@
 #ifndef COMMANDLINEMANAGER_H
 #define COMMANDLINEMANAGER_H
 
+#include "command/InputParser.h"
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -70,7 +71,7 @@ signals:
     void commandStarted(const QString& cmd);
     void commandFinished(const QString& cmd, bool success);
     void commandCancelled();
-    void promptOptionsChanged(const QStringList& options);
+    void promptOptionsChanged(const QList<command::InputParser::ParsedOption>& options);
 
 public slots:
     void onCommandInput(const QString& input);
@@ -88,7 +89,7 @@ private:
     static CommandLineManager* s_instance;
 
     QString m_currentPrompt;
-    QStringList m_currentOptions;
+    QList<command::InputParser::ParsedOption> m_currentOptions;
     InputType m_expectedInputType;
 
     bool m_isWaitingForInput;

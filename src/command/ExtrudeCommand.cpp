@@ -116,7 +116,7 @@ void ExtrudeCommand::promptForHeight() {
 
     bus->publish(Events::COMMAND_PROMPT, "Enter extrude height:");
 
-    CommandLineManager::instance()->waitForInput(InputType::Number);
+    CommandLineManager::instance()->waitForInput(core::InputType::Number);
 
     bus->subscribe(Events::NUMBER_INPUT, this,
                    [this](const QVariant& data) {
@@ -144,7 +144,7 @@ void ExtrudeCommand::handleHeightInput(const QString& input) {
     if (!ok || height <= 0.0) {
         bus->publish(Events::COMMAND_PROMPT,
                      "Invalid height. Please enter a positive number:");
-        CommandLineManager::instance()->waitForInput(InputType::Number);
+        CommandLineManager::instance()->waitForInput(core::InputType::Number);
         return;
     }
 

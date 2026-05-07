@@ -46,7 +46,7 @@ CommandResult LineCommand::execute(const CommandContext& context) {
     viewSetup["rubberBandMode"] = "line";
     bus->publish("command.request-view-setup", viewSetup);
 
-    bus->publish(Events::COMMAND_PROMPT, "Specify first point:");
+    bus->publish(Events::COMMAND_PROMPT, "指定第一點:");
 
 
     // ✅ Subscribe with Qt::QueuedConnection for safety
@@ -72,9 +72,9 @@ CommandResult LineCommand::execute(const CommandContext& context) {
                    [this](const QVariant& data) {
                        const QString opt = data.toString();
                        QMetaObject::invokeMethod(this, [this, opt]() {
-                           if (opt.compare("Undo", Qt::CaseInsensitive) == 0) {
+                           if (opt.compare("U", Qt::CaseInsensitive) == 0) {
                                handleUndo();
-                           } else if (opt.compare("Close", Qt::CaseInsensitive) == 0) {
+                           } else if (opt.compare("C", Qt::CaseInsensitive) == 0) {
                                handleClose();
                            }
                        }, Qt::QueuedConnection);
@@ -82,7 +82,7 @@ CommandResult LineCommand::execute(const CommandContext& context) {
 
     setState(CommandState::Running);  // 關鍵一行
 
-    outputMessage("Specify first point:");
+    outputMessage("指定第一點:");
     return CommandResult::Success("Waiting for input");
 }
 
@@ -112,7 +112,7 @@ void LineCommand::handlePointAcquired(QVector2D point)
                           .arg(point.x()).arg(point.y()));
 
         bus->publish(Events::COMMAND_PROMPT,
-                     tr("Specify next point or [Undo/Close]:"));
+                     tr("指定下一點或 [退回(U)]:"));
         return;
     }
 
@@ -146,7 +146,7 @@ void LineCommand::handlePointAcquired(QVector2D point)
 
     m_startPoint = point;
     bus->publish(Events::COMMAND_PROMPT,
-                 tr("Specify next point or [Undo/Close]:"));
+                 tr("指定下一點或 [封閉(C)/退回(U)]:"));
 }
 
 // ✅ Renamed from onCancelled
@@ -175,6 +175,9 @@ void LineCommand::handleClose() {
     Application::instance()->eventBus()->publish(
         "command.close-line-loop", QVariant());
     Q_EMIT finished(CommandResult::Success("Line closed"));
+
+    qDebug() << "[LineCommand] handleClose()";
+
 }
 
 void LineCommand::cleanup() {

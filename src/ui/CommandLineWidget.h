@@ -1,6 +1,7 @@
 #ifndef COMMANDLINEWIDGET_H
 #define COMMANDLINEWIDGET_H
 
+#include "command/InputParser.h"
 #include <QWidget>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -28,7 +29,7 @@ public:
     ~CommandLineWidget() override;
 
     // 命令進行中：顯示提示選項按鈕
-    void setCommandOptions(const QStringList& options);
+    void setCommandOptions(const QList<command::InputParser::ParsedOption>& options);
     void clearCommandOptions();
 
     // 歷程追加
@@ -52,6 +53,7 @@ public:
     void submitCommand(const QString& cmd);
     // 讓 UIManager 在 alias resolve 後以正確名稱修正歷程
     void recordResolvedCommand(const QString& resolved);
+    void setLastPrompt(const QString& prompt);
 
 signals:
     void commandSubmitted(const QString& cmd);
@@ -60,7 +62,7 @@ signals:
 
 public slots:
     void onHistoryButtonClicked();
-    void onPromptOptionsChanged(const QStringList& options);
+    void onPromptOptionsChanged(const QList<command::InputParser::ParsedOption>& options);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

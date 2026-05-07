@@ -31,8 +31,8 @@ void CommandInputEdit::addToHistory(const QString& cmd) {
     m_historyIndex = -1;
 }
 
-void CommandInputEdit::setPromptOptions(const QString& prefix,
-                                        const QStringList& options) {
+void CommandInputEdit:: setPromptOptions(const QString& prefix,
+                                        const QList<command::InputParser::ParsedOption>& options) {
     m_promptPrefix = prefix;
     m_options      = options;
     rebuildDocument();
@@ -44,7 +44,6 @@ void CommandInputEdit::clearPromptOptions() {
     m_promptDoc->clear();
     m_docWidth = 0;
     setTextMargins(0, 0, 0, 0);
-    setPlaceholderText(tr("輸入指令或 LISP..."));
     update();
 }
 
@@ -116,24 +115,40 @@ void CommandInputEdit::rebuildDocument() {
     // 組合 HTML
     QString html;
     if (!m_promptPrefix.isEmpty())
-        html += QString("<span class='prefix'>%1 </span>")
+        html += QString("<span class='prefix'>%1 [</span>")
                     .arg(m_promptPrefix.toHtmlEscaped());
 
-    for (const QString& opt : m_options) {
-        const QString display = opt.isEmpty() ? opt
-                                              : QString("[%1]%2").arg(opt[0].toUpper()).arg(opt.mid(1));
-        const bool hovered = (("opt:" + opt) == m_hoveredAnchor);
+    for (const auto& po : m_options) {
+        const bool isChinese = !po.label.isEmpty() &&
+                               po.label[0].unicode() > 0x2E7F; // CJK range
 
+        QString display;
+        if (isChinese) {
+            // 中文：label + (U) 格式，括號內快捷鍵用藍色
+            display = QString("%1(<span style='color:#7ec8e3;font-weight:bold;'>%2</span>)")
+                          .arg(po.label.toHtmlEscaped(),
+                               po.shortcut.toHtmlEscaped());
+        } else {
+            // 英文：首字母藍色
+            display = QString("<span style='color:#7ec8e3;font-weight:bold;'>%1</span>%2")
+                          .arg(po.label[0].toUpper())
+                          .arg(po.label.mid(1).toHtmlEscaped());
+        }
+
+        const bool hovered = (("opt:" + po.shortcut) == m_hoveredAnchor);
         html += QString("<a href='opt:%1' class='%2'"
                         " style='background:%3;"
                         " padding:1px 5px;"
                         " border-radius:3px;'>"
                         "%4</a> ")
-                    .arg(opt.toHtmlEscaped(),
+                    .arg(po.shortcut.toHtmlEscaped(),
                          hovered ? "hover" : "",
                          hovered ? "#3d5068" : "#2d3a4a",
-                         display.toHtmlEscaped());
+                         display);
     }
+
+    if (!m_promptPrefix.isEmpty())
+        html += QString("<span class='prefix'>]: </span>");
 
     m_promptDoc->setHtml(html);
     m_promptDoc->setTextWidth(-1);          // 先不限寬，取得自然寬

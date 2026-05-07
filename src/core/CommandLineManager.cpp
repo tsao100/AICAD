@@ -63,17 +63,13 @@ void CommandLineManager::processInput(const QString& input) {
     qDebug() << "[CommandLineManager] Processing input:" << input
              << "Type:" << static_cast<int>(m_expectedInputType);
 
-    // ── 優先：比對 prompt 內的選項 ──────────────────────────────
-    if (!m_currentOptions.isEmpty()) {
-        QString matched = command::InputParser::matchOption(
-            input, m_currentOptions);
-        if (!matched.isEmpty()) {
-            m_isWaitingForInput = false;
-            m_expectedInputType = InputType::None;
-            m_currentOptions.clear();
-            emit promptOptionsChanged({});          // 清空按鈕列
+    // processInput 時比對 shortcut 或 label（case-insensitive）
+    const auto& opts = m_currentOptions;
+    for (const auto& po : opts) {
+        if (input.compare(po.shortcut, Qt::CaseInsensitive) == 0 ||
+            input.compare(po.label,    Qt::CaseInsensitive) == 0) {
             auto* bus = Application::instance()->eventBus();
-            bus->publish(Events::OPTION_SELECTED, matched);
+            bus->publish(Events::OPTION_SELECTED, po.label);
             return;
         }
     }
@@ -165,12 +161,14 @@ void CommandLineManager::showPrompt(const QString& prompt) {
 }
 
 void CommandLineManager::showOptions(const QStringList& options) {
-    m_currentOptions = options;
-
-    auto* bus = Application::instance()->eventBus();
-    bus->publish(Events::OPTIONS_AVAILABLE, QVariant::fromValue(options));
-
-    emit optionsAvailable(options);
+    m_currentOptions.clear();
+    for (const QString& opt : options) {
+        command::InputParser::ParsedOption po;
+        po.label    = opt;
+        po.shortcut = opt.isEmpty() ? QString() : QString(opt[0].toUpper());
+        m_currentOptions.append(po);
+    }
+    emit promptOptionsChanged(m_currentOptions);
 }
 
 void CommandLineManager::clearPrompt() {
@@ -239,9 +237,9 @@ void CommandLineManager::onCommandInput(const QString& input) {
 }
 
 void CommandLineManager::onOptionSelected(const QString& option) {
-    if (m_isWaitingForInput) {
-        processInput(option);
-    }
+    // option 是 po.shortcut（如 "U"、"C"）
+    auto* bus = core::Application::instance()->eventBus();
+    bus->publish(Events::OPTION_SELECTED, option);
 }
 
 void CommandLineManager::onEscapePressed() {

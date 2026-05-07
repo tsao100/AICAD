@@ -1,6 +1,7 @@
 #ifndef COMMANDINPUTEDIT_H
 #define COMMANDINPUTEDIT_H
 
+#include "command/InputParser.h"
 #include <QLineEdit>
 #include <QStringList>
 #include <QTextDocument>
@@ -17,9 +18,9 @@ public:
     explicit CommandInputEdit(QWidget* parent = nullptr);
 
     void setHistory(const QStringList& history);
-    void addToHistory(const QString& cmd);
-    void setPromptOptions(const QString& promptPrefix,
-                          const QStringList& options);
+    void addToHistory(const QString& cmd);    
+    void setPromptOptions(const QString& prefix,
+                          const QList<command::InputParser::ParsedOption>& options);
     void clearPromptOptions();
 
 signals:
@@ -45,7 +46,7 @@ private:
 
     QTextDocument* m_promptDoc   = nullptr;
     QString        m_promptPrefix;
-    QStringList    m_options;
+    QList<command::InputParser::ParsedOption> m_options;
     QString        m_hoveredAnchor;   // 目前 hover 的 href 值
     int            m_docWidth = 0;    // chips 區塊實際寬度，用於 setTextMargins
 

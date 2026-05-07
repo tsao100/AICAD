@@ -705,6 +705,10 @@ void CommandLineWidget::recordResolvedCommand(const QString& resolved) {
         m_recentMenu->addAction(cmd);
 }
 
+void CommandLineWidget::setLastPrompt(const QString& prompt) {
+    m_lastPrompt = prompt;
+}
+
 void CommandLineWidget::onHistoryButtonClicked() {
     // 從命令輸入區上緣滑出歷程視窗（等同 F2）
     if (!m_historyPopup) {
@@ -713,17 +717,21 @@ void CommandLineWidget::onHistoryButtonClicked() {
         for (int i = 0; i < m_fullHistory.size(); ++i)
             m_historyPopup->appendLine(m_fullHistory[i]);
     }
+
     m_historyPopup->toggle(m_inputRow);   // ← toggle 取代原來只呼叫一次 slideIn
     emit historyPopupRequested();
 }
 
-void CommandLineWidget::onPromptOptionsChanged(const QStringList& options) {
+void CommandLineWidget::onPromptOptionsChanged(const QList<command::InputParser::ParsedOption>& options) {
     setCommandOptions(options);
     if (!options.isEmpty())
         m_inputEdit->setFocus();   // 確保鍵盤輸入仍有效
 }
 
 void CommandLineWidget::appendHistory(const QString& text, bool isPrompt) {
+    if (isPrompt)
+        m_lastPrompt = text;
+
     m_fullHistory.append(text);
 
     if (m_historyView) {
@@ -744,18 +752,17 @@ void CommandLineWidget::appendHistory(const QString& text, bool isPrompt) {
         m_transientHistory->addLine(text, isPrompt);
 }
 
-void CommandLineWidget::setCommandOptions(const QStringList& options) {
+void CommandLineWidget::setCommandOptions(const QList<command::InputParser::ParsedOption>& options) {
     if (options.isEmpty()) {
         m_inputEdit->clearPromptOptions();
         return;
     }
-    // 從最新 prompt 截取 "[...]" 前的 prefix，僅保留 "or" 起的部分
+
+    // ★ 修正：截取 "[" 前的文字作為 prefix（m_lastPrompt 由 appendHistory 之前已設）
     QString prefix = m_lastPrompt;
-    static QRegularExpression reBracket(R"(\s*\[.*$)");
-    prefix.remove(reBracket);
-    const int orIdx = prefix.indexOf(QRegularExpression(R"(\bor\b)", QRegularExpression::CaseInsensitiveOption));
-    if (orIdx != -1)
-        prefix = prefix.mid(orIdx).trimmed();   // "or"
+    const int bracketIdx = prefix.indexOf('[');
+    if (bracketIdx != -1)
+        prefix = prefix.left(bracketIdx).trimmed();
 
     m_inputEdit->setPromptOptions(prefix, options);
     m_inputEdit->setFocus();

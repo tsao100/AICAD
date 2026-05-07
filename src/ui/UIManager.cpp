@@ -13,6 +13,7 @@
 #include "core/CommandLineManager.h"     // ✅ 新增
 #include "AutoCompleteModel.h"           // ✅ 新增
 #include "command/CommandAlias.h"        // ✅ 新增
+#include "command/InputParser.h"
 #include "view/ViewManager.h"  // ✅ 添加
 #include "view/CadView.h"      // ✅ 添加
 #include "view/RubberBand.h"
@@ -1314,11 +1315,15 @@ void UIManager::connectCommandLineEvents() {
     // ── 命令發出提示（prompt）───────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_PROMPT, this,
                    [this](const QVariant& v) {
-                       if (!v.toString().isEmpty()) {          // 空字串(清除)不寫入歷程
-                           d->commandLine->appendHistory(v.toString(), /*isPrompt=*/true);
+                       const QString prompt = v.toString();
+                       if (!prompt.isEmpty()) {
+                           d->commandLine->appendHistory(prompt, /*isPrompt=*/true);
                        }
-                       d->commandLine->inputEdit()->setPlaceholderText(v.toString());
-                       // TransientCommandHistory 自動在 appendHistory 觸發
+                       d->commandLine->inputEdit()->setPlaceholderText(prompt);
+
+                       // ★ 新增：解析 prompt 中的 [選項]，更新 chips
+                       auto parsed = command::InputParser::parsePrompt(prompt);
+                       d->commandLine->setCommandOptions(parsed.options);  // 空時自動 clear
                    });
 
     // ── 命令完成 ────────────────────────────────────────────────────
@@ -1358,7 +1363,14 @@ void UIManager::connectCommandLineEvents() {
     bus->subscribe(core::Events::OPTIONS_AVAILABLE, this,
                    [this](const QVariant& v) {
                        QStringList opts = v.toStringList();
-                       d->commandLine->setCommandOptions(opts);
+                        QList<command::InputParser::ParsedOption> parsedOpts;
+                       for (const QString& opt : opts) {
+                            command::InputParser::ParsedOption po;
+                           po.label    = opt;
+                           po.shortcut = opt.isEmpty() ? QString() : QString(opt[0].toUpper());
+                           parsedOpts.append(po);
+                       }
+                       d->commandLine->setCommandOptions(parsedOpts);
                    });
 
     // UIManager.cpp — connectCommandLineEvents() 或 setupSketchPanel() 加入：
