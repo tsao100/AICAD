@@ -44,7 +44,6 @@ gp_Trsf directionTransform(const gp_Pnt& origin, const gp_Dir& dir)
     gp_Ax3 localAx(origin, dir);   // Z → dir
     gp_Trsf trsf;
     trsf.SetTransformation(localAx, gp_Ax3());  // world → local
-    trsf.Invert();
     return trsf;
 }
 } // namespace

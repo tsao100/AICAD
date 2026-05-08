@@ -72,8 +72,9 @@ ExtrudeManipulator::ExtrudeManipulator(cad::Extrude*  extrude,
     }
 
     // ── 箭桿起點 = 底面形心 + 沿拉伸方向偏移 height → 頂面位置 ─────────────
-    gp_Pnt base = computeShaftBase();
+    m_bottomCentroid = bottomCentroid;                                    // ✅ 快取
 
+    gp_Pnt base = m_bottomCentroid.Translated(gp_Vec(extGDir) * extrude->height());
     m_aisManip = new AIS_ExtrudeManipulator(base, extGDir,
                                             extrude->height(), profileFace);
 
@@ -218,8 +219,11 @@ void ExtrudeManipulator::updateAIS()
                 bottomCentroid = gp.CentreOfMass();
             }
         }
+        m_bottomCentroid = bottomCentroid;                                    // ✅ 更新快取
 
-        m_aisManip->SetBase(computeShaftBase());
+        const gp_Vec extDir1(n.x() * sign, n.y() * sign, n.z() * sign);
+        gp_Pnt newBase = m_bottomCentroid.Translated(extDir1 * m_extrude->height());
+        m_aisManip->SetBase(newBase);
     }
 
     m_ctx->Redisplay(m_aisManip, /*update=*/true);
@@ -269,14 +273,21 @@ bool ExtrudeManipulator::eventFilter(QObject* watched, QEvent* event)
         auto* me = static_cast<QMouseEvent*>(event);
 
         gp_Pnt worldNow = screenToWorld(me->pos());
-        double newH = m_aisManip->ComputeHeightFromDrag(m_dragStart, worldNow);
-        newH = std::round(newH * 10.0) / 10.0;   // snap to 0.1 mm
+        gp_Vec delta(m_dragStart, worldNow);
+
+        // m_dir 已含方向符號（含 reversed），直接 Dot
+        // ✅ 以 m_heightAtDragStart 為基準，避免每幀累積
+        const QVector3D n = m_extrude->sketch()->plane()->normal();
+        gp_Dir extDir(n.x(), n.y(), n.z());
+        double proj = delta.Dot(gp_Vec(extDir));
+
+        double newH = std::max(0.1, m_heightAtDragStart + proj);
+        newH = std::round(newH * 10.0) / 10.0;
 
         m_aisManip->SetHeight(newH);
+        m_aisManip->SetBase(computeShaftBase());
         m_miniEdit->setText(QString::number(newH, 'f', 2));
         updateAIS();
-
-        // 即時更新 Extrude（live preview）
         m_extrude->setHeight(newH);
         return true;
     }
@@ -351,28 +362,12 @@ gp_Pnt ExtrudeManipulator::computeShaftBase() const
     auto* sketch = m_extrude->sketch();
     Q_ASSERT(sketch && sketch->plane());
 
-    const QVector3D n   = sketch->plane()->normal();
-    const gp_Vec extVec(n.x(), n.y(), n.z());
-    const double sign   = m_extrude->isReversed() ? -1.0 : 1.0;
-    const gp_Vec extDir = extVec * sign;
+    const QVector3D n  = sketch->plane()->normal();
+    const double sign  = m_extrude->isReversed() ? -1.0 : 1.0;
+    const gp_Vec extDir(n.x() * sign, n.y() * sign, n.z() * sign);
 
-    // ── 直接從 Sketch wire 建面求 2D 形心（不依賴 shape()）────────────
-    TopoDS_Wire wire = sketch->mainWire();
-    if (!wire.IsNull()) {
-        BRepBuilderAPI_MakeFace mkFace(wire, Standard_True /*onlyPlane*/);
-        if (mkFace.IsDone()) {
-            GProp_GProps gp;
-            BRepGProp::SurfaceProperties(mkFace.Face(), gp);
-            gp_Pnt sketchCentroid = gp.CentreOfMass();
-
-            // 底面形心 + 拉伸方向偏移 height → 頂面箭桿起點
-            return sketchCentroid.Translated(extDir * m_extrude->height());
-        }
-    }
-
-    // fallback：sketch plane origin
-    const QVector3D o = sketch->plane()->origin();
-    return gp_Pnt(o.x(), o.y(), o.z());
+    // ✅ 直接使用快取的底面形心，加上高度偏移到頂面
+    return m_bottomCentroid.Translated(extDir * m_extrude->height());
 }
 
 // ── slots ────────────────────────────────────────────────────────────────────

@@ -68,6 +68,7 @@ private:
     DragMode    m_dragMode   = DragMode::None;
     gp_Pnt      m_dragStart;
     double      m_heightAtDragStart = 0.0;
+    gp_Pnt      m_bottomCentroid;
 
     // Mini input widget（父為 CadView）
     QFrame*     m_miniWidget  = nullptr;
