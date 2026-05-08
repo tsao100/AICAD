@@ -6,8 +6,15 @@
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Builder.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Tool.hxx>
+#include <TopLoc_Location.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Select3D_SensitiveTriangulation.hxx>
+#include <TopExp_Explorer.hxx>
 
 #include <StdPrs_ShadedShape.hxx>
 #include <StdPrs_WFShape.hxx>
@@ -45,10 +52,12 @@ gp_Trsf directionTransform(const gp_Pnt& origin, const gp_Dir& dir)
 // ──────────────────────────────────────────────
 AIS_ExtrudeManipulator::AIS_ExtrudeManipulator(const gp_Pnt& baseCenter,
                                                const gp_Dir& extrudeDir,
-                                               double        height)
+                                               double        height,
+                                               const TopoDS_Shape& profileFace)
     : m_base(baseCenter)
     , m_dir(extrudeDir)
     , m_height(height)
+    , m_profile(profileFace)
 {}
 
 void AIS_ExtrudeManipulator::SetHeight(double height)
@@ -99,26 +108,24 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
                                         const Quantity_Color& coneColor)
 {
     double sign = m_reversed ? -1.0 : 1.0;
-    double effectiveHeight = m_symmetric ? m_height / 2.0 : m_height;
+    // ✅ 固定長度，不跟隨 m_height 變動
+    gp_Pnt shaftEnd = m_base.Translated(gp_Vec(m_dir) * sign * kShaftLength);
 
-    gp_Pnt shaftEnd = m_base.Translated(gp_Vec(m_dir) * sign * effectiveHeight);
-    gp_Pnt tipEnd   = shaftEnd.Translated(gp_Vec(m_dir) * sign * kConeHeight);
-
-    // 1. 軸線（用 Polyline 畫，簡單可靠）
+    // 1. 箭桿 Cylinder
     {
-        Handle(Graphic3d_Group) grp = prs->NewGroup();
-        Handle(Prs3d_LineAspect) la =
-            new Prs3d_LineAspect(shaftColor, Aspect_TOL_SOLID, 2.5);
-        grp->SetGroupPrimitivesAspect(la->Aspect());
-
-        Handle(Graphic3d_ArrayOfPolylines) poly =
-            new Graphic3d_ArrayOfPolylines(2);
-        poly->AddVertex((float)m_base.X(), (float)m_base.Y(), (float)m_base.Z());
-        poly->AddVertex((float)shaftEnd.X(), (float)shaftEnd.Y(), (float)shaftEnd.Z());
-        grp->AddPrimitiveArray(poly);
+        gp_Trsf trsf = directionTransform(m_base, gp_Dir(gp_Vec(m_dir) * sign));
+        BRepPrimAPI_MakeCylinder mkCyl(kShaftRadius, kShaftLength);
+        mkCyl.Build();
+        if (mkCyl.IsDone()) {
+            TopoDS_Shape shaft =
+                BRepBuilderAPI_Transform(mkCyl.Shape(), trsf, true).Shape();
+            myDrawer->ShadingAspect()->SetColor(shaftColor);
+            StdPrs_ShadedShape::Add(prs, shaft, myDrawer);
+        }
     }
 
-    // 2. 錐頭 (BRepPrimAPI_MakeCone → TopoDS → StdPrs)
+
+    // 2. 錐頭，base 接在 shaftEnd，apex 朝外
     {
         gp_Trsf trsf = directionTransform(shaftEnd, gp_Dir(gp_Vec(m_dir) * sign));
         BRepPrimAPI_MakeCone mkCone(kConeRadius, 0.0, kConeHeight);
@@ -126,18 +133,27 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
         if (mkCone.IsDone()) {
             TopoDS_Shape cone =
                 BRepBuilderAPI_Transform(mkCone.Shape(), trsf, true).Shape();
-            Handle(Graphic3d_Group) grp = prs->NewGroup();
-            Handle(Prs3d_ShadingAspect) sa = new Prs3d_ShadingAspect();
-            sa->SetColor(coneColor);
-            grp->SetGroupPrimitivesAspect(sa->Aspect());
+            myDrawer->ShadingAspect()->SetColor(coneColor);
             StdPrs_ShadedShape::Add(prs, cone, myDrawer);
         }
     }
 
-    // 3. 如果對稱，再畫反向箭頭
+
+    // 3. 對稱反向箭頭
     if (m_symmetric) {
         gp_Dir negDir(gp_Vec(m_dir) * -sign);
-        gp_Pnt symEnd = m_base.Translated(gp_Vec(m_dir) * -sign * effectiveHeight);
+        gp_Pnt symEnd = m_base.Translated(gp_Vec(m_dir) * -sign * kShaftLength);
+
+        gp_Trsf trsfCyl = directionTransform(m_base, negDir);
+        BRepPrimAPI_MakeCylinder mkCyl2(kShaftRadius, kShaftLength);
+        mkCyl2.Build();
+        if (mkCyl2.IsDone()) {
+            TopoDS_Shape shaft2 =
+                BRepBuilderAPI_Transform(mkCyl2.Shape(), trsfCyl, true).Shape();
+            myDrawer->ShadingAspect()->SetColor(shaftColor);
+            StdPrs_ShadedShape::Add(prs, shaft2, myDrawer);
+        }
+
         gp_Trsf trsf2 = directionTransform(symEnd, negDir);
         BRepPrimAPI_MakeCone mkCone2(kConeRadius, 0.0, kConeHeight);
         mkCone2.Build();
@@ -146,16 +162,15 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
                 BRepBuilderAPI_Transform(mkCone2.Shape(), trsf2, true).Shape();
             StdPrs_ShadedShape::Add(prs, cone2, myDrawer);
         }
+    }
 
-        Handle(Graphic3d_Group) grpLine = prs->NewGroup();
-        Handle(Prs3d_LineAspect) la2 =
-            new Prs3d_LineAspect(shaftColor, Aspect_TOL_SOLID, 2.5);
-        grpLine->SetGroupPrimitivesAspect(la2->Aspect());
-        Handle(Graphic3d_ArrayOfPolylines) poly2 =
-            new Graphic3d_ArrayOfPolylines(2);
-        poly2->AddVertex((float)m_base.X(), (float)m_base.Y(), (float)m_base.Z());
-        poly2->AddVertex((float)symEnd.X(), (float)symEnd.Y(), (float)symEnd.Z());
-        grpLine->AddPrimitiveArray(poly2);
+    // 4. 繪製 profile 輪廓（高亮橙色 wireframe）
+    if (!m_profile.IsNull()) {
+        Handle(Graphic3d_Group) grpPro = prs->NewGroup();
+        Handle(Prs3d_LineAspect) laProfile =
+            new Prs3d_LineAspect(shaftColor, Aspect_TOL_SOLID, 1.5);
+        grpPro->SetGroupPrimitivesAspect(laProfile->Aspect());
+        StdPrs_WFShape::Add(prs, m_profile, myDrawer);
     }
 }
 
@@ -224,7 +239,7 @@ void AIS_ExtrudeManipulator::ComputeSelection(
         perp2 = gp_Dir(m_dir.Crossed(perp1));
 
         double r = kConeRadius * 2.0;  // 選取半徑（稍大於視覺半徑）
-        double len = effectiveH + kConeHeight;
+        double len = kShaftLength + kConeHeight;
 
         // 沿拉伸方向的 8 個角點 → Bnd_Box
         Bnd_Box box;
@@ -242,9 +257,26 @@ void AIS_ExtrudeManipulator::ComputeSelection(
             }
         }
 
-        Handle(Select3D_SensitiveBox) sbox =
-            new Select3D_SensitiveBox(owner, box);
-        sel->Add(sbox);
+        // 在 mode == 1 區塊，取代原本的 Select3D_SensitiveBox
+        {
+            gp_Trsf trsf = directionTransform(m_base, gp_Dir(gp_Vec(m_dir) * sign));
+            BRepPrimAPI_MakeCylinder mkCyl(kShaftRadius * 2.5, effectiveH + kConeHeight);
+            // 半徑略放大讓選取更容易
+            mkCyl.Build();
+            if (mkCyl.IsDone()) {
+                TopoDS_Shape selShaft =
+                    BRepBuilderAPI_Transform(mkCyl.Shape(), trsf, true).Shape();
+                BRepMesh_IncrementalMesh mesh(selShaft, 1.0);
+                TopExp_Explorer fExp(selShaft, TopAbs_FACE);
+                for (; fExp.More(); fExp.Next()) {
+                    TopLoc_Location loc;
+                    Handle(Poly_Triangulation) tri =
+                        BRep_Tool::Triangulation(TopoDS::Face(fExp.Current()), loc);
+                    if (!tri.IsNull())
+                        sel->Add(new Select3D_SensitiveTriangulation(owner, tri, loc, Standard_True));
+                }
+            }
+        }
 
         // 如果對稱，加入反向側
         if (m_symmetric) {
@@ -263,6 +295,20 @@ void AIS_ExtrudeManipulator::ComputeSelection(
             Handle(Select3D_SensitiveBox) sbox2 =
                 new Select3D_SensitiveBox(owner, box2);
             sel->Add(sbox2);
+        }
+        // ── profile face 選取（讓整個底面都可拖曳）──────────────────────
+        if (mode == 1 && !m_profile.IsNull()) {
+            // 三角剖分後建立 SensitiveTriangulation
+            BRepMesh_IncrementalMesh mesh(m_profile, 1.0);   // 1 mm 容差
+            TopLoc_Location loc;
+            Handle(Poly_Triangulation) tri =
+                BRep_Tool::Triangulation(TopoDS::Face(m_profile), loc);
+            if (!tri.IsNull()) {
+                Handle(Select3D_SensitiveTriangulation) sFace =
+                    new Select3D_SensitiveTriangulation(owner, tri, loc,
+                                                        Standard_True /*interior*/);
+                sel->Add(sFace);
+            }
         }
     }
     else if (mode == 2) {

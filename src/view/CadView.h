@@ -89,6 +89,12 @@ class CadView : public QWidget {
     Q_PROPERTY(InteractionMode mode READ mode WRITE setMode NOTIFY modeChanged)
 
 public:
+
+    struct OverlayEntry {
+        Handle(AIS_InteractiveObject) obj;
+        QList<int> modes;
+    };
+
     /**
      * @brief 建構子
      * @param parent 父 Widget
@@ -167,6 +173,12 @@ public:
      * @brief 適應所有物件到視圖
      */
     void fitAll();
+
+    /// 登錄「常駐」AIS 物件，displayAllFeatures 的 RemoveAll 後會自動重新顯示
+    void addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
+                       const QList<int>& activationModes = {});
+    /// 移除登錄並從 context 移除
+    void removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj);
 
     /**
      * @brief 螢幕座標轉平面座標

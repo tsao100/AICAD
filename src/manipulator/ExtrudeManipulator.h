@@ -53,6 +53,7 @@ private:
     void positionMiniInput();
     bool pickManipulatorPart(const QPoint& screenPt, int& outMode);
     gp_Pnt screenToWorld(const QPoint& screenPt) const;
+    gp_Pnt computeShaftBase() const;
 
     // 拖曳狀態
     enum class DragMode { None, Arrow, Flip };

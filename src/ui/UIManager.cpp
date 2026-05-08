@@ -567,10 +567,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            QVariantMap viewData1;
                            viewData1["mode"] = "iso";
                            app->eventBus()->publish("command.request-view-setup", viewData1);
-
-                           // 重繪
-                            if (d->cadView)
-                                QTimer::singleShot(0, d->cadView, &view::CadView::displayAllFeatures);
                         });
 
         // ✅ Handle sketch line creation requests

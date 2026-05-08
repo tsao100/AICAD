@@ -122,6 +122,8 @@ public:
     bool commandInProgress = false;
     bool isDisplayingAllFeatures = false;
 
+    QList<OverlayEntry> overlayObjects;
+
     Private()
         : document(nullptr)
         , rubberBand(nullptr)
@@ -796,6 +798,17 @@ void CadView::displayAllFeatures() {
 
     d->context->UpdateCurrentViewer();
 
+    // ── 重新加回 overlay 物件（如 ExtrudeManipulator 箭頭）──────────────
+    for (const auto& entry : d->overlayObjects) {
+        if (!entry.obj.IsNull()) {
+            d->context->Display(entry.obj, Standard_False);
+            for (int m : entry.modes)
+                d->context->Activate(entry.obj, m);
+        }
+    }
+    if (!d->overlayObjects.isEmpty())
+        d->context->UpdateCurrentViewer();
+
     d->isDisplayingAllFeatures = false;
 }
 
@@ -823,6 +836,37 @@ void CadView::fitAll() {
     d->view->FitAll();
     d->view->ZFitAll();
     update();
+}
+
+void CadView::addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
+                            const QList<int>& activationModes)
+{
+    if (obj.IsNull()) return;
+    removeOverlayAIS(obj);  // 避免重複登錄
+    d->overlayObjects.append({obj, activationModes});
+
+    if (!d->context.IsNull()) {
+        d->context->Display(obj, Standard_False);
+        for (int m : activationModes)
+            d->context->Activate(obj, m);
+        d->context->UpdateCurrentViewer();
+    }
+}
+
+void CadView::removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj)
+{
+    // Qt 5 相容寫法（removeIf 是 Qt 6）
+    for (int i = d->overlayObjects.size() - 1; i >= 0; --i) {
+        if (d->overlayObjects[i].obj == obj) {
+            d->overlayObjects.removeAt(i);
+            break;
+        }
+    }
+
+    if (!d->context.IsNull() && !obj.IsNull()
+        && d->context->IsDisplayed(obj)) {
+        d->context->Remove(obj, Standard_True);
+    }
 }
 
 QJsonObject CadView::saveViewState() const {

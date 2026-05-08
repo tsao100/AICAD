@@ -1,6 +1,7 @@
 #pragma once
 
 #include <AIS_InteractiveObject.hxx>
+#include <TopoDS_Shape.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Ax1.hxx>
@@ -32,11 +33,14 @@ class AIS_ExtrudeManipulator : public AIS_InteractiveObject
 public:
     AIS_ExtrudeManipulator(const gp_Pnt&  baseCenter,
                            const gp_Dir&  extrudeDir,
-                           double         height);
+                           double         height,
+                           const TopoDS_Shape& profileFace = TopoDS_Shape());
 
     void SetHeight(double height);
     void SetSymmetric(bool symmetric);
     void SetReversed(bool reversed);
+    void SetBase(const gp_Pnt& base) { m_base = base; }
+    void SetDir (const gp_Dir& dir)  { m_dir  = dir;  }
 
     /// 從 2D 螢幕 delta 計算新高度（由 ExtrudeManipulator 呼叫）
     double ComputeHeightFromDrag(const gp_Pnt& worldStart,
@@ -74,6 +78,9 @@ private:
     static constexpr double kConeHeight   = 10.0;
     static constexpr double kFlipOffset   = -8.0;  // 距 base 向下偏移
     static constexpr double kFlipHalfLen  = 6.0;
+    static constexpr double kShaftLength = 25.0;
+
+    TopoDS_Shape m_profile;
 };
 
 DEFINE_STANDARD_HANDLE(AIS_ExtrudeManipulator, AIS_InteractiveObject)

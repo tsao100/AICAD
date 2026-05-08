@@ -4,12 +4,18 @@
 #include "view/CadView.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
+#include "AIS_ExtrudeManipulator.h"
 
 #include <AIS_InteractiveContext.hxx>
-#include "AIS_ExtrudeManipulator.h"
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <V3d_View.hxx>
 #include <gp_Lin.hxx>
 #include <BRepBndLib.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -38,18 +44,39 @@ ExtrudeManipulator::ExtrudeManipulator(cad::Extrude*  extrude,
     Q_ASSERT(sketch);
 
     const QVector3D n = sketch->plane()->normal();
-    const gp_Dir extDir(n.x(), n.y(), n.z());
+//    const gp_Dir extDir(n.x(), n.y(), n.z());
 
     // 現有 shape 的 bounding box 中心作為 base
-    Bnd_Box bbox;
-    BRepBndLib::Add(extrude->shape(), bbox);
-    double xmin, ymin, zmin, xmax, ymax, zmax;
-    bbox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
-    gp_Pnt base((xmin + xmax) / 2.0,
-                (ymin + ymax) / 2.0,
-                (zmin + zmax) / 2.0);
+    // ── 新：找 profile face（最靠近 sketch 平面的面）＋ 計算形心 ────────
+    // ── 取代原本 Bnd_Box bbox 那段，同時計算 centroid 與 profileFace ──────
+    const gp_Vec extVec(n.x(), n.y(), n.z());
+    const double sign    = extrude->isReversed() ? -1.0 : 1.0;
+    const gp_Vec extDir  = extVec * sign;          // ✅ 含方向符號
+    const gp_Dir extGDir(extDir);
 
-    m_aisManip = new AIS_ExtrudeManipulator(base, extDir, extrude->height());
+    // ── 找底面（沿拉伸方向投影最小 = sketch 平面那側）────────────────────
+    double      minProj = std::numeric_limits<double>::max();
+    gp_Pnt      bottomCentroid;
+    TopoDS_Face profileFace;
+
+    for (TopExp_Explorer exp(extrude->shape(), TopAbs_FACE); exp.More(); exp.Next()) {
+        TopoDS_Face f = TopoDS::Face(exp.Current());
+        GProp_GProps gp;
+        BRepGProp::SurfaceProperties(f, gp);
+        double proj = gp.CentreOfMass().XYZ().Dot(extDir.XYZ());
+        if (proj < minProj) {
+            minProj        = proj;
+            bottomCentroid = gp.CentreOfMass();
+            profileFace    = f;
+        }
+    }
+
+    // ── 箭桿起點 = 底面形心 + 沿拉伸方向偏移 height → 頂面位置 ─────────────
+    gp_Pnt base = computeShaftBase();
+
+    m_aisManip = new AIS_ExtrudeManipulator(base, extGDir,
+                                            extrude->height(), profileFace);
+
     m_aisManip->SetSymmetric(extrude->isSymmetric());
     m_aisManip->SetReversed (extrude->isReversed());
 
@@ -74,13 +101,10 @@ ExtrudeManipulator::~ExtrudeManipulator()
 // ── show / hide ──────────────────────────────────────────────────────────────
 void ExtrudeManipulator::show()
 {
-    if (m_ctx.IsNull()) return;
+    if (!m_cadView) return;
 
-    m_ctx->Display(m_aisManip, /*update=*/false);
-    // 啟用兩種選取 mode
-    m_ctx->Activate(m_aisManip, 1);  // 主箭頭
-    m_ctx->Activate(m_aisManip, 2);  // 翻轉鍵
-    m_ctx->UpdateCurrentViewer();
+    // 透過 CadView overlay 機制顯示，可在 displayAllFeatures 後自動恢復
+    m_cadView->addOverlayAIS(m_aisManip, {1, 2});
 
     positionMiniInput();
     m_miniWidget->show();
@@ -88,9 +112,9 @@ void ExtrudeManipulator::show()
 
 void ExtrudeManipulator::hide()
 {
-    if (!m_ctx.IsNull() && m_ctx->IsDisplayed(m_aisManip)) {
-        m_ctx->Remove(m_aisManip, /*update=*/true);
-    }
+    if (m_cadView)
+        m_cadView->removeOverlayAIS(m_aisManip);
+
     if (m_miniWidget)
         m_miniWidget->hide();
 }
@@ -151,31 +175,53 @@ void ExtrudeManipulator::buildMiniWidget()
 // ── position mini input at arrow tip ────────────────────────────────────────
 void ExtrudeManipulator::positionMiniInput()
 {
-    if (!m_cadView || m_ctx.IsNull()) return;
+    if (!m_cadView) return;
+    auto view = m_cadView->view();
+    if (view.IsNull()) return;
 
     gp_Pnt tip = m_aisManip->ArrowTipPosition();
 
-    // Project 3D → 2D screen
-    auto view = m_cadView->view();   // Handle(V3d_View)
-    if (view.IsNull()) return;
+    // ✅ Convert 直接給出 pixel 座標（原本用 Project 是錯的）
+    Standard_Integer sx = 0, sy = 0;
+    view->Convert(tip.X(), tip.Y(), tip.Z(), sx, sy);
 
-    double u = 0, v = 0;
-    view->Project(tip.X(), tip.Y(), tip.Z(), u, v);
-
-    // OCCT screen coord → Qt widget coord
-    int winW = m_cadView->width();
-    int winH = m_cadView->height();
-    int sx = (int)((u + 1.0) / 2.0 * winW);
-    int sy = (int)((1.0 - (v + 1.0) / 2.0) * winH);
-
-    // 偏移一點，避免遮住箭頭尖端
-    m_miniWidget->move(sx + 12, sy - m_miniWidget->height() / 2);
+    m_miniWidget->move(sx + 14, sy - m_miniWidget->height() / 2);
 }
 
 // ── updateAIS ───────────────────────────────────────────────────────────────
 void ExtrudeManipulator::updateAIS()
 {
     if (m_ctx.IsNull()) return;
+
+    auto* sketch = m_extrude->sketch();
+    if (sketch && sketch->plane() && !m_extrude->shape().IsNull()) {
+
+        const QVector3D n   = sketch->plane()->normal();
+        const gp_Vec extVec(n.x(), n.y(), n.z());
+        const double sign   = m_extrude->isReversed() ? -1.0 : 1.0;
+        const gp_Vec extDir = extVec * sign;         // ✅ 含方向符號
+
+        m_aisManip->SetDir(gp_Dir(extDir));
+
+        // 底面形心（XY 最準）+ 偏移至頂面
+        double minProj = std::numeric_limits<double>::max();
+        gp_Pnt bottomCentroid;
+
+        for (TopExp_Explorer exp(m_extrude->shape(), TopAbs_FACE);
+             exp.More(); exp.Next())
+        {
+            GProp_GProps gp;
+            BRepGProp::SurfaceProperties(TopoDS::Face(exp.Current()), gp);
+            double proj = gp.CentreOfMass().XYZ().Dot(extDir.XYZ());
+            if (proj < minProj) {
+                minProj        = proj;
+                bottomCentroid = gp.CentreOfMass();
+            }
+        }
+
+        m_aisManip->SetBase(computeShaftBase());
+    }
+
     m_ctx->Redisplay(m_aisManip, /*update=*/true);
     positionMiniInput();
 }
@@ -298,6 +344,35 @@ gp_Pnt ExtrudeManipulator::screenToWorld(const QPoint& screenPt) const
     view->Convert(screenPt.x(), screenPt.y(),
                   xWorld, yWorld, zWorld);
     return gp_Pnt(xWorld, yWorld, zWorld);
+}
+
+gp_Pnt ExtrudeManipulator::computeShaftBase() const
+{
+    auto* sketch = m_extrude->sketch();
+    Q_ASSERT(sketch && sketch->plane());
+
+    const QVector3D n   = sketch->plane()->normal();
+    const gp_Vec extVec(n.x(), n.y(), n.z());
+    const double sign   = m_extrude->isReversed() ? -1.0 : 1.0;
+    const gp_Vec extDir = extVec * sign;
+
+    // ── 直接從 Sketch wire 建面求 2D 形心（不依賴 shape()）────────────
+    TopoDS_Wire wire = sketch->mainWire();
+    if (!wire.IsNull()) {
+        BRepBuilderAPI_MakeFace mkFace(wire, Standard_True /*onlyPlane*/);
+        if (mkFace.IsDone()) {
+            GProp_GProps gp;
+            BRepGProp::SurfaceProperties(mkFace.Face(), gp);
+            gp_Pnt sketchCentroid = gp.CentreOfMass();
+
+            // 底面形心 + 拉伸方向偏移 height → 頂面箭桿起點
+            return sketchCentroid.Translated(extDir * m_extrude->height());
+        }
+    }
+
+    // fallback：sketch plane origin
+    const QVector3D o = sketch->plane()->origin();
+    return gp_Pnt(o.x(), o.y(), o.z());
 }
 
 // ── slots ────────────────────────────────────────────────────────────────────
