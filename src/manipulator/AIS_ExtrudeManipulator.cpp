@@ -70,9 +70,8 @@ void AIS_ExtrudeManipulator::SetReversed (bool r) { m_reversed  = r; SetToUpdate
 
 gp_Pnt AIS_ExtrudeManipulator::ArrowTipPosition() const
 {
-    double sign = m_reversed ? -1.0 : 1.0;
-    double totalLen = m_height + kConeHeight;
-    return m_base.Translated(gp_Vec(m_dir) * sign * totalLen);
+    double totalLen = m_height + kScreenConeHeight;
+    return m_base.Translated(gp_Vec(m_dir) * totalLen);
 }
 
 double AIS_ExtrudeManipulator::ComputeHeightFromDrag(const gp_Pnt& worldStart,
@@ -106,14 +105,19 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
                                         const Quantity_Color& shaftColor,
                                         const Quantity_Color& coneColor)
 {
-    double sign = m_reversed ? -1.0 : 1.0;
-    // ✅ 固定長度，不跟隨 m_height 變動
-    gp_Pnt shaftEnd = m_base.Translated(gp_Vec(m_dir) * sign * kShaftLength);
+    // ── 依縮放反算世界尺寸 ──
+    const double shaftR  = worldSize(kScreenShaftRadius);
+    const double coneR   = worldSize(kScreenConeRadius);
+    const double coneH   = worldSize(kScreenConeHeight);
+    const double shaftL  = worldSize(kScreenShaftLength);
+
+    //double sign = m_reversed ? -1.0 : 1.0;
+    gp_Pnt shaftEnd = m_base.Translated(gp_Vec(m_dir) * shaftL);
 
     // 1. 箭桿 Cylinder
     {
-        gp_Trsf trsf = directionTransform(m_base, gp_Dir(gp_Vec(m_dir) * sign));
-        BRepPrimAPI_MakeCylinder mkCyl(kShaftRadius, kShaftLength);
+        gp_Trsf trsf = directionTransform(m_base, m_dir);
+        BRepPrimAPI_MakeCylinder mkCyl(shaftR, shaftL);
         mkCyl.Build();
         if (mkCyl.IsDone()) {
             TopoDS_Shape shaft =
@@ -126,8 +130,8 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
 
     // 2. 錐頭，base 接在 shaftEnd，apex 朝外
     {
-        gp_Trsf trsf = directionTransform(shaftEnd, gp_Dir(gp_Vec(m_dir) * sign));
-        BRepPrimAPI_MakeCone mkCone(kConeRadius, 0.0, kConeHeight);
+        gp_Trsf trsf = directionTransform(shaftEnd, m_dir);
+        BRepPrimAPI_MakeCone mkCone(coneR, 0.0, coneH);
         mkCone.Build();
         if (mkCone.IsDone()) {
             TopoDS_Shape cone =
@@ -140,11 +144,11 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
 
     // 3. 對稱反向箭頭
     if (m_symmetric) {
-        gp_Dir negDir(gp_Vec(m_dir) * -sign);
-        gp_Pnt symEnd = m_base.Translated(gp_Vec(m_dir) * -sign * kShaftLength);
+        gp_Dir negDir = m_dir.Reversed();
+        gp_Pnt symEnd = m_base.Translated(gp_Vec(negDir) * shaftL);
 
         gp_Trsf trsfCyl = directionTransform(m_base, negDir);
-        BRepPrimAPI_MakeCylinder mkCyl2(kShaftRadius, kShaftLength);
+        BRepPrimAPI_MakeCylinder mkCyl2(shaftR, shaftL);
         mkCyl2.Build();
         if (mkCyl2.IsDone()) {
             TopoDS_Shape shaft2 =
@@ -154,7 +158,7 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
         }
 
         gp_Trsf trsf2 = directionTransform(symEnd, negDir);
-        BRepPrimAPI_MakeCone mkCone2(kConeRadius, 0.0, kConeHeight);
+        BRepPrimAPI_MakeCone mkCone2(coneR, 0.0, coneH);
         mkCone2.Build();
         if (mkCone2.IsDone()) {
             TopoDS_Shape cone2 =
@@ -175,6 +179,10 @@ void AIS_ExtrudeManipulator::buildArrow(const Handle(Prs3d_Presentation)& prs,
 
 void AIS_ExtrudeManipulator::buildFlipButton(const Handle(Prs3d_Presentation)& prs)
 {
+    const double flipOffset  = worldSize(kScreenFlipOffset);
+    const double flipHalfLen = worldSize(kScreenFlipHalfLen);
+    const double arrowLen    = worldSize(4.0);  // Prs3d_Arrow 長度
+
     // 雙向箭頭：畫在 base 下方偏移處，始終顯示於螢幕
     Quantity_Color flipColor(0.3, 0.8, 1.0, Quantity_TOC_RGB);
 
@@ -185,9 +193,9 @@ void AIS_ExtrudeManipulator::buildFlipButton(const Handle(Prs3d_Presentation)& p
     else
         perp = gp_Dir(m_dir.Crossed(gp_Dir(0, 1, 0)));
 
-    gp_Pnt flipCenter = m_base.Translated(gp_Vec(perp) * 12.0);
-    gp_Pnt flipA = flipCenter.Translated(gp_Vec(m_dir) * kFlipHalfLen);
-    gp_Pnt flipB = flipCenter.Translated(gp_Vec(m_dir) * -kFlipHalfLen);
+    gp_Pnt flipCenter = m_base.Translated(gp_Vec(perp) * flipOffset);
+    gp_Pnt flipA = flipCenter.Translated(gp_Vec(m_dir) *  flipHalfLen);
+    gp_Pnt flipB = flipCenter.Translated(gp_Vec(m_dir) * -flipHalfLen);
 
     Handle(Graphic3d_Group) grp = prs->NewGroup();
     Handle(Prs3d_LineAspect) la =
@@ -201,8 +209,8 @@ void AIS_ExtrudeManipulator::buildFlipButton(const Handle(Prs3d_Presentation)& p
     grp->AddPrimitiveArray(poly);
 
     // 兩端小錐（用 Prs3d_Arrow 畫線式箭頭，最簡單）
-    Prs3d_Arrow::Draw(prs->NewGroup(), flipA, m_dir,        M_PI / 12.0, 4.0);
-    Prs3d_Arrow::Draw(prs->NewGroup(), flipB, m_dir.Reversed(), M_PI / 12.0, 4.0);
+    Prs3d_Arrow::Draw(prs->NewGroup(), flipA, m_dir,           M_PI/12.0, arrowLen);
+    Prs3d_Arrow::Draw(prs->NewGroup(), flipB, m_dir.Reversed(), M_PI/12.0, arrowLen);
 }
 
 void AIS_ExtrudeManipulator::buildHeightLabel(const Handle(Prs3d_Presentation)& prs)
@@ -211,6 +219,16 @@ void AIS_ExtrudeManipulator::buildHeightLabel(const Handle(Prs3d_Presentation)& 
     TCollection_ExtendedString txt(
         QString("%1 mm").arg(m_height, 0, 'f', 2).toStdString().c_str());
     Prs3d_Text::Draw(prs->NewGroup(), myDrawer->TextAspect(), txt, labelPos);
+}
+
+double AIS_ExtrudeManipulator::worldSize(double screenSize) const
+{
+    if (m_view.IsNull()) return screenSize;
+    // V3d_View::Scale() 回傳「world 單位 / pixel」的比例
+    // 我們要的是：world_size = screenSize / scale
+    double scale = m_view->Scale();   // pixels per world unit
+    if (scale < 1e-10) return screenSize;
+    return screenSize / scale * 5.0;
 }
 
 IMPLEMENT_STANDARD_RTTIEXT(aicad::manipulator::ExtrudeOwner, SelectMgr_EntityOwner)
@@ -224,9 +242,6 @@ void AIS_ExtrudeManipulator::ComputeSelection(
     Handle(ExtrudeOwner) owner =
         new ExtrudeOwner(this, mode, /*priority*/8);
 
-    double sign = m_reversed ? -1.0 : 1.0;
-    double effectiveH = m_symmetric ? m_height / 2.0 : m_height;
-
     if (mode == 1) {
         // 主箭頭：沿拉伸方向建立 Bnd_Box 作為選取體積
         // 找兩個垂直向量來建立 box
@@ -237,8 +252,8 @@ void AIS_ExtrudeManipulator::ComputeSelection(
             perp1 = gp_Dir(m_dir.Crossed(gp_Dir(0, 1, 0)));
         perp2 = gp_Dir(m_dir.Crossed(perp1));
 
-        double r = kConeRadius * 2.0;  // 選取半徑（稍大於視覺半徑）
-        double len = kShaftLength + kConeHeight;
+        double len = worldSize(kScreenShaftLength) + worldSize(kScreenConeHeight);
+        double r   = worldSize(kScreenConeRadius) * 2.0;
 
         // 沿拉伸方向的 8 個角點 → Bnd_Box
         Bnd_Box box;
@@ -250,7 +265,7 @@ void AIS_ExtrudeManipulator::ComputeSelection(
                             .Translated(gp_Vec(perp2) * (r * sj)));
                 // 頂端
                 box.Add(m_base
-                            .Translated(gp_Vec(m_dir) * sign * len)
+                            .Translated(gp_Vec(m_dir) * len)
                             .Translated(gp_Vec(perp1) * (r * si))
                             .Translated(gp_Vec(perp2) * (r * sj)));
             }
@@ -258,8 +273,9 @@ void AIS_ExtrudeManipulator::ComputeSelection(
 
         // 在 mode == 1 區塊，取代原本的 Select3D_SensitiveBox
         {
-            gp_Trsf trsf = directionTransform(m_base, gp_Dir(gp_Vec(m_dir) * sign));
-            BRepPrimAPI_MakeCylinder mkCyl(kShaftRadius * 2.5, effectiveH + kConeHeight);
+            gp_Trsf trsf = directionTransform(m_base, m_dir);  // ✅ 不再用 sign
+            BRepPrimAPI_MakeCylinder mkCyl(worldSize(kScreenShaftRadius) * 2.5,
+                                           m_height + worldSize(kScreenConeHeight));
             // 半徑略放大讓選取更容易
             mkCyl.Build();
             if (mkCyl.IsDone()) {
@@ -286,7 +302,7 @@ void AIS_ExtrudeManipulator::ComputeSelection(
                                  .Translated(gp_Vec(perp1) * (r * si))
                                  .Translated(gp_Vec(perp2) * (r * sj)));
                     box2.Add(m_base
-                                 .Translated(gp_Vec(m_dir) * -sign * len)
+                                 .Translated(gp_Vec(m_dir.Reversed()) * len)
                                  .Translated(gp_Vec(perp1) * (r * si))
                                  .Translated(gp_Vec(perp2) * (r * sj)));
                 }
@@ -318,11 +334,11 @@ void AIS_ExtrudeManipulator::ComputeSelection(
         else
             perp = gp_Dir(m_dir.Crossed(gp_Dir(0, 1, 0)));
 
-        gp_Pnt flipCenter = m_base.Translated(gp_Vec(perp) * 12.0);
+        gp_Pnt flipCenter = m_base.Translated(gp_Vec(perp) * worldSize(kScreenFlipOffset));
         Bnd_Box box;
-        box.Add(flipCenter.Translated(gp_Vec(m_dir) *  (kFlipHalfLen + 5.0)));
-        box.Add(flipCenter.Translated(gp_Vec(m_dir) * -(kFlipHalfLen + 5.0)));
-        box.Enlarge(6.0);
+        box.Add(flipCenter.Translated(gp_Vec(m_dir) *  (worldSize(kScreenFlipHalfLen) + worldSize(5.0))));
+        box.Add(flipCenter.Translated(gp_Vec(m_dir) * -(worldSize(kScreenFlipHalfLen) + worldSize(5.0))));
+        box.Enlarge(worldSize(6.0));
 
         Handle(Select3D_SensitiveBox) sbox =
             new Select3D_SensitiveBox(owner, box);

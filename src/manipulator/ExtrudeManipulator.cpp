@@ -104,6 +104,8 @@ void ExtrudeManipulator::show()
 {
     if (!m_cadView) return;
 
+    m_aisManip->SetView(m_cadView->view());   // ← 新增
+
     // 透過 CadView overlay 機制顯示，可在 displayAllFeatures 後自動恢復
     m_cadView->addOverlayAIS(m_aisManip, {1, 2});
 
@@ -221,11 +223,11 @@ void ExtrudeManipulator::updateAIS()
         }
         m_bottomCentroid = bottomCentroid;                                    // ✅ 更新快取
 
-        const gp_Vec extDir1(n.x() * sign, n.y() * sign, n.z() * sign);
-        gp_Pnt newBase = m_bottomCentroid.Translated(extDir1 * m_extrude->height());
+        gp_Pnt newBase = bottomCentroid.Translated(extDir * m_extrude->height());
         m_aisManip->SetBase(newBase);
     }
 
+    m_aisManip->SetView(m_cadView->view());
     m_ctx->Redisplay(m_aisManip, /*update=*/true);
     positionMiniInput();
 }
@@ -278,8 +280,9 @@ bool ExtrudeManipulator::eventFilter(QObject* watched, QEvent* event)
         // m_dir 已含方向符號（含 reversed），直接 Dot
         // ✅ 以 m_heightAtDragStart 為基準，避免每幀累積
         const QVector3D n = m_extrude->sketch()->plane()->normal();
+        const double sign   = m_extrude->isReversed() ? -1.0 : 1.0;
         gp_Dir extDir(n.x(), n.y(), n.z());
-        double proj = delta.Dot(gp_Vec(extDir));
+        double proj = delta.Dot(gp_Vec(extDir) * sign);
 
         double newH = std::max(0.1, m_heightAtDragStart + proj);
         newH = std::round(newH * 10.0) / 10.0;
@@ -314,6 +317,13 @@ bool ExtrudeManipulator::eventFilter(QObject* watched, QEvent* event)
                                    : Q_EMIT heightConfirmed(m_extrude->height());
             return true;
         }
+        break;
+    }
+    case QEvent::Wheel: {
+        // 縮放後箭頭大小需重算
+        // Wheel 事件先讓 CadView 處理（不 consume），之後觸發 updateAIS
+        QMetaObject::invokeMethod(this, &ExtrudeManipulator::updateAIS,
+                                  Qt::QueuedConnection);
         break;
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <AIS_InteractiveObject.hxx>
+#include <V3d_View.hxx>
 #include <TopoDS_Shape.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
@@ -57,6 +58,8 @@ public:
     void ComputeSelection(const Handle(SelectMgr_Selection)& sel,
                           Standard_Integer mode) override;
 
+    void SetView(const Handle(V3d_View)& view) { m_view = view; }
+
 private:
     void buildArrow(const Handle(Prs3d_Presentation)& prs,
                     const Quantity_Color& shaftColor,
@@ -66,19 +69,25 @@ private:
 
     void buildHeightLabel(const Handle(Prs3d_Presentation)& prs);
 
+    // 新增：依目前縮放將「螢幕固定大小」轉換為世界座標大小
+    double worldSize(double screenSize) const;
+
+    // data
+    Handle(V3d_View) m_view;
+
     gp_Pnt  m_base;
     gp_Dir  m_dir;
     double  m_height;
     bool    m_symmetric = false;
     bool    m_reversed  = false;
 
-    // 幾何參數（固定比例）
-    static constexpr double kShaftRadius  = 1.5;   // mm
-    static constexpr double kConeRadius   = 4.0;
-    static constexpr double kConeHeight   = 10.0;
-    static constexpr double kFlipOffset   = -8.0;  // 距 base 向下偏移
-    static constexpr double kFlipHalfLen  = 6.0;
-    static constexpr double kShaftLength = 25.0;
+    // 固定螢幕視覺大小（像素/毫米 in screen space）
+    static constexpr double kScreenShaftRadius = 1.5;   // 目標螢幕半徑 (mm-equivalent)
+    static constexpr double kScreenConeRadius  = 4.0;
+    static constexpr double kScreenConeHeight  = 10.0;
+    static constexpr double kScreenShaftLength = 25.0;
+    static constexpr double kScreenFlipOffset  = 12.0;
+    static constexpr double kScreenFlipHalfLen = 6.0;
 
     TopoDS_Shape m_profile;
 };
