@@ -69,6 +69,7 @@ private:
     gp_Pnt      m_dragStart;
     double      m_heightAtDragStart = 0.0;
     gp_Pnt      m_bottomCentroid;
+    gp_Pnt      m_dragBase;   // 拖曳開始時的世界座標基點（用於建拖曳平面）
 
     // Mini input widget（父為 CadView）
     QFrame*     m_miniWidget  = nullptr;

@@ -10,6 +10,9 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <V3d_View.hxx>
 #include <gp_Lin.hxx>
+#include <IntAna_IntConicQuad.hxx>
+#include <gp_Pln.hxx>
+
 #include <BRepBndLib.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Face.hxx>
@@ -249,6 +252,7 @@ bool ExtrudeManipulator::eventFilter(QObject* watched, QEvent* event)
         if (hitMode == 1) {
             // 主箭頭拖曳開始
             m_dragMode = DragMode::Arrow;
+            m_dragBase = computeShaftBase();
             m_dragStart = screenToWorld(me->pos());
             m_heightAtDragStart = m_extrude->height();
             m_cadView->setCursor(Qt::SizeVerCursor);
@@ -338,7 +342,12 @@ bool ExtrudeManipulator::pickManipulatorPart(const QPoint& screenPt, int& outMod
 {
     if (m_ctx.IsNull()) return false;
 
-    m_ctx->MoveTo(screenPt.x(), screenPt.y(), m_cadView->view(), /*update=*/false);
+    // Win10 HiDPI 修正
+    const qreal dpr = m_cadView->devicePixelRatioF();
+    const int px = qRound(screenPt.x() * dpr);
+    const int py = qRound(screenPt.y() * dpr);
+
+    m_ctx->MoveTo(px, py, m_cadView->view(), /*update=*/false);
 
     Handle(SelectMgr_EntityOwner) owner = m_ctx->DetectedOwner();
     if (owner.IsNull()) return false;
@@ -357,14 +366,42 @@ gp_Pnt ExtrudeManipulator::screenToWorld(const QPoint& screenPt) const
     auto view = m_cadView->view();
     if (view.IsNull()) return gp_Pnt();
 
-    double xEye, yEye, zEye, xAt, yAt, zAt;
-    view->Eye(xEye, yEye, zEye);
-    view->At (xAt,  yAt,  zAt);
+    // 乘上 devicePixelRatio，確保 HiDPI 平台（Win10）座標正確
+    const qreal dpr = m_cadView->devicePixelRatioF();
+    const int px = qRound(screenPt.x() * dpr);
+    const int py = qRound(screenPt.y() * dpr);
 
-    double xWorld, yWorld, zWorld;
-    view->Convert(screenPt.x(), screenPt.y(),
-                  xWorld, yWorld, zWorld);
-    return gp_Pnt(xWorld, yWorld, zWorld);
+    // 建射線
+    double xEye, yEye, zEye;
+    view->Eye(xEye, yEye, zEye);
+
+    double xAt, yAt, zAt;
+    double xDir, yDir, zDir;
+    view->Convert(px, py, xAt, yAt, zAt);
+    gp_Vec rayDir(gp_Pnt(xEye, yEye, zEye), gp_Pnt(xAt, yAt, zAt));
+    rayDir.Normalize();
+
+    // 與拖曳平面（過 m_dragBase，法向朝 camera eye）求交
+    auto* sketch = m_extrude->sketch();
+    if (!sketch || !sketch->plane()) return gp_Pnt(xAt, yAt, zAt);
+
+    const QVector3D n = sketch->plane()->normal();
+    const double sign = m_extrude->isReversed() ? -1.0 : 1.0;
+    gp_Dir extDir(n.x() * sign, n.y() * sign, n.z() * sign);
+
+    // 拖曳平面：過箭頭基點，法向取 extDir 在 camera 方向的投影最大者
+    // 用「過 m_dragBase、法向朝 view eye」的平面，讓深度固定
+    gp_Pnt eye(xEye, yEye, zEye);
+    gp_Vec toEye(m_dragBase, eye);
+    toEye.Normalize();
+    gp_Pln dragPlane(m_dragBase, gp_Dir(toEye));
+
+    gp_Lin ray(eye, gp_Dir(rayDir));
+    IntAna_IntConicQuad inter(ray, dragPlane, Precision::Angular());
+    if (!inter.IsDone() || inter.IsParallel() || inter.NbPoints() == 0)
+        return gp_Pnt(xAt, yAt, zAt);
+
+    return inter.Point(1);
 }
 
 gp_Pnt ExtrudeManipulator::computeShaftBase() const
