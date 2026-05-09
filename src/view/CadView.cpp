@@ -1576,8 +1576,10 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
-    d->context->MoveTo(xp, yp, d->view, Standard_True);
-
+    bool gripActive = d->gripManager && d->gripManager->isGripSelected();
+    if (!gripActive) {
+        d->context->MoveTo(xp, yp, d->view, Standard_True);
+    }
     // ── OSnap 偵測（每次 mouse move）──────────────────────────────────────
     // 注意：Grip 系統已透過 EventBus 設定 m_snapManager 的 m_gripActive 旗標，
     //       所以這裡不需要額外判斷。
@@ -1599,7 +1601,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     }
 
     // 更新懸停偵測
-    if (!d->context.IsNull() && !d->view.IsNull()) {
+    if (!d->context.IsNull() && !d->view.IsNull() && !gripActive) {
         //d->context->MoveTo(xp, yp, d->view, Standard_True);
 
         if (d->context->HasDetected()) {

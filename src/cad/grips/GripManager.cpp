@@ -1,5 +1,6 @@
 // src/cad/grips/GripManager.cpp
 #include "GripManager.h"
+#include "SketchGripProvider.h"
 #include <QDebug>
 #include <cmath>
 
@@ -20,10 +21,11 @@ void GripManager::setContext(const Handle(AIS_InteractiveContext)& ctx)
 }
 
 // ── 掛載 Provider，建立 grip 顯示 ─────────────────────────────────────
-void GripManager::attachProvider(IGripProvider* provider)
+
+void GripManager::attachProvider(std::unique_ptr<IGripProvider> provider)
 {
-    detach();
-    m_provider = provider;
+    detach();   // 自動 delete 舊 provider（unique_ptr 析構）
+    m_provider = std::move(provider);
     if (m_provider) {
         m_grips = m_provider->computeGrips();
         displayHandles();
@@ -50,7 +52,7 @@ void GripManager::detach()
     eraseHandles();
     m_handles.clear();
     m_grips.clear();
-    m_provider    = nullptr;
+    m_provider.reset();
     m_activeGripId.clear();
     m_hoveredGripId.clear();
 }
@@ -120,10 +122,14 @@ bool GripManager::cancelGrip()
     if (!m_gripSelected) return false;
 
     // ① 找到 active grip，呼叫 onDrag 還原到起始位置
-    for (const GripPoint& gp : m_grips) {
-        if (gp.id == m_activeGripId && gp.onDrag) {
-            gp.onDrag(m_dragStartPos, false);   // ← 還原幾何
-            break;
+    if (auto* sgp = dynamic_cast<SketchGripProvider*>(m_provider.get())) {
+        sgp->restoreSnapshot();   // 精確還原所有受影響頂點
+    } else {
+        for (const GripPoint& gp : m_grips) {
+            if (gp.id == m_activeGripId && gp.onDrag) {
+                gp.onDrag(m_dragStartPos, false);
+                break;
+            }
         }
     }
 
@@ -160,18 +166,26 @@ void GripManager::refreshGrips()
 }
 
 // ── Hit Test ─────────────────────────────────────────────────────────
-QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double threshold) const
+QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double /*unused*/) const
 {
-    QString best;
-    double  bestDist = threshold;
+    // 計算目前 zoom 下 12 像素對應的世界單位距離
+    double pixThreshold = 12.0;
+    double worldThreshold = pixThreshold;   // fallback
 
+    if (!m_view.IsNull()) {
+        // V3d_View::Convert(pixSize) → world size
+        double wx1, wy1, wz1, wx2, wy2, wz2;
+        m_view->Convert(0, 0, wx1, wy1, wz1);
+        m_view->Convert((int)pixThreshold, 0, wx2, wy2, wz2);
+        worldThreshold = gp_Pnt(wx1,wy1,wz1).Distance(gp_Pnt(wx2,wy2,wz2));
+    }
+
+    QString best;
+    double  bestDist = worldThreshold;
     for (const GripPoint& gp : m_grips) {
         if (!gp.enabled) continue;
         double d = worldPos.Distance(gp.position);
-        if (d < bestDist) {
-            bestDist = d;
-            best     = gp.id;
-        }
+        if (d < bestDist) { bestDist = d; best = gp.id; }
     }
     return best;
 }

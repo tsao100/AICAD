@@ -36,8 +36,8 @@ public:
     }
 
     // ── 選取物件後，載入其 grip ────────────────────────────────
-    void attachProvider(IGripProvider* provider);
-    IGripProvider* currentProvider(){return m_provider;}
+    IGripProvider* currentProvider() const { return m_provider.get(); }
+    void attachProvider(std::unique_ptr<IGripProvider> provider);
     void detach();
     bool hasActiveGrips() const { return !m_handles.isEmpty(); }
 
@@ -68,6 +68,7 @@ public:
     bool cancelGrip();          // ESC 取消選取
     bool isGripSelected() const { return m_gripSelected; }
     const QVector<GripPoint>& currentGrips() const { return m_grips; }
+    void setView(const Handle(V3d_View)& view) { m_view = view; }
 
 Q_SIGNALS:
     void gripDragStarted(const QString& gripId);
@@ -88,7 +89,7 @@ private:
     void        updateHandleColor(const QString& id, GripState state);
 
     Handle(AIS_InteractiveContext) m_context;
-    IGripProvider*                 m_provider  = nullptr;
+    std::unique_ptr<IGripProvider> m_provider;   // 替換原 raw pointer
 
     QVector<GripPoint>                         m_grips;
     QMap<QString, Handle(AIS_GripHandle)>      m_handles;
@@ -109,6 +110,7 @@ private:
     bool        m_snapMidpoint = true;
     bool        m_enabled = true;
     osnap::OSnapManager* m_snapManager = nullptr;
+    Handle(V3d_View) m_view;
 };
 
 } // namespace aicad::cad

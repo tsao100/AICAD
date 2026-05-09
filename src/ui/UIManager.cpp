@@ -160,7 +160,7 @@ void UIManager::initGripSystem()
                            // ✅ 同樣傳給 GripEventFilter 做 ray-plane 投影
                            d->gripFilter->setSketchPlane(plane);
                            d->gripManager->attachProvider(
-                               new cad::SketchGripProvider(sketch, geomIndices));
+                               std::make_unique<cad::SketchGripProvider>(sketch, geomIndices));
                            qDebug() << "[UIManager] Grips attached for sketch:"
                                     << sketch->id() << " -> " << geomIndices;
                        }
@@ -300,6 +300,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // 在 Private 初始化完成、建立 cadView 之後加入（約 initialize() 函式內）：
         d->undoStack = new QUndoStack(d->mainWindow);   // parent 給 mainWindow 自動清理        // 設置命令列系統（在 CadView 創建後）
+
         setupCommandLine();
 
         // ✅ 在這裡呼叫，d->mainWindow 和 d->cadView 都已存在
@@ -1095,6 +1096,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->gripManager = new GripManager(this);
         d->gripManager->setContext(d->cadView->context());
         d->gripManager->setGridSnap(true, 5.0);
+
+        d->gripManager->setView(d->cadView->view());
 
         // 在 d->gripManager 初始化之後加：
         if (d->cadView && d->cadView->snapManager())

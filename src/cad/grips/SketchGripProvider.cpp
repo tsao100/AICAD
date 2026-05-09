@@ -131,12 +131,14 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
 
 void SketchGripProvider::onGripDragBegin(const QString& /*gripId*/)
 {
-    // 快照：記錄所有 geometry 點以供 Undo
     m_snapshots.clear();
-    for (const SketchGeometry* g : m_sketch->geometries()) {
-        for (int i = 0; i < g->points.size(); ++i) {
-            m_snapshots[QString("pt_%1_%2").arg((quintptr)g).arg(i)] = g->points[i];
-        }
+    const auto geoms = m_sketch->normalGeometries();
+    for (int i = 0; i < geoms.size(); ++i) {
+        if (!m_geomIndices.isEmpty() && !m_geomIndices.contains(i)) continue;
+        GeomSnapshot snap;
+        snap.geomIndex = i;
+        snap.points    = geoms[i]->points;   // deep copy
+        m_snapshots.append(snap);
     }
 }
 
@@ -165,6 +167,16 @@ void SketchGripProvider::onGripDragEnd(const QString& gripId,
         m_sketch->solveConstraints();  // 套用現有約束
         Q_EMIT m_sketch->rebuildRequested();  // 通知 Document 更新
     }
+}
+
+void SketchGripProvider::restoreSnapshot()
+{
+    const auto geoms = m_sketch->normalGeometries();
+    for (const GeomSnapshot& snap : m_snapshots) {
+        if (snap.geomIndex < geoms.size())
+            geoms[snap.geomIndex]->points = snap.points;
+    }
+    m_sketch->rebuildShapesOnly();
 }
 
 } // namespace aicad::cad

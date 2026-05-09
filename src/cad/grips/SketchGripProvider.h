@@ -17,11 +17,17 @@ public:
     void onGripDragEnd(const QString& gripId,
                        const gp_Pnt& startPos,
                        const gp_Pnt& endPos) override;
+    void restoreSnapshot();
 
 private:
     Sketch*                     m_sketch;
     QSet<int>  m_geomIndices;  // ✅ empty = all geometries
-    QMap<QString, QVector2D>    m_snapshots;  ///< Undo snapshot
+
+    struct GeomSnapshot {
+        int              geomIndex;
+        QVector<QVector2D> points;
+    };
+    QVector<GeomSnapshot> m_snapshots; ///< Undo snapshot
 };
 
 } // namespace aicad::cad
