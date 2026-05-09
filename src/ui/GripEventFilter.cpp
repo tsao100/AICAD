@@ -70,38 +70,46 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
     if (!m_enabled) return false;
     if (m_view.IsNull() || !m_gripManager) return false;
 
-    // ✅ 取得 DPR，Qt6/Windows HiDPI 必須
     const qreal dpr = qobject_cast<QWidget*>(obj)
                           ? qobject_cast<QWidget*>(obj)->devicePixelRatio()
                           : 1.0;
-
     auto toPhys = [dpr](const QPointF& lp, int& px, int& py) {
         px = static_cast<int>(lp.x() * dpr);
         py = static_cast<int>(lp.y() * dpr);
     };
 
     switch (event->type()) {
+
+    case QEvent::KeyPress: {
+        auto* e = static_cast<QKeyEvent*>(event);
+        if (e->key() == Qt::Key_Escape && m_gripManager->isGripSelected()) {
+            m_gripManager->cancelGrip();
+            return true;
+        }
+        break;
+    }
+
     case QEvent::MouseMove: {
         auto* e = static_cast<QMouseEvent*>(event);
         int px, py;
-        toPhys(e->pos(), px, py);               // ✅ physical pixels
+        toPhys(e->pos(), px, py);
         gp_Pnt wp = screenToWorld(px, py);
-        bool handled = m_gripManager->mouseMoveEvent(wp, px, py);
-            // 在 mouseMoveEvent 處理中，當 grip hover 狀態改變時發布事件：
-        bool wasHovered = m_lastHovered;
 
+        bool handled = m_gripManager->mouseMoveEvent(wp, px, py);
+
+        // Hover 事件發布（同原邏輯）
+        bool wasHovered = m_lastHovered;
         if (handled != wasHovered) {
             auto* bus = core::Application::instance()->eventBus();
             if (bus) {
-                if (handled)
-                    bus->publish("grip.hovered", QVariant{});
-                else
-                    bus->publish("grip.released", QVariant{});
+                if (handled) bus->publish("grip.hovered", QVariant{});
+                else         bus->publish("grip.released", QVariant{});
             }
             m_lastHovered = handled;
         }
 
-        if (m_gripCaptured) return true;   // 吃掉事件，不傳給 orbit
+        // grip 已選取時，阻止 orbit 旋轉
+        if (m_gripManager->isGripSelected()) return true;
         return handled;
     }
 
@@ -109,25 +117,16 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
         auto* e = static_cast<QMouseEvent*>(event);
         if (e->button() != Qt::LeftButton) break;
         int px, py;
-        toPhys(e->pos(), px, py);               // ✅
+        toPhys(e->pos(), px, py);
         gp_Pnt wp = screenToWorld(px, py);
-        m_gripCaptured = m_gripManager->mousePressEvent(wp, px, py);
-        return m_gripCaptured;
+        // 第一次點：選取 grip；第二次點：確認位置
+        return m_gripManager->mousePressEvent(wp, px, py);
     }
 
-    case QEvent::MouseButtonRelease: {
-        auto* e = static_cast<QMouseEvent*>(event);
-        if (e->button() != Qt::LeftButton) break;
-        if (m_gripCaptured) {
-            int px, py;
-            toPhys(e->pos(), px, py);               // ✅
-            gp_Pnt wp = screenToWorld(px, py);
-            m_gripManager->mouseReleaseEvent(wp);
-            m_gripCaptured = false;
-            return true;
-        }
+    case QEvent::MouseButtonRelease:
+        // Click-to-place 模式下，release 不做任何事
+        if (m_gripManager->isGripSelected()) return true;  // 吃掉，避免 orbit deselect
         break;
-    }
 
     default: break;
     }

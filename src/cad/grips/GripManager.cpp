@@ -32,7 +32,7 @@ void GripManager::attachProvider(IGripProvider* provider)
 
 void GripManager::detach()
 {
-    m_isDragging    = false;
+    m_gripSelected = false;
     m_activeGripId.clear();
     m_hoveredGripId.clear();
 
@@ -40,7 +40,6 @@ void GripManager::detach()
     m_handles.clear();
     m_grips.clear();
     m_provider    = nullptr;
-    m_isDragging  = false;
     m_activeGripId.clear();
     m_hoveredGripId.clear();
 }
@@ -91,13 +90,44 @@ void GripManager::setEnabled(bool enabled)
     if (!enabled) {
         // 視覺隱藏，但保留 provider / m_grips，可供後續 refreshGrips()
         hideGrips();
-        // 中止懸掛的 hover 狀態
+        if (m_gripSelected) {
+            // 取消未完成的選取
+            if (m_provider) m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, m_dragStartPos);
+            m_gripSelected = false;
+            m_activeGripId.clear();
+        }
         m_hoveredGripId.clear();
     } else {
         // 重新顯示（provider 還在）
         refreshGrips();
     }
     qDebug() << "[GripManager] Grips" << (enabled ? "enabled" : "disabled");
+}
+
+bool GripManager::cancelGrip()
+{
+    if (!m_gripSelected) return false;
+
+    // 還原 handle 位置到起始點
+    Handle(AIS_GripHandle) h = m_handles.value(m_activeGripId);
+    if (!h.IsNull()) {
+        h->SetPosition(m_dragStartPos);
+        m_context->RecomputePrsOnly(h, Standard_False);
+        m_context->UpdateCurrentViewer();
+    }
+
+    if (m_provider)
+        m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, m_dragStartPos); // 原位
+
+    if (m_snapManager) m_snapManager->onGripDragEnded();
+
+    updateHandleColor(m_activeGripId, GripState::Normal);
+    m_gripSelected = false;
+    m_activeGripId.clear();
+
+    refreshGrips();
+    qDebug() << "[GripManager] Grip cancelled";
+    return true;
 }
 
 void GripManager::refreshGrips()
@@ -163,24 +193,22 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
 {
     if (m_handles.isEmpty()) return false;
 
-    if (m_isDragging && !m_activeGripId.isEmpty()) {
+    // ── 已選取 grip：預覽移動（不需按住滑鼠）────────────────────
+    if (m_gripSelected && !m_activeGripId.isEmpty()) {
 
-        // ── OSnap 優先 ──────────────────────────────────────────
         gp_Pnt snapPos = worldPos;
         bool   snapped = false;
         QString snapDesc;
 
         if (m_snapManager) {
-            m_snapManager->onMouseMove(sx, sy);      // 驅動偵測
+            m_snapManager->onMouseMove(sx, sy);
             auto pt3d = m_snapManager->snapPoint3D();
             if (pt3d.has_value()) {
-                snapPos   = *pt3d;
-                snapped   = true;
-                //snapDesc  = m_snapManager->currentSnapDescription(); // 可選
+                snapPos = *pt3d;
+                snapped = true;
             }
         }
 
-        // ── OSnap 無結果時退回 grip-to-grip / grid snap ─────────
         if (!snapped) {
             SnapResult fallback = computeSnap(worldPos);
             snapPos  = fallback.point;
@@ -188,10 +216,11 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
             snapDesc = fallback.description;
         }
 
+        m_lastSnapPos = snapPos;   // ← 儲存供 mousePressEvent 第二次點擊使用
+
         SnapResult result{ snapped, snapPos, snapDesc };
         Q_EMIT snapOccurred(result);
 
-        // 更新 AIS handle 位置
         Handle(AIS_GripHandle) h = m_handles.value(m_activeGripId);
         if (!h.IsNull()) {
             h->SetPosition(snapPos);
@@ -207,74 +236,66 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
         }
 
         Q_EMIT gripDragging(m_activeGripId, snapPos);
-        return true;
+        return true;   // 消費 move，阻止 orbit 旋轉
     }
 
-    // ── Hover 偵測 ────────────────────────────────────────────────
+    // ── Hover 偵測（同原邏輯）────────────────────────────────────
     QString hoverId = hitTestGrip(worldPos);
-
     if (hoverId != m_hoveredGripId) {
-        // 恢復舊 hover
         if (!m_hoveredGripId.isEmpty())
             updateHandleColor(m_hoveredGripId, GripState::Normal);
-
         m_hoveredGripId = hoverId;
-
-        // 高亮新 hover
         if (!m_hoveredGripId.isEmpty())
             updateHandleColor(m_hoveredGripId, GripState::Hover);
     }
-
     return !hoverId.isEmpty();
 }
 
 bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int sx, int sy)
 {
     if (m_handles.isEmpty()) return false;
-    QString hitId = hitTestGrip(worldPos);
-    if (hitId.isEmpty()) return false;
 
-    m_activeGripId = hitId;
-    m_isDragging   = true;
-    m_dragStartPos = worldPos;
+    // ── 狀態一：尚未選取 grip，嘗試 hit test ───────────────────
+    if (!m_gripSelected) {
+        QString hitId = hitTestGrip(worldPos);
+        if (hitId.isEmpty()) return false;          // 沒點到，不消費事件
 
-    // 通知 OSnapManager 進入 drag 模式
-    if (m_snapManager) m_snapManager->onGripDragStarted();
+        m_activeGripId = hitId;
+        m_gripSelected = true;
+        m_dragStartPos = worldPos;
+        m_lastSnapPos  = worldPos;
 
-    updateHandleColor(hitId, GripState::Active);
-    if (m_provider) m_provider->onGripDragBegin(hitId);
-    Q_EMIT gripDragStarted(hitId);
-    return true;
-}
+        if (m_snapManager) m_snapManager->onGripDragStarted();
 
-bool GripManager::mouseReleaseEvent(const gp_Pnt& worldPos)
-{
-    if (!m_isDragging) return false;
+        updateHandleColor(hitId, GripState::Active);
+        if (m_provider) m_provider->onGripDragBegin(hitId);
+        Q_EMIT gripDragStarted(hitId);
 
-    // 用最後一次 snap 結果做最終位置
-    gp_Pnt finalPos = worldPos;
-    if (m_snapManager) {
-        auto pt3d = m_snapManager->snapPoint3D();
-        if (pt3d.has_value()) finalPos = *pt3d;
-        m_snapManager->onGripDragEnded();             // 清除 drag 狀態
+        qDebug() << "[GripManager] Grip selected:" << hitId;
+        return true;   // 消費此點擊
     }
 
-    bool didSnap = finalPos.Distance(worldPos) > Precision::Confusion();
-    SnapResult snap{ didSnap, finalPos, QString{} };
+    // ── 狀態二：已選取 grip，此次點擊 = 確認放置位置 ────────────
+    gp_Pnt finalPos = m_lastSnapPos;   // 使用 mouseMoveEvent 中最後的 snap 結果
 
     if (m_provider)
         m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, finalPos);
     Q_EMIT gripDragFinished(m_activeGripId, m_dragStartPos, finalPos);
 
+    if (m_snapManager) m_snapManager->onGripDragEnded();
+
     updateHandleColor(m_activeGripId, GripState::Normal);
-    m_isDragging   = false;
+    m_gripSelected = false;
     m_activeGripId.clear();
 
-    // 拖拉結束後重新計算所有 grip 位置
     refreshGrips();
-
-    qDebug() << "[GripManager] Drag ended";
+    qDebug() << "[GripManager] Grip placed at" << finalPos.X() << finalPos.Y() << finalPos.Z();
     return true;
+}
+
+bool GripManager::mouseReleaseEvent(const gp_Pnt& /*worldPos*/)
+{
+    return false;   // 放開滑鼠不再 commit，commit 在第二次 mousePressEvent
 }
 
 void GripManager::updateHandleColor(const QString& id, GripState state)

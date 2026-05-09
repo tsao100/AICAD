@@ -65,6 +65,9 @@ public:
     void setEnabled(bool enabled);
     bool isEnabled() const { return m_enabled; }
 
+    bool cancelGrip();          // ESC 取消選取
+    bool isGripSelected() const { return m_gripSelected; }
+
 Q_SIGNALS:
     void gripDragStarted(const QString& gripId);
     void gripDragging(const QString& gripId, const gp_Pnt& pos);
@@ -91,8 +94,9 @@ private:
 
     // 拖拉狀態
     QString     m_activeGripId;
-    gp_Pnt      m_dragStartPos;
-    bool        m_isDragging = false;
+    gp_Pnt      m_dragStartPos;    
+    bool        m_gripSelected = false;   // grip 已被選取，等待放置點
+    gp_Pnt      m_lastSnapPos;            // mouseMoveEvent 中最後 snap 到的位置
 
     // Hover 狀態
     QString     m_hoveredGripId;

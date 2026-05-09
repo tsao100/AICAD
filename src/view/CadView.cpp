@@ -1512,7 +1512,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         // ① Let GripEventFilter have first chance (already installed)
         //    If grip captured the event, it returns true and Qt won't
         //    propagate here — but if you handle manually, check:
-        if (d->gripFilter && d->gripFilter->isCapturing()) {
+        if (d->gripFilter && d->gripFilter->isGripSelected()) {
             return;  // grip is dragging, skip AIS selection
         }
 

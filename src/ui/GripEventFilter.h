@@ -20,7 +20,6 @@ public:
                              QObject* parent = nullptr);
 
     bool eventFilter(QObject* obj, QEvent* event) override;
-    bool isCapturing() const { return m_gripCaptured; }
 
     // ✅ 讓外部在 attach provider 時設定當前 sketch plane
     void setSketchPlane(cad::Plane* plane) { m_sketchPlane = plane; }
@@ -29,6 +28,9 @@ public:
     void setEnabled(bool enabled) { m_enabled = enabled; }
     bool isEnabled() const        { return m_enabled; }
     void setView(const Handle(V3d_View)& view) { m_view = view; }
+    bool isGripSelected() const {
+        return m_gripManager && m_gripManager->isGripSelected();
+    }
 
 private:
     gp_Pnt screenToWorld(int x, int y) const;
@@ -36,7 +38,6 @@ private:
     cad::GripManager*  m_gripManager;
     Handle(V3d_View)   m_view;
     cad::Plane*        m_sketchPlane  = nullptr;
-    bool               m_gripCaptured = false;
     bool m_lastHovered = false;    
     bool m_enabled = false;
 };
