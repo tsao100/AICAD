@@ -37,6 +37,7 @@
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
 #include "command/LineCommand.h"
+#include "command/GripMoveCommand.h"
 
 #include <QMenu>
 #include <QMenuBar>
@@ -1191,16 +1192,38 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // });
 
         // ── 監聽 Grip 拖拉完成（Log / Status bar）────────────────────────────
+        // src/ui/UIManager.cpp — 替換 gripDragFinished 連接
+
         connect(d->gripManager, &GripManager::gripDragFinished,
-                this, [bus](const QString& id, const gp_Pnt& from, const gp_Pnt& to) {
+                this, [this, bus](const QString& id,
+                            const gp_Pnt& from, const gp_Pnt& to) {
+
+                    if (from.Distance(to) < Precision::Confusion()) return;  // 無位移，不記錄
+
+                    // 找到 active grip 的 onDrag lambda
+                    auto* provider = d->gripManager->currentProvider();
+                    if (!provider) return;
+
+                    // 從 computeGrips 找對應 grip 的 onDrag（已套用在幾何上）
+                    // 封裝成 GripMoveCommand 推入 undo stack
+                    for (const auto& gp : d->gripManager->currentGrips()) {  // ★ 需新增 currentGrips()
+                        if (gp.id == id && gp.onDrag) {
+                            auto applyFn = gp.onDrag;  // copy lambda
+                            auto* cmd = new cad::GripMoveCommand(
+                                [applyFn](const gp_Pnt& p){ applyFn(p, false); },
+                                id, from, to, provider);
+                            //d->undoStack->push(cmd);   // ★ 確認 d->undoStack 已初始化
+                            break;
+                        }
+                    }
+
                     QString msg = QString("Grip '%1' moved Δ(%.2f, %.2f, %.2f)")
                                       .arg(id)
-                                      .arg(to.X() - from.X())
-                                      .arg(to.Y() - from.Y())
-                                      .arg(to.Z() - from.Z());
+                                      .arg(to.X()-from.X())
+                                      .arg(to.Y()-from.Y())
+                                      .arg(to.Z()-from.Z());
                     bus->publish(Events::COMMAND_PROMPT, msg);
                 });
-
         // ── Snap 指示（顯示在 status bar）──────────────────────────────────────
         connect(d->gripManager, &GripManager::snapOccurred,
                 this, [bus](const SnapResult& s) {

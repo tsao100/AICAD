@@ -67,6 +67,7 @@ public:
 
     bool cancelGrip();          // ESC 取消選取
     bool isGripSelected() const { return m_gripSelected; }
+    const QVector<GripPoint>& currentGrips() const { return m_grips; }
 
 Q_SIGNALS:
     void gripDragStarted(const QString& gripId);

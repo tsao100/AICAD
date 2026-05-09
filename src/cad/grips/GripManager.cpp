@@ -32,6 +32,17 @@ void GripManager::attachProvider(IGripProvider* provider)
 
 void GripManager::detach()
 {
+    // 若有選取中的 grip，先還原幾何
+    if (m_gripSelected) {
+        for (const GripPoint& gp : m_grips) {
+            if (gp.id == m_activeGripId && gp.onDrag) {
+                gp.onDrag(m_dragStartPos, false);
+                break;
+            }
+        }
+        if (m_snapManager) m_snapManager->onGripDragEnded();
+    }
+
     m_gripSelected = false;
     m_activeGripId.clear();
     m_hoveredGripId.clear();
