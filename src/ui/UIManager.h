@@ -11,6 +11,7 @@
 #include <QObject>
 #include <QString>
 #include <QMainWindow>
+#include <QUndoStack>
 #include "osnap/OSnapToolbar.h"
 #include "cad/sketch/SketchRegion.h"
 #include <TopoDS_Face.hxx>
@@ -189,6 +190,8 @@ public:
     void showCommandWarning(const QString& warning);
 
     cad::Sketch* currentActiveSketch();
+
+    QUndoStack* undoStack() const;
 
 Q_SIGNALS:
     /**

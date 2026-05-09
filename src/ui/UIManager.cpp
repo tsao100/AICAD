@@ -45,6 +45,7 @@
 #include <QTimer>
 #include <QtMath>
 #include <QDebug>
+#include <QUndoStack>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -74,12 +75,14 @@ public:
         , commandLineManager(nullptr)       // ✅ 新增
         , commandAlias(nullptr)             // ✅ 新增
         , autoCompleteModel(nullptr)        // ✅ 新增
+        , undoStack(nullptr)
     {
     }
     
     ~Private() {
         // MainWindow 會自動刪除子元件
         delete mainWindow;
+        delete undoStack;
     }
     
     MainWindow* mainWindow;
@@ -97,6 +100,7 @@ public:
     core::CommandLineManager* commandLineManager;
     command::CommandAlias* commandAlias;
     AutoCompleteModel* autoCompleteModel;
+    QUndoStack* undoStack;
     SketchPanel* sketchPanel = nullptr;
 };
 
@@ -293,7 +297,9 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->cadView = new view::CadView(d->mainWindow);
         d->mainWindow->setCentralWidget(d->cadView);
         app->viewManager()->setActiveView(d->cadView);
-        // 設置命令列系統（在 CadView 創建後）
+
+        // 在 Private 初始化完成、建立 cadView 之後加入（約 initialize() 函式內）：
+        d->undoStack = new QUndoStack(d->mainWindow);   // parent 給 mainWindow 自動清理        // 設置命令列系統（在 CadView 創建後）
         setupCommandLine();
 
         // ✅ 在這裡呼叫，d->mainWindow 和 d->cadView 都已存在
@@ -1212,7 +1218,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                             auto* cmd = new cad::GripMoveCommand(
                                 [applyFn](const gp_Pnt& p){ applyFn(p, false); },
                                 id, from, to, provider);
-                            //d->undoStack->push(cmd);   // ★ 確認 d->undoStack 已初始化
+                            d->undoStack->push(cmd);   // ★ 確認 d->undoStack 已初始化
                             break;
                         }
                     }
@@ -1900,6 +1906,8 @@ void UIManager::showCommandWarning(const QString& warning) {
 cad::Sketch* UIManager::currentActiveSketch(){
     return m_currentActiveSketch;
 }
+
+QUndoStack* UIManager::undoStack() const { return d->undoStack; }
 
 void UIManager::showMainWindow() {
     if (!d->mainWindow) {
