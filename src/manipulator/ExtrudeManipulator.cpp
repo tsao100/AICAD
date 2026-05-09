@@ -342,7 +342,7 @@ bool ExtrudeManipulator::pickManipulatorPart(const QPoint& screenPt, int& outMod
 {
     if (m_ctx.IsNull()) return false;
 
-    // Win10 HiDPI 修正
+    // Win10 HiDPI 修正 also valid for ubuntu.
     const qreal dpr = m_cadView->devicePixelRatioF();
     const int px = qRound(screenPt.x() * dpr);
     const int py = qRound(screenPt.y() * dpr);
