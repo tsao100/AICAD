@@ -151,6 +151,12 @@ void SketchGripProvider::onGripDragEnd(const QString& gripId,
                                        const gp_Pnt& endPos)
 {
     Q_UNUSED(startPos)
+    // cancel 時 startPos == endPos，不做任何事
+    if (startPos.Distance(endPos) < Precision::Confusion()) {
+        qDebug() << "[SketchGripProvider] Cancelled (no movement):" << gripId;
+        return;
+    }
+
     qDebug() << "[SketchGripProvider] Grip committed:" << gripId
              << "to" << endPos.X() << endPos.Y() << endPos.Z();
 

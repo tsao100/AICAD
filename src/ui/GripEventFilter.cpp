@@ -80,15 +80,6 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
 
     switch (event->type()) {
 
-    case QEvent::KeyPress: {
-        auto* e = static_cast<QKeyEvent*>(event);
-        if (e->key() == Qt::Key_Escape && m_gripManager->isGripSelected()) {
-            m_gripManager->cancelGrip();
-            return true;
-        }
-        break;
-    }
-
     case QEvent::MouseMove: {
         auto* e = static_cast<QMouseEvent*>(event);
         int px, py;

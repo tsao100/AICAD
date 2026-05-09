@@ -108,18 +108,27 @@ bool GripManager::cancelGrip()
 {
     if (!m_gripSelected) return false;
 
-    // 還原 handle 位置到起始點
+    // ① 找到 active grip，呼叫 onDrag 還原到起始位置
+    for (const GripPoint& gp : m_grips) {
+        if (gp.id == m_activeGripId && gp.onDrag) {
+            gp.onDrag(m_dragStartPos, false);   // ← 還原幾何
+            break;
+        }
+    }
+
+    // ② 通知 provider 放棄此次編輯（startPos == endPos = 無位移）
+    if (m_provider)
+        m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, m_dragStartPos);
+
+    if (m_snapManager) m_snapManager->onGripDragEnded();
+
+    // ③ 還原 handle 視覺位置
     Handle(AIS_GripHandle) h = m_handles.value(m_activeGripId);
     if (!h.IsNull()) {
         h->SetPosition(m_dragStartPos);
         m_context->RecomputePrsOnly(h, Standard_False);
         m_context->UpdateCurrentViewer();
     }
-
-    if (m_provider)
-        m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, m_dragStartPos); // 原位
-
-    if (m_snapManager) m_snapManager->onGripDragEnded();
 
     updateHandleColor(m_activeGripId, GripState::Normal);
     m_gripSelected = false;

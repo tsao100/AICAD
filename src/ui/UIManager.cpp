@@ -165,6 +165,10 @@ void UIManager::initGripSystem()
     // ── B) Selection cleared → detach grips ──────────────────────────
     bus->subscribe("selection.cleared", this,
                    [this](const QVariant&) {
+                       // 若 grip 正在選取中，先取消以還原幾何，再 detach
+                       if (d->gripManager->isGripSelected())
+                           d->gripManager->cancelGrip();
+
                        d->gripManager->detach();
                        qDebug() << "[UIManager] Grips detached (selection cleared)";
                    });

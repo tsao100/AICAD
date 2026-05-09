@@ -1804,30 +1804,33 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             Q_EMIT pointCancelled();
         }
         // ① 先 detach grips（安全順序同 visibility-changed）
+        // src/view/CadView.cpp — keyPressEvent ESC 段落，替換原本的 grip detach 區塊
+
         if (d->gripManager && d->gripManager->hasActiveGrips()) {
 
-            d->gripManager->detach();
+            // ① 若 grip 正在選取中（click-to-place 模式），先取消，保留 grip 顯示
+            if (d->gripManager->isGripSelected()) {
+                d->gripManager->cancelGrip();
+                event->accept();
+                return;   // 第一次 ESC 只取消移動，不清除 grips
+            }
 
+            // ② 第二次 ESC：真正 detach
+            d->gripManager->detach();
             if (d->gripFilter)
                 d->gripFilter->clearSketchPlane();
 
-            // ② 清除 OCCT selection 高亮
             if (!d->context.IsNull()) {
                 d->context->ClearSelected(Standard_False);
                 d->context->UpdateCurrentViewer();
             }
 
-            // ③ 通知其他元件選取已清除
             auto* bus = core::Application::instance()->eventBus();
             bus->publish("selection.cleared", QVariant());
 
             qDebug() << "[CadView] ESC: grips detached";
-
             event->accept();
-
         }
-
-
         return;
     }
 
