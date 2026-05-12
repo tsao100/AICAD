@@ -1099,10 +1099,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         d->gripManager->setView(d->cadView->view());
 
-        // 在 d->gripManager 初始化之後加：
-        if (d->cadView && d->cadView->snapManager())
-            d->gripManager->setSnapManager(d->cadView->snapManager());
-
         // 安裝事件攔截器到 CadView widget
         d->gripFilter = new GripEventFilter(d->gripManager, d->cadView->view(), this);
         d->cadView->installEventFilter(d->gripFilter);
@@ -2182,6 +2178,12 @@ void UIManager::onViewReady() {
     core::Application* app = core::Application::instance();
     core::DocumentManager* docMgr = app->documentManager();
     cad::Document* doc = docMgr->currentDocument();
+
+    // ★ 修正：在這裡才做 setSnapManager，因為 snapManager 是 initializeViewer() 裡建立的
+    if (d->gripManager && d->cadView && d->cadView->snapManager()) {
+        d->gripManager->setSnapManager(d->cadView->snapManager());
+        qDebug() << "[UIManager] GripManager::setSnapManager connected";
+    }
 
     // ✅ 現在 view/context 已就緒，補上 GripManager/Filter 初始化
     if (d->gripManager && d->cadView)
