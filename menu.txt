@@ -35,6 +35,7 @@ toolbar|main|ellipse|Draw Ellipse|:/icons/ellipse.png|EL
 toolbar|main|separator|||
 
 toolbar|main|save|Save|:/icons/save.png|Ctrl+S
+toolbar|main|saveas|Save As|:/icons/save_as.png|Ctrl+Shift+A
 toolbar|main|load|Load|:/icons/load.png|Ctrl+O
 
 toolbar|main|separator|||
@@ -55,6 +56,7 @@ toolbar|main|view_iso|Isometric|:/icons/isometric.png|I
 # ======================
 
 menu|File|save|Save||Ctrl+S
+menu|File|saveas|Save As||Ctrl+Shift+A
 menu|File|load|Load||Ctrl+O
 menu|File|load_lisp|Load Lisp File...||Ctrl+Shift+L
 menu|File|separator|||
@@ -113,6 +115,7 @@ command|ellipse|el|3
 command|extrude||1
 
 command|save||0
+command|saveas||0
 command|load||0
 command|load_lisp||1
 command|print||0

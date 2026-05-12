@@ -252,6 +252,48 @@ public:
 REGISTER_COMMAND("save", SaveCommand);
 
 // ===========================================
+// SaveAs 命令
+// ===========================================
+class SaveAsCommand : public Command {
+public:
+    SaveAsCommand() : Command("saveas", "Save Document As") {}
+
+    CommandResult execute(const CommandContext& context) override {
+        Application* app = Application::instance();
+        DocumentManager* docMgr = app->documentManager();
+
+        cad::Document* doc = docMgr->currentDocument();
+        if (!doc) {
+            return CommandResult::Failure("No active document");
+        }
+
+        // Always prompt — that's the point of Save As
+        QString fileName = QFileDialog::getSaveFileName(
+            nullptr,
+            "Save Document As",
+            doc->fileName().isEmpty() ? QString() : doc->fileName(),
+            "AICAD Files (*.aicad);;All Files (*)"
+            );
+
+        if (fileName.isEmpty()) {
+            return CommandResult::Failure("Save As cancelled");
+        }
+
+        if (doc->save(fileName)) {
+            return CommandResult::Success("Document saved as: " + QFileInfo(fileName).fileName());
+        } else {
+            return CommandResult::Failure("Failed to save document");
+        }
+    }
+
+    QString getUsage() const override {
+        return "Usage: saveas";
+    }
+};
+
+REGISTER_COMMAND("saveas", SaveAsCommand);
+
+// ===========================================
 // Load 命令
 // ===========================================
 class LoadCommand : public Command {
