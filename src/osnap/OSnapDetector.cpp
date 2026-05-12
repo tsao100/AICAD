@@ -133,7 +133,13 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     candidates.erase(
         std::remove_if(candidates.begin(), candidates.end(),
                        [this](const SnapCandidate& c) {
-                           return c.screenDist > m_settings.magnetRadius;  // 磁吸半徑
+                           if (c.screenDist > m_settings.magnetRadius)
+                               return true;
+                           // ★ 排除 active grip 自身位置
+                           if (m_hasExcludedPoint &&
+                               c.worldPoint.Distance(m_excludedPoint) < m_excludedPointTol)
+                               return true;
+                           return false;
                        }),
         candidates.end());
 

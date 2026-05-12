@@ -138,6 +138,7 @@ bool GripManager::cancelGrip()
         m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, m_dragStartPos);
 
     if (m_snapManager) m_snapManager->onGripDragEnded();
+    if (m_snapManager) m_snapManager->clearSnapExcludePoint();
 
     // ③ 還原 handle 視覺位置
     Handle(AIS_GripHandle) h = m_handles.value(m_activeGripId);
@@ -235,6 +236,19 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
         QString snapDesc;
 
         if (m_snapManager) {
+            // ★ 用上一幀的位置（m_lastSnapPos）作為排除點
+            //   避免 snap to itself，且不需要從 AIS_GripHandle 取位置
+            m_snapManager->setSnapExcludePoint(m_lastSnapPos, 1.0);
+
+            m_snapManager->onMouseMove(sx, sy);
+            auto pt3d = m_snapManager->snapPoint3D();
+            if (pt3d.has_value()) {
+                snapPos = *pt3d;
+                snapped = true;
+            }
+        }
+
+        if (m_snapManager) {
             m_snapManager->onMouseMove(sx, sy);
             auto pt3d = m_snapManager->snapPoint3D();
             if (pt3d.has_value()) {
@@ -255,12 +269,12 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
         SnapResult result{ snapped, snapPos, snapDesc };
         Q_EMIT snapOccurred(result);
 
-        Handle(AIS_GripHandle) h = m_handles.value(m_activeGripId);
-        if (!h.IsNull()) {
-            h->SetPosition(snapPos);
-            m_context->RecomputePrsOnly(h, Standard_False);
-            m_context->UpdateCurrentViewer();
-        }
+        // Handle(AIS_GripHandle) h = m_handles.value(m_activeGripId);
+        // if (!h.IsNull()) {
+        //     h->SetPosition(snapPos);
+        //     m_context->RecomputePrsOnly(h, Standard_False);
+        //     m_context->UpdateCurrentViewer();
+        // }
 
         for (GripPoint& gp : m_grips) {
             if (gp.id == m_activeGripId && gp.onDrag) {
@@ -317,6 +331,7 @@ bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int sx, int sy)
     Q_EMIT gripDragFinished(m_activeGripId, m_dragStartPos, finalPos);
 
     if (m_snapManager) m_snapManager->onGripDragEnded();
+    if (m_snapManager) m_snapManager->clearSnapExcludePoint();
 
     updateHandleColor(m_activeGripId, GripState::Normal);
     m_gripSelected = false;

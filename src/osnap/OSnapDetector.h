@@ -98,6 +98,13 @@ public:
     void removeExcludedObject(const Handle(AIS_InteractiveObject)& obj);
     void clearExcludedObjects(){ m_excludedObjects.clear(); }
 
+    void setExcludedPoint(const gp_Pnt& pt, double tolerance = 0.5) {
+        m_hasExcludedPoint  = true;
+        m_excludedPoint     = pt;
+        m_excludedPointTol  = tolerance;
+    }
+    void clearExcludedPoint() { m_hasExcludedPoint = false; }
+
 private:
     // ── 內部偵測管線 ──────────────────────────────────────────────────────────
     void collectCandidateShapes(
@@ -210,6 +217,10 @@ private:
     QVector<SnapCandidate>     m_lastCandidates;
     cad::Sketch* m_activeSketch = nullptr;
     QVector<Handle(AIS_InteractiveObject)> m_excludedObjects;
+
+    bool   m_hasExcludedPoint = false;
+    gp_Pnt m_excludedPoint;
+    double m_excludedPointTol = 0.5;
 
     static constexpr double    kMinEdgeLength = 1e-7;
 };

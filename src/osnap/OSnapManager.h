@@ -126,6 +126,13 @@ public:
 
     std::optional<gp_Pnt> snapPoint3D() const;
 
+    void setSnapExcludePoint(const gp_Pnt& pt, double tol = 0.5) {
+        m_detector.setExcludedPoint(pt, tol);
+    }
+    void clearSnapExcludePoint() {
+        m_detector.clearExcludedPoint();
+    }
+
 Q_SIGNALS:
     /// 有新的 snap 點鎖定
     void snapLocked(const SnapCandidate& candidate);

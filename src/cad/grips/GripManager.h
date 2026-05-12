@@ -70,6 +70,12 @@ public:
     const QVector<GripPoint>& currentGrips() const { return m_grips; }
     void setView(const Handle(V3d_View)& view) { m_view = view; }
 
+    gp_Pnt gripOriginPos(const QString& gripId) const {
+        for (const GripPoint& gp : m_grips)
+            if (gp.id == gripId) return gp.position;
+        return gp_Pnt();
+    }
+
 Q_SIGNALS:
     void gripDragStarted(const QString& gripId);
     void gripDragging(const QString& gripId, const gp_Pnt& pos);
