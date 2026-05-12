@@ -467,20 +467,28 @@ bool Sketch::rebuild() {
 bool Sketch::rebuildShapesOnly()
 {
     if (!hasValidPlane()) return false;
+    if (m_aisContext.IsNull()) return false;
 
-    // 重新生成 TopoDS shapes 並更新每個現有 AIS_Shape 的幾何
-    // 不 erase/display，只用 RecomputePrsOnly 更新顯示
-    if (!rebuild()) return false;   // 重建 m_aisShapes（內含新 TopoDS）
+    // ① 把舊 AIS_Shape 從 context 先 Erase（保留 handle 本身）
+    for (const Handle(AIS_Shape)& s : m_aisShapes)
+        if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
+    for (const Handle(AIS_Shape)& s : m_constructionShapes)
+        if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
 
-    if (!m_aisContext.IsNull()) {
-        for (const Handle(AIS_Shape)& s : m_aisShapes)
-            if (!s.IsNull())
-                m_aisContext->RecomputePrsOnly(s, Standard_False);
-        for (const Handle(AIS_Shape)& s : m_constructionShapes)
-            if (!s.IsNull())
-                m_aisContext->RecomputePrsOnly(s, Standard_False);
-        m_aisContext->UpdateCurrentViewer();
+    // ② 重建 TopoDS + 更新 m_aisShapes（建立全新 handle）
+    if (!rebuild()) return false;
+
+    // ③ 把新 AIS_Shape Display 回 context
+    for (const Handle(AIS_Shape)& s : m_aisShapes)
+        if (!s.IsNull()) m_aisContext->Display(s, Standard_False);
+    for (const Handle(AIS_Shape)& s : m_constructionShapes) {
+        if (!s.IsNull()) {
+            m_aisContext->Display(s, Standard_False);
+            m_aisContext->Deactivate(s);
+        }
     }
+
+    m_aisContext->UpdateCurrentViewer();
     return true;
 }
 
