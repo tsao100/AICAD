@@ -132,7 +132,6 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
             const auto* arc = static_cast<const SketchArc*>(geom);
             if (arc->curve.IsNull()) continue;
 
-            // 取得弧的首尾參數以及圓心/半徑
             const Handle(Geom_Circle) circle =
                 Handle(Geom_Circle)::DownCast(arc->curve->BasisCurve());
             if (circle.IsNull()) continue;
@@ -141,88 +140,76 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
             double t1 = arc->curve->LastParameter();
             double tM = (t0 + t1) * 0.5;
 
-            gp_Pnt gpStart  = arc->curve->Value(t0);
-            gp_Pnt gpMid    = arc->curve->Value(tM);
-            gp_Pnt gpEnd    = arc->curve->Value(t1);
-            gp_Pnt gpCenter = circle->Location();
+            // ✅ 在 computeGrips() 時就固定三點座標，capture by value
+            gp_Pnt fixedStart  = arc->curve->Value(t0);
+            gp_Pnt fixedMid    = arc->curve->Value(tM);
+            gp_Pnt fixedEnd    = arc->curve->Value(t1);
+            gp_Pnt fixedCenter = circle->Location();
 
-            // 起點 grip
+            // 起點 grip：移動起點，midPoint / endPoint 固定
             {
                 GripPoint gp;
                 gp.id       = QString("g%1_arcStart").arg(gi);
-                gp.position = gpStart;
+                gp.position = fixedStart;
                 gp.type     = GripType::Vertex;
-                gp.onDrag   = [this, gi, t0, t1](const gp_Pnt& np, bool) {
+                gp.onDrag   = [this, gi, fixedMid, fixedEnd](const gp_Pnt& np, bool) {
                     auto* a = static_cast<SketchArc*>(m_sketch->normalGeometries()[gi]);
-                    if (a->curve.IsNull()) return;
-                    const Handle(Geom_Circle) c =
-                        Handle(Geom_Circle)::DownCast(a->curve->BasisCurve());
-                    if (c.IsNull()) return;
-                    // 以新點重新計算起始角度，保持終點不變
-                    gp_Pnt gpEnd = a->curve->Value(t1);
-                    GC_MakeArcOfCircle maker(np, a->curve->Value((t0+t1)*0.5), gpEnd);
+                    GC_MakeArcOfCircle maker(np, fixedMid, fixedEnd);
                     if (maker.IsDone()) a->curve = maker.Value();
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
             }
 
-            // 中點 grip（移動整段弧）
+            // 中點 grip：移動弧上中點，startPoint / endPoint 固定
             {
                 GripPoint gp;
                 gp.id       = QString("g%1_arcMid").arg(gi);
-                gp.position = gpMid;
+                gp.position = fixedMid;
                 gp.type     = GripType::Midpoint;
-                gp.onDrag   = [this, gi, t0, t1](const gp_Pnt& np, bool) {
+                gp.onDrag   = [this, gi, fixedStart, fixedEnd](const gp_Pnt& np, bool) {
                     auto* a = static_cast<SketchArc*>(m_sketch->normalGeometries()[gi]);
-                    if (a->curve.IsNull()) return;
-                    gp_Pnt gpS = a->curve->Value(t0);
-                    gp_Pnt gpE = a->curve->Value(t1);
-                    GC_MakeArcOfCircle maker(gpS, np, gpE);
+                    GC_MakeArcOfCircle maker(fixedStart, np, fixedEnd);
                     if (maker.IsDone()) a->curve = maker.Value();
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
             }
 
-            // 終點 grip
+            // 終點 grip：移動終點，startPoint / midPoint 固定
             {
                 GripPoint gp;
                 gp.id       = QString("g%1_arcEnd").arg(gi);
-                gp.position = gpEnd;
+                gp.position = fixedEnd;
                 gp.type     = GripType::Vertex;
-                gp.onDrag   = [this, gi, t0, t1](const gp_Pnt& np, bool) {
+                gp.onDrag   = [this, gi, fixedStart, fixedMid](const gp_Pnt& np, bool) {
                     auto* a = static_cast<SketchArc*>(m_sketch->normalGeometries()[gi]);
-                    if (a->curve.IsNull()) return;
-                    gp_Pnt gpS = a->curve->Value(t0);
-                    GC_MakeArcOfCircle maker(gpS, a->curve->Value((t0+t1)*0.5), np);
+                    GC_MakeArcOfCircle maker(fixedStart, fixedMid, np);
                     if (maker.IsDone()) a->curve = maker.Value();
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
             }
 
-            // 圓心 grip（平移整段弧）
+            // 圓心 grip：平移整段弧（三點同步加上 delta）
             {
                 GripPoint gp;
                 gp.id       = QString("g%1_arcCenter").arg(gi);
-                gp.position = gpCenter;
+                gp.position = fixedCenter;
                 gp.type     = GripType::Center;
-                gp.onDrag   = [this, gi, t0, t1, gpCenter](const gp_Pnt& np, bool) {
+                gp.onDrag   = [this, gi, fixedCenter, fixedStart, fixedMid, fixedEnd](const gp_Pnt& np, bool) {
                     auto* a = static_cast<SketchArc*>(m_sketch->normalGeometries()[gi]);
-                    if (a->curve.IsNull()) return;
-                    gp_Vec delta(gpCenter, np);
-                    gp_Pnt gpS = a->curve->Value(t0).Translated(delta);
-                    gp_Pnt gpM = a->curve->Value((t0+t1)*0.5).Translated(delta);
-                    gp_Pnt gpE = a->curve->Value(t1).Translated(delta);
-                    GC_MakeArcOfCircle maker(gpS, gpM, gpE);
+                    gp_Vec delta(fixedCenter, np);
+                    gp_Pnt newStart = fixedStart.Translated(delta);
+                    gp_Pnt newMid   = fixedMid.Translated(delta);
+                    gp_Pnt newEnd   = fixedEnd.Translated(delta);
+                    GC_MakeArcOfCircle maker(newStart, newMid, newEnd);
                     if (maker.IsDone()) a->curve = maker.Value();
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
             }
         }
-
         // ── Ellipse ────────────────────────────────────────────────────
         else if (geom->type == SketchGeometryType::Ellipse) {
             const auto* ellipse = static_cast<const SketchEllipse*>(geom);
