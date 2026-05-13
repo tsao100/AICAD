@@ -17,6 +17,7 @@
 #include "ui/UIManager.h"
 #include "view/CadView.h"
 #include <QFileDialog>
+#include <QSettings>
 
 namespace aicad {
 namespace command {
@@ -224,11 +225,13 @@ public:
         
         QString fileName = doc->fileName();
         if (fileName.isEmpty()|| fileName == "Untitled") {
+            QSettings settings("AICAD", "AICAD");
+            QString lastDir = settings.value("file/lastDirectory").toString();
             // 沒有檔名，需要使用者選擇
             fileName = QFileDialog::getSaveFileName(
                 nullptr,
                 "Save Document",
-                "",
+                lastDir,
                 "AICAD Files (*.aicad);;All Files (*)"
             );
             
@@ -238,6 +241,8 @@ public:
         }
         
         if (doc->save(fileName)) {
+            QSettings settings("AICAD", "AICAD");
+            settings.setValue("file/lastDirectory", QFileInfo(fileName).absolutePath());
             return CommandResult::Success("Document saved");
         } else {
             return CommandResult::Failure("Failed to save document");
@@ -268,10 +273,15 @@ public:
         }
 
         // Always prompt — that's the point of Save As
+        QSettings settings("AICAD", "AICAD");
+        QString initialPath = doc->fileName().isEmpty()
+                                  ? settings.value("file/lastDirectory").toString()
+                                  : doc->fileName();
+
         QString fileName = QFileDialog::getSaveFileName(
             nullptr,
             "Save Document As",
-            doc->fileName().isEmpty() ? QString() : doc->fileName(),
+            initialPath,
             "AICAD Files (*.aicad);;All Files (*)"
             );
 
@@ -303,17 +313,22 @@ public:
     CommandResult execute(const CommandContext& context) override {
         Application* app = Application::instance();
         DocumentManager* docMgr = app->documentManager();
-        
+
+        QSettings settings("AICAD", "AICAD");
+        QString lastDir = settings.value("file/lastDirectory").toString();
+
         QString fileName = QFileDialog::getOpenFileName(
             nullptr,
             "Open Document",
-            "",
+            lastDir,
             "AICAD Files (*.aicad);;All Files (*)"
         );
         
         if (fileName.isEmpty()) {
             return CommandResult::Failure("Load cancelled");
         }
+
+        settings.setValue("file/lastDirectory", QFileInfo(fileName).absolutePath());
         
         cad::Document* doc = docMgr->openDocument(fileName);
         if (doc) {
