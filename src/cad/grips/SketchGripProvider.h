@@ -26,6 +26,7 @@ private:
     struct GeomSnapshot {
         int              geomIndex;
         QVector<QVector2D> points;
+        Handle(Geom_TrimmedCurve)  arcCurve;   // ← 新增，僅 Arc 使用
     };
     QVector<GeomSnapshot> m_snapshots; ///< Undo snapshot
 };

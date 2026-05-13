@@ -58,7 +58,7 @@
             "id": "{53c30f20-74d2-4665-9a96-9c6dcce775f9}",
             "name": "Sketch 1",
             "planeData": {
-                "createdTime": "2026-05-12T16:52:44",
+                "createdTime": "2026-05-13T15:16:27",
                 "geometry": {
                     "normal": [
                         0,
@@ -76,13 +76,13 @@
                         0
                     ]
                 },
-                "id": "49d515f0-6b5e-414f-8165-ba7502784ec8",
+                "id": "c461d66d-185c-4716-bdf6-42da03eadde4",
                 "isLocked": true,
-                "modifiedTime": "2026-05-12T16:52:44",
+                "modifiedTime": "2026-05-13T15:16:27",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "49d515f0-6b5e-414f-8165-ba7502784ec8",
+            "planeId": "c461d66d-185c-4716-bdf6-42da03eadde4",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
@@ -107,7 +107,7 @@
             "name": "Sketch 2",
             "parentId": "{27cb2df7-7a28-49d1-96fd-9708afd07cd9}",
             "planeData": {
-                "createdTime": "2026-05-12T16:52:44",
+                "createdTime": "2026-05-13T15:16:27",
                 "geometry": {
                     "normal": [
                         1,
@@ -125,13 +125,13 @@
                         0
                     ]
                 },
-                "id": "30153bb7-0436-4d6d-93f3-9dcbe828d2d4",
+                "id": "752c0a72-3fa1-4d59-884e-4e1ebc24ec13",
                 "isLocked": true,
-                "modifiedTime": "2026-05-12T16:52:44",
+                "modifiedTime": "2026-05-13T15:16:27",
                 "name": "YZ",
                 "type": 1
             },
-            "planeId": "30153bb7-0436-4d6d-93f3-9dcbe828d2d4",
+            "planeId": "752c0a72-3fa1-4d59-884e-4e1ebc24ec13",
             "planeName": "YZ",
             "suppressed": false,
             "type": "Sketch",
@@ -147,7 +147,7 @@
             "suppressed": false,
             "symmetric": false,
             "type": "Extrude",
-            "visible": true
+            "visible": false
         }
     ],
     "fileName": "1.aicad",

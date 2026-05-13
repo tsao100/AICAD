@@ -4,12 +4,12 @@ NG:
 
     sketchPanel->setSketchSelection(n, lines, arcs) not well connected.
 
-    Snap and grips ON. need to check later.
-
     inputEdit options ok. but the input text need to check.
+
+    rubber line or geometry when grip moving need to check.
 
 Solved:
 
     Grips not show.
-
-    @Q21
+   
+    Snap and grips ON. need to check later.
