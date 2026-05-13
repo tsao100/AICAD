@@ -43,5 +43,7 @@
         <file>icons/osnap/OSNTAN.ico</file>
         <file>icons/osnap/OSNTMP.ico</file>
         <file>icons/osnap/OSNGRID.ico</file>
+        <file>icons/isometric.png</file>
+        <file>icons/save_as.png</file>
     </qresource>
 </RCC>
