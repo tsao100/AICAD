@@ -223,7 +223,6 @@ void UIManager::initGripSystem()
                        // Grip Filter 啟動
                        if (d->gripFilter) d->gripFilter->setEnabled(true);
                        // 此時 GripManager 的 provider 由 selection.featureSelected 設定
-                       if (d->gripManager) d->gripManager->setEnabled(true);  // ← ADD
                        if (d->cadView) d->cadView->displayAllFeatures();      // ← ADD
                    });
 
