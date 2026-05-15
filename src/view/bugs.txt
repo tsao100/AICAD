@@ -8,6 +8,8 @@ NG:
 
     rubber line or geometry when grip moving need to check.
 
+    show all when sketch edit start, but align to plane not yet.
+
 Solved:
 
     Grips not show.
