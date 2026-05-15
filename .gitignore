@@ -12,3 +12,4 @@ AICAD.pro.*
 AICAD.pro
 AICAD.pro.user
 test_integration.pro.user
+test/*
