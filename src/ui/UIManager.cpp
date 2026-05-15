@@ -29,6 +29,7 @@
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "cad/Plane.h"
+#include "cad/PlaneManager.h"
 #include "cad/Extrude.h"
 #include "cad/grips/GripManager.h"
 #include "cad/grips/SketchGripProvider.h"
@@ -223,7 +224,9 @@ void UIManager::initGripSystem()
                        // Grip Filter 啟動
                        if (d->gripFilter) d->gripFilter->setEnabled(true);
                        // 此時 GripManager 的 provider 由 selection.featureSelected 設定
-                       if (d->cadView) d->cadView->displayAllFeatures();      // ← ADD
+                       if (d->cadView){
+                           d->cadView->displayAllFeatures();      // ← ADD
+                       }
                    });
 
     // ── G) Sketch 退出 → 完整關閉（Grips / OSnap / Selection） ──
@@ -1949,6 +1952,9 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
             d->gripManager->setPlaneAxes(
                 gp_Dir(qx.x(), qx.y(), qx.z()),
                 gp_Dir(qy.x(), qy.y(), qy.z()));
+
+        cad::PlaneManager::instance()->setActivePlane(sketch->plane());
+        d->cadView->setViewType(d->cadView->viewType());
     }
 
     // SketchPanel
