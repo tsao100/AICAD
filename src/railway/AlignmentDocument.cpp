@@ -1,4 +1,5 @@
 #include "AlignmentDocument.h"
+#include "AlignmentSolver.h"
 
 #include <QJsonArray>
 #include <QLineF>
@@ -70,13 +71,39 @@ int HorizontalAlignmentEdit::addFixedCurve(QPointF center, double radius)
     return m_elems.size() - 1;
 }
 
-int HorizontalAlignmentEdit::addFloatingCurve(int /*tangentIdxBefore*/,
-                                              int /*tangentIdxAfter*/,
-                                              double /*radius*/)
+int HorizontalAlignmentEdit::addFloatingCurve(int tangentIdxBefore,
+                                              int tangentIdxAfter,
+                                              double radius)
 {
-    // TODO Step 3
-    return -1;
+    if (tangentIdxBefore < 0 || tangentIdxBefore >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addFloatingCurve: tangentIdxBefore out of range:" << tangentIdxBefore;
+        return -1;
+    }
+    if (tangentIdxAfter < 0 || tangentIdxAfter >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addFloatingCurve: tangentIdxAfter out of range:" << tangentIdxAfter;
+        return -1;
+    }
+    if (m_elems[tangentIdxBefore].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addFloatingCurve: element at tangentIdxBefore is not a Tangent";
+        return -1;
+    }
+    if (m_elems[tangentIdxAfter].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addFloatingCurve: element at tangentIdxAfter is not a Tangent";
+        return -1;
+    }
+
+    EditableElement e;
+    e.type             = EditableElementType::CircularArc;
+    e.mode             = ConstraintMode::Floating;
+    e.radius           = std::abs(radius);
+    e.tangentIdxBefore = tangentIdxBefore;
+    e.tangentIdxAfter  = tangentIdxAfter;
+    // startPI / endPI left at default (0,0); AlignmentSolver fills them in.
+
+    m_elems.append(e);
+    return m_elems.size() - 1;
 }
+
 
 int HorizontalAlignmentEdit::addSCS(int    /*tangentIdxBefore*/,
                                     int    /*tangentIdxAfter*/,
@@ -317,7 +344,8 @@ void HorizontalAlignmentEdit::solve()
     }
 
     // ── Pass 3：交給 HorizontalAlignment 建立幾何元素 ────────────────────────
-    m_result->load(pts);
+    AlignmentSolver solver;
+    m_result = solver.solve(m_elems);
     emit changed();
 }
 
@@ -342,6 +370,8 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
         elem["endX"]   = e.endPI.x();
         elem["endY"]   = e.endPI.y();
         elem["solved"] = e.solved;
+        elem["tangentIdxBefore"]  = e.tangentIdxBefore;
+        elem["tangentIdxAfter"]   = e.tangentIdxAfter;
         arr.append(elem);
     }
     obj["elements"] = arr;
@@ -363,6 +393,8 @@ bool HorizontalAlignmentEdit::fromJson(const QJsonObject& obj)
         elem.startPI = QPointF(e["startX"].toDouble(), e["startY"].toDouble());
         elem.endPI   = QPointF(e["endX"].toDouble(),   e["endY"].toDouble());
         elem.solved  = e["solved"].toBool();
+        elem.tangentIdxBefore = e["tangentIdxBefore"].toInt(-1);
+        elem.tangentIdxAfter  = e["tangentIdxAfter"].toInt(-1);
         m_elems.append(elem);
     }
     return true;

@@ -43,9 +43,13 @@ struct EditableElement
     ConstraintMode      mode   = ConstraintMode::Fixed;
     double              radius = 0.0;   ///< 圓弧半徑 [m]，切線段為 0
     double              length = 0.0;   ///< 元素長度 [m]
-    QPointF             startPI;        ///< 起點 / 入切線端點
+    QPointF             startPI;        ///< 起點 / 入切線端點（Fixed arc 存圓心）
     QPointF             endPI;          ///< 終點 / 出切線端點
     bool                solved = false; ///< solver 是否已完成求解
+
+    // Floating / SCS：依附的前後切線在 m_elems 中的 index（-1 = 未設定）
+    int tangentIdxBefore = -1;
+    int tangentIdxAfter  = -1;
 };
 
 // ============================================================================
