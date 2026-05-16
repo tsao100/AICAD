@@ -74,6 +74,15 @@ void AlignmentRenderer::setAlignment(railway::HorizontalAlignmentEdit* edit)
     m_edit = edit;
 }
 
+bool AlignmentRenderer::containsObject(const AIS_InteractiveObject* obj) const
+{
+    for (const auto& o : m_overlays)
+        if (o.get() == obj) return true;
+    for (const auto& o : m_piGrips)
+        if (o.get() == obj) return true;
+    return false;
+}
+
 void AlignmentRenderer::showPIGrips()
 {
     m_piGripsVisible = true;

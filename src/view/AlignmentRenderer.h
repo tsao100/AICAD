@@ -60,6 +60,12 @@ public:
     /** Attach the editable alignment model that drives this renderer. */
     void setAlignment(railway::HorizontalAlignmentEdit* edit);
 
+    /**
+     * @brief Returns true if @p obj is one of the AIS overlay objects managed
+     *        by this renderer (used to detect alignment element clicks).
+     */
+    bool containsObject(const AIS_InteractiveObject* obj) const;
+
     /** Show PI marker grips in the CadView. */
     void showPIGrips();
 

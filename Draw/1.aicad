@@ -19,7 +19,7 @@
             "name": "Sketch 2",
             "parentId": "{27cb2df7-7a28-49d1-96fd-9708afd07cd9}",
             "planeData": {
-                "createdTime": "2026-05-13T15:29:34",
+                "createdTime": "2026-05-16T21:30:11",
                 "geometry": {
                     "normal": [
                         1,
@@ -37,13 +37,13 @@
                         0
                     ]
                 },
-                "id": "59f7140e-2ff2-4b23-9112-3b4e98c043a9",
+                "id": "0b975cc9-f726-4b3c-8123-2a6b8083943d",
                 "isLocked": true,
-                "modifiedTime": "2026-05-13T15:29:34",
+                "modifiedTime": "2026-05-16T21:30:11",
                 "name": "YZ",
                 "type": 1
             },
-            "planeId": "59f7140e-2ff2-4b23-9112-3b4e98c043a9",
+            "planeId": "0b975cc9-f726-4b3c-8123-2a6b8083943d",
             "planeName": "YZ",
             "suppressed": false,
             "type": "Sketch",
@@ -122,7 +122,7 @@
             "id": "{53c30f20-74d2-4665-9a96-9c6dcce775f9}",
             "name": "Sketch 1",
             "planeData": {
-                "createdTime": "2026-05-13T15:29:34",
+                "createdTime": "2026-05-16T21:30:11",
                 "geometry": {
                     "normal": [
                         0,
@@ -140,17 +140,17 @@
                         0
                     ]
                 },
-                "id": "86e3f290-abe6-42e7-8c28-125ba305f180",
+                "id": "683b510a-30a6-471b-be55-e82dbfad8c13",
                 "isLocked": true,
-                "modifiedTime": "2026-05-13T15:29:34",
+                "modifiedTime": "2026-05-16T21:30:11",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "86e3f290-abe6-42e7-8c28-125ba305f180",
+            "planeId": "683b510a-30a6-471b-be55-e82dbfad8c13",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
-            "visible": true
+            "visible": false
         },
         {
             "draftAngle": 0,
@@ -162,7 +162,82 @@
             "suppressed": false,
             "symmetric": false,
             "type": "Extrude",
+            "visible": true
+        },
+        {
+            "constraints": [
+            ],
+            "geometries": [
+                {
+                    "closed": true,
+                    "points": [
+                        {
+                            "x": -19.704301834106445,
+                            "y": -24.3262996673584
+                        },
+                        {
+                            "x": 19.704301834106445,
+                            "y": -24.3262996673584
+                        },
+                        {
+                            "x": 19.704301834106445,
+                            "y": 23.109983444213867
+                        },
+                        {
+                            "x": -19.704301834106445,
+                            "y": 23.109983444213867
+                        }
+                    ],
+                    "role": 0,
+                    "type": 4,
+                    "uuid": "eda0eee9-d868-4543-8e19-88cf253882f1"
+                }
+            ],
+            "id": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
+            "name": "Sketch 4",
+            "parentId": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
+            "planeData": {
+                "createdTime": "2026-05-16T21:30:11",
+                "geometry": {
+                    "normal": [
+                        0,
+                        -1,
+                        0
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        0,
+                        0,
+                        1
+                    ]
+                },
+                "id": "c835735b-2e79-4b60-a77e-847ead4208b4",
+                "isLocked": true,
+                "modifiedTime": "2026-05-16T21:30:11",
+                "name": "XZ",
+                "type": 3
+            },
+            "planeId": "c835735b-2e79-4b60-a77e-847ead4208b4",
+            "planeName": "XZ",
+            "suppressed": false,
+            "type": "Sketch",
             "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "21.5",
+            "id": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
+            "name": "Extrude 3",
+            "reversed": false,
+            "sketchId": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
+            "visible": true
         }
     ],
     "fileName": "1.aicad",

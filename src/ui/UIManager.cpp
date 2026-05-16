@@ -33,6 +33,7 @@
 #include "cad/Extrude.h"
 #include "cad/grips/GripManager.h"
 #include "cad/grips/SketchGripProvider.h"
+#include "cad/grips/AlignmentGripProvider.h"
 #include "ui/GripEventFilter.h"
 #include "SketchPanel.h"
 #include "command/CommandTypes.h"  // 確保包含完整定義
@@ -174,7 +175,7 @@ void UIManager::initGripSystem()
                        // future: else if Extrude → ExtrudeGripProvider ...
                    });
 
-    // ── B) Selection cleared → detach grips ──────────────────────────
+    // ── B1) Selection cleared → detach grips ──────────────────────────
     bus->subscribe("selection.cleared", this,
                    [this](const QVariant&) {
                        // 若 grip 正在選取中，先取消以還原幾何，再 detach
@@ -183,6 +184,44 @@ void UIManager::initGripSystem()
 
                        d->gripManager->detach();
                        qDebug() << "[UIManager] Grips detached (selection cleared)";
+                   });
+
+    // ── B2) Alignment element selected → attach AlignmentGripProvider ─────
+    // 當使用者在 CadView 中點選任一 Alignment AIS 物件時，CadView 或
+    // AlignmentRenderer 發布此事件，UIManager 負責掛載 Provider。
+    bus->subscribe("alignment.elementSelected", this,
+                   [this](const QVariant&) {
+                       if (!d->alignmentDoc) return;
+
+                       // 使 Grip 套用在 XY 平面（Alignment 永遠在 Z=0 平面）
+                       d->gripManager->setPlaneAxes(gp_Dir(1, 0, 0), gp_Dir(0, 1, 0));
+                       d->gripFilter->clearSketchPlane();   // 不使用草圖平面投影
+
+                       d->gripManager->attachProvider(
+                           std::make_unique<cad::AlignmentGripProvider>(
+                               d->alignmentDoc->horizontal()));
+
+                       // 啟用 Grip 互動
+                       if (d->gripFilter) d->gripFilter->setEnabled(true);
+                       if (d->gripManager) d->gripManager->setEnabled(true);
+
+                       qDebug() << "[UIManager] AlignmentGripProvider attached";
+                   });
+
+    // ── B3) geometry.selected → 偵測是否點選到 Alignment 物件 ────────────
+    bus->subscribe("geometry.selected", this,
+                   [this](const QVariant& payload) {
+                       if (!d->alignmentRenderer) return;
+                       const QVariantMap data = payload.toMap();
+                       auto* rawPtr = reinterpret_cast<AIS_InteractiveObject*>(
+                           data.value("aisObject").value<void*>());
+                       if (!rawPtr) return;
+
+                       if (d->alignmentRenderer->containsObject(rawPtr)) {
+                           // 重新發布為 alignment.elementSelected
+                           core::Application::instance()->eventBus()->publish(
+                               "alignment.elementSelected", QVariant{});
+                       }
                    });
 
     // ── C) Document closed / new document → detach grips ─────────────

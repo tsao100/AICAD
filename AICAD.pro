@@ -220,6 +220,7 @@ SOURCES += \
     src/cad/DependencyGraph.cpp \
     src/cad/PlaneManager.cpp \
     src/cad/grips/AIS_GripHandle.cpp \
+    src/cad/grips/AlignmentGripProvider.cpp \
     src/cad/grips/GripManager.cpp \
     src/cad/grips/SketchGripProvider.cpp \
     src/cad/sketch/ConstraintSolver.cpp \
@@ -319,6 +320,7 @@ HEADERS += \
     src/cad/DependencyGraph.h \
     src/cad/PlaneManager.h \
     src/cad/grips/AIS_GripHandle.h \
+    src/cad/grips/AlignmentGripProvider.h \
     src/cad/grips/GripManager.h \
     src/cad/grips/GripPoint.h \
     src/cad/grips/GripProvider.h \
