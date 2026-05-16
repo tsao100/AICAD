@@ -39,6 +39,8 @@
 #include "command/CommandManager.h"
 #include "command/LineCommand.h"
 #include "command/GripMoveCommand.h"
+#include "view/AlignmentRenderer.h"
+#include "railway/AlignmentDocument.h"
 
 #include <QMenu>
 #include <QMenuBar>
@@ -103,6 +105,10 @@ public:
     AutoCompleteModel* autoCompleteModel;
     QUndoStack* undoStack;
     SketchPanel* sketchPanel = nullptr;
+
+    // ── Railway alignment ──────────────────────────────────────
+    railway::AlignmentDocument*  alignmentDoc      = nullptr;
+    view::AlignmentRenderer*     alignmentRenderer = nullptr;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -309,6 +315,14 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // ✅ 在這裡呼叫，d->mainWindow 和 d->cadView 都已存在
         setupSketchPanel();
+
+        d->alignmentDoc      = new railway::AlignmentDocument(d->mainWindow);
+        d->alignmentRenderer = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+        d->alignmentRenderer->setAlignment(d->alignmentDoc->horizontal());
+        connect(d->alignmentDoc->horizontal(),
+                &railway::HorizontalAlignmentEdit::changed,
+                d->alignmentRenderer,
+                &view::AlignmentRenderer::refresh);
 
         // 建立並加入 OSnap 工具列
         // 改用信號，等 viewer 初始化完畢再建立 toolbar
