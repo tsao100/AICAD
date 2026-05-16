@@ -296,6 +296,7 @@ SOURCES += \
     # View Module (Felicia - 視圖系統)
     src/ui/VAlignEditorDockWidget.cpp \
     src/ui/VAlignProfileView.cpp \
+    src/view/AlignmentRenderer.cpp \
     src/view/ViewManager.cpp \
     src/view/CadView.cpp \
     src/view/RubberBand.cpp \
@@ -394,6 +395,7 @@ HEADERS += \
     # View Module (Felicia)
     src/ui/VAlignEditorDockWidget.h \
     src/ui/VAlignProfileView.h \
+    src/view/AlignmentRenderer.h \
     src/view/ViewManager.h \
     src/view/CadView.h \
     src/view/RubberBand.h \

@@ -10,6 +10,8 @@
 #include "cad/PlaneManager.h"
 
 #include <QDebug>
+#include <cmath>
+#include <functional>
 #include <Graphic3d_ArrayOfPolylines.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <Graphic3d_Group.hxx>
@@ -45,6 +47,10 @@ public:
     QVector<QVector2D> points;
     QVector2D currentPoint;
     bool hasCurrentPoint;
+
+    // ── Spiral / SCS parameters ───────────────────────────────────────────────
+    double radius       = 400.0;   ///< Circular arc radius [m]; +right, −left
+    double spiralLength = 100.0;   ///< Transition curve length [m]
 };
 
 RubberBand::RubberBand(const Handle(AIS_InteractiveContext)& context, QObject* parent)
@@ -137,6 +143,26 @@ void RubberBand::clearPoints() {
     clear();
 }
 
+void RubberBand::setRadius(double r)
+{
+    d->radius = r;
+}
+
+double RubberBand::radius() const
+{
+    return d->radius;
+}
+
+void RubberBand::setSpiralLength(double ls)
+{
+    d->spiralLength = ls;
+}
+
+double RubberBand::spiralLength() const
+{
+    return d->spiralLength;
+}
+
 void RubberBand::update() {
     if (d->context.IsNull()) {
         return;
@@ -170,6 +196,12 @@ void RubberBand::update() {
         break;
     case RubberBandMode::Arc:
         updateArc();
+        break;
+    case RubberBandMode::Spiral:
+        updateSpiral();
+        break;
+    case RubberBandMode::SCS:
+        updateSCS();
         break;
     case RubberBandMode::None:
     default:
@@ -691,6 +723,304 @@ void RubberBand::updateArc() {
 
 QVector3D RubberBand::planeToWorld(const QVector2D& planePt) const {
     return d->plane->origin() + d->plane->xAxis() * planePt.x() + d->plane->yAxis() * planePt.y();
+}
+
+// ============================================================================
+//  Spiral / SCS helpers
+// ============================================================================
+
+namespace {
+
+/**
+ * @brief Clothoid local-frame at arc-length L.
+ *
+ * Mirrors ClothoidElement::localFrame() — inlined here to avoid pulling the
+ * entire railway header chain into RubberBand.cpp.
+ *
+ * @param L   Arc-length from TC [m]
+ * @param R   Signed circular radius [m]  (+right, −left)
+ * @param Ls  Total spiral length [m]
+ * @return    {x, y, theta} in local tangent frame (x along entry tangent,
+ *             y rightward, theta = cumulative deflection [rad])
+ */
+struct SpiralFrame { double x, y, theta; };
+
+SpiralFrame clothoidFrame(double L, double R, double Ls)
+{
+    if (std::abs(R) < 1e-9 || Ls < 1e-9)
+        return { L, 0.0, 0.0 };
+
+    const double A2    = std::abs(R) * Ls;
+    const double sign  = (R > 0.0) ? 1.0 : -1.0;
+    const double theta = (L * L / (2.0 * A2)) * sign;
+    const double th2   = theta * theta;
+    const double th4   = th2 * th2;
+    const double th6   = th4 * th2;
+    const double x     = L * (1.0 - th2 / 10.0 + th4 / 216.0 - th6 / 9360.0);
+    const double y     = L * theta * (1.0 / 3.0 - th2 / 42.0 + th4 / 1320.0);
+    return { x, y, theta };
+}
+
+/**
+ * @brief Rotate and translate a local-frame point to plane 2-D coords.
+ *
+ * @param lx, ly  Local x (along tangent) and y (rightward) [m]
+ * @param ox, oy  Origin in plane coords [m]
+ * @param angle   Tangent bearing in plane space [rad, CCW from +U axis]
+ */
+QVector2D localToPlane(double lx, double ly,
+                       double ox, double oy,
+                       double angle)
+{
+    const double ca = std::cos(angle);
+    const double sa = std::sin(angle);
+    return QVector2D(static_cast<float>(ox + lx * ca - ly * sa),
+                     static_cast<float>(oy + lx * sa + ly * ca));
+}
+
+/**
+ * @brief Append a dashed Clothoid spiral to a polyline array.
+ *
+ * @param poly      Target polyline (must be large enough)
+ * @param ox, oy    Start point in plane coords
+ * @param angle     Entry tangent angle in plane coords [rad, CCW from +U]
+ * @param R         Signed radius [m]
+ * @param Ls        Total spiral length [m]
+ * @param nSamples  Number of segments
+ * @param rb        RubberBand (for planeToWorld)
+ */
+void appendSpiral(Handle(Graphic3d_ArrayOfPolylines)& poly,
+                  double ox, double oy, double angle,
+                  double R, double Ls, int nSamples,
+                  const RubberBand* rb,
+                  std::function<QVector3D(QVector2D)> toWorld)
+{
+    for (int i = 0; i <= nSamples; ++i) {
+        const double L   = Ls * static_cast<double>(i) / nSamples;
+        const SpiralFrame lf = clothoidFrame(L, R, Ls);
+        const QVector2D  p2  = localToPlane(lf.x, lf.y, ox, oy, angle);
+        const QVector3D  w   = toWorld(p2);
+        poly->AddVertex(gp_Pnt(w.x(), w.y(), w.z()));
+    }
+}
+
+} // anonymous namespace
+
+// ============================================================================
+//  updateSpiral()
+// ============================================================================
+
+void RubberBand::updateSpiral()
+{
+    // Need at least a start point and either a second point or currentPoint
+    if (d->points.isEmpty()) return;
+    if (d->points.size() < 2 && !d->hasCurrentPoint) return;
+
+    const double R  = d->radius;
+    const double Ls = d->spiralLength;
+    if (std::abs(R) < 1e-6 || Ls < 1e-6) return;
+
+    // Origin: points[0]; direction: toward points[1] if present, else currentPoint
+    const QVector2D origin = d->points[0];
+    const QVector2D dirPt  = (d->points.size() >= 2) ? d->points[1]
+                                                    : d->currentPoint;
+    const QVector2D delta  = dirPt - origin;
+    if (delta.length() < 1e-6f) return;
+
+    const double angle = std::atan2(static_cast<double>(delta.y()),
+                                    static_cast<double>(delta.x()));
+
+    constexpr int kSamples = 60;
+    Handle(Graphic3d_ArrayOfPolylines) poly =
+        new Graphic3d_ArrayOfPolylines(kSamples + 1);
+
+    auto toWorld = [this](QVector2D p) { return planeToWorld(p); };
+
+    appendSpiral(poly,
+                 static_cast<double>(origin.x()),
+                 static_cast<double>(origin.y()),
+                 angle, R, Ls, kSamples, this, toWorld);
+
+    // ── Build presentation ────────────────────────────────────────────────────
+    if (!d->presentation.IsNull()) {
+        d->presentation->Clear();
+        d->presentation->Erase();
+    }
+    d->presentation = new Prs3d_Presentation(
+        d->context->MainPrsMgr()->StructureManager());
+
+    Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+        Quantity_NOC_GREEN,   // 緩和曲線 → 綠色虛線
+        Aspect_TOL_DASH,
+        2.0);
+
+    Handle(Graphic3d_Group) group = d->presentation->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect->Aspect());
+    group->AddPrimitiveArray(poly);
+
+    d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+    d->presentation->Display();
+    d->context->UpdateCurrentViewer();
+}
+
+// ============================================================================
+//  updateSCS()
+// ============================================================================
+
+void RubberBand::updateSCS()
+{
+    // Need: points[0] = entry tangent start,
+    //       points[1] = PI (intersection of entry & exit tangents),
+    //       currentPoint = exit tangent end
+    if (d->points.size() < 2 || !d->hasCurrentPoint) return;
+
+    const double R  = d->radius;
+    const double Ls = d->spiralLength;
+    if (std::abs(R) < 1e-6 || Ls < 1e-6) return;
+
+    // ── Tangent directions ────────────────────────────────────────────────────
+    const QVector2D p0  = d->points[0];    // entry tangent start
+    const QVector2D pi  = d->points[1];    // PI
+    const QVector2D pe  = d->currentPoint; // exit tangent end
+
+    const QVector2D entryVec = (pi - p0).normalized();
+    const QVector2D exitVec  = (pe - pi).normalized();
+
+    if (entryVec.length() < 1e-6f || exitVec.length() < 1e-6f) return;
+
+    const double entryAngle = std::atan2(static_cast<double>(entryVec.y()),
+                                         static_cast<double>(entryVec.x()));
+    const double exitAngle  = std::atan2(static_cast<double>(exitVec.y()),
+                                        static_cast<double>(exitVec.x()));
+
+    // ── SCS geometry (Appendix B formula) ────────────────────────────────────
+    // Deflection angle Δ between entry and exit tangents
+    double delta = exitAngle - entryAngle;
+    // Normalise to (−π, π]
+    while (delta >  M_PI) delta -= 2.0 * M_PI;
+    while (delta < -M_PI) delta += 2.0 * M_PI;
+
+    // Use the sign of delta to determine curve side (right turn → +R)
+    const double signedR = (delta >= 0.0) ? std::abs(R) : -std::abs(R);
+
+    const double thetaS = Ls / (2.0 * std::abs(signedR));
+    const double Xm     = Ls * (1.0 - thetaS * thetaS / 10.0);
+    const double Ym     = Ls * thetaS / 3.0;
+    const double Ts     = (std::abs(signedR) + Ym) * std::tan(std::abs(delta) / 2.0) + Xm;
+
+    // SCS start in plane coords
+    const QVector2D scsStart(
+        static_cast<float>(static_cast<double>(pi.x()) - Ts * static_cast<double>(entryVec.x())),
+        static_cast<float>(static_cast<double>(pi.y()) - Ts * static_cast<double>(entryVec.y())));
+
+    // SCS end in plane coords (approach from exit direction reversed)
+    const QVector2D scsEnd(
+        static_cast<float>(static_cast<double>(pi.x()) + Ts * static_cast<double>(exitVec.x())),
+        static_cast<float>(static_cast<double>(pi.y()) + Ts * static_cast<double>(exitVec.y())));
+
+    // Entry spiral end point (TC→SC): sample at L=Ls
+    SpiralFrame scFrame = clothoidFrame(Ls, signedR, Ls);
+    const QVector2D scPoint = localToPlane(scFrame.x, scFrame.y,
+                                           static_cast<double>(scsStart.x()),
+                                           static_cast<double>(scsStart.y()),
+                                           entryAngle);
+    // Exit spiral start (CS): approach from scsEnd in reversed exit direction
+    const double revExitAngle = exitAngle + M_PI;
+    SpiralFrame csFrame = clothoidFrame(Ls, -signedR, Ls);  // mirror for exit
+    const QVector2D csPoint = localToPlane(csFrame.x, csFrame.y,
+                                           static_cast<double>(scsEnd.x()),
+                                           static_cast<double>(scsEnd.y()),
+                                           revExitAngle);
+
+    // ── Build presentation ────────────────────────────────────────────────────
+    if (!d->presentation.IsNull()) {
+        d->presentation->Clear();
+        d->presentation->Erase();
+    }
+    d->presentation = new Prs3d_Presentation(
+        d->context->MainPrsMgr()->StructureManager());
+
+    constexpr int kSpiral = 60;
+    constexpr int kArc    = 48;
+
+    auto toWorld = [this](QVector2D p) { return planeToWorld(p); };
+
+    // ── Segment 1: Entry spiral (dashed green) ────────────────────────────────
+    {
+        Handle(Graphic3d_ArrayOfPolylines) poly =
+            new Graphic3d_ArrayOfPolylines(kSpiral + 1);
+        appendSpiral(poly,
+                     static_cast<double>(scsStart.x()),
+                     static_cast<double>(scsStart.y()),
+                     entryAngle, signedR, Ls, kSpiral, this, toWorld);
+
+        Handle(Prs3d_LineAspect) asp = new Prs3d_LineAspect(
+            Quantity_NOC_GREEN, Aspect_TOL_DASH, 2.0);
+        Handle(Graphic3d_Group) grp = d->presentation->NewGroup();
+        grp->SetGroupPrimitivesAspect(asp->Aspect());
+        grp->AddPrimitiveArray(poly);
+    }
+
+    // ── Segment 2: Circular arc (solid orange) ────────────────────────────────
+    {
+        // Arc centre: perpendicular to entry tangent at SC point, dist = |R|
+        const double perpAngle = entryAngle + M_PI / 2.0 * std::copysign(1.0, signedR);
+        const double cx = static_cast<double>(scPoint.x()) + std::abs(signedR) * std::cos(perpAngle);
+        const double cy = static_cast<double>(scPoint.y()) + std::abs(signedR) * std::sin(perpAngle);
+
+        // Arc start angle (from centre to SC) and end angle (centre to CS)
+        const double aStart = std::atan2(static_cast<double>(scPoint.y()) - cy,
+                                         static_cast<double>(scPoint.x()) - cx);
+        const double aEnd   = std::atan2(static_cast<double>(csPoint.y()) - cy,
+                                       static_cast<double>(csPoint.x()) - cx);
+
+        double arcSpan = aEnd - aStart;
+        if (signedR > 0.0) {
+            while (arcSpan < 0.0) arcSpan += 2.0 * M_PI;
+        } else {
+            while (arcSpan > 0.0) arcSpan -= 2.0 * M_PI;
+        }
+
+        Handle(Graphic3d_ArrayOfPolylines) poly =
+            new Graphic3d_ArrayOfPolylines(kArc + 1);
+        for (int i = 0; i <= kArc; ++i) {
+            const double a = aStart + arcSpan * i / kArc;
+            const QVector2D pt(static_cast<float>(cx + std::abs(signedR) * std::cos(a)),
+                               static_cast<float>(cy + std::abs(signedR) * std::sin(a)));
+            QVector3D w = toWorld(pt);
+            poly->AddVertex(gp_Pnt(w.x(), w.y(), w.z()));
+        }
+
+        Handle(Prs3d_LineAspect) asp = new Prs3d_LineAspect(
+            Quantity_NOC_ORANGE, Aspect_TOL_SOLID, 2.5);
+        Handle(Graphic3d_Group) grp = d->presentation->NewGroup();
+        grp->SetGroupPrimitivesAspect(asp->Aspect());
+        grp->AddPrimitiveArray(poly);
+    }
+
+    // ── Segment 3: Exit spiral (dashed green) reversed from scsEnd ────────────
+    {
+        Handle(Graphic3d_ArrayOfPolylines) poly =
+            new Graphic3d_ArrayOfPolylines(kSpiral + 1);
+        // Sample from scsEnd inward (reversed exit direction)
+        // The exit spiral mirrors the entry: negate R for opposite hand
+        appendSpiral(poly,
+                     static_cast<double>(scsEnd.x()),
+                     static_cast<double>(scsEnd.y()),
+                     revExitAngle, -signedR, Ls, kSpiral, this, toWorld);
+
+        Handle(Prs3d_LineAspect) asp = new Prs3d_LineAspect(
+            Quantity_NOC_GREEN, Aspect_TOL_DASH, 2.0);
+        Handle(Graphic3d_Group) grp = d->presentation->NewGroup();
+        grp->SetGroupPrimitivesAspect(asp->Aspect());
+        grp->AddPrimitiveArray(poly);
+    }
+
+    d->presentation->SetZLayer(Graphic3d_ZLayerId_Top);
+    d->presentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+    d->presentation->Display();
+    d->context->UpdateCurrentViewer();
 }
 
 } // namespace view

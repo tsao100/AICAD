@@ -36,7 +36,10 @@ enum class RubberBandMode {
     Circle,     ///< 圓形模式
     Ellipse,    ///< 橢圓形模式
     Arc,        ///< 弧線模式
-    Spline      ///< 線模式
+    Spline,     ///< 樣條線模式
+    Spiral,     ///< 緩和曲線（單條 Clothoid）預覽
+    SCS         ///< 螺旋–圓弧–螺旋完整預覽
+
 };
 
 /**
@@ -117,7 +120,29 @@ public:
      * @brief 清除所有點
      */
     void clearPoints();
-    
+
+    /**
+     * @brief 設定圓弧半徑（Spiral / SCS 模式使用）
+     * @param r 半徑 [m]，正值 = 右彎，負值 = 左彎
+     */
+    void setRadius(double r);
+
+    /**
+     * @brief 取得圓弧半徑
+     */
+    double radius() const;
+
+    /**
+     * @brief 設定緩和曲線長度（Spiral / SCS 模式使用）
+     * @param ls 緩和曲線長度 [m]
+     */
+    void setSpiralLength(double ls);
+
+    /**
+     * @brief 取得緩和曲線長度
+     */
+    double spiralLength() const;
+
     /**
      * @brief 更新橡皮筋顯示
      */
@@ -187,6 +212,26 @@ private:
      * @brief 更新弧線模式
      */
     void updateArc();
+
+    /**
+     * @brief 更新緩和曲線（Clothoid）預覽 — 60 點虛線
+     *
+     * 點配置：
+     *   points[0] = 切線起點（平面座標）
+     *   points[1] = 切線方向點（可省略，省略時使用 currentPoint 作方向）
+     *   currentPoint = 游標位置（僅在 points 只有 1 個時作方向參考）
+     */
+    void updateSpiral();
+
+    /**
+     * @brief 更新 SCS（入螺旋 / 圓弧 / 出螺旋）三段預覽
+     *
+     * 點配置：
+     *   points[0] = 入切線起點
+     *   points[1] = 交叉點 PI（入出切線交會點）
+     *   currentPoint = 出切線方向點
+     */
+    void updateSCS();
     
     /**
      * @brief 平面座標轉世界座標
