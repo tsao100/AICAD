@@ -87,6 +87,21 @@ void OSnapToolbar::setupUI() {
 
     addSeparator();
 
+    // ── 鐵路線形 Alignment Snap 按鈕 ────────────────────────────────────────
+    // 專用 icon 路徑（尚未建立時 Qt 自動 fallback 到縮寫文字，功能不受影響）
+    addSnapButton(SnapType::AlignmentPI,
+                  ":/icons/osnap/OSNALIGNPI.ico",
+                  "Alignment PI (ALignPI)\nSnap to horizontal alignment PI points");
+    addSnapButton(SnapType::AlignmentTC,
+                  ":/icons/osnap/OSNALIGNTC.ico",
+                  "Alignment TC/CS (ALignTC)\nSnap to tangent-curve transition points");
+    addSnapButton(SnapType::AlignmentMid,
+                  ":/icons/osnap/OSNALIGNMID.ico",
+                  "Alignment Midpoint (ALignMid)\nSnap to midpoint of alignment elements");
+    addSnapButton(SnapType::AlignmentPerp,
+                  ":/icons/osnap/OSNALIGNPERP.ico",
+                  "Alignment Perpendicular (ALignPerp)\nSnap to nearest foot on alignment");
+
     // ── 狀態標籤（顯示目前鎖定的 snap 類型）──────────────────────────────────────
     m_statusLabel = new QLabel("", this);
     m_statusLabel->setFixedWidth(90);

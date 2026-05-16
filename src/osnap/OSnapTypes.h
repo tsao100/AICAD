@@ -60,9 +60,15 @@ enum class SnapType : quint32 {
     // ── 網格 ──────────────────────────────────────────────────────────────────
     Grid            = 0x00001000,  ///< 網格點吸附
 
+    // ── 鐵路平面線形 (Alignment) ──────────────────────────────────────────────
+    AlignmentPI     = 0x00002000,  ///< 線形交點 (PI, Point of Intersection)
+    AlignmentTC     = 0x00004000,  ///< 切點／緩和曲線起終點 (TC/CS/ST/TS)
+    AlignmentMid    = 0x00008000,  ///< 各元素中點（圓弧或切線段中央）
+    AlignmentPerp   = 0x00010000,  ///< 游標至線形最近垂足
+
     // ── 預設組合 ──────────────────────────────────────────────────────────────
     Standard = Endpoint | Midpoint | Center | Quadrant,
-    All      = 0x0000FFFF
+    All      = 0x0001FFFF
 };
 Q_DECLARE_FLAGS(SnapTypes, SnapType)
 Q_DECLARE_OPERATORS_FOR_FLAGS(SnapTypes)
@@ -84,6 +90,10 @@ inline int snapPriority(SnapType t) {
     case SnapType::Extension:     return 55;
     case SnapType::Parallel:      return 60;
     case SnapType::Grid:          return 70;
+    case SnapType::AlignmentPI:   return 12;  ///< 線形 PI 點，與 Endpoint 同級略高
+    case SnapType::AlignmentTC:   return 14;  ///< 切點（TC/CS），緊接 PI 之後
+    case SnapType::AlignmentMid:  return 27;  ///< 線形中點，與 Midpoint 同級
+    case SnapType::AlignmentPerp: return 42;  ///< 垂足，與 Perpendicular 同級
     default:                      return 99;
     }
 }
@@ -146,6 +156,10 @@ inline Quantity_NameOfColor snapColor(SnapType t) {
     case SnapType::Nearest:       return Quantity_NOC_WHITE;
     case SnapType::Extension:     return Quantity_NOC_GRAY60;
     case SnapType::Grid:          return Quantity_NOC_GRAY80;
+    case SnapType::AlignmentPI:   return Quantity_NOC_ORANGE;
+    case SnapType::AlignmentTC:   return Quantity_NOC_GREENYELLOW;
+    case SnapType::AlignmentMid:  return Quantity_NOC_CYAN2;
+    case SnapType::AlignmentPerp: return Quantity_NOC_LIGHTPINK;
     default:                      return Quantity_NOC_WHITE;
     }
 }
@@ -167,6 +181,10 @@ inline QString snapTypeName(SnapType t) {
     case SnapType::Parallel:      return "Parallel";
     case SnapType::Node:          return "Node";
     case SnapType::Grid:          return "Grid";
+    case SnapType::AlignmentPI:   return "AlignPI";
+    case SnapType::AlignmentTC:   return "AlignTC";
+    case SnapType::AlignmentMid:  return "AlignMid";
+    case SnapType::AlignmentPerp: return "AlignPerp";
     default:                      return "";
     }
 }
@@ -176,4 +194,3 @@ inline QString snapTypeName(SnapType t) {
 
 Q_DECLARE_METATYPE(aicad::osnap::SnapCandidate)
 Q_DECLARE_METATYPE(aicad::osnap::OSnapSettings)
-

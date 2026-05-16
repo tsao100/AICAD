@@ -5,6 +5,7 @@
 
 #include "OSnapDetector.h"
 #include "../cad/Plane.h"   // aicad::cad::Plane
+#include "../railway/AlignmentDocument.h"  // aicad::railway::AlignmentDocument
 
 // OCCT topology
 #include <TopoDS.hxx>
@@ -126,6 +127,16 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     if (m_settings.gridSnapEnabled &&
         m_settings.enabledTypes.testFlag(SnapType::Grid)) {
         detectGridPoint(view, mouseWorldPt, mouseX, mouseY, candidates);
+    }
+
+    // Alignment snap（不依賴 AIS shape，直接查詢 AlignmentDocument）
+    const bool anyAlignmentEnabled =
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentPI)   ||
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentTC)   ||
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentMid)  ||
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentPerp);
+    if (m_alignmentDoc && anyAlignmentEnabled) {
+        detectAlignmentSnap(view, mouseWorldPt, mouseX, mouseY, candidates);
     }
 
     // ── Step 4: 過濾掉超過 pickRadius 的候選 ──────────────────────────────────
@@ -942,6 +953,143 @@ gp_Pnt OSnapDetector::projectToActivePlane(const gp_Pnt& pt) {
     return gp_Pnt(pt.X() - normal.X() * dist,
                   pt.Y() - normal.Y() * dist,
                   pt.Z() - normal.Z() * dist);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+//  Alignment Snap 偵測
+//
+//  資料來源：AlignmentDocument → HorizontalAlignmentEdit → HorizontalAlignment
+//  AlignmentPI   — EditableElement 的 startPI / endPI（PI 交點）
+//  AlignmentTC   — rawPoints() 中 tsc 為 TC/CS/ST/TS/CC 的切點
+//  AlignmentMid  — 相鄰兩個 rawPoints 的中點
+//  AlignmentPerp — 游標至相鄰 rawPoints 連線段的垂足
+//
+//  注意：rawPoints 座標以 (easting, northing) 存放，Z = 0（平面線形）
+// ──────────────────────────────────────────────────────────────────────────────
+void OSnapDetector::detectAlignmentSnap(
+    const Handle(V3d_View)& view,
+    const gp_Pnt& mousePt,
+    int mouseX, int mouseY,
+    QVector<SnapCandidate>& out)
+{
+    using namespace aicad::railway;
+
+    if (!m_alignmentDoc) return;
+
+    HorizontalAlignmentEdit* hEdit = m_alignmentDoc->horizontal();
+    if (!hEdit) return;
+
+    const HorizontalAlignment* halign = hEdit->result();
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  AlignmentPI：從 EditableElement 的 startPI / endPI 取交點
+    // ──────────────────────────────────────────────────────────────────────────
+    if (m_settings.enabledTypes.testFlag(SnapType::AlignmentPI)) {
+        const auto& elems = hEdit->elements();
+        for (const EditableElement& e : elems) {
+            // Tangent 元素的兩個端點即為 PI 點
+            if (e.type == EditableElementType::Tangent) {
+                for (const QPointF& pi : { e.startPI, e.endPI }) {
+                    gp_Pnt piPt(pi.x(), pi.y(), 0.0);
+                    double dist = screenDistance(view, piPt, mouseX, mouseY);
+                    if (dist <= m_settings.pickPixelRadius) {
+                        SnapCandidate c = makeCandidate(
+                            SnapType::AlignmentPI, piPt, nullptr, view, mouseX, mouseY);
+                        out.append(c);
+                    }
+                }
+            }
+        }
+    }
+
+    // rawPoints 以下三個類型都需要
+    const bool needTC    = m_settings.enabledTypes.testFlag(SnapType::AlignmentTC);
+    const bool needMid   = m_settings.enabledTypes.testFlag(SnapType::AlignmentMid);
+    const bool needPerp  = m_settings.enabledTypes.testFlag(SnapType::AlignmentPerp);
+
+    if (!halign || (!needTC && !needMid && !needPerp))
+        return;
+
+    const QVector<AlignmentPoint>& pts = halign->rawPoints();
+    if (pts.isEmpty()) return;
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  AlignmentTC：rawPoints 中 tsc 為 TC/CS/ST/TS/CC 的切點
+    // ──────────────────────────────────────────────────────────────────────────
+    if (needTC) {
+        // 已知切點 tsc 代碼集合（英制/日制/台鐵混用）
+        static const QStringList kTcCodes = {
+            "TC", "CT",         // Tangent-Curve / Curve-Tangent
+            "CS", "SC",         // Curve-Spiral / Spiral-Curve
+            "ST", "TS",         // Spiral-Tangent / Tangent-Spiral
+            "CC",               // Curve-Curve（複曲線）
+            "SCS", "CSS"        // 複合螺旋切點（較少見）
+        };
+        for (const AlignmentPoint& ap : pts) {
+            if (kTcCodes.contains(ap.tsc, Qt::CaseInsensitive)) {
+                gp_Pnt tcPt(ap.easting, ap.northing, 0.0);
+                double dist = screenDistance(view, tcPt, mouseX, mouseY);
+                if (dist <= m_settings.pickPixelRadius) {
+                    SnapCandidate c = makeCandidate(
+                        SnapType::AlignmentTC, tcPt, nullptr, view, mouseX, mouseY);
+                    out.append(c);
+                }
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  AlignmentMid & AlignmentPerp：逐段掃描相鄰 rawPoints
+    // ──────────────────────────────────────────────────────────────────────────
+    if (!needMid && !needPerp) return;
+
+    for (int i = 0; i + 1 < pts.size(); ++i) {
+        const AlignmentPoint& a = pts[i];
+        const AlignmentPoint& b = pts[i + 1];
+
+        gp_Pnt pA(a.easting, a.northing, 0.0);
+        gp_Pnt pB(b.easting, b.northing, 0.0);
+
+        gp_Vec seg(pA, pB);
+        double segLen = seg.Magnitude();
+        if (segLen < kMinEdgeLength) continue;
+
+        // ── AlignmentMid：線段中點 ─────────────────────────────────────────
+        if (needMid) {
+            gp_Pnt midPt(
+                (pA.X() + pB.X()) * 0.5,
+                (pA.Y() + pB.Y()) * 0.5,
+                0.0);
+            double dist = screenDistance(view, midPt, mouseX, mouseY);
+            if (dist <= m_settings.pickPixelRadius) {
+                SnapCandidate c = makeCandidate(
+                    SnapType::AlignmentMid, midPt, nullptr, view, mouseX, mouseY);
+                out.append(c);
+            }
+        }
+
+        // ── AlignmentPerp：游標在線段上的垂足 ────────────────────────────
+        if (needPerp) {
+            // 參數 t = (mousePt - pA) · seg / |seg|²，限制到 [0, 1]
+            gp_Vec toMouse(pA, mousePt);
+            double t = toMouse.Dot(seg) / (segLen * segLen);
+            t = std::max(0.0, std::min(1.0, t));
+
+            // 若垂足剛好是端點，跳過（避免與 AlignmentTC / PI 重複）
+            if (t < 1e-4 || t > 1.0 - 1e-4) continue;
+
+            gp_Pnt footPt(
+                pA.X() + seg.X() * t,
+                pA.Y() + seg.Y() * t,
+                0.0);
+            double dist = screenDistance(view, footPt, mouseX, mouseY);
+            if (dist <= m_settings.pickPixelRadius) {
+                SnapCandidate c = makeCandidate(
+                    SnapType::AlignmentPerp, footPt, nullptr, view, mouseX, mouseY);
+                out.append(c);
+            }
+        }
+    }
 }
 
 } // namespace osnap

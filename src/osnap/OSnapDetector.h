@@ -40,6 +40,7 @@
 
 namespace aicad {
 namespace cad  { class Plane; }
+namespace railway { class AlignmentDocument; }  // ← forward declaration
 namespace osnap {
 
 /**
@@ -76,6 +77,13 @@ public:
 
     void setActiveSketch(cad::Sketch* sketch) { m_activeSketch = sketch; }
     cad::Sketch* activeSketch() const         { return m_activeSketch; }
+
+    /**
+     * @brief 設定 AlignmentDocument，啟用 Alignment Snap 偵測
+     * @param doc  可為 nullptr（停用 Alignment Snap）
+     */
+    void setAlignmentDocument(railway::AlignmentDocument* doc) { m_alignmentDoc = doc; }
+    railway::AlignmentDocument* alignmentDocument() const      { return m_alignmentDoc; }
 
     /// 設定「上一個輸入點」（用於 Perpendicular / Tangent / Parallel 計算）
     void setLastInputPoint(const gp_Pnt& pt)   { m_lastInputPoint = pt; m_hasLastPoint = true; }
@@ -182,6 +190,21 @@ private:
         int mouseX, int mouseY,
         QVector<SnapCandidate>& out);
 
+    /**
+     * @brief 對 AlignmentDocument 中的 HorizontalAlignment 執行 Snap 偵測
+     *
+     *  偵測流程：
+     *   1. AlignmentPI   — 從 EditableElement 的 startPI/endPI 取 PI 交點
+     *   2. AlignmentTC   — 從 rawPoints() 過濾 tsc 為 "TC"/"CS"/"ST"/"TS" 的切點
+     *   3. AlignmentMid  — 每個元素起終點的中點
+     *   4. AlignmentPerp — 游標至相鄰 rawPoints 連線段的最近垂足
+     */
+    void detectAlignmentSnap(
+        const Handle(V3d_View)& view,
+        const gp_Pnt& mousePt,
+        int mouseX, int mouseY,
+        QVector<SnapCandidate>& out);
+
     // ── 工具函數 ──────────────────────────────────────────────────────────────
 
     /// 世界座標 → 螢幕座標
@@ -217,6 +240,7 @@ private:
     QVector<SnapCandidate>     m_lastCandidates;
     cad::Sketch* m_activeSketch = nullptr;
     QVector<Handle(AIS_InteractiveObject)> m_excludedObjects;
+    railway::AlignmentDocument* m_alignmentDoc = nullptr;  ///< 可選，啟用 Alignment Snap
 
     bool   m_hasExcludedPoint = false;
     gp_Pnt m_excludedPoint;
