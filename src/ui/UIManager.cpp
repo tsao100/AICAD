@@ -1944,17 +1944,14 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
 
     auto* bus = core::Application::instance()->eventBus();
 
-    // OSnap 平面設定（必須在 SKETCH_ENTERED 發布前完成）
+    // OSnap 平面設定
     if (d->cadView && d->cadView->snapManager()) {
         d->cadView->snapManager()->setActivePlane(sketch->plane());
         d->cadView->snapManager()->setActiveSketch(sketch);
-        // ← OSnap 初始 OFF：等 command.started 才開啟
-        //   無 command = 選取模式，OCCT hover highlight 就夠
         d->cadView->snapManager()->setSnapEnabled(false);
     }
 
-    // ✅ 預先設定 GripFilter 的草圖平面與 GripManager 的平面軸向
-    // （不等 selection.featureSelected，讓第一次 hover/click 就有正確投影）
+    // GripFilter / GripManager 平面軸向
     if (sketch->plane()) {
         QVector3D qx = sketch->plane()->xAxis();
         QVector3D qy = sketch->plane()->yAxis();
@@ -1969,6 +1966,26 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
 
         cad::PlaneManager::instance()->setActivePlane(sketch->plane());
         d->cadView->setViewType(d->cadView->viewType());
+
+        // ✅ 正視於 Sketch Plane，並顯示格線（仿 ViewManager::onSketchCreated）
+        cad::Plane* gridPlane = sketch->plane();
+        d->cadView->alignToPlane(gridPlane);
+
+        if (gridPlane->isXY()) {
+            d->cadView->setTopView();
+        } else if (gridPlane->isXZ()) {
+            d->cadView->setFrontView();
+        } else if (gridPlane->isYZ()) {
+            d->cadView->setRightView();
+        }
+        // 自訂平面：alignToPlane 已對齊，不需額外設定標準視角
+
+        view::ViewGrid* grid = d->cadView->grid();
+        if (grid)
+            grid->setPlane(gridPlane);
+
+        d->cadView->setGridEnabled(true);
+        d->cadView->fitAll();
     }
 
     // SketchPanel
@@ -1978,10 +1995,8 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         d->sketchPanel->raise();
     }
 
-    // 統一發布 SKETCH_ENTERED → 由 initGripSystem 的訂閱接管
-    // setMode(Sketching)、gripFilter::setEnabled(true) 都在那裡執行
     bus->publish(core::Events::SKETCH_ENTERED, QVariant::fromValue(sketch));
-    bus->publish("sketch.editStarted", QVariant::fromValue(sketch)); // 保留向下相容
+    bus->publish("sketch.editStarted", QVariant::fromValue(sketch));
 }
 
 void UIManager::onSketchEditEnded()
