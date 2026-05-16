@@ -105,13 +105,69 @@ int HorizontalAlignmentEdit::addFloatingCurve(int tangentIdxBefore,
 }
 
 
-int HorizontalAlignmentEdit::addSCS(int    /*tangentIdxBefore*/,
-                                    int    /*tangentIdxAfter*/,
-                                    double /*radius*/,
-                                    double /*spiralLength*/)
+int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
+                                    int    tangentIdxAfter,
+                                    double radius,
+                                    double spiralLength)
 {
-    // TODO Step 4
-    return -1;
+    // Validate tangent references
+    if (tangentIdxBefore < 0 || tangentIdxBefore >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS: tangentIdxBefore out of range:" << tangentIdxBefore;
+        return -1;
+    }
+    if (tangentIdxAfter < 0 || tangentIdxAfter >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS: tangentIdxAfter out of range:" << tangentIdxAfter;
+        return -1;
+    }
+    if (m_elems[tangentIdxBefore].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS: element at tangentIdxBefore is not a Tangent";
+        return -1;
+    }
+    if (m_elems[tangentIdxAfter].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS: element at tangentIdxAfter is not a Tangent";
+        return -1;
+    }
+    if (std::abs(radius) < 1e-9) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS: radius ≈ 0";
+        return -1;
+    }
+    if (spiralLength < 1e-9) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS: spiralLength ≈ 0";
+        return -1;
+    }
+
+    const int spiralInIdx = m_elems.size();
+
+    // ── 入螺旋 (SpiralIn) ──────────────────────────────────────────────────
+    EditableElement spiralIn;
+    spiralIn.type             = EditableElementType::SpiralIn;
+    spiralIn.mode             = ConstraintMode::Floating;
+    spiralIn.radius           = std::abs(radius);
+    spiralIn.length           = std::abs(spiralLength);
+    spiralIn.tangentIdxBefore = tangentIdxBefore;
+    spiralIn.tangentIdxAfter  = tangentIdxAfter;
+    m_elems.append(spiralIn);
+
+    // ── 圓弧 (CircularArc) ────────────────────────────────────────────────
+    EditableElement arc;
+    arc.type             = EditableElementType::CircularArc;
+    arc.mode             = ConstraintMode::Floating;
+    arc.radius           = std::abs(radius);
+    arc.tangentIdxBefore = tangentIdxBefore;
+    arc.tangentIdxAfter  = tangentIdxAfter;
+    m_elems.append(arc);
+
+    // ── 出螺旋 (SpiralOut) ────────────────────────────────────────────────
+    EditableElement spiralOut;
+    spiralOut.type             = EditableElementType::SpiralOut;
+    spiralOut.mode             = ConstraintMode::Floating;
+    spiralOut.radius           = std::abs(radius);
+    spiralOut.length           = std::abs(spiralLength);
+    spiralOut.tangentIdxBefore = tangentIdxBefore;
+    spiralOut.tangentIdxAfter  = tangentIdxAfter;
+    m_elems.append(spiralOut);
+
+    return spiralInIdx;  // 回傳入螺旋的 index
 }
 
 // ── 元素操作 ──────────────────────────────────────────────────────────────────

@@ -57,6 +57,43 @@ struct SolvedCurve
 };
 
 // ============================================================================
+//  SolvedSCS  — internal result of solveSCS()
+// ============================================================================
+
+/**
+ * @brief Geometry solution for one SCS group (SpiralIn + Arc + SpiralOut).
+ *
+ * Coordinate/azimuth conventions follow SolvedCurve above.
+ * All three elements share the same PI₁ and PI₂; the arc is bounded by SC/CS
+ * cut-points; each spiral runs from a tangent cut-point to an arc cut-point.
+ */
+struct SolvedSCS
+{
+    bool    valid    = false;
+
+    // SpiralIn (TS → SC)
+    QPointF tsPoint;     ///< Start of entry spiral (on incoming tangent)
+    QPointF scPoint;     ///< End of entry spiral = start of circular arc
+    double  azTS    = 0; ///< Azimuth at TS (= incoming tangent azimuth)
+    double  azSC    = 0; ///< Azimuth at SC
+
+    // Circular arc (SC → CS)
+    QPointF csPoint;     ///< End of circular arc = start of exit spiral
+    double  azCS    = 0; ///< Azimuth at CS
+    double  arcLen  = 0; ///< Arc length between SC and CS [m]
+
+    // SpiralOut (CS → ST)
+    QPointF stPoint;     ///< End of exit spiral (on outgoing tangent)
+    double  azST    = 0; ///< Azimuth at ST (= outgoing tangent azimuth)
+
+    // Shared
+    double  Ls      = 0; ///< Spiral length [m] (same for in and out)
+    double  R       = 0; ///< Circular radius [m] (absolute)
+    double  delta   = 0; ///< Total turning angle Δ [rad]
+    double  thetaS  = 0; ///< Spiral angle Θs = Ls/(2R) [rad]
+};
+
+// ============================================================================
 //  AlignmentSolver
 // ============================================================================
 
@@ -94,6 +131,22 @@ public:
      */
     static SolvedCurve solveFloatingCurve(
         const EditableElement& cur,
+        const QPointF& tanStartPrev, const QPointF& tanEndPrev,
+        const QPointF& tanStartNext, const QPointF& tanEndNext);
+
+    /**
+     * @brief Compute full SCS geometry using Appendix B formulae.
+     *
+     * @param radius        Circular radius R [m] (absolute).
+     * @param spiralLength  Entry (= exit) spiral length Ls [m].
+     * @param tanStartPrev  Effective start of incoming tangent.
+     * @param tanEndPrev    Effective end   of incoming tangent.
+     * @param tanStartNext  Effective start of outgoing tangent.
+     * @param tanEndNext    Effective end   of outgoing tangent.
+     * @return SolvedSCS with valid==true on success.
+     */
+    static SolvedSCS solveSCS(
+        double radius, double spiralLength,
         const QPointF& tanStartPrev, const QPointF& tanEndPrev,
         const QPointF& tanStartNext, const QPointF& tanEndNext);
 
