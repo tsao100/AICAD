@@ -42,6 +42,10 @@ namespace command {
     class CommandAlias;  // ✅ 新增
 }
 
+namespace railway {
+    class AlignmentDocument;
+}
+
 namespace ui {
 
 class MainWindow;
@@ -192,6 +196,9 @@ public:
     cad::Sketch* currentActiveSketch();
 
     QUndoStack* undoStack() const;
+
+    /// Railway alignment document (owned by UIManager)
+    railway::AlignmentDocument* alignmentDocument() const;
 
 Q_SIGNALS:
     /**

@@ -441,6 +441,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                     // ✅ 新文件或無 viewState：走原本流程
                                     onDocumentCreated();
                                 }
+
+                                // ✅ 還原 alignment 資料
+                                if (d->alignmentDoc && !doc->alignmentData().isEmpty())
+                                    d->alignmentDoc->fromJson(doc->alignmentData());
                            });
 
         bus->subscribe(core::Events::DOCUMENT_CLOSED, this,
@@ -1393,8 +1397,15 @@ void UIManager::connectCommandLineEvents() {
                    [this](const QVariant& data) {
                        QString cmdName = data.toString();
                        auto* cmdMgr = core::Application::instance()->commandManager();
-                       if (cmdMgr)
-                           cmdMgr->executeCommand(cmdName);
+                       if (!cmdMgr) return;
+
+                       // Build context — fill railway fields so alignment
+                       // commands can access the document without a global.
+                       command::CommandContext ctx;
+                       ctx.alignmentDoc = d->alignmentDoc;
+                       ctx.cadView      = d->cadView;
+                       // profileView: not held directly; leave nullptr for now.
+                       cmdMgr->executeCommand(cmdName, ctx);
                    });
 
     // ── 命令發出提示（prompt）───────────────────────────────────────
@@ -1965,6 +1976,11 @@ cad::Sketch* UIManager::currentActiveSketch(){
 
 QUndoStack* UIManager::undoStack() const { return d->undoStack; }
 
+railway::AlignmentDocument* UIManager::alignmentDocument() const
+{
+    return d->alignmentDoc;
+}
+
 void UIManager::showMainWindow() {
     if (!d->mainWindow) {
         qWarning() << "[UIManager] MainWindow not created";
@@ -2237,11 +2253,6 @@ void UIManager::onOpenDocument() {
 }
 
 void UIManager::onSaveDocument() {
-    // ✅ 儲存 camera 狀態到 document
-    if (d->cadView) {
-        if (auto* doc = d->cadView->document())
-            doc->setViewState(d->cadView->saveViewState());
-    }
     executeCommand("save");
 }
 

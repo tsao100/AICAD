@@ -65,9 +65,12 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("REDO", "REDO", "Redo last undo", true);
 
     // Sketch Commands (AICAD specific)
-    registerAlias("SK", "SKETCH", "Create a sketch", true);
+    registerAlias("SK",  "SKETCH",  "Create a sketch", true);
     registerAlias("EXT", "EXTRUDE", "Extrude a profile", true);
     registerAlias("REV", "REVOLVE", "Revolve a profile", true);
+
+    // Railway Alignment Commands
+    registerAlias("FT", "ALIGNMENTFIXTANGENT", "Add Fixed Tangent to horizontal alignment", true);
 }
 
 void CommandAlias::registerAlias(const QString& alias, const QString& command, const QString& description, bool isSystem) {

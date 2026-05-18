@@ -270,6 +270,10 @@ public:
     void setViewState(const QJsonObject& state) { m_viewState = state; }
     QJsonObject viewState() const { return m_viewState; }
 
+    /** Passthrough blob for AlignmentDocument — written/read by UIManager */
+    void setAlignmentData(const QJsonObject& data) { m_alignmentData = data; }
+    QJsonObject alignmentData() const { return m_alignmentData; }
+
     cad::Extrude* lastExtrude() const;
 
     // 復原/重做（未來實作）
@@ -397,7 +401,8 @@ private:
 
     aicad::core::ParameterStore* m_parameterStore;
     DependencyGraph              m_depGraph;
-    QJsonObject m_viewState;   // ✅ 儲存視圖狀態（camera eye/at/up/scale）
+    QJsonObject m_viewState;       // ✅ 儲存視圖狀態（camera eye/at/up/scale）
+    QJsonObject m_alignmentData;   // passthrough — owned by UIManager::d->alignmentDoc
 
     Q_DISABLE_COPY(Document)
 };

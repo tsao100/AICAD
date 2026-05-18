@@ -164,6 +164,9 @@ public:
     /** 將求解結果同步寫入 OCAF Document（AIS 端使用） */
     void syncToOCAF(aicad::cad::Document* doc);
 
+    QJsonObject toJson()              const;
+    bool        fromJson(const QJsonObject& obj);
+
 private:
     std::unique_ptr<HorizontalAlignmentEdit> m_horizontal;
     std::unique_ptr<VerticalAlignmentEdit>   m_vertical;

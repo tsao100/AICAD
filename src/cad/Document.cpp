@@ -141,6 +141,10 @@ bool Document::save(const QString& fileName) {
         if (!m_viewState.isEmpty())
             docJson["viewState"] = m_viewState;
 
+        // ✅ 儲存 alignment 資料（由 UIManager 在 save 前注入）
+        if (!m_alignmentData.isEmpty())
+            docJson["alignment"] = m_alignmentData;
+
         QFile file(saveFileName);
         if (!file.open(QIODevice::WriteOnly)) {
             qWarning() << "[Document] Cannot open file for writing:" << saveFileName;
@@ -269,6 +273,10 @@ bool Document::load(const QString& fileName) {
         // ✅ 讀取視圖狀態
         if (docJson.contains("viewState"))
             m_viewState = docJson["viewState"].toObject();
+
+        // ✅ 讀取 alignment 資料（UIManager 在 DOCUMENT_OPENED 後取出）
+        if (docJson.contains("alignment"))
+            m_alignmentData = docJson["alignment"].toObject();
 
         setFileName(fileName);
         setModified(false);

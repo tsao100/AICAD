@@ -126,3 +126,5 @@ command|view_top||0
 command|view_front||0
 command|view_right||0
 command|view_iso||0
+
+command|alignmentfixtangent||0

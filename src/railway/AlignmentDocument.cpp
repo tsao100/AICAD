@@ -543,6 +543,30 @@ AlignmentDocument::AlignmentDocument(QObject* parent)
 {
 }
 
+QJsonObject AlignmentDocument::toJson() const
+{
+    QJsonObject obj;
+    obj["horizontal"] = m_horizontal->toJson();
+    obj["vertical"]   = m_vertical->toJson();
+    return obj;
+}
+
+bool AlignmentDocument::fromJson(const QJsonObject& obj)
+{
+    bool ok = true;
+    if (obj.contains("horizontal"))
+        ok &= m_horizontal->fromJson(obj["horizontal"].toObject());
+    if (obj.contains("vertical"))
+        ok &= m_vertical->fromJson(obj["vertical"].toObject());
+
+    // Re-solve so AlignmentRenderer gets refreshed after load
+    if (ok) {
+        m_horizontal->solve();
+        m_vertical->solve();
+    }
+    return ok;
+}
+
 void AlignmentDocument::syncToOCAF(aicad::cad::Document* /*doc*/)
 {
     // TODO Step 5: 呼叫 AlignmentRenderer 同步 AIS 物件至 OCAF Document

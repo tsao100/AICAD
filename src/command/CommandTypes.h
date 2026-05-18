@@ -13,6 +13,13 @@
 #include <QVariant>
 #include <QMap>
 
+// Forward declarations for railway / UI pointers
+namespace aicad {
+namespace railway { class AlignmentDocument; }
+namespace ui      { class VAlignProfileView; }
+namespace view    { class CadView; }
+}
+
 namespace aicad {
 namespace command {
 
@@ -24,6 +31,15 @@ struct CommandContext {
     QObject* sender;
     QVariantMap data;
     bool interactive;
+
+    /// Railway alignment document (set by UIManager before execute())
+    aicad::railway::AlignmentDocument* alignmentDoc = nullptr;
+
+    /// Vertical alignment profile view (set by UIManager before execute())
+    aicad::ui::VAlignProfileView* profileView = nullptr;
+
+    /// 3-D viewport — gives commands access to RubberBand, snap, etc.
+    aicad::view::CadView* cadView = nullptr;
 
     CommandContext()
         : sender(nullptr)

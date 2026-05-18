@@ -231,6 +231,7 @@ SOURCES += \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
     src/command/ExtrudeCommand.cpp \
+    src/command/alignment/AlignmentFixTangentCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
     src/command/InputParser.cpp \
@@ -334,6 +335,8 @@ HEADERS += \
     src/command/CommandAlias.h \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
+    src/command/alignment/AlignmentCommandBase.h \
+    src/command/alignment/AlignmentFixTangentCommand.h \
     src/core/CommandHistory.h \
     src/command/EllipseCommand.h \
     src/command/InputParser.h \

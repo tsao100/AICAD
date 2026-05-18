@@ -16,6 +16,7 @@
 #include "core/EventBus.h"
 #include "ui/UIManager.h"
 #include "view/CadView.h"
+#include "railway/AlignmentDocument.h"
 #include <QFileDialog>
 #include <QSettings>
 
@@ -239,7 +240,14 @@ public:
                 return CommandResult::Failure("Save cancelled");
             }
         }
-        
+
+        // Inject viewState and alignment data immediately before save —
+        // guaranteed same doc pointer that save() writes to.
+        if (context.cadView)
+            doc->setViewState(context.cadView->saveViewState());
+        if (context.alignmentDoc)
+            doc->setAlignmentData(context.alignmentDoc->toJson());
+
         if (doc->save(fileName)) {
             QSettings settings("AICAD", "AICAD");
             settings.setValue("file/lastDirectory", QFileInfo(fileName).absolutePath());
@@ -288,6 +296,11 @@ public:
         if (fileName.isEmpty()) {
             return CommandResult::Failure("Save As cancelled");
         }
+
+        if (context.cadView)
+            doc->setViewState(context.cadView->saveViewState());
+        if (context.alignmentDoc)
+            doc->setAlignmentData(context.alignmentDoc->toJson());
 
         if (doc->save(fileName)) {
             return CommandResult::Success("Document saved as: " + QFileInfo(fileName).fileName());
