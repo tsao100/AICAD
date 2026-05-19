@@ -141,16 +141,22 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
         }
 
         // ── 建立 Fixed CircularArc ─────────────────────────────────────────
-        QPointF centerF(center.x(), center.y());
-        int idx = m_alignDoc->horizontal()->addFixedCurve(centerF, radius);
+        QPointF centerF   (center.x(),       center.y());
+        QPointF arcStartF (m_startPoint.x(), m_startPoint.y());
+        QPointF arcEndF   (point.x(),        point.y());
+
+        int idx = m_alignDoc->horizontal()->addFixedCurve(
+                      arcStartF, arcEndF, centerF, radius);
         m_alignDoc->horizontal()->solve();   // emit changed() → AlignmentRenderer::refresh()
 
         outputMessage(
-            QString("Fixed Curve #%1  center(%2, %3)  R=%4 m")
+            QString("Fixed Curve #%1  start(%2, %3) → end(%4, %5)  R=%6 m")
                 .arg(idx)
-                .arg(centerF.x(), 0, 'f', 3)
-                .arg(centerF.y(), 0, 'f', 3)
-                .arg(radius,      0, 'f', 3));
+                .arg(arcStartF.x(), 0, 'f', 3)
+                .arg(arcStartF.y(), 0, 'f', 3)
+                .arg(arcEndF.x(),   0, 'f', 3)
+                .arg(arcEndF.y(),   0, 'f', 3)
+                .arg(radius,        0, 'f', 3));
 
         m_isFinishing = true;
         Q_EMIT finished(CommandResult::Success("AlignmentFixCurve completed"));

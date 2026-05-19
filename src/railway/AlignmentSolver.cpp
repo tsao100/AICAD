@@ -309,54 +309,52 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         if (e.type != EditableElementType::CircularArc) continue;
         if (e.mode != ConstraintMode::Fixed)            continue;
 
-        const QPointF center = e.startPI;  // Fixed arc: startPI = circle centre
+        const QPointF center = e.arcCenter;   // Fixed arc: circle centre stored separately
         const double  R      = std::abs(e.radius);
         if (R < 1e-9) {
             qWarning() << "[AlignmentSolver] Pass1 Fixed arc radius ≈ 0 at idx" << i;
             continue;
         }
 
-        // Find nearest preceding and following Tangent elements
-        int prevT = -1;
-        for (int j = i - 1; j >= 0; --j)
-            if (elems[j].type == EditableElementType::Tangent) { prevT = j; break; }
-
-        int nextT = -1;
-        for (int j = i + 1; j < n; ++j)
-            if (elems[j].type == EditableElementType::Tangent) { nextT = j; break; }
-
         ArcData arc;
 
-        // T1: foot of perpendicular from centre onto incoming tangent
-        if (prevT >= 0) {
-            arc.pc             = footOfPerp(tanStart[prevT], tanEnd[prevT], center);
-            tanEnd[prevT]      = arc.pc;
-            arc.azPC           = azimuthOf(tanStart[prevT], arc.pc);
-        } else {
-            arc.pc   = center + QPointF(0.0, R);  // North fallback
-            arc.azPC = 0.0;
-        }
+        // ── PC and PT are stored directly in startPI / endPI ──────────────────
+        //    (set by addFixedCurve from the 3 user-clicked points).
+        //    Do NOT recompute via foot-of-perpendicular; that would move the
+        //    arc away from the user's 3 points.
+        arc.pc = e.startPI;
+        arc.pt = e.endPI;
 
-        // T2: foot of perpendicular from centre onto outgoing tangent
-        if (nextT >= 0) {
-            arc.pt             = footOfPerp(tanStart[nextT], tanEnd[nextT], center);
-            tanStart[nextT]    = arc.pt;
-        } else {
-            arc.pt = center + QPointF(R, 0.0);    // East fallback
-        }
+        // ── Tangent azimuth at PC: perpendicular to radius (centre → PC) ──────
+        //    cross(r1, r2) > 0  →  CCW (left turn)   →  tangent = (-r1.y,  r1.x)
+        //    cross(r1, r2) < 0  →  CW  (right turn)  →  tangent = ( r1.y, -r1.x)
+        //    In (Easting, Northing) frame:
+        //      azimuth = atan2(dEast, dNorth)
+        {
+            const QPointF r1 = arc.pc - center;
+            const QPointF r2 = arc.pt - center;
+            const double  crossVal = r1.x() * r2.y() - r1.y() * r2.x();
+            const double  sign     = (crossVal >= 0.0) ? 1.0 : -1.0;
+            // tangent (dE, dN) = sign * (-r1.y, r1.x)
+            arc.azPC = std::atan2(sign * (-r1.y()), sign * r1.x());
 
-        // Arc length via included angle between radii to T1 and T2
-        const QPointF v1     = arc.pc - center;
-        const QPointF v2     = arc.pt - center;
-        const double  cross  = v1.x() * v2.y() - v1.y() * v2.x();
-        const double  dot    = v1.x() * v2.x() + v1.y() * v2.y();
-        const double  delta  = std::abs(std::atan2(cross, dot));
-        arc.arcLen = R * delta;
+            // ── Arc length from included angle ────────────────────────────────
+            const double dot   = r1.x() * r2.x() + r1.y() * r2.y();
+            const double delta = std::abs(std::atan2(crossVal, dot));
+            arc.arcLen = R * delta;
+        }
 
         if (arc.arcLen < 1e-9) {
             qWarning() << "[AlignmentSolver] Pass1 Fixed arc length ≈ 0 at idx" << i;
             continue;
         }
+
+        // ── Fixed arc: do NOT trim adjacent tangents ──────────────────────────
+        //    A Fixed arc's PC/PT are exactly the user-clicked points, fully
+        //    independent of any neighbouring tangent.  Trimming would move the
+        //    tangent's endpoint to match the arc, which is wrong.
+        //    (Only Floating arcs auto-connect to adjacent tangents — handled in
+        //     Pass 2 via solveFloatingCurve.)
 
         arc.valid    = true;
         arcData[i]   = arc;

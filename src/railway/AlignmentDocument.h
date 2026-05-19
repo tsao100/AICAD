@@ -43,8 +43,9 @@ struct EditableElement
     ConstraintMode      mode   = ConstraintMode::Fixed;
     double              radius = 0.0;   ///< 圓弧半徑 [m]，切線段為 0
     double              length = 0.0;   ///< 元素長度 [m]
-    QPointF             startPI;        ///< 起點 / 入切線端點（Fixed arc 存圓心）
-    QPointF             endPI;          ///< 終點 / 出切線端點
+    QPointF             startPI;        ///< 切線起點；Fixed CircularArc = 弧起點 (PC)
+    QPointF             endPI;          ///< 切線終點；Fixed CircularArc = 弧終點 (PT)
+    QPointF             arcCenter;      ///< 圓心（Fixed CircularArc 專用；其他元素忽略）
     bool                solved = false; ///< solver 是否已完成求解
 
     // Floating / SCS：依附的前後切線在 m_elems 中的 index（-1 = 未設定）
@@ -69,8 +70,11 @@ public:
     /** 新增 Fixed Tangent，回傳元素 index */
     int addFixedTangent(QPointF from, QPointF to);
 
-    /** 新增 Fixed CircularArc，回傳元素 index */
-    int addFixedCurve(QPointF center, double radius);
+    /** 新增 Fixed CircularArc（由三點外接圓確定），回傳元素 index。
+     *  arcStart / arcEnd = 使用者指定的弧起終點（PC / PT）。
+     *  arcCenter = 外接圓圓心（由命令層計算後傳入）。 */
+    int addFixedCurve(QPointF arcStart, QPointF arcEnd,
+                      QPointF arcCenter, double radius);
 
     /** 新增 Floating 圓弧（依附前後切線），回傳元素 index */
     int addFloatingCurve(int tangentIdxBefore, int tangentIdxAfter, double radius);

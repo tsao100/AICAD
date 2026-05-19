@@ -60,13 +60,16 @@ int HorizontalAlignmentEdit::addFixedTangent(QPointF from, QPointF to)
     return m_elems.size() - 1;
 }
 
-int HorizontalAlignmentEdit::addFixedCurve(QPointF center, double radius)
+int HorizontalAlignmentEdit::addFixedCurve(QPointF arcStart, QPointF arcEnd,
+                                           QPointF arcCenter, double radius)
 {
     EditableElement e;
-    e.type    = EditableElementType::CircularArc;
-    e.mode    = ConstraintMode::Fixed;
-    e.startPI = center;   // center of circle（solve() 時解出實際弧端點）
-    e.radius  = std::abs(radius);
+    e.type      = EditableElementType::CircularArc;
+    e.mode      = ConstraintMode::Fixed;
+    e.startPI   = arcStart;    // PC  — 弧起點（使用者第一個點擊點）
+    e.endPI     = arcEnd;      // PT  — 弧終點（使用者第三個點擊點）
+    e.arcCenter = arcCenter;   // 外接圓圓心（由命令層計算）
+    e.radius    = std::abs(radius);
     m_elems.append(e);
     return m_elems.size() - 1;
 }
@@ -425,6 +428,8 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
         elem["startY"] = e.startPI.y();
         elem["endX"]   = e.endPI.x();
         elem["endY"]   = e.endPI.y();
+        elem["centerX"] = e.arcCenter.x();
+        elem["centerY"] = e.arcCenter.y();
         elem["solved"] = e.solved;
         elem["tangentIdxBefore"]  = e.tangentIdxBefore;
         elem["tangentIdxAfter"]   = e.tangentIdxAfter;
@@ -448,7 +453,10 @@ bool HorizontalAlignmentEdit::fromJson(const QJsonObject& obj)
         elem.length = e["length"].toDouble();
         elem.startPI = QPointF(e["startX"].toDouble(), e["startY"].toDouble());
         elem.endPI   = QPointF(e["endX"].toDouble(),   e["endY"].toDouble());
-        elem.solved  = e["solved"].toBool();
+        // BUG FIX: Always reset to false — solve() recomputes this flag.
+        // Loading a stale 'true' would leave Floating elements appearing
+        // solved before the solver has actually run.
+        elem.solved  = false;
         elem.tangentIdxBefore = e["tangentIdxBefore"].toInt(-1);
         elem.tangentIdxAfter  = e["tangentIdxAfter"].toInt(-1);
         m_elems.append(elem);
