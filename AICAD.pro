@@ -234,6 +234,7 @@ SOURCES += \
     src/command/alignment/AlignmentFixCurveCommand.cpp \
     src/command/alignment/AlignmentFixTangentCommand.cpp \
     src/command/alignment/AlignmentFloatCurveCommand.cpp \
+    src/command/alignment/AlignmentSCSCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
     src/command/InputParser.cpp \
@@ -341,6 +342,7 @@ HEADERS += \
     src/command/alignment/AlignmentFixCurveCommand.h \
     src/command/alignment/AlignmentFixTangentCommand.h \
     src/command/alignment/AlignmentFloatCurveCommand.h \
+    src/command/alignment/AlignmentSCSCommand.h \
     src/core/CommandHistory.h \
     src/command/EllipseCommand.h \
     src/command/InputParser.h \

@@ -133,15 +133,37 @@ public:
     double radius() const;
 
     /**
-     * @brief 設定緩和曲線長度（Spiral / SCS 模式使用）
+     * @brief 設定緩和曲線長度（Spiral / SCS 模式使用，同時設定 L1 與 L2）
      * @param ls 緩和曲線長度 [m]
      */
     void setSpiralLength(double ls);
 
     /**
-     * @brief 取得緩和曲線長度
+     * @brief 取得緩和曲線長度（回傳 spiralLength1）
      */
     double spiralLength() const;
+
+    /**
+     * @brief 設定入螺旋長度 L1（SCS 模式）
+     * @param ls 入螺旋長度 [m]；0 表示無入螺旋
+     */
+    void setSpiralLength1(double ls);
+
+    /**
+     * @brief 取得入螺旋長度 L1
+     */
+    double spiralLength1() const;
+
+    /**
+     * @brief 設定出螺旋長度 L2（SCS 模式）
+     * @param ls 出螺旋長度 [m]；0 表示無出螺旋
+     */
+    void setSpiralLength2(double ls);
+
+    /**
+     * @brief 取得出螺旋長度 L2
+     */
+    double spiralLength2() const;
 
     /**
      * @brief 更新橡皮筋顯示

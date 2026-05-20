@@ -82,6 +82,12 @@ public:
     /** 新增 SCS 組合（入螺旋＋圓弧＋出螺旋），建立 3 個 EditableElement，回傳入螺旋的 index */
     int addSCS(int tangentIdxBefore, int tangentIdxAfter, double radius, double spiralLength);
 
+    /** 非對稱版本：L1（入螺旋）、L2（出螺旋）可獨立設定。
+     *  L1=L2=0 退化為 AFC（單圓弧）；其中一方為 0 則省略對應螺旋段。
+     *  回傳第一個新建元素的 index；失敗時回傳 -1。 */
+    int addSCS(int tangentIdxBefore, int tangentIdxAfter,
+               double radius, double spiralLength1, double spiralLength2);
+
     // ── 元素操作 ─────────────────────────────────────────────────────────────
 
     void movePI(int idx, QPointF newPos);

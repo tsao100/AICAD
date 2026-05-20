@@ -130,3 +130,4 @@ command|view_iso||0
 command|alignmentfixtangent||0
 command|alignmentfixcurve||0
 command|alignmentfloatcurve||0
+command|alignmentscs||0

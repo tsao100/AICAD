@@ -73,6 +73,7 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("FT",  "ALIGNMENTFIXTANGENT",  "Add Fixed Tangent to horizontal alignment",    true);
     registerAlias("FC",  "ALIGNMENTFIXCURVE",    "Add Fixed Curve (3-point arc) to alignment",   true);
     registerAlias("AFC", "ALIGNMENTFLOATCURVE",  "Add Floating Curve between two tangents",      true);
+    registerAlias("SCS", "ALIGNMENTSCS",         "Add SCS (Spiral-Circular-Spiral) curve",       true);
 }
 
 void CommandAlias::registerAlias(const QString& alias, const QString& command, const QString& description, bool isSystem) {

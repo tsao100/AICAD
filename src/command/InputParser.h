@@ -71,6 +71,17 @@ public:
     static QString formatNumber(double value, int precision = 4);
     static QString formatAngle(double degrees, int precision = 2);
 
+    // KEY=VALUE 解析（不分大小寫），供 SCS / alignment 命令使用
+    // 回傳 true 且填入 outValue，當輸入形如 "KEY=123.4"。
+    static bool tryParseKeyValueDouble(const QString& input,
+                                       const QString& expectedKey,
+                                       double& outValue);
+
+    // 便利函式：嘗試 "KEY=<num>" 或純數字，成功回傳 true 並填入 outValue。
+    static bool tryParseKeyedOrPlainDouble(const QString& input,
+                                           const QString& preferredKey,
+                                           double& outValue);
+
     static ParsedPrompt parsePrompt(const QString& promptText);
     static QString      matchOption(const QString& input,
                                const QStringList& options);

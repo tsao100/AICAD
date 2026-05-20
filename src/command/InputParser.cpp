@@ -308,5 +308,57 @@ double InputParser::radiansToDegrees(double radians) {
     return radians * 180.0 / M_PI;
 }
 
+// ── KEY=VALUE 解析 ────────────────────────────────────────────────────────────
+//
+// 識別 "KEY=<number>" 格式（不分大小寫，允許前後空格）。
+// 例如：tryParseKeyValueDouble("R=600", "R", v) → v=600, return true
+//        tryParseKeyValueDouble(" L1 = 150 ", "L1", v) → v=150, return true
+//        tryParseKeyValueDouble("600", "R", v) → return false
+//
+bool InputParser::tryParseKeyValueDouble(const QString& input,
+                                         const QString& expectedKey,
+                                         double& outValue)
+{
+    const QString trimmed = input.trimmed();
+    const int eqIdx = trimmed.indexOf('=');
+    if (eqIdx < 0)
+        return false;
+
+    const QString key     = trimmed.left(eqIdx).trimmed();
+    const QString valPart = trimmed.mid(eqIdx + 1).trimmed();
+
+    if (key.compare(expectedKey, Qt::CaseInsensitive) != 0)
+        return false;
+
+    bool ok = false;
+    const double val = valPart.toDouble(&ok);
+    if (!ok)
+        return false;
+
+    outValue = val;
+    return true;
+}
+
+// ── tryParseKeyedOrPlainDouble ─────────────────────────────────────────────
+//
+// 先嘗試 "KEY=<num>"；若失敗則嘗試純數字。
+// 適用於：使用者可輸入 "R=600" 也可直接輸入 "600"。
+//
+bool InputParser::tryParseKeyedOrPlainDouble(const QString& input,
+                                              const QString& preferredKey,
+                                              double& outValue)
+{
+    if (tryParseKeyValueDouble(input, preferredKey, outValue))
+        return true;
+
+    bool ok = false;
+    const double val = input.trimmed().toDouble(&ok);
+    if (ok) {
+        outValue = val;
+        return true;
+    }
+    return false;
+}
+
 } // namespace command
 } // namespace aicad

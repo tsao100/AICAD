@@ -49,8 +49,10 @@ public:
     bool hasCurrentPoint;
 
     // ── Spiral / SCS parameters ───────────────────────────────────────────────
-    double radius       = 400.0;   ///< Circular arc radius [m]; +right, −left
-    double spiralLength = 100.0;   ///< Transition curve length [m]
+    double radius        = 400.0;   ///< Circular arc radius [m]; +right, −left
+    double spiralLength  = 100.0;   ///< Transition curve length [m] (L1 = L2 symmetric)
+    double spiralLength1 = 100.0;   ///< Entry spiral length L1 [m]  (SCS asymmetric)
+    double spiralLength2 = 100.0;   ///< Exit  spiral length L2 [m]  (SCS asymmetric)
 };
 
 RubberBand::RubberBand(const Handle(AIS_InteractiveContext)& context, QObject* parent)
@@ -155,12 +157,35 @@ double RubberBand::radius() const
 
 void RubberBand::setSpiralLength(double ls)
 {
-    d->spiralLength = ls;
+    d->spiralLength  = ls;
+    d->spiralLength1 = ls;   // symmetric: both L1 and L2 follow
+    d->spiralLength2 = ls;
 }
 
 double RubberBand::spiralLength() const
 {
-    return d->spiralLength;
+    return d->spiralLength1;
+}
+
+void RubberBand::setSpiralLength1(double ls)
+{
+    d->spiralLength1 = ls;
+    d->spiralLength  = ls;   // keep legacy field in sync with L1
+}
+
+double RubberBand::spiralLength1() const
+{
+    return d->spiralLength1;
+}
+
+void RubberBand::setSpiralLength2(double ls)
+{
+    d->spiralLength2 = ls;
+}
+
+double RubberBand::spiralLength2() const
+{
+    return d->spiralLength2;
 }
 
 void RubberBand::update() {
@@ -875,9 +900,10 @@ void RubberBand::updateSCS()
     //       currentPoint = exit tangent end
     if (d->points.size() < 2 || !d->hasCurrentPoint) return;
 
-    const double R  = d->radius;
-    const double Ls = d->spiralLength;
-    if (std::abs(R) < 1e-6 || Ls < 1e-6) return;
+    const double R   = d->radius;
+    const double Ls1 = d->spiralLength1;   // entry spiral length
+    const double Ls2 = d->spiralLength2;   // exit  spiral length
+    if (std::abs(R) < 1e-6) return;
 
     // ── Tangent directions ────────────────────────────────────────────────────
     const QVector2D p0  = d->points[0];    // entry tangent start
@@ -894,44 +920,59 @@ void RubberBand::updateSCS()
     const double exitAngle  = std::atan2(static_cast<double>(exitVec.y()),
                                         static_cast<double>(exitVec.x()));
 
-    // ── SCS geometry (Appendix B formula) ────────────────────────────────────
-    // Deflection angle Δ between entry and exit tangents
+    // ── SCS geometry (Appendix B formula, asymmetric L1≠L2) ─────────────────
     double delta = exitAngle - entryAngle;
-    // Normalise to (−π, π]
     while (delta >  M_PI) delta -= 2.0 * M_PI;
     while (delta < -M_PI) delta += 2.0 * M_PI;
 
-    // Use the sign of delta to determine curve side (right turn → +R)
     const double signedR = (delta >= 0.0) ? std::abs(R) : -std::abs(R);
 
-    const double thetaS = Ls / (2.0 * std::abs(signedR));
-    const double Xm     = Ls * (1.0 - thetaS * thetaS / 10.0);
-    const double Ym     = Ls * thetaS / 3.0;
-    const double Ts     = (std::abs(signedR) + Ym) * std::tan(std::abs(delta) / 2.0) + Xm;
+    // Entry spiral tangent length
+    const auto spiralTs = [](double Ls, double absR) -> std::pair<double,double> {
+        if (Ls < 1e-9) return {0.0, 0.0};     // no spiral
+        const double th = Ls / (2.0 * absR);
+        const double Xm = Ls * (1.0 - th * th / 10.0);
+        const double Ym = Ls * th / 3.0;
+        return {Xm, Ym};
+    };
 
-    // SCS start in plane coords
+    const double absR  = std::abs(signedR);
+    const double halfD = std::abs(delta) / 2.0;
+
+    auto [Xm1, Ym1] = spiralTs(Ls1, absR);
+    auto [Xm2, Ym2] = spiralTs(Ls2, absR);
+
+    // Asymmetric tangent lengths
+    const double Ts1 = (absR + Ym1) * std::tan(halfD) + Xm1;
+    const double Ts2 = (absR + Ym2) * std::tan(halfD) + Xm2;
+
+    // SCS start / end in plane coords
     const QVector2D scsStart(
-        static_cast<float>(static_cast<double>(pi.x()) - Ts * static_cast<double>(entryVec.x())),
-        static_cast<float>(static_cast<double>(pi.y()) - Ts * static_cast<double>(entryVec.y())));
-
-    // SCS end in plane coords (approach from exit direction reversed)
+        static_cast<float>(static_cast<double>(pi.x()) - Ts1 * static_cast<double>(entryVec.x())),
+        static_cast<float>(static_cast<double>(pi.y()) - Ts1 * static_cast<double>(entryVec.y())));
     const QVector2D scsEnd(
-        static_cast<float>(static_cast<double>(pi.x()) + Ts * static_cast<double>(exitVec.x())),
-        static_cast<float>(static_cast<double>(pi.y()) + Ts * static_cast<double>(exitVec.y())));
+        static_cast<float>(static_cast<double>(pi.x()) + Ts2 * static_cast<double>(exitVec.x())),
+        static_cast<float>(static_cast<double>(pi.y()) + Ts2 * static_cast<double>(exitVec.y())));
 
-    // Entry spiral end point (TC→SC): sample at L=Ls
-    SpiralFrame scFrame = clothoidFrame(Ls, signedR, Ls);
-    const QVector2D scPoint = localToPlane(scFrame.x, scFrame.y,
-                                           static_cast<double>(scsStart.x()),
-                                           static_cast<double>(scsStart.y()),
-                                           entryAngle);
-    // Exit spiral start (CS): approach from scsEnd in reversed exit direction
+    // Entry spiral end point (SC)
+    QVector2D scPoint  = scsStart;  // default: no entry spiral → arc starts here
+    QVector2D csPoint  = scsEnd;    // default: no exit  spiral → arc ends here
+
+    if (Ls1 > 1e-9) {
+        SpiralFrame scFrame = clothoidFrame(Ls1, signedR, Ls1);
+        scPoint = localToPlane(scFrame.x, scFrame.y,
+                               static_cast<double>(scsStart.x()),
+                               static_cast<double>(scsStart.y()),
+                               entryAngle);
+    }
     const double revExitAngle = exitAngle + M_PI;
-    SpiralFrame csFrame = clothoidFrame(Ls, -signedR, Ls);  // mirror for exit
-    const QVector2D csPoint = localToPlane(csFrame.x, csFrame.y,
-                                           static_cast<double>(scsEnd.x()),
-                                           static_cast<double>(scsEnd.y()),
-                                           revExitAngle);
+    if (Ls2 > 1e-9) {
+        SpiralFrame csFrame = clothoidFrame(Ls2, -signedR, Ls2);
+        csPoint = localToPlane(csFrame.x, csFrame.y,
+                               static_cast<double>(scsEnd.x()),
+                               static_cast<double>(scsEnd.y()),
+                               revExitAngle);
+    }
 
     // ── Build presentation ────────────────────────────────────────────────────
     if (!d->presentation.IsNull()) {
@@ -947,13 +988,13 @@ void RubberBand::updateSCS()
     auto toWorld = [this](QVector2D p) { return planeToWorld(p); };
 
     // ── Segment 1: Entry spiral (dashed green) ────────────────────────────────
-    {
+    if (Ls1 > 1e-9) {
         Handle(Graphic3d_ArrayOfPolylines) poly =
             new Graphic3d_ArrayOfPolylines(kSpiral + 1);
         appendSpiral(poly,
                      static_cast<double>(scsStart.x()),
                      static_cast<double>(scsStart.y()),
-                     entryAngle, signedR, Ls, kSpiral, this, toWorld);
+                     entryAngle, signedR, Ls1, kSpiral, this, toWorld);
 
         Handle(Prs3d_LineAspect) asp = new Prs3d_LineAspect(
             Quantity_NOC_GREEN, Aspect_TOL_DASH, 2.0);
@@ -964,12 +1005,10 @@ void RubberBand::updateSCS()
 
     // ── Segment 2: Circular arc (solid orange) ────────────────────────────────
     {
-        // Arc centre: perpendicular to entry tangent at SC point, dist = |R|
         const double perpAngle = entryAngle + M_PI / 2.0 * std::copysign(1.0, signedR);
         const double cx = static_cast<double>(scPoint.x()) + std::abs(signedR) * std::cos(perpAngle);
         const double cy = static_cast<double>(scPoint.y()) + std::abs(signedR) * std::sin(perpAngle);
 
-        // Arc start angle (from centre to SC) and end angle (centre to CS)
         const double aStart = std::atan2(static_cast<double>(scPoint.y()) - cy,
                                          static_cast<double>(scPoint.x()) - cx);
         const double aEnd   = std::atan2(static_cast<double>(csPoint.y()) - cy,
@@ -1000,15 +1039,13 @@ void RubberBand::updateSCS()
     }
 
     // ── Segment 3: Exit spiral (dashed green) reversed from scsEnd ────────────
-    {
+    if (Ls2 > 1e-9) {
         Handle(Graphic3d_ArrayOfPolylines) poly =
             new Graphic3d_ArrayOfPolylines(kSpiral + 1);
-        // Sample from scsEnd inward (reversed exit direction)
-        // The exit spiral mirrors the entry: negate R for opposite hand
         appendSpiral(poly,
                      static_cast<double>(scsEnd.x()),
                      static_cast<double>(scsEnd.y()),
-                     revExitAngle, -signedR, Ls, kSpiral, this, toWorld);
+                     revExitAngle, -signedR, Ls2, kSpiral, this, toWorld);
 
         Handle(Prs3d_LineAspect) asp = new Prs3d_LineAspect(
             Quantity_NOC_GREEN, Aspect_TOL_DASH, 2.0);
