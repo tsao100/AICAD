@@ -14,26 +14,9 @@ namespace railway {
 // ============================================================================
 
 namespace {
-
-/** 方位角 [rad, 順時針自北] = atan2(dEast, dNorth) */
-static double azimuthOf(QPointF from, QPointF to)
-{
-    return std::atan2(to.x() - from.x(), to.y() - from.y());
-}
-
-/**
- * P 到直線 A→B 的垂足。
- * t 未必在 [0,1]，呼叫端可視需要 clamp。
- */
-static QPointF footOfPerp(QPointF A, QPointF B, QPointF P)
-{
-    QPointF ab = B - A;
-    double  ab2 = QPointF::dotProduct(ab, ab);
-    if (ab2 < 1e-18) return A;
-    double t = QPointF::dotProduct(P - A, ab) / ab2;
-    return A + t * ab;
-}
-
+// (helpers removed — azimuthOf and footOfPerp are no longer needed here;
+//  the dead-code pass that called them has been removed.  AlignmentSolver
+//  has its own copies of these utilities.)
 } // anonymous namespace
 
 // ============================================================================
@@ -250,159 +233,17 @@ void HorizontalAlignmentEdit::solve()
         return;
     }
 
-    // ── 工作用副本（保留 startPI / endPI 原始意義）──────────────────────────
-    // arcStart / arcEnd：解算後的弧端點（切點）
-    // arcAz             ：弧起點的切線方位角
-    // arcLen            ：弧長
-
-    struct ArcData {
-        bool    valid  = false;
-        QPointF start;          ///< T1 切點 = 弧起點
-        QPointF end;            ///< T2 切點 = 弧終點
-        double  azStart = 0.0;  ///< 弧起點切線方位角 [rad]
-        double  len     = 0.0;  ///< 弧長 [m]
-    };
-
-    // 切線段調整後的 startPI / endPI
-    QVector<QPointF> tanStart(n), tanEnd(n);
-    for (int i = 0; i < n; ++i) {
-        tanStart[i] = m_elems[i].startPI;
-        tanEnd[i]   = m_elems[i].endPI;
-    }
-
-    QVector<ArcData> arcs(n);
-
-    // ── Pass 1：解算 Fixed CircularArc ───────────────────────────────────────
-    for (int i = 0; i < n; ++i) {
-        const auto& e = m_elems[i];
-        if (e.type != EditableElementType::CircularArc) continue;
-        if (e.mode != ConstraintMode::Fixed) continue;  // Floating → Step 3
-
-        const QPointF center = e.startPI;   // Fixed arc 用 startPI 存圓心
-        const double  R      = std::abs(e.radius);
-        if (R < 1e-9) {
-            qWarning() << "[HorizontalAlignmentEdit] Arc radius ~ 0 at index" << i;
-            continue;
-        }
-
-        // 尋找前後切線元素
-        int prevT = -1;
-        for (int j = i - 1; j >= 0; --j)
-            if (m_elems[j].type == EditableElementType::Tangent) { prevT = j; break; }
-
-        int nextT = -1;
-        for (int j = i + 1; j < n; ++j)
-            if (m_elems[j].type == EditableElementType::Tangent) { nextT = j; break; }
-
-        ArcData arc;
-
-        // ── T1：圓心到前切線的垂足 ──────────────────────────────────────────
-        if (prevT >= 0) {
-            arc.start = footOfPerp(tanStart[prevT], tanEnd[prevT], center);
-            tanEnd[prevT] = arc.start;              // 修正前切線終點
-            arc.azStart   = azimuthOf(tanStart[prevT], arc.start);
-        } else {
-            // 無前切線：用 startPI 本身作為弧起點（standalone arc）
-            arc.start   = center + QPointF(0, R);  // 正北方向作 fallback
-            arc.azStart = 0.0;
-        }
-
-        // ── T2：圓心到後切線的垂足 ──────────────────────────────────────────
-        if (nextT >= 0) {
-            arc.end         = footOfPerp(tanStart[nextT], tanEnd[nextT], center);
-            tanStart[nextT] = arc.end;              // 修正後切線起點
-        } else {
-            arc.end = center + QPointF(R, 0);       // 正東方向作 fallback
-        }
-
-        // ── 弧長 ─────────────────────────────────────────────────────────────
-        // 以圓心角計算：Δθ = angle between (center→T1) and (center→T2)
-        const QPointF v1 = arc.start - center;
-        const QPointF v2 = arc.end   - center;
-        const double  cross = v1.x() * v2.y() - v1.y() * v2.x();
-        const double  dot   = v1.x() * v2.x() + v1.y() * v2.y();
-        const double  delta = std::abs(std::atan2(cross, dot));  // 始終取正值
-        arc.len = R * delta;
-
-        if (arc.len < 1e-9) {
-            qWarning() << "[HorizontalAlignmentEdit] Arc length ~ 0 at index" << i;
-            continue;
-        }
-
-        arc.valid     = true;
-        arcs[i]       = arc;
-        m_elems[i].solved = true;
-    }
-
-    // ── Pass 2：建立 AlignmentPoint 序列 ─────────────────────────────────────
-    QVector<AlignmentPoint> pts;
-    pts.reserve(n + 1);
-    double chainage = 0.0;
-
-    for (int i = 0; i < n; ++i) {
-        const auto& e = m_elems[i];
-        AlignmentPoint pt;
-
-        if (e.type == EditableElementType::Tangent) {
-            const double len = QLineF(tanStart[i], tanEnd[i]).length();
-            if (len < 1e-9) continue;   // 退化段略過
-
-            pt.tsc      = QStringLiteral("TT");
-            pt.easting  = tanStart[i].x();
-            pt.northing = tanStart[i].y();
-            pt.azimuth  = azimuthOf(tanStart[i], tanEnd[i]);
-            pt.length   = len;
-            pt.chainage = chainage;
-            chainage   += len;
-            pts.append(pt);
-
-        } else if (e.type == EditableElementType::CircularArc) {
-            if (!arcs[i].valid) continue;
-            const ArcData& arc = arcs[i];
-
-            pt.tsc      = QStringLiteral("CC");
-            pt.easting  = arc.start.x();
-            pt.northing = arc.start.y();
-            pt.azimuth  = arc.azStart;
-            pt.radius   = e.radius;    // 絕對值；load() 自動判斷符號
-            pt.length   = arc.len;
-            pt.chainage = chainage;
-            chainage   += arc.len;
-            pts.append(pt);
-        }
-        // SpiralIn / SpiralOut → Step 4
-    }
-
-    // ── 終端哨兵點（length = 0）───────────────────────────────────────────────
-    if (!pts.isEmpty()) {
-        AlignmentPoint sentinel;
-        sentinel.tsc     = QStringLiteral("TT");
-        sentinel.length  = 0.0;
-        sentinel.chainage = chainage;
-
-        // 最後一個元素的終點
-        const int last = n - 1;
-        if (m_elems[last].type == EditableElementType::Tangent) {
-            sentinel.easting  = tanEnd[last].x();
-            sentinel.northing = tanEnd[last].y();
-            sentinel.azimuth  = azimuthOf(tanStart[last], tanEnd[last]);
-        } else if (m_elems[last].type == EditableElementType::CircularArc
-                   && arcs[last].valid) {
-            sentinel.easting  = arcs[last].end.x();
-            sentinel.northing = arcs[last].end.y();
-            // 弧終點切線方位角 = 弧起點方位角 + 圓心角（帶符號由 load() 決定）
-            sentinel.azimuth  = arcs[last].azStart;
-        } else {
-            // fallback：沿用最後一個 AlignmentPoint 的方位角
-            sentinel.easting  = pts.last().easting;
-            sentinel.northing = pts.last().northing;
-            sentinel.azimuth  = pts.last().azimuth;
-        }
-
-        pts.append(sentinel);
-    }
-
-    // ── Pass 3：交給 HorizontalAlignment 建立幾何元素 ────────────────────────
+    // ── 委由 AlignmentSolver 完成所有解算 ───────────────────────────────────
+    //
+    //  NOTE: The previous design had a Pass 1 here that recomputed arc
+    //  cut-points and built an intermediate AlignmentPoint sequence.  That
+    //  code contained a stale assumption — it read `e.startPI` as the arc
+    //  centre, whereas `addFixedCurve` now stores the arc centre in
+    //  `e.arcCenter` and the PC in `e.startPI`.  The intermediate pts array
+    //  was also discarded immediately after (AlignmentSolver::solve rebuilt
+    //  it from scratch), so the whole pass was dead code.  It has been
+    //  removed; AlignmentSolver::solve(m_elems) is the sole authoritative
+    //  solver for both Fixed and Floating elements.
     AlignmentSolver solver;
     m_result = solver.solve(m_elems);
     emit changed();

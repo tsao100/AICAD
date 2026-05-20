@@ -668,6 +668,50 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             pt.chainage = chainage;
             chainage   += arc.arcLen;
             pts.append(pt);
+
+            // ── PT waypoint: anchor the arc's endpoint in pts ─────────────────
+            // The arc's PT (end-point) must always appear in the pts array so
+            // that (a) PI grips are drawn there, and (b) it is never lost when
+            // a subsequent element is appended and the sentinel moves.
+            //
+            // Exception: if the very next non-SCS element is a Tangent, its
+            // own easting/northing in pts already anchors this point (via
+            // tanStart[nextTangent] which Pass 2 sets to arc.pt for a Floating
+            // arc, or which is already at the right position for a Fixed arc
+            // followed by a tangent).  In that case we skip the extra point to
+            // avoid a zero-length degenerate element.
+            {
+                // Look ahead: find the next emittable element in m_elems
+                bool nextIsTangent = false;
+                for (int j = i + 1; j < n; ++j) {
+                    if (handledBySCS[j]) continue;  // part of SCS, skip
+                    if (elems[j].type == EditableElementType::SpiralIn
+                        && scsData[j].valid) break;  // SCS group — not a Tangent
+                    if (elems[j].type == EditableElementType::Tangent) {
+                        nextIsTangent = true;
+                    }
+                    break;  // only examine the immediate next emittable element
+                }
+
+                if (!nextIsTangent) {
+                    // Compute azimuth at PT (tangent direction at arc end).
+                    // The arc sweeps by delta = arcLen / R from azPC.
+                    // Sign follows e.radius: positive = right turn (CW), negative = left.
+                    const double R           = std::abs(e.radius);
+                    const double delta       = (R > 1e-9) ? (arc.arcLen / R) : 0.0;
+                    const double signedDelta = (e.radius >= 0.0) ? delta : -delta;
+                    const double azPT        = arc.azPC + signedDelta;
+
+                    AlignmentPoint ptWaypoint;
+                    ptWaypoint.tsc      = QStringLiteral("TT");
+                    ptWaypoint.easting  = arc.pt.x();
+                    ptWaypoint.northing = arc.pt.y();
+                    ptWaypoint.azimuth  = azPT;
+                    ptWaypoint.length   = 0.0;
+                    ptWaypoint.chainage = chainage;
+                    pts.append(ptWaypoint);
+                }
+            }
         }
     }
 
@@ -698,7 +742,17 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                        && arcData[i].valid) {
                 sentinel.easting  = arcData[i].pt.x();
                 sentinel.northing = arcData[i].pt.y();
-                sentinel.azimuth  = arcData[i].azPC;
+                // Azimuth at PT = azimuth at PC ± (arc angle).
+                // delta = arcLen / R; sign follows e.radius sign.
+                {
+                    const double R    = std::abs(elems[i].radius);
+                    const double arc_delta = (R > 1e-9)
+                                            ? (arcData[i].arcLen / R)
+                                            : 0.0;
+                    const double signedDelta = (elems[i].radius >= 0.0)
+                                              ? arc_delta : -arc_delta;
+                    sentinel.azimuth = arcData[i].azPC + signedDelta;
+                }
                 break;
             }
         }

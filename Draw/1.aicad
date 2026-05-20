@@ -3,6 +3,8 @@
         "horizontal": {
             "elements": [
                 {
+                    "centerX": 0,
+                    "centerY": 0,
                     "endX": -41.195613861083984,
                     "endY": -7.780396461486816,
                     "length": 176.82173362729844,
@@ -16,6 +18,8 @@
                     "type": 0
                 },
                 {
+                    "centerX": 0,
+                    "centerY": 0,
                     "endX": 62.01398468017578,
                     "endY": 98.18145751953125,
                     "length": 147.9193554952921,
@@ -29,6 +33,8 @@
                     "type": 0
                 },
                 {
+                    "centerX": 0,
+                    "centerY": 0,
                     "endX": 103.02106475830078,
                     "endY": 252.22732543945312,
                     "length": 159.41050793387421,
@@ -40,6 +46,96 @@
                     "tangentIdxAfter": -1,
                     "tangentIdxBefore": -1,
                     "type": 0
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 200,
+                    "solved": false,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 1,
+                    "tangentIdxBefore": 0,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 100,
+                    "solved": false,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 2,
+                    "tangentIdxBefore": 1,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 57.38692092895508,
+                    "endY": -12.093151092529297,
+                    "length": 0,
+                    "mode": 0,
+                    "radius": 155.5516673964487,
+                    "solved": false,
+                    "startX": -2.2321267127990723,
+                    "startY": -134.34231567382812,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": -9.892202377319336,
+                    "endY": 116.13178253173828,
+                    "length": 0,
+                    "mode": 0,
+                    "radius": 109.44883611496986,
+                    "solved": false,
+                    "startX": -136.16046142578125,
+                    "startY": 4.9403300285339355,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": -125.25747680664062,
+                    "endY": -197.44871520996094,
+                    "length": 105.6371355894959,
+                    "mode": 0,
+                    "radius": 0,
+                    "solved": false,
+                    "startX": -95.20931243896484,
+                    "startY": -298.72216796875,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 0
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 100,
+                    "solved": false,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 0,
+                    "tangentIdxBefore": 7,
+                    "type": 1
                 }
             ]
         },
@@ -49,107 +145,6 @@
         }
     },
     "features": [
-        {
-            "constraints": [
-            ],
-            "geometries": [
-                {
-                    "closed": true,
-                    "points": [
-                        {
-                            "x": -19.704301834106445,
-                            "y": -24.3262996673584
-                        },
-                        {
-                            "x": 19.704301834106445,
-                            "y": -24.3262996673584
-                        },
-                        {
-                            "x": 19.704301834106445,
-                            "y": 23.109983444213867
-                        },
-                        {
-                            "x": -19.704301834106445,
-                            "y": 23.109983444213867
-                        }
-                    ],
-                    "role": 0,
-                    "type": 4,
-                    "uuid": "eda0eee9-d868-4543-8e19-88cf253882f1"
-                }
-            ],
-            "id": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
-            "name": "Sketch 4",
-            "parentId": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
-            "planeData": {
-                "createdTime": "2026-05-18T20:06:59",
-                "geometry": {
-                    "normal": [
-                        0,
-                        -1,
-                        0
-                    ],
-                    "origin": [
-                        0,
-                        0,
-                        0
-                    ],
-                    "xAxis": [
-                        0,
-                        0,
-                        1
-                    ]
-                },
-                "id": "7f4abc81-86e2-4652-8a32-a254ac14a8e3",
-                "isLocked": true,
-                "modifiedTime": "2026-05-18T20:06:59",
-                "name": "XZ",
-                "type": 3
-            },
-            "planeId": "7f4abc81-86e2-4652-8a32-a254ac14a8e3",
-            "planeName": "XZ",
-            "suppressed": false,
-            "type": "Sketch",
-            "visible": false
-        },
-        {
-            "constraints": [
-            ],
-            "geometries": [
-            ],
-            "id": "{4517f981-11f6-467c-a854-168e8d589b63}",
-            "name": "Sketch 6",
-            "planeData": {
-                "createdTime": "2026-05-18T20:06:59",
-                "geometry": {
-                    "normal": [
-                        0,
-                        0,
-                        1
-                    ],
-                    "origin": [
-                        0,
-                        0,
-                        0
-                    ],
-                    "xAxis": [
-                        1,
-                        0,
-                        0
-                    ]
-                },
-                "id": "470cef81-2218-4bc9-baae-9acc5c447bc7",
-                "isLocked": true,
-                "modifiedTime": "2026-05-18T20:06:59",
-                "name": "XY",
-                "type": 0
-            },
-            "planeId": "470cef81-2218-4bc9-baae-9acc5c447bc7",
-            "planeName": "XY",
-            "suppressed": false,
-            "type": "Sketch",
-            "visible": false
-        },
         {
             "constraints": [
             ],
@@ -223,7 +218,7 @@
             "id": "{53c30f20-74d2-4665-9a96-9c6dcce775f9}",
             "name": "Sketch 1",
             "planeData": {
-                "createdTime": "2026-05-18T20:06:59",
+                "createdTime": "2026-05-20T11:58:39",
                 "geometry": {
                     "normal": [
                         0,
@@ -241,16 +236,28 @@
                         0
                     ]
                 },
-                "id": "470cef81-2218-4bc9-baae-9acc5c447bc7",
+                "id": "9075f33a-e1df-45f4-91d1-277953628b1d",
                 "isLocked": true,
-                "modifiedTime": "2026-05-18T20:06:59",
+                "modifiedTime": "2026-05-20T11:58:39",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "470cef81-2218-4bc9-baae-9acc5c447bc7",
+            "planeId": "9075f33a-e1df-45f4-91d1-277953628b1d",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
+            "visible": false
+        },
+        {
+            "draftAngle": 0,
+            "heightExpression": "21.5",
+            "id": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
+            "name": "Extrude 3",
+            "reversed": false,
+            "sketchId": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
+            "suppressed": false,
+            "symmetric": false,
+            "type": "Extrude",
             "visible": false
         },
         {
@@ -263,19 +270,7 @@
             "suppressed": false,
             "symmetric": false,
             "type": "Extrude",
-            "visible": true
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "21.5",
-            "id": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
-            "name": "Extrude 3",
-            "reversed": false,
-            "sketchId": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": true
+            "visible": false
         },
         {
             "constraints": [
@@ -296,7 +291,7 @@
             "name": "Sketch 2",
             "parentId": "{27cb2df7-7a28-49d1-96fd-9708afd07cd9}",
             "planeData": {
-                "createdTime": "2026-05-18T20:06:59",
+                "createdTime": "2026-05-20T11:58:39",
                 "geometry": {
                     "normal": [
                         1,
@@ -314,17 +309,118 @@
                         0
                     ]
                 },
-                "id": "ffc8a1c8-b740-47b4-b490-c72b44856bf6",
+                "id": "b9071ebd-121d-4b9a-8ee1-b205a125c809",
                 "isLocked": true,
-                "modifiedTime": "2026-05-18T20:06:59",
+                "modifiedTime": "2026-05-20T11:58:39",
                 "name": "YZ",
                 "type": 1
             },
-            "planeId": "ffc8a1c8-b740-47b4-b490-c72b44856bf6",
+            "planeId": "b9071ebd-121d-4b9a-8ee1-b205a125c809",
             "planeName": "YZ",
             "suppressed": false,
             "type": "Sketch",
             "visible": false
+        },
+        {
+            "constraints": [
+            ],
+            "geometries": [
+                {
+                    "closed": true,
+                    "points": [
+                        {
+                            "x": -19.704301834106445,
+                            "y": -24.3262996673584
+                        },
+                        {
+                            "x": 19.704301834106445,
+                            "y": -24.3262996673584
+                        },
+                        {
+                            "x": 19.704301834106445,
+                            "y": 23.109983444213867
+                        },
+                        {
+                            "x": -19.704301834106445,
+                            "y": 23.109983444213867
+                        }
+                    ],
+                    "role": 0,
+                    "type": 4,
+                    "uuid": "eda0eee9-d868-4543-8e19-88cf253882f1"
+                }
+            ],
+            "id": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
+            "name": "Sketch 4",
+            "parentId": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
+            "planeData": {
+                "createdTime": "2026-05-20T11:58:39",
+                "geometry": {
+                    "normal": [
+                        0,
+                        -1,
+                        0
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        0,
+                        0,
+                        1
+                    ]
+                },
+                "id": "40ae8936-1e4f-455d-bcd3-4440dd5508a2",
+                "isLocked": true,
+                "modifiedTime": "2026-05-20T11:58:39",
+                "name": "XZ",
+                "type": 3
+            },
+            "planeId": "40ae8936-1e4f-455d-bcd3-4440dd5508a2",
+            "planeName": "XZ",
+            "suppressed": false,
+            "type": "Sketch",
+            "visible": false
+        },
+        {
+            "constraints": [
+            ],
+            "geometries": [
+            ],
+            "id": "{4517f981-11f6-467c-a854-168e8d589b63}",
+            "name": "Sketch 6",
+            "planeData": {
+                "createdTime": "2026-05-20T11:58:39",
+                "geometry": {
+                    "normal": [
+                        0,
+                        0,
+                        1
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        1,
+                        0,
+                        0
+                    ]
+                },
+                "id": "9075f33a-e1df-45f4-91d1-277953628b1d",
+                "isLocked": true,
+                "modifiedTime": "2026-05-20T11:58:39",
+                "name": "XY",
+                "type": 0
+            },
+            "planeId": "9075f33a-e1df-45f4-91d1-277953628b1d",
+            "planeName": "XY",
+            "suppressed": false,
+            "type": "Sketch",
+            "visible": true
         }
     ],
     "fileName": "1.aicad",
@@ -332,16 +428,16 @@
     },
     "version": "1.0",
     "viewState": {
-        "atX": -4.866600036621094,
-        "atY": 41.375946044921875,
-        "atZ": 1.2163143157958984,
-        "eyeX": 225.96051788330084,
-        "eyeY": -189.45117187500006,
-        "eyeZ": 232.04343223571783,
-        "scale": 2.449178644917954,
-        "upX": -0.4082482904638631,
-        "upY": 0.4082482904638631,
-        "upZ": 0.8164965809277261,
-        "viewType": 7
+        "atX": 8.200187683105469,
+        "atY": -23.247421264648438,
+        "atZ": 0,
+        "eyeX": 8.200187683105469,
+        "eyeY": -23.247421264648438,
+        "eyeZ": 0,
+        "scale": 1.7970776300676574,
+        "upX": 0,
+        "upY": 1,
+        "upZ": 0,
+        "viewType": 1
     }
 }

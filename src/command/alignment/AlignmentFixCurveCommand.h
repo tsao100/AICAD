@@ -21,6 +21,7 @@
 
 #include "command/alignment/AlignmentCommandBase.h"
 #include "command/CommandFactory.h"
+#include <QPointF>
 #include <QVector2D>
 
 namespace aicad {
@@ -52,13 +53,15 @@ private:
 
     /**
      * @brief 由三點求外接圓心與半徑。
+     *
+     * outCenter 以 QPointF（double 精度）回傳，避免 QVector2D float 截斷誤差。
      * @return 成功回傳 true；三點共線時回傳 false。
      */
     static bool circumcircle(const QVector2D& p1,
                              const QVector2D& p2,
                              const QVector2D& p3,
-                             QVector2D& outCenter,
-                             double&    outRadius);
+                             QPointF& outCenter,
+                             double&  outRadius);
 
     // ── 狀態 ─────────────────────────────────────────────────────────────────
     railway::AlignmentDocument* m_alignDoc   = nullptr;

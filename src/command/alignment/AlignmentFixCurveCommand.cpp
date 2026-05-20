@@ -128,8 +128,8 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
 
     // ── Step 3：終點 → 求外接圓 → addFixedCurve + solve ─────────────────────
     case PickState::WaitingForEnd: {
-        QVector2D center;
-        double    radius = 0.0;
+        QPointF center;
+        double  radius = 0.0;
 
         if (!circumcircle(m_startPoint, m_midPoint, point, center, radius)) {
             outputMessage("Error: The three points are collinear — "
@@ -141,12 +141,12 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
         }
 
         // ── 建立 Fixed CircularArc ─────────────────────────────────────────
-        QPointF centerF   (center.x(),       center.y());
+        // center is already QPointF (double precision) from circumcircle()
         QPointF arcStartF (m_startPoint.x(), m_startPoint.y());
         QPointF arcEndF   (point.x(),        point.y());
 
         int idx = m_alignDoc->horizontal()->addFixedCurve(
-                      arcStartF, arcEndF, centerF, radius);
+                      arcStartF, arcEndF, center, radius);
         m_alignDoc->horizontal()->solve();   // emit changed() → AlignmentRenderer::refresh()
 
         outputMessage(
@@ -210,7 +210,7 @@ void AlignmentFixCurveCommand::cleanup()
 bool AlignmentFixCurveCommand::circumcircle(const QVector2D& p1,
                                             const QVector2D& p2,
                                             const QVector2D& p3,
-                                            QVector2D&       outCenter,
+                                            QPointF&         outCenter,
                                             double&          outRadius)
 {
     const double ax = p2.x() - p1.x();
@@ -231,11 +231,12 @@ bool AlignmentFixCurveCommand::circumcircle(const QVector2D& p1,
     const double ux = (by * aa - ay * bb) / (2.0 * det);
     const double uy = (ax * bb - bx * aa) / (2.0 * det);
 
-    outCenter = QVector2D(
-        static_cast<float>(p1.x() + ux),
-        static_cast<float>(p1.y() + uy));
+    // Keep full double precision — do NOT downcast to float via QVector2D
+    const double cx = static_cast<double>(p1.x()) + ux;
+    const double cy = static_cast<double>(p1.y()) + uy;
 
-    outRadius = static_cast<double>(QVector2D(outCenter - p1).length());
+    outCenter = QPointF(cx, cy);
+    outRadius = std::hypot(ux, uy);   // distance from p1 to center, in double
     return true;
 }
 
