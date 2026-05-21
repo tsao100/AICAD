@@ -16,3 +16,10 @@ Solved:
     Snap and grips ON. need to check later.
 
     show all when sketch edit start, but align to plane not yet.
+
+
+Chrome 17:50
+
+FireFox: 18:10
+
+Edge: 19:10

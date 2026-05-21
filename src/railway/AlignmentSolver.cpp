@@ -151,21 +151,22 @@ SolvedCurve AlignmentSolver::solveFloatingCurve(
 // ============================================================================
 
 SolvedSCS AlignmentSolver::solveSCS(
-    double radius, double spiralLength,
+    double radius, double spiralLength1, double spiralLength2,
     const QPointF& tanStartPrev, const QPointF& tanEndPrev,
     const QPointF& tanStartNext, const QPointF& tanEndNext)
 {
     SolvedSCS result;
 
     const double R  = std::abs(radius);
-    const double Ls = std::abs(spiralLength);
+    const double L1 = std::abs(spiralLength1);
+    const double L2 = std::abs(spiralLength2);
 
     if (R < 1e-9) {
         qWarning() << "[AlignmentSolver] solveSCS: radius ≈ 0";
         return result;
     }
-    if (Ls < 1e-9) {
-        qWarning() << "[AlignmentSolver] solveSCS: spiral length ≈ 0";
+    if (L1 < 1e-9 && L2 < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveSCS: both spiral lengths ≈ 0";
         return result;
     }
 
@@ -185,64 +186,85 @@ SolvedSCS AlignmentSolver::solveSCS(
         return result;
     }
 
-    // ── Step 4: Appendix B spiral parameters ─────────────────────────────────
-    //   Θs = Ls / (2R)
-    //   Xm = Ls × (1 − Θs²/10)
-    //   Ym = Ls × Θs / 3
-    //   Ts = (R + Ym) × tan(Δ/2) + Xm
+    const int sign = (delta >= 0.0) ? 1 : -1;   // +1 = right turn
 
-    const double thetaS = Ls / (2.0 * R);
-    const double Xm     = Ls * (1.0 - (thetaS * thetaS) / 10.0);
-    const double Ym     = Ls * thetaS / 3.0;
-    const double Ts     = (R + Ym) * std::tan(absDelta * 0.5) + Xm;
+    // ── Step 4: Per-spiral parameters (asymmetric) ────────────────────────────
+    //   Θ  = L / (2R)
+    //   Xm = L × (1 − Θ²/10)
+    //   Ym = L × Θ / 3
 
-    // ── Step 5: TS and ST (SCS start/end on tangents) ────────────────────────
-    //   TS = PI − Ts × unit(α₁)
-    //   ST = PI − Ts × unit(α₂) [going backward along exit tangent]
+    const double thetaS1 = L1 / (2.0 * R);
+    const double Xm1     = L1 * (1.0 - (thetaS1 * thetaS1) / 10.0);
+    const double Ym1     = L1 * thetaS1 / 3.0;
+
+    const double thetaS2 = L2 / (2.0 * R);
+    const double Xm2     = L2 * (1.0 - (thetaS2 * thetaS2) / 10.0);
+    const double Ym2     = L2 * thetaS2 / 3.0;
+
+    // ── Step 5: Asymmetric tangent distances T1 and T2 from PI ───────────────
+    //
+    //  The shifted-PI approach: each spiral shifts its adjacent tangent
+    //  perpendicular by Ym and tangentially by Xm, so the virtual arc centre
+    //  is displaced.  For ASYMMETRIC spirals the two tangent distances differ:
+    //
+    //    T1 = Xm1 + (R + Ym1)·tan(Δ/2) + (Ym2 − Ym1) / sin(Δ)
+    //    T2 = Xm2 + (R + Ym2)·tan(Δ/2) − (Ym2 − Ym1) / sin(Δ)
+    //
+    //  When Ym1 = Ym2 (symmetric case) both reduce to the standard formula.
+    //  Derivation: the two shifted tangent lines must intersect at the same
+    //  virtual PI, giving the correction term ΔYm / sin(Δ).
+
+    const double tanHalfDelta = std::tan(absDelta * 0.5);
+    const double sinDelta     = std::sin(absDelta);
+
+    double correction = 0.0;
+    if (sinDelta > 1e-9)
+        correction = (Ym2 - Ym1) / sinDelta;
+
+    const double T1 = Xm1 + (R + Ym1) * tanHalfDelta + correction;
+    const double T2 = Xm2 + (R + Ym2) * tanHalfDelta - correction;
+
+    // ── Step 6: TS and ST ────────────────────────────────────────────────────
+    //   TS = PI − T1 · unit(α₁)   (backward along entry tangent)
+    //   ST = PI + T2 · unit(α₂)   (forward  along exit  tangent from PI)
 
     const QPointF unit1(std::sin(az1), std::cos(az1));
     const QPointF unit2(std::sin(az2), std::cos(az2));
 
-    const QPointF tsPoint = pi - Ts * unit1;   // entry spiral start
-    const QPointF stPoint = pi + Ts * unit2;   // exit  spiral end
+    const QPointF tsPoint = pi - T1 * unit1;   // entry spiral start
+    const QPointF stPoint = pi + T2 * unit2;   // exit  spiral end
 
-    // ── Step 6: SC and CS (arc tangent cut-points) ───────────────────────────
-    //   The entry spiral deflects by Θs; the arc chord (from TS to SC) is
-    //   in local spiral coordinates. We reconstruct from the shifted circle
-    //   centre. In practice, given the local frame:
-    //     SC = TS + Xm·unit(α₁) + Ym·unit_perp(α₁)
-    //   where unit_perp is 90° right for a right-turn, left for a left-turn.
+    // ── Step 7: SC and CS (arc tangent cut-points) ───────────────────────────
+    //   SC = TS + Xm1·unit(α₁) + sign·Ym1·perp1
+    //   CS = ST − Xm2·unit(α₂) − sign·Ym2·perp2
+    //
+    //   perp = 90° right of unit  (CW perpendicular in Easting/Northing)
+    //   Sign: +1 = right-hand curve (delta > 0), −1 = left-hand curve.
 
-    const int sign = (delta >= 0.0) ? 1 : -1;   // +1 = right turn
-
-    // unit perpendicular (90° right of unit1)
-    const QPointF perp1( std::cos(az1), -std::sin(az1));   // (cosA, -sinA) in E/N
+    // 90° right of unit = (cos az, -sin az)
+    const QPointF perp1( std::cos(az1), -std::sin(az1));
     const QPointF perp2( std::cos(az2), -std::sin(az2));
 
-    const QPointF scPoint = tsPoint + Xm * unit1 + sign * Ym * perp1;
+    const QPointF scPoint = tsPoint + Xm1 * unit1 + sign * Ym1 * perp1;
+    const QPointF csPoint = stPoint - Xm2 * unit2 - sign * Ym2 * perp2;
 
-    // CS: mirror of SC construction from ST backward along exit tangent
-    // Exit spiral: TS_exit = ST (reversed), so:
-    //   CS = ST − Xm·unit(α₂) − sign·Ym·perp2   (walking from ST → CS)
-    const QPointF csPoint = stPoint - Xm * unit2 - sign * Ym * perp2;
-
-    // ── Step 7: arc length (SC → CS) ─────────────────────────────────────────
-    //   Arc deflection = Δ − 2·Θs
-    const double arcDelta = absDelta - 2.0 * thetaS;
+    // ── Step 8: arc length (SC → CS) ─────────────────────────────────────────
+    //   Arc deflection = Δ − Θ1 − Θ2
+    const double arcDelta = absDelta - thetaS1 - thetaS2;
     if (arcDelta < -1e-9) {
         qWarning() << "[AlignmentSolver] solveSCS: arc delta < 0 "
-                      "(Δ < 2·Θs — spirals overlap). Δ="
+                      "(Δ < Θ1+Θ2 — spirals overlap). Δ="
                    << qRadiansToDegrees(absDelta)
-                   << "2Θs=" << qRadiansToDegrees(2.0 * thetaS);
+                   << "Θ1+Θ2=" << qRadiansToDegrees(thetaS1 + thetaS2);
         return result;
     }
     const double arcLen = R * std::max(0.0, arcDelta);
 
-    // ── Step 8: azimuths at key points ───────────────────────────────────────
-    //   At SC: tangent has rotated by Θs from α₁
-    //   At CS: tangent has rotated by (Δ − Θs) from α₁  i.e. (Θs before α₂)
-    const double azSC = az1 + sign * thetaS;
-    const double azCS = az2 - sign * thetaS;
+    // ── Step 9: azimuths at SC and CS ────────────────────────────────────────
+    //   At SC: tangent rotated by Θ1 from α₁
+    //   At CS: tangent is Θ2 short of α₂
+    const double azSC = az1 + sign * thetaS1;
+    const double azCS = az2 - sign * thetaS2;
 
     // ── Populate result ───────────────────────────────────────────────────────
     result.valid    = true;
@@ -255,10 +277,12 @@ SolvedSCS AlignmentSolver::solveSCS(
     result.azCS     = azCS;
     result.azST     = az2;
     result.arcLen   = arcLen;
-    result.Ls       = Ls;
+    result.Ls1      = L1;
+    result.Ls2      = L2;
     result.R        = R;
     result.delta    = delta;
-    result.thetaS   = thetaS;
+    result.thetaS1  = thetaS1;
+    result.thetaS2  = thetaS2;
 
     return result;
 }
@@ -443,10 +467,11 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         }
 
         const double R  = std::abs(elems[i+1].radius);
-        const double Ls = elems[i].length;
+        const double L1 = elems[i].length;    // entry spiral length
+        const double L2 = elems[i+2].length;  // exit  spiral length
 
         const SolvedSCS scs = solveSCS(
-            R, Ls,
+            R, L1, L2,
             tanStart[tb], tanEnd[tb],
             tanStart[ta], tanEnd[ta]);
 
@@ -575,13 +600,27 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     pts.reserve(n * 2);
     double chainage = 0.0;
 
-    // Track which indices are part of an SCS group (to avoid double-emitting)
+    // Track which indices are part of an SCS group (to avoid double-emitting).
+    //
+    // CRITICAL: the exit tangent (tangentIdxAfter) of every SCS group must also
+    // be suppressed from the main loop.  addSCS() always appends SCS elements
+    // AFTER the existing tangents, so the exit tangent index is always LOWER
+    // than the SpiralIn index.  Emitting it in index order inserts a TT
+    // keypoint into pts[] BEFORE the TS/SC/CS keypoints (wrong chainage order).
+    //
+    // Instead, the SCS emission block emits the trimmed exit tangent TT
+    // immediately after the CS keypoint — correct order, correct position.
     QVector<bool> handledBySCS(n, false);
     for (int i = 0; i < n; ++i) {
         if (scsData[i].valid) {
-            handledBySCS[i]                    = true;  // SpiralIn
-            handledBySCS[scsData[i].arcIdx]    = true;  // CircularArc
-            handledBySCS[scsData[i].spiralOutIdx] = true; // SpiralOut
+            handledBySCS[i]                       = true;  // SpiralIn
+            handledBySCS[scsData[i].arcIdx]       = true;  // CircularArc
+            handledBySCS[scsData[i].spiralOutIdx] = true;  // SpiralOut
+
+            // Suppress exit tangent — emitted inline by the SCS block (after CS).
+            const int ta = elems[i].tangentIdxAfter;
+            if (ta >= 0 && ta < n && ta < i)
+                handledBySCS[ta] = true;
         }
     }
 
@@ -592,8 +631,9 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         // ── SCS group: SpiralIn drives emission of all three sub-elements ──
         if (e.type == EditableElementType::SpiralIn && scsData[i].valid) {
             const SolvedSCS& scs = scsData[i].scs;
-            const double R = scs.R;
-            const double Ls = scs.Ls;
+            const double R   = scs.R;
+            const double Ls1 = scs.Ls1;   // entry spiral length
+            const double Ls2 = scs.Ls2;   // exit  spiral length (may differ from Ls1)
 
             // Emit TS point (entry spiral start): tsc = "TS"
             AlignmentPoint tspt;
@@ -602,10 +642,10 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             tspt.easting   = scs.tsPoint.x();
             tspt.northing  = scs.tsPoint.y();
             tspt.azimuth   = scs.azTS;
-            tspt.length    = Ls;
+            tspt.length    = Ls1;
             tspt.radius    = R;
             tspt.chainage  = chainage;
-            chainage      += Ls;
+            chainage      += Ls1;
             pts.append(tspt);
 
             // Emit SC point (arc start): tsc = "SC"
@@ -628,14 +668,43 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             cspt.easting   = scs.csPoint.x();
             cspt.northing  = scs.csPoint.y();
             cspt.azimuth   = scs.azCS;
-            cspt.length    = Ls;
+            cspt.length    = Ls2;
             cspt.radius    = R;
             cspt.chainage  = chainage;
-            chainage      += Ls;
+            chainage      += Ls2;
             pts.append(cspt);
 
-            // SpiralOut's endpoint (ST) will appear as the next TT sentinel
-            // or as the next tangent's start — no extra point needed here.
+            // Emit the trimmed exit tangent TT immediately after CS, in
+            // correct chainage order.  This point serves two purposes:
+            //   1. It is the "next" seen by makeReversedPlacement() for the
+            //      spiral-out element — its easting/northing/azimuth give the
+            //      ST anchor so the reversed spiral draws from the right place.
+            //   2. It becomes a rendered TangentElement (ST → tanEnd[ta]),
+            //      i.e. the trimmed exit tangent is visible on screen.
+            //
+            // tanStart[ta] was set to scs.stPoint by Pass 2b, so it already
+            // holds the correct trimmed start.  tanEnd[ta] is the unchanged
+            // far end of the exit tangent.
+            {
+                const int ta = e.tangentIdxAfter;
+                if (ta >= 0 && ta < n
+                    && elems[ta].type == EditableElementType::Tangent) {
+
+                    const QPointF& stPt  = tanStart[ta];  // = scs.stPoint
+                    const QPointF& endPt = tanEnd[ta];    // far end (unchanged)
+                    const double   tlen  = QLineF(stPt, endPt).length();
+
+                    AlignmentPoint stTT;
+                    stTT.tsc      = QStringLiteral("TT");
+                    stTT.easting  = stPt.x();
+                    stTT.northing = stPt.y();
+                    stTT.azimuth  = scs.azST;          // forward direction at ST
+                    stTT.length   = tlen;
+                    stTT.chainage = chainage;
+                    chainage     += tlen;
+                    pts.append(stTT);
+                }
+            }
             continue;
         }
 
@@ -726,10 +795,24 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         for (int i = n - 1; i >= 0; --i) {
             if (elems[i].type == EditableElementType::SpiralOut
                 && i >= 2 && scsData[i - 2].valid) {
-                const SolvedSCS& scs = scsData[i - 2].scs;
-                sentinel.easting  = scs.stPoint.x();
-                sentinel.northing = scs.stPoint.y();
-                sentinel.azimuth  = scs.azST;
+                // The trimmed exit tangent TT (starting at scs.stPoint) was
+                // already emitted directly after the CS keypoint.  The sentinel
+                // must therefore point to the FAR END of the exit tangent so it
+                // doesn't duplicate the TT point and provides the correct
+                // end-of-alignment anchor.
+                const int ta = elems[i - 2].tangentIdxAfter;  // SpiralIn is i-2
+                if (ta >= 0 && ta < n
+                    && elems[ta].type == EditableElementType::Tangent) {
+                    sentinel.easting  = tanEnd[ta].x();
+                    sentinel.northing = tanEnd[ta].y();
+                    sentinel.azimuth  = azimuthOf(tanStart[ta], tanEnd[ta]);
+                } else {
+                    // Fallback: no exit tangent found, anchor at ST
+                    const SolvedSCS& scs = scsData[i - 2].scs;
+                    sentinel.easting  = scs.stPoint.x();
+                    sentinel.northing = scs.stPoint.y();
+                    sentinel.azimuth  = scs.azST;
+                }
                 break;
             } else if (elems[i].type == EditableElementType::Tangent) {
                 const double len = QLineF(tanStart[i], tanEnd[i]).length();

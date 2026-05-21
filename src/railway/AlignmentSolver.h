@@ -87,10 +87,12 @@ struct SolvedSCS
     double  azST    = 0; ///< Azimuth at ST (= outgoing tangent azimuth)
 
     // Shared
-    double  Ls      = 0; ///< Spiral length [m] (same for in and out)
+    double  Ls1     = 0; ///< Entry spiral length L1 [m]
+    double  Ls2     = 0; ///< Exit  spiral length L2 [m]
     double  R       = 0; ///< Circular radius [m] (absolute)
     double  delta   = 0; ///< Total turning angle Δ [rad]
-    double  thetaS  = 0; ///< Spiral angle Θs = Ls/(2R) [rad]
+    double  thetaS1 = 0; ///< Entry spiral angle Θ1 = L1/(2R) [rad]
+    double  thetaS2 = 0; ///< Exit  spiral angle Θ2 = L2/(2R) [rad]
 };
 
 // ============================================================================
@@ -135,18 +137,19 @@ public:
         const QPointF& tanStartNext, const QPointF& tanEndNext);
 
     /**
-     * @brief Compute full SCS geometry using Appendix B formulae.
+     * @brief Compute full SCS geometry using Appendix B formulae (asymmetric).
      *
-     * @param radius        Circular radius R [m] (absolute).
-     * @param spiralLength  Entry (= exit) spiral length Ls [m].
-     * @param tanStartPrev  Effective start of incoming tangent.
-     * @param tanEndPrev    Effective end   of incoming tangent.
-     * @param tanStartNext  Effective start of outgoing tangent.
-     * @param tanEndNext    Effective end   of outgoing tangent.
+     * @param radius         Circular radius R [m] (absolute).
+     * @param spiralLength1  Entry spiral length L1 [m].
+     * @param spiralLength2  Exit  spiral length L2 [m].
+     * @param tanStartPrev   Effective start of incoming tangent.
+     * @param tanEndPrev     Effective end   of incoming tangent.
+     * @param tanStartNext   Effective start of outgoing tangent.
+     * @param tanEndNext     Effective end   of outgoing tangent.
      * @return SolvedSCS with valid==true on success.
      */
     static SolvedSCS solveSCS(
-        double radius, double spiralLength,
+        double radius, double spiralLength1, double spiralLength2,
         const QPointF& tanStartPrev, const QPointF& tanEndPrev,
         const QPointF& tanStartNext, const QPointF& tanEndNext);
 
