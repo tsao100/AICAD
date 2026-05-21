@@ -418,6 +418,25 @@ void AlignmentSCSCommand::commitSCS()
         return;
     }
 
+    // ── Auto-correct reversed tangent selection ───────────────────────────
+    // tangentIdxBefore (entry) must have a lower element index than
+    // tangentIdxAfter (exit) because elements are appended in alignment order.
+    // If the user selected exit THEN entry, swap both the indices and the
+    // corresponding spiral lengths so L1 always belongs to the entry spiral
+    // and L2 to the exit spiral.
+    if (m_idx1 > m_idx2) {
+        std::swap(m_idx1, m_idx2);
+        std::swap(m_L1, m_L2);
+        outputMessage(
+            QString("Tangent selection order reversed — "
+                    "using tangent #%1 as entry (L1=%2 m) "
+                    "and #%3 as exit (L2=%4 m).")
+                .arg(m_idx1)
+                .arg(m_L1, 0, 'f', 3)
+                .arg(m_idx2)
+                .arg(m_L2, 0, 'f', 3));
+    }
+
     // 呼叫非對稱版 addSCS（L1=L2=0 → 退化為 AFC）
     int idx = m_alignDoc->horizontal()->addSCS(
         m_idx1, m_idx2, m_radius, m_L1, m_L2);

@@ -301,6 +301,19 @@ void AlignmentFloatCurveCommand::commitCurve()
         return;
     }
 
+    // ── Auto-correct reversed tangent selection ───────────────────────────
+    // tangentIdxBefore (entry) must have a lower element index than
+    // tangentIdxAfter (exit) because elements are appended in alignment order.
+    // If the user picked them in reverse order, swap so the solver receives
+    // the correct entry→exit pairing.
+    if (m_idx1 > m_idx2) {
+        std::swap(m_idx1, m_idx2);
+        outputMessage(
+            QString("Tangent selection order reversed — "
+                    "using tangent #%1 as entry and #%2 as exit.")
+                .arg(m_idx1).arg(m_idx2));
+    }
+
     int idx = m_alignDoc->horizontal()->addFloatingCurve(m_idx1, m_idx2, m_radius);
     if (idx < 0) {
         outputMessage("Failed to add floating curve — check tangent indices.");

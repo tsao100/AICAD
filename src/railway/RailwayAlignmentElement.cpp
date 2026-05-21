@@ -823,9 +823,19 @@ AlignmentElementFactory::createSpiral(const AlignmentPoint& prev,
 
     // ── Reversed (CT): circle → spiral → tangent ──────────────────────────
     if (prevElem == 'C' && nextElem == 'T') {
-        // Reversed: reference origin = next (far end), reversed azimuth
-        // Radius = −prev.radius (negated for reversed traverse; C# SREVxy)
-        return makeTransition(-prev.radius,
+        // Reversed: reference origin = next (far end = ST), reversed azimuth.
+        //
+        // Radius sign: load() has already assigned the correct sign to
+        // prev.radius via the crossTrack test (positive = right-turn arc,
+        // negative = left-turn arc).  We must pass that signed value
+        // UNCHANGED so that the local frame at L=Ls produces the correct
+        // y-offset that connects to csPoint.
+        //
+        // Derivation (localToWorld at L=Ls, az=az_ST+π):
+        //   Right turn (prev.radius = +R):  Wx = ST.x − Xm·sin(az2) − Ym·cos(az2) = csPoint ✓
+        //   Left  turn (prev.radius = −R):  Wx = ST.x − Xm·sin(az2) + Ym·cos(az2) = csPoint ✓
+        //   Using −prev.radius inverts both cases → arc/spiral gap (the bug).
+        return makeTransition(prev.radius,
                               makeReversedPlacement(next, cur.length),
                               cur.length,
                               true);
