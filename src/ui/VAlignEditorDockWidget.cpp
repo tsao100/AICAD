@@ -8,7 +8,9 @@
 
 #include "VAlignEditorDockWidget.h"
 #include "VAlignProfileView.h"
+#include "VAlignCommandBar.h"              // Step 13
 #include "railway/RailwayAlignment.h"
+#include "railway/AlignmentDocument.h"     // Step 16
 
 #include <QToolBar>
 #include <QAction>
@@ -29,6 +31,8 @@
 #include <QFontDatabase>
 #include <QDebug>
 #include <cmath>
+
+using namespace aicad::railway;
 
 namespace aicad {
 namespace ui {
@@ -672,6 +676,11 @@ void VAlignEditorDockWidget::setupContent()
     m_splitter->setStretchFactor(1, 24);
 
     mainLayout->addWidget(m_splitter, 1);
+
+    // ── Step 13：底部命令列 ────────────────────────────────────────────────
+    m_commandBar = new VAlignCommandBar;
+    mainLayout->addWidget(m_commandBar);
+
     setWidget(container);
 
     // ── Connect profile view signals ──────────────────────────────────────────
@@ -770,6 +779,60 @@ void VAlignEditorDockWidget::setTrackCenterLine(railway::TrackCenterLine* tcl)
 railway::TrackCenterLine* VAlignEditorDockWidget::trackCenterLine() const
 {
     return m_tcl;
+}
+
+// ── Step 16：水平縱斷面聯動 ─────────────────────────────────────────────────
+//
+//  當 HorizontalAlignmentEdit::changed() 觸發時：
+//   1. 從 solver 結果取出各元素的 ch 區間與類型
+//   2. 更新 VAlignProfileView 的水平元素條帶
+//   3. 更新總里程（chainageEnd）
+//
+void VAlignEditorDockWidget::setAlignmentDocument(railway::AlignmentDocument* doc)
+{
+    if (m_alignDoc == doc) return;
+
+    // 斷開舊連接
+    if (m_alignDoc)
+        disconnect(m_alignDoc->horizontal(), nullptr, this, nullptr);
+
+    m_alignDoc = doc;
+    if (!doc) return;
+
+    // Lambda：從 HorizontalAlignment 重建水平元素條帶
+    auto rebuildHStrip = [this]() {
+        if (!m_alignDoc) return;
+        const HorizontalAlignment* ha = m_alignDoc->horizontal()->result();
+        if (!ha || ha->isEmpty()) return;
+
+        const QVector<AlignmentPoint>& rawPts = ha->rawPoints();
+        QVector<HElem> hElems;
+        for (int i = 0; i + 1 < rawPts.size(); ++i) {
+            const AlignmentPoint& pt = rawPts[i];
+            HElem el;
+            el.ch0 = pt.chainage;
+            el.ch1 = rawPts[i + 1].chainage;
+            if (pt.tsc.size() >= 2) {
+                QChar t = pt.tsc[1];
+                if      (t == 'T') el.type = HElemType::Tangent;
+                else if (t == 'C') { el.type = HElemType::Circular; el.radius = std::abs(pt.radius); }
+                else               el.type = HElemType::Spiral;
+            }
+            el.label = pt.curveType;
+            hElems.append(el);
+        }
+        m_profileView->setHElements(hElems);
+
+        // 更新總里程
+        if (!rawPts.isEmpty())
+            m_profileView->setChainageEnd(rawPts.last().chainage);
+    };
+
+    connect(m_alignDoc->horizontal(), &railway::HorizontalAlignmentEdit::changed,
+            this, rebuildHStrip);
+
+    // 初始同步一次（若已有求解結果）
+    rebuildHStrip();
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────

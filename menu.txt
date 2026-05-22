@@ -131,3 +131,7 @@ command|alignmentfixtangent||0
 command|alignmentfixcurve||0
 command|alignmentfloatcurve||0
 command|alignmentscs||0
+
+command|valignfloatvcurve||0
+command|valignmovepvi||0
+command|valignsetk||0

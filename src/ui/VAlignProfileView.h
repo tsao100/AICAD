@@ -227,6 +227,11 @@ private:
     void drawStripVipTicks    (QPainter&) const;
     void drawStripCursorLine  (QPainter&) const;
 
+    // Step 14：AddVip 預覽（Tool::AddVip 模式下，顯示虛線折線 + 坡度提示）
+    void drawAddVipPreview    (QPainter& p,
+                               const QVector<double>& gs,
+                               const QVector<VcData>& vcs) const;
+
     // ── Utility ───────────────────────────────────────────────────────────────
     static QVector<double> niceTicks(double lo, double hi, double step);
     QColor elemColor(HElemType t, bool border) const;
@@ -250,6 +255,12 @@ private:
     double m_curCh     = 0.0;
     double m_curEl     = 0.0;
     QPointF m_curPx;   ///< pixel position of cursor
+
+    // Step 14：AddVip 預覽狀態
+    //   在 Tool::AddVip 模式下，游標移動時同步計算插入後的坡度變化並顯示預覽折線。
+    bool   m_hasPreview  = false;
+    double m_previewCh   = 0.0;   ///< 預覽插入點的 chainage
+    double m_previewEl   = 0.0;   ///< 游標的 elevation（使用者選定值）
 
     // Elevation range (computed from VIPs + padding)
     double m_elBot = 8.0;

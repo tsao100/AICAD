@@ -419,8 +419,18 @@ void VAlignProfileView::mouseMoveEvent(QMouseEvent* e)
         m_curEl  = fEl(pt.y());
         m_curPx  = pt;
         Q_EMIT cursorMoved(m_curCh, m_curEl);
+
+        // Step 14：AddVip 預覽狀態更新
+        if (m_tool == Tool::AddVip) {
+            m_hasPreview = true;
+            m_previewCh  = m_curCh;
+            m_previewEl  = m_curEl;
+        } else {
+            m_hasPreview = false;
+        }
     } else {
-        m_hasCursor = false;
+        m_hasCursor  = false;
+        m_hasPreview = false;
     }
 
     // Drag VIP
@@ -508,6 +518,8 @@ void VAlignProfileView::paintEvent(QPaintEvent*)
     if (m_showKVal)  drawKvalLabels(p, vcs, gs);
     drawVipPoints(p, vcs);
     if (m_hasCursor) drawCursor(p, vcs);
+    if (m_hasPreview && m_tool == Tool::AddVip)
+        drawAddVipPreview(p, gs, vcs);    // Step 14
 
     // ── Chainage axis ────────────────────────────────────────────────────────
     {
@@ -887,8 +899,112 @@ void VAlignProfileView::drawCursor(QPainter& p, const QVector<VcData>& vcs) cons
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Drawing helpers – horizontal alignment strip
+//  Step 14 — AddVip 預覽
+//
+//  在 Tool::AddVip 模式下，游標移動時顯示：
+//   1. 插入新 VIP 後的折線（前一 VIP → 游標 → 後一 VIP）：橙色虛線
+//   2. 兩段的 Δg%（坡度差）標注，以及預估 K 值
 // ─────────────────────────────────────────────────────────────────────────────
+
+void VAlignProfileView::drawAddVipPreview(QPainter& p,
+                                          const QVector<double>& gs,
+                                          const QVector<VcData>& /*vcs*/) const
+{
+    if (!m_hasPreview || m_vips.size() < 2) return;
+
+    p.save();
+    p.setClipRect(profileRect());
+
+    // ── 找出游標所在的前後 VIP ───────────────────────────────────────────────
+    int idxBefore = -1;  // 最後一個 ch <= m_previewCh 的 VIP
+    int idxAfter  = -1;  // 第一個 ch >  m_previewCh 的 VIP
+
+    for (int i = 0; i < m_vips.size(); ++i) {
+        if (m_vips[i].ch <= m_previewCh) idxBefore = i;
+        else if (idxAfter < 0)           idxAfter  = i;
+    }
+
+    // 若游標在所有 VIP 之前或之後，不顯示預覽
+    if (idxBefore < 0 || idxAfter < 0) { p.restore(); return; }
+
+    const Vip& vBefore = m_vips[idxBefore];
+    const Vip& vAfter  = m_vips[idxAfter];
+
+    // ── 計算插入後的三段坡度 ─────────────────────────────────────────────────
+    const double dch_in  = m_previewCh - vBefore.ch;
+    const double dch_out = vAfter.ch   - m_previewCh;
+
+    if (dch_in < 1e-3 || dch_out < 1e-3) { p.restore(); return; }
+
+    const double g_in  = (m_previewEl - vBefore.el) / dch_in  * 100.0;  // %
+    const double g_out = (vAfter.el   - m_previewEl) / dch_out * 100.0;  // %
+    const double deltaG = std::abs(g_out - g_in);
+
+    // 原來坡度（無新 VIP）
+    const double g_orig = (idxBefore < gs.size()) ? gs[idxBefore] * 100.0 : 0.0;
+    Q_UNUSED(g_orig);
+
+    // ── 取 3 個節點的像素座標 ────────────────────────────────────────────────
+    const QPointF pxBefore(tx(vBefore.ch), ty(vBefore.el));
+    const QPointF pxCursor(tx(m_previewCh), ty(m_previewEl));
+    const QPointF pxAfter (tx(vAfter.ch),  ty(vAfter.el));
+
+    // ── 繪製橙色虛線折線 ─────────────────────────────────────────────────────
+    QPen dashPen(QColor(255, 160, 32), 1.5, Qt::DashLine);
+    dashPen.setDashPattern({4, 3});
+    p.setPen(dashPen);
+    p.drawLine(pxBefore, pxCursor);
+    p.drawLine(pxCursor, pxAfter);
+
+    // ── 游標點：橙色菱形 ─────────────────────────────────────────────────────
+    p.setPen(QPen(QColor(255, 130, 0), 1.5));
+    p.setBrush(QColor(255, 160, 32, 160));
+    static const double kR = 5.0;
+    QPolygonF diamond;
+    diamond << QPointF(pxCursor.x(),      pxCursor.y() - kR)
+            << QPointF(pxCursor.x() + kR, pxCursor.y())
+            << QPointF(pxCursor.x(),      pxCursor.y() + kR)
+            << QPointF(pxCursor.x() - kR, pxCursor.y());
+    p.drawPolygon(diamond);
+
+    // ── 標注文字 ─────────────────────────────────────────────────────────────
+    QFont f = font();
+    f.setPointSize(8);
+    p.setFont(f);
+
+    auto fmtGrade = [](double g) -> QString {
+        return QString("%1%2%")
+            .arg(g >= 0 ? "+" : "")
+            .arg(g, 0, 'f', 3);
+    };
+
+    // 入坡標注（折線中點）
+    QPointF midIn ((pxBefore.x() + pxCursor.x()) / 2.0,
+                   (pxBefore.y() + pxCursor.y()) / 2.0);
+    p.setPen(QColor(255, 200, 80));
+    p.drawText(midIn + QPointF(4, -4), fmtGrade(g_in));
+
+    // 出坡標注
+    QPointF midOut((pxCursor.x() + pxAfter.x()) / 2.0,
+                   (pxCursor.y() + pxAfter.y()) / 2.0);
+    p.drawText(midOut + QPointF(4, -4), fmtGrade(g_out));
+
+    // 游標旁：Δg 與 K 值
+    const QString kStr = (deltaG > 1e-6)
+        ? QString("Δg=%1%  K≈%2")
+              .arg(deltaG, 0, 'f', 2)
+              .arg(0.0)   // K 在無 LVC 時不顯示數值
+        : QString("Δg=%1%  ─").arg(deltaG, 0, 'f', 2);
+
+    p.setPen(QColor(255, 220, 120));
+    QFont fInfo = f;
+    fInfo.setPointSize(7);
+    p.setFont(fInfo);
+    p.drawText(int(pxCursor.x()) + 10, int(pxCursor.y()) + 14, kStr);
+
+    p.restore();
+}
+
 
 QColor VAlignProfileView::elemColor(HElemType t, bool border) const
 {

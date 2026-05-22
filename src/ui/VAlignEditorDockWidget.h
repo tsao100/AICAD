@@ -30,6 +30,9 @@ class QActionGroup;
 class QSplitter;
 class QLabel;
 
+// Railway / alignment
+namespace aicad { namespace railway { class AlignmentDocument; } }
+
 namespace aicad {
 namespace railway {
 class TrackCenterLine;
@@ -39,6 +42,7 @@ namespace ui {
 
 class VAlignProfileView;
 class VAlignPropertiesPanel;
+class VAlignCommandBar;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -53,6 +57,17 @@ public:
     /** Bind to a live TrackCenterLine.  Ownership stays with the caller. */
     void setTrackCenterLine(railway::TrackCenterLine* tcl);
     railway::TrackCenterLine* trackCenterLine() const;
+
+    /**
+     * @brief Step 16：連接 AlignmentDocument（水平＋縱斷面聯動）。
+     *
+     * 連接後，每當水平 alignment 求解完成（changed()），
+     * 自動更新 VAlignProfileView 的水平元素條帶與總里程。
+     */
+    void setAlignmentDocument(railway::AlignmentDocument* doc);
+
+    /** 取得底部命令列（供命令層驅動提示與輸入）。 */
+    VAlignCommandBar* commandBar() const { return m_commandBar; }
 
 Q_SIGNALS:
     /** Emitted whenever the user modifies the vertical alignment. */
@@ -79,6 +94,7 @@ private:
     VAlignProfileView*    m_profileView = nullptr;
     VAlignPropertiesPanel* m_propsPanel = nullptr;
     QLabel*               m_cursorLabel = nullptr;
+    VAlignCommandBar*     m_commandBar  = nullptr;   ///< Step 13
 
     // ── Actions ────────────────────────────────────────────────────────────
     QAction* m_actSelect  = nullptr;
@@ -90,7 +106,8 @@ private:
     QAction* m_actKval    = nullptr;
 
     // ── Data ───────────────────────────────────────────────────────────────
-    QPointer<railway::TrackCenterLine> m_tcl;
+    QPointer<railway::TrackCenterLine>   m_tcl;
+    QPointer<railway::AlignmentDocument> m_alignDoc;  ///< Step 16
 };
 
 } // namespace ui

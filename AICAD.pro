@@ -235,6 +235,7 @@ SOURCES += \
     src/command/alignment/AlignmentFixTangentCommand.cpp \
     src/command/alignment/AlignmentFloatCurveCommand.cpp \
     src/command/alignment/AlignmentSCSCommand.cpp \
+    src/command/alignment/VAlignFloatVCurveCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
     src/command/InputParser.cpp \
@@ -299,6 +300,7 @@ SOURCES += \
     src/ui/ResultPopup.cpp \
     \
     # View Module (Felicia - 視圖系統)
+    src/ui/VAlignCommandBar.cpp \
     src/ui/VAlignEditorDockWidget.cpp \
     src/ui/VAlignProfileView.cpp \
     src/view/AlignmentRenderer.cpp \
@@ -343,6 +345,9 @@ HEADERS += \
     src/command/alignment/AlignmentFixTangentCommand.h \
     src/command/alignment/AlignmentFloatCurveCommand.h \
     src/command/alignment/AlignmentSCSCommand.h \
+    src/command/alignment/VAlignFloatVCurveCommand.h \
+    src/command/alignment/VAlignMovePVICommand.h \
+    src/command/alignment/VAlignSetKCommand.h \
     src/core/CommandHistory.h \
     src/command/EllipseCommand.h \
     src/command/InputParser.h \
@@ -404,6 +409,7 @@ HEADERS += \
     src/ui/ResultPopup.h \
     \
     # View Module (Felicia)
+    src/ui/VAlignCommandBar.h \
     src/ui/VAlignEditorDockWidget.h \
     src/ui/VAlignProfileView.h \
     src/view/AlignmentRenderer.h \
