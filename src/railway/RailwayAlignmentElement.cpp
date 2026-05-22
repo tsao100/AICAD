@@ -330,7 +330,7 @@ QJsonObject TransitionElement::toJson() const
 LocalFrame ClothoidElement::localFrame(double L) const
 {
     const double Ls = m_length;
-    const double R  = m_radius;
+    const double R  = m_reversed ? - m_radius :  m_radius;
 
     // Scale parameter A: A² = |R|·Ls
     const double A2     = std::abs(R) * Ls;
@@ -361,7 +361,7 @@ QJsonObject ClothoidElement::toJson() const
 LocalFrame HalfSineElement::localFrame(double L) const
 {
     const double Ls = m_length;
-    const double R  = m_radius;
+     const double R  = m_reversed ? - m_radius :  m_radius;
     const double b  = 1.0 / (2.0 * R);
     const double la = M_PI / Ls;
     const double Ba = la * L;
@@ -412,7 +412,7 @@ double ParabolaElement::xEnd() const
 
 LocalFrame ParabolaElement::localFrame(double L) const
 {
-    const double R   = m_radius;
+    const double R   = m_reversed ? - m_radius :  m_radius;
     const double XB  = xEnd();
 
     const double x = L - std::pow(L, 5) / (40.0 * R * R * m_length * m_length);
@@ -472,7 +472,7 @@ double CubicJPNElement::bigX() const
 LocalFrame CubicJPNElement::localFrame(double L) const
 {
     const double BX = bigX();
-    const double R  = m_radius;
+     const double R  = m_reversed ? - m_radius :  m_radius;
 
     const double x     = solveFx(BX, L, std::abs(R));
     const double y     = (x * x * x) / (6.0 * R * BX);
@@ -529,15 +529,16 @@ double CubicECIElement::bigA()  const { ensureCache(); return m_bigA;  }
 LocalFrame CubicECIElement::localFrame(double L) const
 {
     const double absR = std::abs(m_radius);
+    const double R = m_reversed ? - m_radius :  m_radius;
     // θ at L: re-solve CECI for partial length L (same equation, different Ls)
     const double theta_abs = solveCECI(L, absR);
-    const double theta     = theta_abs * std::copysign(1.0, m_radius);
+    const double theta     = theta_abs * std::copysign(1.0, R);
 
     const double BA  = bigA();
     const double p   = std::tan(theta_abs);
     const double p2  = p * p;
     const double x   = L / (1.0 + p2 / 10.0 - p2 * p2 / 72.0 + p2 * p2 * p2 / 208.0);
-    const double y   = (x * x * x) / (6.0 * BA) * std::copysign(1.0, m_radius);
+    const double y   = (x * x * x) / (6.0 * BA) * std::copysign(1.0, R);
 
     return { x, y, theta };
 }

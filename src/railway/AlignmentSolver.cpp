@@ -147,7 +147,24 @@ SolvedCurve AlignmentSolver::solveFloatingCurve(
 
 
 // ============================================================================
-//  solveSCS  (public static — Appendix B formula)
+//  solveSCS  (public static — VBA TryToFit sliding algorithm)
+//
+//  Algorithm ported from VBA Sub TryToFit():
+//
+//  Pass 1 — Anchor TS at tanStartPrev, propagate the SCS block forward
+//            (entry spiral → circular arc → exit spiral reversed) to obtain a
+//            preliminary ST position.
+//
+//  Fit    — Measure the cross-track gap (tw) from preliminary ST to the exit
+//            tangent line, then compute the along-tangent correction d5:
+//
+//              d5 = tw(tanStartNext, az2, stInit) / sin(|Δ|) × signR
+//
+//            Derivation: sliding TS by d5 along az1 translates the entire SCS
+//            block by d5·unit(az1), which changes ST's cross-track by
+//            −d5·sin(Δ).  Setting the corrected gap to zero gives d5 exactly.
+//
+//  Pass 2 — Rebuild all four key-points from the corrected TS.
 // ============================================================================
 
 SolvedSCS AlignmentSolver::solveSCS(
@@ -157,11 +174,11 @@ SolvedSCS AlignmentSolver::solveSCS(
 {
     SolvedSCS result;
 
-    const double R  = std::abs(radius);
-    const double L1 = std::abs(spiralLength1);
-    const double L2 = std::abs(spiralLength2);
+    const double Rabs = std::abs(radius);
+    const double L1   = std::abs(spiralLength1);
+    const double L2   = std::abs(spiralLength2);
 
-    if (R < 1e-9) {
+    if (Rabs < 1e-9) {
         qWarning() << "[AlignmentSolver] solveSCS: radius ≈ 0";
         return result;
     }
@@ -170,101 +187,118 @@ SolvedSCS AlignmentSolver::solveSCS(
         return result;
     }
 
-    // ── Step 1: tangent azimuths ─────────────────────────────────────────────
-    const double az1 = azimuthOf(tanStartPrev, tanEndPrev);  // incoming α₁
-    const double az2 = azimuthOf(tanStartNext, tanEndNext);  // outgoing α₂
+    // ── Step 1: tangent azimuths  (VBA: Amz1, Amz2) ─────────────────────────
+    const double az1 = azimuthOf(tanStartPrev, tanEndPrev);
+    const double az2 = azimuthOf(tanStartNext, tanEndNext);
 
-    // ── Step 2: intersection PI ──────────────────────────────────────────────
-    const QPointF pi = lineIntersect(tanStartPrev, az1, tanStartNext, az2);
-
-    // ── Step 3: total turning angle Δ ────────────────────────────────────────
+    // ── Step 2: turning angle and hand-of-curve ───────────────────────────────
+    // VBA: a1 = AngleOfTwoAmz(Amz1, Amz2)
+    //      R1 = R1 * LeftRightOfTwoAmz(Amz1, Amz2)
     const double delta    = normaliseAngle(az2 - az1);
     const double absDelta = std::abs(delta);
-
     if (absDelta < 1e-9) {
         qWarning() << "[AlignmentSolver] solveSCS: Δ ≈ 0 (parallel tangents)";
         return result;
     }
+    const int    signR = (delta >= 0.0) ? 1 : -1;  // +1 = right-hand curve
+    const double R     = signR * Rabs;              // signed radius (VBA: R1)
 
-    const int sign = (delta >= 0.0) ? 1 : -1;   // +1 = right turn
+    // ── Step 3: clothoid spiral angles  (VBA: angle1 = sa(0,S1,R1,S1,0,type)) ─
+    //   Θ = L / (2R)
+    const double thetaS1 = (L1 > 1e-9) ? L1 / (2.0 * Rabs) : 0.0;
+    const double thetaS2 = (L2 > 1e-9) ? L2 / (2.0 * Rabs) : 0.0;
 
-    // ── Step 4: Per-spiral parameters (asymmetric) ────────────────────────────
-    //   Θ  = L / (2R)
-    //   Xm = L × (1 − Θ²/10)
-    //   Ym = L × Θ / 3
-
-    const double thetaS1 = L1 / (2.0 * R);
-    const double Xm1     = L1 * (1.0 - (thetaS1 * thetaS1) / 10.0);
-    const double Ym1     = L1 * thetaS1 / 3.0;
-
-    const double thetaS2 = L2 / (2.0 * R);
-    const double Xm2     = L2 * (1.0 - (thetaS2 * thetaS2) / 10.0);
-    const double Ym2     = L2 * thetaS2 / 3.0;
-
-    // ── Step 5: Asymmetric tangent distances T1 and T2 from PI ───────────────
-    //
-    //  The shifted-PI approach: each spiral shifts its adjacent tangent
-    //  perpendicular by Ym and tangentially by Xm, so the virtual arc centre
-    //  is displaced.  For ASYMMETRIC spirals the two tangent distances differ:
-    //
-    //    T1 = Xm1 + (R + Ym1)·tan(Δ/2) + (Ym2 − Ym1) / sin(Δ)
-    //    T2 = Xm2 + (R + Ym2)·tan(Δ/2) − (Ym2 − Ym1) / sin(Δ)
-    //
-    //  When Ym1 = Ym2 (symmetric case) both reduce to the standard formula.
-    //  Derivation: the two shifted tangent lines must intersect at the same
-    //  virtual PI, giving the correction term ΔYm / sin(Δ).
-
-    const double tanHalfDelta = std::tan(absDelta * 0.5);
-    const double sinDelta     = std::sin(absDelta);
-
-    double correction = 0.0;
-    if (sinDelta > 1e-9)
-        correction = (Ym2 - Ym1) / sinDelta;
-
-    const double T1 = Xm1 + (R + Ym1) * tanHalfDelta + correction;
-    const double T2 = Xm2 + (R + Ym2) * tanHalfDelta - correction;
-
-    // ── Step 6: TS and ST ────────────────────────────────────────────────────
-    //   TS = PI − T1 · unit(α₁)   (backward along entry tangent)
-    //   ST = PI + T2 · unit(α₂)   (forward  along exit  tangent from PI)
-
-    const QPointF unit1(std::sin(az1), std::cos(az1));
-    const QPointF unit2(std::sin(az2), std::cos(az2));
-
-    const QPointF tsPoint = pi - T1 * unit1;   // entry spiral start
-    const QPointF stPoint = pi + T2 * unit2;   // exit  spiral end
-
-    // ── Step 7: SC and CS (arc tangent cut-points) ───────────────────────────
-    //   SC = TS + Xm1·unit(α₁) + sign·Ym1·perp1
-    //   CS = ST − Xm2·unit(α₂) − sign·Ym2·perp2
-    //
-    //   perp = 90° right of unit  (CW perpendicular in Easting/Northing)
-    //   Sign: +1 = right-hand curve (delta > 0), −1 = left-hand curve.
-
-    // 90° right of unit = (cos az, -sin az)
-    const QPointF perp1( std::cos(az1), -std::sin(az1));
-    const QPointF perp2( std::cos(az2), -std::sin(az2));
-
-    const QPointF scPoint = tsPoint + Xm1 * unit1 + sign * Ym1 * perp1;
-    const QPointF csPoint = stPoint - Xm2 * unit2 - sign * Ym2 * perp2;
-
-    // ── Step 8: arc length (SC → CS) ─────────────────────────────────────────
-    //   Arc deflection = Δ − Θ1 − Θ2
-    const double arcDelta = absDelta - thetaS1 - thetaS2;
-    if (arcDelta < -1e-9) {
-        qWarning() << "[AlignmentSolver] solveSCS: arc delta < 0 "
-                      "(Δ < Θ1+Θ2 — spirals overlap). Δ="
+    // ── Step 4: arc deflection and length  (VBA: cl1 = |R1|*(a1-angle1-angle2)/180*π) ──
+    const double arcAngle = absDelta - thetaS1 - thetaS2;
+    if (arcAngle < -1e-9) {
+        qWarning() << "[AlignmentSolver] solveSCS: spirals overlap (Δ < Θ1+Θ2). Δ="
                    << qRadiansToDegrees(absDelta)
                    << "Θ1+Θ2=" << qRadiansToDegrees(thetaS1 + thetaS2);
         return result;
     }
-    const double arcLen = R * std::max(0.0, arcDelta);
+    const double arcLen = Rabs * std::max(0.0, arcAngle);
 
-    // ── Step 9: azimuths at SC and CS ────────────────────────────────────────
-    //   At SC: tangent rotated by Θ1 from α₁
-    //   At CS: tangent is Θ2 short of α₂
-    const double azSC = az1 + sign * thetaS1;
-    const double azCS = az2 - sign * thetaS2;
+    // ── Step 5: azimuths at SC and CS ────────────────────────────────────────
+    //   azSC = az1 + signR·Θ1
+    //   azCS = az2 − signR·Θ2
+    const double azSC = az1 + signR * thetaS1;
+    const double azCS = az2 - signR * thetaS2;
+
+    // ── Step 6: pre-compute trig ──────────────────────────────────────────────
+    const double sA1 = std::sin(az1), cA1 = std::cos(az1);
+    const double sA2 = std::sin(az2), cA2 = std::cos(az2);
+
+    // ── Step 7: rigid offsets within the SCS block ───────────────────────────
+    //
+    //  The SCS block translates as a rigid body when TS slides along az1.
+    //  Pre-compute each sub-element's (ΔEast, ΔNorth) offset from its
+    //  predecessor so that pass 1 and pass 2 are a single vector addition each.
+    //
+    //  (a) Entry spiral TS → SC   (VBA: sx/sy from TS at az1)
+    //      Clothoid tangential offset Xm, radial offset Ym:
+    //        SC = TS + Xm1·unit(az1) + signR·Ym1·right_perp(az1)
+    //      right_perp(az) in (E,N) = (cos az, −sin az)
+    const double Xm1   = (L1 > 1e-9) ? L1 * (1.0 - thetaS1 * thetaS1 / 10.0) : 0.0;
+    const double Ym1   = (L1 > 1e-9) ? L1 * thetaS1 / 3.0                     : 0.0;
+    const double scDx  =  Xm1 * sA1 + signR * Ym1 * cA1;   // ΔEast  TS → SC
+    const double scDy  =  Xm1 * cA1 - signR * Ym1 * sA1;   // ΔNorth TS → SC
+
+    //  (b) Circular arc SC → CS   (VBA: CX/CY from SC, azSC, R, cl1)
+    //      Center C = SC + R·right_perp(azSC)
+    //      CS = C − R·right_perp(azCS)
+    //      Δ = R·(cos azSC − cos azCS,  sin azCS − sin azSC)
+    const double csDx  =  R * (std::cos(azSC) - std::cos(azCS));   // ΔEast  SC → CS
+    const double csDy  =  R * (std::sin(azCS) - std::sin(azSC));   // ΔNorth SC → CS
+
+    //  (c) Exit spiral reversed CS → ST   (VBA: tx from CS using d3, d4, az2)
+    //      VBA computes the clothoid shape in local az=0 frame:
+    //        d4 = |sy(0,0, 0,S2,R1,S2, 0,0, type)| = Xm2   (along-track)
+    //        d3 = |sx(0,0, 0,S2,R1,S2, 0,0, type)| * signR = Ym2·signR (cross-track)
+    //      then: ST = tx(CS, az2, 0, d4, −d3)
+    //              = CS + d4·unit(az2) + (−d3)·right_perp(az2)
+    //              = CS + Xm2·unit(az2) − signR·Ym2·right_perp(az2)
+    const double Xm2   = (L2 > 1e-9) ? L2 * (1.0 - thetaS2 * thetaS2 / 10.0) : 0.0;
+    const double Ym2   = (L2 > 1e-9) ? L2 * thetaS2 / 3.0                     : 0.0;
+    const double stDx  =  Xm2 * sA2 - signR * Ym2 * cA2;   // ΔEast  CS → ST
+    const double stDy  =  Xm2 * cA2 + signR * Ym2 * sA2;   // ΔNorth CS → ST
+
+    // ── Step 8: pass 1 — anchor TS at tanStartPrev, propagate to ST ──────────
+    //  VBA: initial TS = ed[0].StartNE = (cox1, coy1)
+    //       SC  = sx/sy(cox1,coy1, …)
+    //       CS  = CX/CY(SC, azSC, R1, cl1)
+    //       ST  = tx(CS, Amz2, 0, d4, −d3)          [cox6, coy6]
+    const QPointF stInit(
+        tanStartPrev.x() + scDx + csDx + stDx,
+        tanStartPrev.y() + scDy + csDy + stDy);
+
+    // ── Step 9: cross-track gap from preliminary ST to exit tangent ──────────
+    //  VBA: tw(cox2, coy2, Amz2, 0, cox6, coy6)
+    //  tw = (ST − ref) · right_perp(az2)
+    //     = (ST.x − ref.x)·cos(az2) − (ST.y − ref.y)·sin(az2)
+    //  Positive → ST is to the right of the exit tangent line.
+    const double twDist = (stInit.x() - tanStartNext.x()) * cA2
+                        - (stInit.y() - tanStartNext.y()) * sA2;
+
+    // ── Step 10: along-tangent correction d5  (VBA: d5 = tw/sin(a1)*signR) ──
+    //  Sliding TS by d5 along az1 translates the whole SCS block by d5·unit(az1).
+    //  Cross-track change of ST = d5 · sin(az1−az2) = −d5 · sin(Δ).
+    //  Setting corrected gap = 0:
+    //    twDist − d5·sin(Δ) = 0
+    //    d5 = twDist / sin(Δ) = twDist / (signR·sin(|Δ|))
+    //       = twDist / sin(|Δ|) · signR          [VBA form, valid since signR = ±1]
+    const double d5 = twDist / std::sin(absDelta) * signR;
+
+    // ── Step 11: corrected TS  (VBA: cox7 = tx(cox1,coy1, Amz1, 0, d5, 0)) ──
+    const QPointF tsPoint(tanStartPrev.x() + d5 * sA1,
+                          tanStartPrev.y() + d5 * cA1);
+
+    // ── Step 12: pass 2 — final geometry from corrected TS ───────────────────
+    //  VBA second block: recompute cox4/coy4 (SC), cox5/coy5 (CS), cox6/coy6 (ST)
+    //  from cox7/coy7 (corrected TS). Because the offsets are rigid, this is
+    //  a simple translation of the preliminary block by d5·unit(az1).
+    const QPointF scPoint(tsPoint.x() + scDx, tsPoint.y() + scDy);
+    const QPointF csPoint(scPoint.x() + csDx, scPoint.y() + csDy);
+    const QPointF stPoint(csPoint.x() + stDx, csPoint.y() + stDy);
 
     // ── Populate result ───────────────────────────────────────────────────────
     result.valid    = true;
@@ -279,7 +313,7 @@ SolvedSCS AlignmentSolver::solveSCS(
     result.arcLen   = arcLen;
     result.Ls1      = L1;
     result.Ls2      = L2;
-    result.R        = R;
+    result.R        = Rabs;
     result.delta    = delta;
     result.thetaS1  = thetaS1;
     result.thetaS2  = thetaS2;
