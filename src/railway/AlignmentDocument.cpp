@@ -395,34 +395,207 @@ VerticalAlignmentEdit::VerticalAlignmentEdit(QObject* parent)
 {
 }
 
-int VerticalAlignmentEdit::addVip(double /*chainage*/,
-                                  double /*elevation*/,
-                                  double /*lvc*/)
+// ── addVip ────────────────────────────────────────────────────────────────────
+//  插入並維持 chainage 升冪排序，回傳最終插入的 index。
+int VerticalAlignmentEdit::addVip(double chainage, double elevation, double lvc)
 {
-    // TODO Step 12
-    return -1;
+    VipRecord rec;
+    rec.chainage  = chainage;
+    rec.elevation = elevation;
+    rec.lvc       = lvc;
+
+    int insertIdx = m_vips.size();
+    for (int i = 0; i < m_vips.size(); ++i) {
+        if (chainage < m_vips[i].chainage) {
+            insertIdx = i;
+            break;
+        }
+    }
+    m_vips.insert(insertIdx, rec);
+    return insertIdx;
 }
 
-void VerticalAlignmentEdit::moveVip(int /*idx*/,
-                                    double /*newChainage*/,
-                                    double /*newElevation*/)
+// ── moveVip ───────────────────────────────────────────────────────────────────
+void VerticalAlignmentEdit::moveVip(int idx, double newChainage, double newElevation)
 {
-    // TODO Step 12
+    if (idx < 0 || idx >= m_vips.size()) return;
+
+    m_vips[idx].chainage  = newChainage;
+    m_vips[idx].elevation = newElevation;
+
+    // 維持 chainage 升冪：取出後重新插入
+    VipRecord moved = m_vips.takeAt(idx);
+    int insertIdx = m_vips.size();
+    for (int i = 0; i < m_vips.size(); ++i) {
+        if (moved.chainage < m_vips[i].chainage) {
+            insertIdx = i;
+            break;
+        }
+    }
+    m_vips.insert(insertIdx, moved);
 }
 
-void VerticalAlignmentEdit::removeVip(int /*idx*/)
+// ── removeVip ─────────────────────────────────────────────────────────────────
+void VerticalAlignmentEdit::removeVip(int idx)
 {
-    // TODO Step 12
+    if (idx < 0 || idx >= m_vips.size()) return;
+    m_vips.removeAt(idx);
 }
 
-void VerticalAlignmentEdit::setKValue(int /*vipIdx*/, double /*K*/)
+// ── setKValue ─────────────────────────────────────────────────────────────────
+//  K 值定義：lvc = K × |Δg%|
+//  Δg% = 出坡% − 入坡%（百分比單位，非小數）。
+//  僅對中間 VIP（非首尾）有效。
+void VerticalAlignmentEdit::setKValue(int vipIdx, double K)
 {
-    // TODO Step 12: lvc = K × |Δg%|
+    if (vipIdx <= 0 || vipIdx >= m_vips.size() - 1) {
+        qWarning() << "[VerticalAlignmentEdit] setKValue: vipIdx" << vipIdx
+                   << "is an endpoint — no VC can be assigned.";
+        return;
+    }
+    if (K < 0.0) {
+        qWarning() << "[VerticalAlignmentEdit] setKValue: K must be >= 0";
+        return;
+    }
+
+    const double dch_in  = m_vips[vipIdx    ].chainage - m_vips[vipIdx - 1].chainage;
+    const double dch_out = m_vips[vipIdx + 1].chainage - m_vips[vipIdx    ].chainage;
+
+    if (std::abs(dch_in) < 1e-9 || std::abs(dch_out) < 1e-9) {
+        qWarning() << "[VerticalAlignmentEdit] setKValue: zero chainage interval adjacent to VIP" << vipIdx;
+        return;
+    }
+
+    const double g_in  = (m_vips[vipIdx    ].elevation - m_vips[vipIdx - 1].elevation) / dch_in  * 100.0;
+    const double g_out = (m_vips[vipIdx + 1].elevation - m_vips[vipIdx    ].elevation) / dch_out * 100.0;
+    const double deltaG = std::abs(g_out - g_in);  // |Δg%|
+
+    m_vips[vipIdx].lvc = (deltaG < 1e-9) ? 0.0 : K * deltaG;
 }
 
+// ── solve ─────────────────────────────────────────────────────────────────────
+//
+//  將 m_vips 轉換成 VerticalAlignment::load() 接受的 VerticalAlignmentPoint 序列。
+//
+//  每個含有效 lvc 的中間 VIP 產生「2 筆記錄」（VC entry + VC exit）：
+//
+//    idx   : entry  — ch = vip.ch − lvc/2, grade = g_in
+//    idx+1 : exit   — ch = vip.ch + lvc/2, grade = g_out,
+//                     lvc = L, pviElevation = vip.el
+//
+//  VerticalAlignment::insideVC(idx) 檢查 grade[idx] != grade[idx+1]，
+//  符合條件時呼叫 parabolaElev(idx, p)：
+//
+//    y(x) = pviElevation − (lvc·g₁/2) + g₁·x − (g₁−g₂)·x²/(2·lvc)
+//         = y₀ + g₁·x + (g₂−g₁)/(2L)·x²            ← 附錄 C 公式
+//
+//  其中 x = p − vc_entry_ch，g₁ = grade[idx]，g₂ = grade[idx+2]。
+//  grade[idx+2] 即 exit 記錄之後那筆（與 exit 同為 g_out），正確。
+//
 void VerticalAlignmentEdit::solve()
 {
-    // TODO Step 12: 將 m_vips 轉成 VerticalAlignmentPoint → m_result->load() → emit changed()
+    const int n = m_vips.size();
+
+    if (n < 2) {
+        m_result->clear();
+        emit changed();
+        return;
+    }
+
+    // Step 1：計算各段坡度（% 單位）
+    QVector<double> grades(n - 1);
+    for (int i = 0; i < n - 1; ++i) {
+        const double dch = m_vips[i + 1].chainage - m_vips[i].chainage;
+        if (std::abs(dch) < 1e-9) {
+            qWarning() << "[VerticalAlignmentEdit] solve: zero chainage interval between VIP"
+                       << i << "and" << (i + 1);
+            grades[i] = 0.0;
+        } else {
+            grades[i] = (m_vips[i + 1].elevation - m_vips[i].elevation) / dch * 100.0;
+        }
+    }
+
+    // Step 2：沿指定坡段切線計算高程輔助函式
+    //   以 m_vips[gradeIdx] 為基準點，沿 grades[gradeIdx] 延伸到 ch
+    auto tangentEl = [&](int gradeIdx, double ch) -> double {
+        return m_vips[gradeIdx].elevation
+               + (ch - m_vips[gradeIdx].chainage) * grades[gradeIdx] / 100.0;
+    };
+
+    // Step 3：建立 pts 陣列
+    QVector<VerticalAlignmentPoint> pts;
+    pts.reserve(n + 2 * (n - 2));
+
+    // 起始 VIP（切線起點）
+    {
+        VerticalAlignmentPoint p0;
+        p0.chainage  = m_vips[0].chainage;
+        p0.elevation = m_vips[0].elevation;
+        p0.grade     = grades[0];
+        pts.append(p0);
+    }
+
+    // 中間 VIP：各自產生 VC entry + VC exit 兩筆
+    for (int i = 1; i < n - 1; ++i) {
+        const double lvc = m_vips[i].lvc;
+
+        if (lvc < 1e-6) {
+            // lvc ≈ 0：以「微小 VC」模擬純折點，避免 parabolaElev 除以零。
+            // 間距 tiny = 1e-6 m（0.001 mm），VC 長度可忽略不計。
+            static const double tiny = 1e-6;
+
+            VerticalAlignmentPoint before;
+            before.chainage  = m_vips[i].chainage - tiny;
+            before.elevation = tangentEl(i - 1, before.chainage);
+            before.grade     = grades[i - 1];
+            pts.append(before);
+
+            VerticalAlignmentPoint after;
+            after.chainage     = m_vips[i].chainage;
+            after.elevation    = m_vips[i].elevation;
+            after.grade        = grades[i];
+            after.lvc          = tiny;         // 非零：避免 parabolaElev 除以零
+            after.pviElevation = m_vips[i].elevation;
+            pts.append(after);
+
+        } else {
+            const double vc_half     = lvc / 2.0;
+            const double vc_start_ch = m_vips[i].chainage - vc_half;
+            const double vc_end_ch   = m_vips[i].chainage + vc_half;
+
+            // ── VC entry ──────────────────────────────────────────────────
+            VerticalAlignmentPoint entry;
+            entry.chainage  = vc_start_ch;
+            entry.elevation = tangentEl(i - 1, vc_start_ch);
+            entry.grade     = grades[i - 1];
+            pts.append(entry);
+
+            // ── VC exit（攜帶 lvc / pviElevation）─────────────────────────
+            //  parabolaElev 讀取 m_pts[entry_idx+1].lvc / pviElevation
+            //  以及 m_pts[entry_idx+2].grade（= exit 後一筆，與 exit 同 grade）
+            const double deltaGpct = std::abs(grades[i] - grades[i - 1]);
+            VerticalAlignmentPoint exitPt;
+            exitPt.chainage     = vc_end_ch;
+            exitPt.elevation    = tangentEl(i, vc_end_ch);
+            exitPt.grade        = grades[i];
+            exitPt.lvc          = lvc;
+            exitPt.pviElevation = m_vips[i].elevation;
+            exitPt.kValue       = (deltaGpct > 1e-9) ? lvc / deltaGpct : 0.0;
+            exitPt.mo           = lvc * deltaGpct / 800.0;  // 標準中距公式
+            pts.append(exitPt);
+        }
+    }
+
+    // 終止 VIP（切線終點）
+    {
+        VerticalAlignmentPoint pN;
+        pN.chainage  = m_vips[n - 1].chainage;
+        pN.elevation = m_vips[n - 1].elevation;
+        pN.grade     = grades[n - 2];
+        pts.append(pN);
+    }
+
+    m_result->load(pts);
     emit changed();
 }
 
