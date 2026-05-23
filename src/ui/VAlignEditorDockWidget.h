@@ -69,6 +69,9 @@ public:
     /** 取得底部命令列（供命令層驅動提示與輸入）。 */
     VAlignCommandBar* commandBar() const { return m_commandBar; }
 
+    /** 取得縱斷面視圖（供命令層設定 ctx.profileView）。 */
+    VAlignProfileView* profileView() const { return m_profileView; }
+
 Q_SIGNALS:
     /** Emitted whenever the user modifies the vertical alignment. */
     void alignmentChanged();

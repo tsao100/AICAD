@@ -121,6 +121,18 @@ public:
     /** Set total alignment chainage length. */
     void setChainageEnd(double ch);
 
+    /**
+     * @brief Step 19 — 標示超限坡度區段（紅色半透明底色）。
+     *
+     * 由 VALIGNCHECKGRADE 命令呼叫；下次 update() 後繪製。
+     * 清除違規記錄請傳入空向量。
+     *
+     * @param violations  每筆記錄含 {起始 chainage, 終止 chainage}
+     * @param maxGrade    最大容許坡度（絕對值，m/m 單位，例如 0.035 = 3.5%）
+     */
+    void setGradeViolations(const QVector<QPair<double,double>>& violations,
+                            double maxGrade);
+
     // ── Tool / display ───────────────────────────────────────────────────────
 
     void setTool(Tool t);
@@ -232,6 +244,9 @@ private:
                                const QVector<double>& gs,
                                const QVector<VcData>& vcs) const;
 
+private:
+    void drawGradeViolations(QPainter& p) const;
+
     // ── Utility ───────────────────────────────────────────────────────────────
     static QVector<double> niceTicks(double lo, double hi, double step);
     QColor elemColor(HElemType t, bool border) const;
@@ -257,10 +272,13 @@ private:
     QPointF m_curPx;   ///< pixel position of cursor
 
     // Step 14：AddVip 預覽狀態
-    //   在 Tool::AddVip 模式下，游標移動時同步計算插入後的坡度變化並顯示預覽折線。
     bool   m_hasPreview  = false;
-    double m_previewCh   = 0.0;   ///< 預覽插入點的 chainage
-    double m_previewEl   = 0.0;   ///< 游標的 elevation（使用者選定值）
+    double m_previewCh   = 0.0;
+    double m_previewEl   = 0.0;
+
+    // Step 19：Grade violation 超限標示
+    QVector<QPair<double,double>> m_gradeViolations; ///< (ch_start, ch_end) pairs
+    double m_violationMaxGrade = 0.0;
 
     // Elevation range (computed from VIPs + padding)
     double m_elBot = 8.0;

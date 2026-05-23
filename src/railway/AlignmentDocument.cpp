@@ -1,5 +1,8 @@
 #include "AlignmentDocument.h"
 #include "AlignmentSolver.h"
+#include "command/alignment/AlignmentEditCommand.h"
+#include "core/Application.h"
+#include "ui/UIManager.h"
 
 #include <QJsonArray>
 #include <QLineF>
@@ -33,6 +36,8 @@ HorizontalAlignmentEdit::HorizontalAlignmentEdit(QObject* parent)
 
 int HorizontalAlignmentEdit::addFixedTangent(QPointF from, QPointF to)
 {
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
     EditableElement e;
     e.type    = EditableElementType::Tangent;
     e.mode    = ConstraintMode::Fixed;
@@ -40,20 +45,34 @@ int HorizontalAlignmentEdit::addFixedTangent(QPointF from, QPointF to)
     e.endPI   = to;
     e.length  = QLineF(from, to).length();
     m_elems.append(e);
+
+    if (parentDocument()) {
+        const QJsonObject after = parentDocument()->toJson();
+        command::AlignmentEditCommand::push(parentDocument(), before, after,
+                                            "Add Fixed Tangent");
+    }
     return m_elems.size() - 1;
 }
 
 int HorizontalAlignmentEdit::addFixedCurve(QPointF arcStart, QPointF arcEnd,
                                            QPointF arcCenter, double radius)
 {
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
     EditableElement e;
     e.type      = EditableElementType::CircularArc;
     e.mode      = ConstraintMode::Fixed;
-    e.startPI   = arcStart;    // PC  — 弧起點（使用者第一個點擊點）
-    e.endPI     = arcEnd;      // PT  — 弧終點（使用者第三個點擊點）
-    e.arcCenter = arcCenter;   // 外接圓圓心（由命令層計算）
+    e.startPI   = arcStart;
+    e.endPI     = arcEnd;
+    e.arcCenter = arcCenter;
     e.radius    = std::abs(radius);
     m_elems.append(e);
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add Fixed Curve");
+    }
     return m_elems.size() - 1;
 }
 
@@ -78,6 +97,8 @@ int HorizontalAlignmentEdit::addFloatingCurve(int tangentIdxBefore,
         return -1;
     }
 
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
     EditableElement e;
     e.type             = EditableElementType::CircularArc;
     e.mode             = ConstraintMode::Floating;
@@ -87,6 +108,12 @@ int HorizontalAlignmentEdit::addFloatingCurve(int tangentIdxBefore,
     // startPI / endPI left at default (0,0); AlignmentSolver fills them in.
 
     m_elems.append(e);
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add Floating Curve");
+    }
     return m_elems.size() - 1;
 }
 
@@ -123,6 +150,7 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     }
 
     const int spiralInIdx = m_elems.size();
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
 
     // ── 入螺旋 (SpiralIn) ──────────────────────────────────────────────────
     EditableElement spiralIn;
@@ -153,6 +181,11 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     spiralOut.tangentIdxAfter  = tangentIdxAfter;
     m_elems.append(spiralOut);
 
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add SCS");
+    }
     return spiralInIdx;  // 回傳入螺旋的 index
 }
 
@@ -193,12 +226,13 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
         return -1;
     }
 
-    // L1=L2=0 → 退化為 AFC
+    // L1=L2=0 → 退化為 AFC（addFloatingCurve 內部自行推 undo）
     if (spiralLength1 < 1e-9 && spiralLength2 < 1e-9) {
         return addFloatingCurve(tangentIdxBefore, tangentIdxAfter, radius);
     }
 
     const int firstIdx = m_elems.size();
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
 
     // ── 入螺旋 (SpiralIn) — 僅當 L1 > 0 ────────────────────────────────────
     if (spiralLength1 > 1e-9) {
@@ -233,6 +267,11 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
         m_elems.append(spiralOut);
     }
 
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add SCS (asymmetric)");
+    }
     return firstIdx;
 }
 
@@ -241,25 +280,34 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
 void HorizontalAlignmentEdit::movePI(int idx, QPointF newPos)
 {
     if (idx < 0 || idx >= m_elems.size()) return;
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
     auto& e = m_elems[idx];
 
     switch (e.type) {
     case EditableElementType::Tangent:
-        // 移動切線的遠端（結束端）
         e.endPI  = newPos;
         e.length = QLineF(e.startPI, newPos).length();
         break;
 
     case EditableElementType::CircularArc:
-        // Fixed arc：移動圓心
         e.startPI = newPos;
-        // endPI / length 由 solve() 重新計算
         e.solved  = false;
         break;
 
     default:
         e.startPI = newPos;
         break;
+    }
+
+    if (parentDocument()) {
+        // mergeId=1: 連續拖曳合併成一筆 Undo 記錄
+        auto* cmd = new command::AlignmentEditCommand(
+            parentDocument(), before, parentDocument()->toJson(), "Move PI", /*mergeId=*/1);
+        auto* app = core::Application::instance();
+        if (app && app->uiManager() && app->uiManager()->undoStack())
+            app->uiManager()->undoStack()->push(cmd);
     }
 }
 
@@ -336,7 +384,6 @@ const HorizontalAlignment* HorizontalAlignmentEdit::result() const
 
 QJsonObject HorizontalAlignmentEdit::toJson() const
 {
-    // TODO Step 18: 序列化所有 EditableElement
     QJsonObject obj;
     QJsonArray arr;
     for (const auto& e : m_elems) {
@@ -362,22 +409,23 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
 
 bool HorizontalAlignmentEdit::fromJson(const QJsonObject& obj)
 {
-    // TODO Step 18: 還原所有 EditableElement
     m_elems.clear();
     const QJsonArray arr = obj["elements"].toArray();
     for (const auto& v : arr) {
         const QJsonObject e = v.toObject();
         EditableElement elem;
-        elem.type   = static_cast<EditableElementType>(e["type"].toInt());
-        elem.mode   = static_cast<ConstraintMode>(e["mode"].toInt());
-        elem.radius = e["radius"].toDouble();
-        elem.length = e["length"].toDouble();
-        elem.startPI = QPointF(e["startX"].toDouble(), e["startY"].toDouble());
-        elem.endPI   = QPointF(e["endX"].toDouble(),   e["endY"].toDouble());
-        // BUG FIX: Always reset to false — solve() recomputes this flag.
+        elem.type      = static_cast<EditableElementType>(e["type"].toInt());
+        elem.mode      = static_cast<ConstraintMode>(e["mode"].toInt());
+        elem.radius    = e["radius"].toDouble();
+        elem.length    = e["length"].toDouble();
+        elem.startPI   = QPointF(e["startX"].toDouble(),  e["startY"].toDouble());
+        elem.endPI     = QPointF(e["endX"].toDouble(),    e["endY"].toDouble());
+        // Step 18: arcCenter was serialized but not restored — fixed.
+        elem.arcCenter = QPointF(e["centerX"].toDouble(), e["centerY"].toDouble());
+        // Always reset to false — solve() recomputes this flag.
         // Loading a stale 'true' would leave Floating elements appearing
         // solved before the solver has actually run.
-        elem.solved  = false;
+        elem.solved           = false;
         elem.tangentIdxBefore = e["tangentIdxBefore"].toInt(-1);
         elem.tangentIdxAfter  = e["tangentIdxAfter"].toInt(-1);
         m_elems.append(elem);
@@ -643,6 +691,8 @@ AlignmentDocument::AlignmentDocument(QObject* parent)
     , m_horizontal(std::make_unique<HorizontalAlignmentEdit>(this))
     , m_vertical(std::make_unique<VerticalAlignmentEdit>(this))
 {
+    // Step 17: give children a back-pointer for Undo push
+    m_horizontal->m_parentDoc = this;
 }
 
 QJsonObject AlignmentDocument::toJson() const

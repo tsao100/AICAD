@@ -135,3 +135,5 @@ command|alignmentscs||0
 command|valignfloatvcurve||0
 command|valignmovepvi||0
 command|valignsetk||0
+command|profileview||0
+command|valigncheckgrade||0

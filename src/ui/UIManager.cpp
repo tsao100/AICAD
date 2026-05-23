@@ -42,6 +42,7 @@
 #include "command/GripMoveCommand.h"
 #include "view/AlignmentRenderer.h"
 #include "railway/AlignmentDocument.h"
+#include "ui/VAlignEditorDockWidget.h"   // Step 16
 
 #include <QMenu>
 #include <QMenuBar>
@@ -110,6 +111,7 @@ public:
     // ── Railway alignment ──────────────────────────────────────
     railway::AlignmentDocument*  alignmentDoc      = nullptr;
     view::AlignmentRenderer*     alignmentRenderer = nullptr;
+    ui::VAlignEditorDockWidget*  vAlignDock        = nullptr;  ///< Step 16
 };
 
 UIManager::UIManager(QObject* parent)
@@ -362,6 +364,12 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 &railway::HorizontalAlignmentEdit::changed,
                 d->alignmentRenderer,
                 &view::AlignmentRenderer::refresh);
+
+        // ── Step 16：建立縱斷面 Dock，連接水平↔縱斷面聯動 ─────────────────
+        d->vAlignDock = new ui::VAlignEditorDockWidget(d->mainWindow);
+        d->vAlignDock->setAlignmentDocument(d->alignmentDoc);
+        d->mainWindow->addDockWidget(Qt::BottomDockWidgetArea, d->vAlignDock);
+        d->vAlignDock->hide();   // 初始隱藏；PROFILEVIEW 命令顯示
 
         // 建立並加入 OSnap 工具列
         // 改用信號，等 viewer 初始化完畢再建立 toolbar
@@ -1404,7 +1412,9 @@ void UIManager::connectCommandLineEvents() {
                        command::CommandContext ctx;
                        ctx.alignmentDoc = d->alignmentDoc;
                        ctx.cadView      = d->cadView;
-                       // profileView: not held directly; leave nullptr for now.
+                       // Step 16: profileView now accessible via vAlignDock
+                       if (d->vAlignDock)
+                           ctx.profileView = d->vAlignDock->profileView();
                        cmdMgr->executeCommand(cmdName, ctx);
                    });
 
@@ -1979,6 +1989,11 @@ QUndoStack* UIManager::undoStack() const { return d->undoStack; }
 railway::AlignmentDocument* UIManager::alignmentDocument() const
 {
     return d->alignmentDoc;
+}
+
+ui::VAlignEditorDockWidget* UIManager::vAlignDockWidget() const
+{
+    return d->vAlignDock;
 }
 
 void UIManager::showMainWindow() {

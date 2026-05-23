@@ -518,6 +518,7 @@ void VAlignProfileView::paintEvent(QPaintEvent*)
     if (m_showKVal)  drawKvalLabels(p, vcs, gs);
     drawVipPoints(p, vcs);
     if (m_hasCursor) drawCursor(p, vcs);
+    if (!m_gradeViolations.isEmpty()) drawGradeViolations(p);  // Step 19
     if (m_hasPreview && m_tool == Tool::AddVip)
         drawAddVipPreview(p, gs, vcs);    // Step 14
 
@@ -1206,6 +1207,53 @@ void VAlignProfileView::drawStripCursorLine(QPainter& p) const
     p.setPen(hp);
     p.drawLine(QPointF(m_curPx.x(), stripTop()),
                QPointF(m_curPx.x(), stripTop() + kSH));
+    p.restore();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Step 19 — Grade violations
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VAlignProfileView::setGradeViolations(
+    const QVector<QPair<double,double>>& violations,
+    double maxGrade)
+{
+    m_gradeViolations    = violations;
+    m_violationMaxGrade  = maxGrade;
+    update();
+}
+
+void VAlignProfileView::drawGradeViolations(QPainter& p) const
+{
+    if (m_gradeViolations.isEmpty()) return;
+
+    p.save();
+    p.setClipRect(profileRect());
+
+    // 半透明紅色填色
+    const QColor fillCol(220, 40, 40, 55);
+    const QColor borderCol(220, 40, 40, 140);
+
+    for (const auto& seg : m_gradeViolations) {
+        const double x0 = tx(seg.first);
+        const double x1 = tx(seg.second);
+        if (x1 <= kML || x0 >= width() - kMR) continue;
+
+        const QRectF band(x0, kMT, x1 - x0, profileH());
+        p.fillRect(band, fillCol);
+        p.setPen(QPen(borderCol, 1.0, Qt::DashLine));
+        p.drawLine(QPointF(x0, kMT), QPointF(x0, kMT + profileH()));
+        p.drawLine(QPointF(x1, kMT), QPointF(x1, kMT + profileH()));
+    }
+
+    // 在最頂端標示限值文字
+    if (m_violationMaxGrade > 0.0) {
+        QFont f = font(); f.setPointSize(7); p.setFont(f);
+        p.setPen(QColor(220, 80, 80, 180));
+        const QString lbl = QString("Max grade: ±%1%").arg(m_violationMaxGrade * 100.0, 0, 'f', 2);
+        p.drawText(kML + 4, kMT + 11, lbl);
+    }
+
     p.restore();
 }
 

@@ -55,6 +55,7 @@ class ToolManager;
 class CommandLineWidget;
 class TransientCommandHistory;
 class AutoCompleteModel;     // ✅ 新增
+class VAlignEditorDockWidget; // Step 16
 
 TopoDS_Face buildFaceFromRegion(
     const cad::Sketch* sketch,
@@ -199,6 +200,9 @@ public:
 
     /// Railway alignment document (owned by UIManager)
     railway::AlignmentDocument* alignmentDocument() const;
+
+    /// Step 16: Vertical-alignment dock widget
+    ui::VAlignEditorDockWidget* vAlignDockWidget() const;
 
 Q_SIGNALS:
     /**

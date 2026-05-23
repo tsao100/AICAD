@@ -79,6 +79,10 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("VADD",   "VALIGNFLOATVCURVE", "Add VIP with vertical curve (K value)",        true);
     registerAlias("VMOVE",  "VALIGNMOVEPVI",     "Drag VIP in vertical profile",                 true);
     registerAlias("VSETK",  "VALIGNSETK",        "Set K value for selected VIP",                 true);
+
+    // ── Step 19 ───────────────────────────────────────────────────────────────
+    registerAlias("PV",  "PROFILEVIEW",      "Show vertical alignment profile view",         true);
+    registerAlias("VCG", "VALIGNCHECKGRADE", "Check grades against limit, highlight violations", true);
 }
 
 void CommandAlias::registerAlias(const QString& alias, const QString& command, const QString& description, bool isSystem) {

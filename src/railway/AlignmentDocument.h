@@ -53,6 +53,9 @@ struct EditableElement
     int tangentIdxAfter  = -1;
 };
 
+// Forward declaration (AlignmentDocument is defined later in this file)
+class AlignmentDocument;
+
 // ============================================================================
 //  HorizontalAlignmentEdit
 // ============================================================================
@@ -117,6 +120,11 @@ Q_SIGNALS:
 private:
     QVector<EditableElement>             m_elems;
     std::unique_ptr<HorizontalAlignment> m_result;
+
+    // Step 17: back-pointer to AlignmentDocument for Undo push
+    friend class AlignmentDocument;
+    AlignmentDocument* parentDocument() const { return m_parentDoc; }
+    AlignmentDocument* m_parentDoc = nullptr;
 };
 
 // ============================================================================

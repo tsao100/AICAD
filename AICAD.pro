@@ -231,6 +231,7 @@ SOURCES += \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
     src/command/ExtrudeCommand.cpp \
+    src/command/alignment/AlignmentEditCommand.cpp \
     src/command/alignment/AlignmentFixCurveCommand.cpp \
     src/command/alignment/AlignmentFixTangentCommand.cpp \
     src/command/alignment/AlignmentFloatCurveCommand.cpp \
@@ -341,10 +342,13 @@ HEADERS += \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
     src/command/alignment/AlignmentCommandBase.h \
+    src/command/alignment/AlignmentEditCommand.h \
     src/command/alignment/AlignmentFixCurveCommand.h \
     src/command/alignment/AlignmentFixTangentCommand.h \
     src/command/alignment/AlignmentFloatCurveCommand.h \
     src/command/alignment/AlignmentSCSCommand.h \
+    src/command/alignment/ProfileViewCommand.h \
+    src/command/alignment/VAlignCheckGradeCommand.h \
     src/command/alignment/VAlignFloatVCurveCommand.h \
     src/command/alignment/VAlignMovePVICommand.h \
     src/command/alignment/VAlignSetKCommand.h \
