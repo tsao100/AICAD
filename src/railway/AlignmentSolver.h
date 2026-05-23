@@ -34,6 +34,7 @@
 
 #include "AlignmentDocument.h"
 #include "RailwayAlignment.h"
+#include "RailwayAlignmentElement.h"
 
 #include <QPointF>
 #include <QVector>
@@ -139,9 +140,16 @@ public:
     /**
      * @brief Compute full SCS geometry using Appendix B formulae (asymmetric).
      *
+     * Xm / Ym / thetaS for each spiral are derived by calling the appropriate
+     * TransitionElement subclass's localFrame(Ls) rather than using the
+     * Clothoid-only Fresnel approximation, so all five spiral families
+     * (Clothoid, HalfSine, Parabola, CubicJPN, CubicECI) are handled exactly.
+     *
      * @param radius         Circular radius R [m] (absolute).
      * @param spiralLength1  Entry spiral length L1 [m].
      * @param spiralLength2  Exit  spiral length L2 [m].
+     * @param type1          Entry spiral family (default: Clothoid).
+     * @param type2          Exit  spiral family (default: Clothoid).
      * @param tanStartPrev   Effective start of incoming tangent.
      * @param tanEndPrev     Effective end   of incoming tangent.
      * @param tanStartNext   Effective start of outgoing tangent.
@@ -150,6 +158,7 @@ public:
      */
     static SolvedSCS solveSCS(
         double radius, double spiralLength1, double spiralLength2,
+        SpiralType type1, SpiralType type2,
         const QPointF& tanStartPrev, const QPointF& tanEndPrev,
         const QPointF& tanStartNext, const QPointF& tanEndNext);
 

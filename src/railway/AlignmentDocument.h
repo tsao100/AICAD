@@ -34,6 +34,25 @@ enum class EditableElementType {
 };
 
 // ============================================================================
+//  SpiralType  — 螺旋線過渡曲線類型
+//
+//  對應 RailwayAlignmentElement.h 中的 ElementType 過渡曲線子集：
+//    Clothoid  → ClothoidElement  (Euler / Cornu — 曲率線性遞增，預設)
+//    HalfSine  → HalfSineElement  (半正弦，曲率依升餘弦分佈)
+//    Parabola  → ParabolaElement  (三次拋物線，路軌常用近似)
+//    CubicJPN  → CubicJPNElement  (日本 JIS E 1301 三次拋物線)
+//    CubicECI  → CubicECIElement  (CECI 三次拋物線)
+// ============================================================================
+
+enum class SpiralType {
+    Clothoid = 0,  ///< 預設：Euler–Cornu clothoid（線性曲率）
+    HalfSine,      ///< Half-sine（半正弦）
+    Parabola,      ///< Cubic parabola（三次拋物線）
+    CubicJPN,      ///< Japanese cubic parabola（JIS E 1301）
+    CubicECI       ///< CECI cubic parabola
+};
+
+// ============================================================================
 //  EditableElement
 // ============================================================================
 
@@ -51,10 +70,17 @@ struct EditableElement
     // Floating / SCS：依附的前後切線在 m_elems 中的 index（-1 = 未設定）
     int tangentIdxBefore = -1;
     int tangentIdxAfter  = -1;
+
+    // SCS 螺旋線類型（僅 SpiralIn / SpiralOut 使用；其餘元素忽略）
+    // spiralType1 = 入螺旋類型（SpiralIn 元素使用）
+    // spiralType2 = 出螺旋類型（SpiralOut 元素使用；SpiralIn 元素也同時攜帶以便查詢）
+    SpiralType spiralType1 = SpiralType::Clothoid;  ///< 入螺旋類型，預設 Clothoid
+    SpiralType spiralType2 = SpiralType::Clothoid;  ///< 出螺旋類型，預設 Clothoid
 };
 
 // Forward declaration (AlignmentDocument is defined later in this file)
 class AlignmentDocument;
+
 
 // ============================================================================
 //  HorizontalAlignmentEdit
@@ -91,6 +117,13 @@ public:
     int addSCS(int tangentIdxBefore, int tangentIdxAfter,
                double radius, double spiralLength1, double spiralLength2);
 
+    /** 完整版本：L1、L2 可獨立設定，並分別指定入螺旋（type1）與出螺旋（type2）的
+     *  過渡曲線類型。未指定時預設為 SpiralType::Clothoid。
+     *  回傳第一個新建元素的 index；失敗時回傳 -1。 */
+    int addSCS(int tangentIdxBefore, int tangentIdxAfter,
+               double radius, double spiralLength1, double spiralLength2,
+               SpiralType type1, SpiralType type2);
+
     // ── 元素操作 ─────────────────────────────────────────────────────────────
 
     void movePI(int idx, QPointF newPos);
@@ -120,7 +153,7 @@ Q_SIGNALS:
 private:
     QVector<EditableElement>             m_elems;
     std::unique_ptr<HorizontalAlignment> m_result;
-
+    
     // Step 17: back-pointer to AlignmentDocument for Undo push
     friend class AlignmentDocument;
     AlignmentDocument* parentDocument() const { return m_parentDoc; }

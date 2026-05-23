@@ -575,10 +575,44 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            if (!rb) return;
                            QVariantMap map = data.toMap();
                            QString action = map["action"].toString();
-                           if (action == "clearAndAdd") {
+                           if (action == "setParams") {
+                               // ── Spiral / SCS geometric parameters ────────────────
+                               if (map.contains("radius"))
+                                   rb->setRadius(map["radius"].toDouble());
+                               if (map.contains("spiralLength"))
+                                   rb->setSpiralLength(map["spiralLength"].toDouble());
+                               if (map.contains("spiralLength1"))
+                                   rb->setSpiralLength1(map["spiralLength1"].toDouble());
+                               if (map.contains("spiralLength2"))
+                                   rb->setSpiralLength2(map["spiralLength2"].toDouble());
+                               // ── Spiral type (int encoding of SpiralType enum) ─────
+                               if (map.contains("spiralType1"))
+                                   rb->setSpiralType1(
+                                       static_cast<railway::SpiralType>(map["spiralType1"].toInt()));
+                               if (map.contains("spiralType2"))
+                                   rb->setSpiralType2(
+                                       static_cast<railway::SpiralType>(map["spiralType2"].toInt()));
+                               if (map.contains("mode")) {
+                                   // Convert string mode to enum
+                                   QString modeStr = map["mode"].toString();
+                                   if (modeStr == "scs")
+                                       rb->setMode(view::RubberBandMode::SCS);
+                                   else if (modeStr == "spiral")
+                                       rb->setMode(view::RubberBandMode::Spiral);
+                               }
+                           } else if (action == "clearAndAdd") {
                                rb->clearPoints();
                                QVector2D pt = map["point"].value<QVector2D>();
                                rb->addPoint(pt);
+                               rb->update();
+                           } else if (action == "addPoint") {
+                               QVector2D pt = map["point"].value<QVector2D>();
+                               rb->addPoint(pt);
+                               rb->update();
+                           } else if (action == "setCurrentPoint") {
+                               QVector2D pt = map["point"].value<QVector2D>();
+                               rb->setCurrentPoint(pt);
+                               rb->update();
                            } else if (action == "clear") {
                                rb->clearPoints();
                                rb->clear();

@@ -275,6 +275,96 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     return firstIdx;
 }
 
+// ── addSCS (完整版：獨立螺旋長度 + 獨立螺旋類型) ──────────────────────────────
+//
+//  L1=L2=0 → 退化為 AFC（單一 Floating CircularArc）
+//  L1>0, L2=0 → SpiralIn + CircularArc（SC 型）
+//  L1=0, L2>0 → CircularArc + SpiralOut（CS 型）
+//  L1>0, L2>0 → SpiralIn + CircularArc + SpiralOut（完整 SCS）
+//
+//  type1 = 入螺旋類型（SpiralIn 元素）
+//  type2 = 出螺旋類型（SpiralOut 元素）
+//  兩者皆記錄於 SpiralIn 元素的 spiralType1 / spiralType2，方便 Solver 查詢。
+//
+int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
+                                    int        tangentIdxAfter,
+                                    double     radius,
+                                    double     spiralLength1,
+                                    double     spiralLength2,
+                                    SpiralType type1,
+                                    SpiralType type2)
+{
+    // Validate tangent references
+    if (tangentIdxBefore < 0 || tangentIdxBefore >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS(full): tangentIdxBefore out of range:"
+                   << tangentIdxBefore;
+        return -1;
+    }
+    if (tangentIdxAfter < 0 || tangentIdxAfter >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS(full): tangentIdxAfter out of range:"
+                   << tangentIdxAfter;
+        return -1;
+    }
+    if (m_elems[tangentIdxBefore].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS(full): tangentIdxBefore is not a Tangent";
+        return -1;
+    }
+    if (m_elems[tangentIdxAfter].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS(full): tangentIdxAfter is not a Tangent";
+        return -1;
+    }
+    if (std::abs(radius) < 1e-9) {
+        qWarning() << "[HorizontalAlignmentEdit] addSCS(full): radius ≈ 0";
+        return -1;
+    }
+
+    // L1=L2=0 → 退化為 AFC
+    if (spiralLength1 < 1e-9 && spiralLength2 < 1e-9) {
+        return addFloatingCurve(tangentIdxBefore, tangentIdxAfter, radius);
+    }
+
+    const int firstIdx = m_elems.size();
+
+    // ── 入螺旋 (SpiralIn) — 僅當 L1 > 0 ────────────────────────────────────
+    if (spiralLength1 > 1e-9) {
+        EditableElement spiralIn;
+        spiralIn.type             = EditableElementType::SpiralIn;
+        spiralIn.mode             = ConstraintMode::Floating;
+        spiralIn.radius           = std::abs(radius);
+        spiralIn.length           = spiralLength1;
+        spiralIn.tangentIdxBefore = tangentIdxBefore;
+        spiralIn.tangentIdxAfter  = tangentIdxAfter;
+        spiralIn.spiralType1      = type1;   // 入螺旋類型（自身使用）
+        spiralIn.spiralType2      = type2;   // 出螺旋類型（由此攜帶供 Solver 查詢）
+        m_elems.append(spiralIn);
+    }
+
+    // ── 圓弧 (CircularArc) ────────────────────────────────────────────────
+    EditableElement arc;
+    arc.type             = EditableElementType::CircularArc;
+    arc.mode             = ConstraintMode::Floating;
+    arc.radius           = std::abs(radius);
+    arc.tangentIdxBefore = tangentIdxBefore;
+    arc.tangentIdxAfter  = tangentIdxAfter;
+    m_elems.append(arc);
+
+    // ── 出螺旋 (SpiralOut) — 僅當 L2 > 0 ────────────────────────────────────
+    if (spiralLength2 > 1e-9) {
+        EditableElement spiralOut;
+        spiralOut.type             = EditableElementType::SpiralOut;
+        spiralOut.mode             = ConstraintMode::Floating;
+        spiralOut.radius           = std::abs(radius);
+        spiralOut.length           = spiralLength2;
+        spiralOut.tangentIdxBefore = tangentIdxBefore;
+        spiralOut.tangentIdxAfter  = tangentIdxAfter;
+        spiralOut.spiralType1      = type2;  // SpiralOut 自身類型記在 spiralType1
+        spiralOut.spiralType2      = type2;  // 保持一致
+        m_elems.append(spiralOut);
+    }
+
+    return firstIdx;
+}
+
 // ── 元素操作 ──────────────────────────────────────────────────────────────────
 
 void HorizontalAlignmentEdit::movePI(int idx, QPointF newPos)

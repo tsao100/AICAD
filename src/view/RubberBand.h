@@ -17,6 +17,8 @@
 #include <AIS_InteractiveContext.hxx>
 #include <Graphic3d_ArrayOfPolylines.hxx>
 
+#include "railway/AlignmentDocument.h"   // SpiralType
+
 namespace aicad {
 // 前向宣告
 namespace cad {
@@ -164,6 +166,33 @@ public:
      * @brief 取得出螺旋長度 L2
      */
     double spiralLength2() const;
+
+    /**
+     * @brief 設定入螺旋類型（Spiral / SCS 模式）
+     *
+     * 控制 updateSpiral() 和 updateSCS() 入螺旋段使用的數學模型：
+     * Clothoid（預設）、HalfSine、Parabola、CubicJPN、CubicECI。
+     * 類型改變後需呼叫 update() 才會重新繪製。
+     */
+    void setSpiralType1(railway::SpiralType type);
+
+    /**
+     * @brief 取得入螺旋類型
+     */
+    railway::SpiralType spiralType1() const;
+
+    /**
+     * @brief 設定出螺旋類型（SCS 模式）
+     *
+     * 控制 updateSCS() 出螺旋段使用的數學模型。
+     * 類型改變後需呼叫 update() 才會重新繪製。
+     */
+    void setSpiralType2(railway::SpiralType type);
+
+    /**
+     * @brief 取得出螺旋類型
+     */
+    railway::SpiralType spiralType2() const;
 
     /**
      * @brief 更新橡皮筋顯示

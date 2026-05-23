@@ -12,6 +12,7 @@
 
 #include "AlignmentDocument.h"
 #include "AlignmentSolver.h"
+#include "RailwayAlignmentElement.h"
 
 #include <QJsonArray>
 #include <QLineF>
@@ -147,6 +148,35 @@ SolvedCurve AlignmentSolver::solveFloatingCurve(
 
 
 // ============================================================================
+//  makeTransitionElement  (file-local helper)
+//
+//  Instantiate the correct TransitionElement subclass for a given SpiralType,
+//  configure its length and radius, and return it.  The element is used only
+//  to evaluate localFrame(Ls) so placement is left at defaults.
+// ============================================================================
+
+namespace {
+
+std::unique_ptr<TransitionElement>
+makeTransitionElement(SpiralType type, double Ls, double signedR)
+{
+    std::unique_ptr<TransitionElement> elem;
+    switch (type) {
+    case SpiralType::HalfSine: elem = std::make_unique<HalfSineElement>(); break;
+    case SpiralType::Parabola: elem = std::make_unique<ParabolaElement>(); break;
+    case SpiralType::CubicJPN: elem = std::make_unique<CubicJPNElement>(); break;
+    case SpiralType::CubicECI: elem = std::make_unique<CubicECIElement>(); break;
+    case SpiralType::Clothoid:
+    default:                   elem = std::make_unique<ClothoidElement>();  break;
+    }
+    elem->setLength(Ls);
+    elem->setRadius(signedR);
+    return elem;
+}
+
+} // anonymous namespace
+
+// ============================================================================
 //  solveSCS  (public static — VBA TryToFit sliding algorithm)
 //
 //  Algorithm ported from VBA Sub TryToFit():
@@ -165,10 +195,15 @@ SolvedCurve AlignmentSolver::solveFloatingCurve(
 //            −d5·sin(Δ).  Setting the corrected gap to zero gives d5 exactly.
 //
 //  Pass 2 — Rebuild all four key-points from the corrected TS.
+//
+//  Xm / Ym / thetaS for each spiral are obtained from the corresponding
+//  TransitionElement subclass via localFrame(Ls) rather than the Clothoid-only
+//  Fresnel series, so all five spiral families are handled correctly.
 // ============================================================================
 
 SolvedSCS AlignmentSolver::solveSCS(
     double radius, double spiralLength1, double spiralLength2,
+    SpiralType type1, SpiralType type2,
     const QPointF& tanStartPrev, const QPointF& tanEndPrev,
     const QPointF& tanStartNext, const QPointF& tanEndNext)
 {
@@ -203,26 +238,52 @@ SolvedSCS AlignmentSolver::solveSCS(
     const int    signR = (delta >= 0.0) ? 1 : -1;  // +1 = right-hand curve
     const double R     = signR * Rabs;              // signed radius (VBA: R1)
 
-    // ── Step 3: clothoid spiral angles  (VBA: angle1 = sa(0,S1,R1,S1,0,type)) ─
-    //   Θ = L / (2R)
-    const double thetaS1 = (L1 > 1e-9) ? L1 / (2.0 * Rabs) : 0.0;
-    const double thetaS2 = (L2 > 1e-9) ? L2 / (2.0 * Rabs) : 0.0;
+    // ── Step 3: spiral end-frame via TransitionElement::localFrame(Ls) ─────────
+    //
+    //  Each spiral is instantiated with its full length Ls and the signed
+    //  radius R (signR * Rabs).  localFrame(Ls) returns the local coordinates
+    //  at the far end of the spiral (the TC→SC or CS→ST tangent point):
+    //    lf.x     = Xm  – along-tangent reach from the spiral start
+    //    lf.y     = Ym  – cross-track offset (positive = right, sign follows R)
+    //    lf.theta = θs  – total tangent deflection (positive = right turn)
+    //
+    //  This replaces the Clothoid-only Fresnel approximation so that all five
+    //  spiral families (Clothoid, HalfSine, Parabola, CubicJPN, CubicECI)
+    //  are handled with their own exact formulae.
 
-    // ── Step 4: arc deflection and length  (VBA: cl1 = |R1|*(a1-angle1-angle2)/180*π) ──
-    const double arcAngle = absDelta - thetaS1 - thetaS2;
+    double Xm1 = 0.0, Ym1 = 0.0, thetaS1 = 0.0;
+    if (L1 > 1e-9) {
+        const auto elem1 = makeTransitionElement(type1, L1, R);  // R is signed
+        const LocalFrame lf1 = elem1->localFrame(L1);
+        Xm1     = lf1.x;
+        Ym1     = lf1.y;      // already carries sign from R
+        thetaS1 = lf1.theta;  // already carries sign from R
+    }
+
+    double Xm2 = 0.0, Ym2 = 0.0, thetaS2 = 0.0;
+    if (L2 > 1e-9) {
+        const auto elem2 = makeTransitionElement(type2, L2, R);  // R is signed
+        const LocalFrame lf2 = elem2->localFrame(L2);
+        Xm2     = lf2.x;
+        Ym2     = lf2.y;
+        thetaS2 = lf2.theta;
+    }
+
+    // ── Step 4: arc deflection and length ────────────────────────────────────
+    //   arcAngle = |Δ| − |θs1| − |θs2|
+    const double arcAngle = absDelta - std::abs(thetaS1) - std::abs(thetaS2);
     if (arcAngle < -1e-9) {
         qWarning() << "[AlignmentSolver] solveSCS: spirals overlap (Δ < Θ1+Θ2). Δ="
                    << qRadiansToDegrees(absDelta)
-                   << "Θ1+Θ2=" << qRadiansToDegrees(thetaS1 + thetaS2);
+                   << "Θ1+Θ2=" << qRadiansToDegrees(std::abs(thetaS1) + std::abs(thetaS2));
         return result;
     }
     const double arcLen = Rabs * std::max(0.0, arcAngle);
 
     // ── Step 5: azimuths at SC and CS ────────────────────────────────────────
-    //   azSC = az1 + signR·Θ1
-    //   azCS = az2 − signR·Θ2
-    const double azSC = az1 + signR * thetaS1;
-    const double azCS = az2 - signR * thetaS2;
+    //   thetaS already carries the turn sign, so no separate signR multiply.
+    const double azSC = az1 + thetaS1;
+    const double azCS = az2 - thetaS2;
 
     // ── Step 6: pre-compute trig ──────────────────────────────────────────────
     const double sA1 = std::sin(az1), cA1 = std::cos(az1);
@@ -230,37 +291,24 @@ SolvedSCS AlignmentSolver::solveSCS(
 
     // ── Step 7: rigid offsets within the SCS block ───────────────────────────
     //
-    //  The SCS block translates as a rigid body when TS slides along az1.
-    //  Pre-compute each sub-element's (ΔEast, ΔNorth) offset from its
-    //  predecessor so that pass 1 and pass 2 are a single vector addition each.
-    //
-    //  (a) Entry spiral TS → SC   (VBA: sx/sy from TS at az1)
-    //      Clothoid tangential offset Xm, radial offset Ym:
-    //        SC = TS + Xm1·unit(az1) + signR·Ym1·right_perp(az1)
-    //      right_perp(az) in (E,N) = (cos az, −sin az)
-    const double Xm1   = (L1 > 1e-9) ? L1 * (1.0 - thetaS1 * thetaS1 / 10.0) : 0.0;
-    const double Ym1   = (L1 > 1e-9) ? L1 * thetaS1 / 3.0                     : 0.0;
-    const double scDx  =  Xm1 * sA1 + signR * Ym1 * cA1;   // ΔEast  TS → SC
-    const double scDy  =  Xm1 * cA1 - signR * Ym1 * sA1;   // ΔNorth TS → SC
+    //  (a) Entry spiral TS → SC
+    //      Xm1 is along az1; Ym1 is along right_perp(az1) = (cos az1, −sin az1).
+    //      Ym1 is already signed, so no extra signR factor needed.
+    const double scDx  =  Xm1 * sA1 + Ym1 * cA1;   // ΔEast  TS → SC
+    const double scDy  =  Xm1 * cA1 - Ym1 * sA1;   // ΔNorth TS → SC
 
-    //  (b) Circular arc SC → CS   (VBA: CX/CY from SC, azSC, R, cl1)
-    //      Center C = SC + R·right_perp(azSC)
-    //      CS = C − R·right_perp(azCS)
-    //      Δ = R·(cos azSC − cos azCS,  sin azCS − sin azSC)
+    //  (b) Circular arc SC → CS
+    //      R is signed; this computes the chord CS − SC correctly for both hands.
     const double csDx  =  R * (std::cos(azSC) - std::cos(azCS));   // ΔEast  SC → CS
     const double csDy  =  R * (std::sin(azCS) - std::sin(azSC));   // ΔNorth SC → CS
 
-    //  (c) Exit spiral reversed CS → ST   (VBA: tx from CS using d3, d4, az2)
-    //      VBA computes the clothoid shape in local az=0 frame:
-    //        d4 = |sy(0,0, 0,S2,R1,S2, 0,0, type)| = Xm2   (along-track)
-    //        d3 = |sx(0,0, 0,S2,R1,S2, 0,0, type)| * signR = Ym2·signR (cross-track)
-    //      then: ST = tx(CS, az2, 0, d4, −d3)
-    //              = CS + d4·unit(az2) + (−d3)·right_perp(az2)
-    //              = CS + Xm2·unit(az2) − signR·Ym2·right_perp(az2)
-    const double Xm2   = (L2 > 1e-9) ? L2 * (1.0 - thetaS2 * thetaS2 / 10.0) : 0.0;
-    const double Ym2   = (L2 > 1e-9) ? L2 * thetaS2 / 3.0                     : 0.0;
-    const double stDx  =  Xm2 * sA2 - signR * Ym2 * cA2;   // ΔEast  CS → ST
-    const double stDy  =  Xm2 * cA2 + signR * Ym2 * sA2;   // ΔNorth CS → ST
+    //  (c) Exit spiral reversed CS → ST
+    //      The exit spiral runs CT (decreasing curvature toward ST).
+    //      In the local frame of az2: Xm2 along az2, Ym2 rightward.
+    //      ST = CS + Xm2·unit(az2) − Ym2·right_perp(az2)
+    //      (subtract because CT mirror of TC; Ym2 already signed).
+    const double stDx  =  Xm2 * sA2 - Ym2 * cA2;   // ΔEast  CS → ST
+    const double stDy  =  Xm2 * cA2 + Ym2 * sA2;   // ΔNorth CS → ST
 
     // ── Step 8: pass 1 — anchor TS at tanStartPrev, propagate to ST ──────────
     //  VBA: initial TS = ed[0].StartNE = (cox1, coy1)
@@ -504,8 +552,13 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         const double L1 = elems[i].length;    // entry spiral length
         const double L2 = elems[i+2].length;  // exit  spiral length
 
+        // Spiral types: SpiralIn element (index i) carries both type1 and type2.
+        const SpiralType type1 = elems[i].spiralType1;
+        const SpiralType type2 = elems[i].spiralType2;
+
         const SolvedSCS scs = solveSCS(
             R, L1, L2,
+            type1, type2,
             tanStart[tb], tanEnd[tb],
             tanStart[ta], tanEnd[ta]);
 
@@ -669,10 +722,26 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             const double Ls1 = scs.Ls1;   // entry spiral length
             const double Ls2 = scs.Ls2;   // exit  spiral length (may differ from Ls1)
 
+            // Map SpiralType enum → AlignmentPoint curveType string
+            // SpiralIn element (index i) carries both type1 (entry) and type2 (exit)
+            auto spiralTypeName = [](SpiralType t) -> QString {
+                switch (t) {
+                case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
+                case SpiralType::Parabola: return QStringLiteral("PARABOLA");
+                case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
+                case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
+                case SpiralType::Clothoid: // fall-through — default
+                default:                   return QStringLiteral("SPIRAL");
+                }
+            };
+
+            const QString curveTypeIn  = spiralTypeName(e.spiralType1);
+            const QString curveTypeOut = spiralTypeName(e.spiralType2);
+
             // Emit TS point (entry spiral start): tsc = "TS"
             AlignmentPoint tspt;
             tspt.tsc       = QStringLiteral("TS");
-            tspt.curveType = QStringLiteral("SPIRAL");
+            tspt.curveType = curveTypeIn;
             tspt.easting   = scs.tsPoint.x();
             tspt.northing  = scs.tsPoint.y();
             tspt.azimuth   = scs.azTS;
@@ -698,7 +767,7 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             // Emit CS point (arc end / spiral-out start): tsc = "CS"
             AlignmentPoint cspt;
             cspt.tsc       = QStringLiteral("CS");
-            cspt.curveType = QStringLiteral("SPIRAL");
+            cspt.curveType = curveTypeOut;
             cspt.easting   = scs.csPoint.x();
             cspt.northing  = scs.csPoint.y();
             cspt.azimuth   = scs.azCS;
