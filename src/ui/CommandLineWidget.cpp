@@ -663,10 +663,17 @@ void CommandLineWidget::installMouseFilterOnChildren(QWidget* w) {
 // ─────────────────────────────────────────
 
 void CommandLineWidget::onInputSubmit(const QString& text) {
+    auto* clm = core::CommandLineManager::instance();
+
     if (text.isEmpty()) {
-        // 重覆上一個指令
-        if (!m_recentCommands.isEmpty())
+        if (clm->isWaitingForInput()) {
+            // Forward empty string to the active command so it can apply its
+            // default value (e.g. pressing Enter to accept Clothoid spiral type).
+            clm->executeCommand(QString());
+        } else if (!m_recentCommands.isEmpty()) {
+            // No active command — repeat the last one.
             emit commandSubmitted(m_recentCommands.first());
+        }
         return;
     }
 

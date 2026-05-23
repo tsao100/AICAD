@@ -1,4 +1,5 @@
 #include "CommandInputEdit.h"
+#include "core/CommandLineManager.h"
 #include <QKeyEvent>
 #include <QPainter>
 
@@ -61,15 +62,26 @@ void CommandInputEdit::keyPressEvent(QKeyEvent* event) {
         const QString t = text().trimmed();
         clear();
         m_historyIndex = -1;
-        if (t.isEmpty())
-            repeatLastCommand();
-        else
+        if (t.isEmpty()) {
+            // If a command is actively waiting for input, submit an empty string
+            // so it can apply its default (e.g. "Enter = Clothoid" for spiral type).
+            // Only repeat the last command when the system is idle.
+            if (core::CommandLineManager::instance()->isWaitingForInput())
+                emit commandSubmitted(QString());
+            else
+                repeatLastCommand();
+        } else {
             emit commandSubmitted(t);
+        }
         return;
     }
     case Qt::Key_Space:
         if (text().trimmed().isEmpty()) {
-            repeatLastCommand();
+            // Same logic as Enter: forward empty string when a command is running.
+            if (core::CommandLineManager::instance()->isWaitingForInput())
+                emit commandSubmitted(QString());
+            else
+                repeatLastCommand();
             return;
         }
         break;

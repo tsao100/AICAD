@@ -30,18 +30,24 @@ CommandLineManager::~CommandLineManager() {
 }
 
 void CommandLineManager::executeCommand(const QString& input) {
-    if (input.isEmpty()) return;
+    // If a command is waiting for input, an empty string is a valid "Enter for
+    // default" signal (e.g. accepting the default Clothoid spiral type).
+    // Only reject empty input when the system is idle.
+    if (input.isEmpty() && !m_isWaitingForInput) return;
 
     QString trimmed = input.trimmed();
 
-    // 添加到歷史記錄
-    addToHistory(trimmed);
-
     // 如果正在等待輸入
     if (m_isWaitingForInput) {
+        // trimmed may be empty here — that is the "accept default" case.
         processInput(trimmed);
         return;
     }
+
+    if (trimmed.isEmpty()) return;
+
+    // 添加到歷史記錄
+    addToHistory(trimmed);
 
     // 否則作為新命令執行
     processCommand(trimmed);

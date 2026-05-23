@@ -488,7 +488,9 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
         elem["endY"]   = e.endPI.y();
         elem["centerX"] = e.arcCenter.x();
         elem["centerY"] = e.arcCenter.y();
-        elem["solved"] = e.solved;
+        elem["solved"]       = e.solved;
+        elem["spiralType1"]  = static_cast<int>(e.spiralType1);
+        elem["spiralType2"]  = static_cast<int>(e.spiralType2);
         elem["tangentIdxBefore"]  = e.tangentIdxBefore;
         elem["tangentIdxAfter"]   = e.tangentIdxAfter;
         arr.append(elem);
@@ -515,7 +517,9 @@ bool HorizontalAlignmentEdit::fromJson(const QJsonObject& obj)
         // Always reset to false — solve() recomputes this flag.
         // Loading a stale 'true' would leave Floating elements appearing
         // solved before the solver has actually run.
-        elem.solved           = false;
+        elem.solved      = false;
+        elem.spiralType1 = static_cast<SpiralType>(e["spiralType1"].toInt(0));
+        elem.spiralType2 = static_cast<SpiralType>(e["spiralType2"].toInt(0));
         elem.tangentIdxBefore = e["tangentIdxBefore"].toInt(-1);
         elem.tangentIdxAfter  = e["tangentIdxAfter"].toInt(-1);
         m_elems.append(elem);
