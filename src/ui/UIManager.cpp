@@ -374,6 +374,14 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         d->mainWindow->addDockWidget(Qt::BottomDockWidgetArea, d->vAlignDock);
         d->vAlignDock->hide();   // 初始隱藏；PROFILEVIEW 命令顯示
 
+        // ── 縱斷面編輯完成 → 寫回 TCL + 標記文件已修改 ───────────────────
+        connect(d->vAlignDock, &ui::VAlignEditorDockWidget::alignmentChanged,
+                this, [this, docMgr] {
+                    d->vAlignDock->writeBackToTcl();
+                    auto* doc = docMgr->currentDocument();
+                    if (doc) doc->setModified(true);
+                });
+
         // 建立並加入 OSnap 工具列
         // 改用信號，等 viewer 初始化完畢再建立 toolbar
         connect(d->cadView, &view::CadView::viewInitialized,

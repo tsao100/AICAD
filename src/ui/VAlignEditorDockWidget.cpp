@@ -723,18 +723,55 @@ void VAlignEditorDockWidget::setTrackCenterLine(railway::TrackCenterLine* tcl)
     m_tcl = tcl;
     if (!tcl) return;
 
-    // Load VIPs from the vertical alignment
-    const auto& vPts = tcl->vertical()->points();
+    // ── Load VIPs ─────────────────────────────────────────────────────────────
+    // Prefer editor-VIP format (lossless, one record per PVI) over the raw
+    // VerticalAlignment m_pts, which may contain ALD-style triplet records.
     QVector<Vip> vips;
     int id = 1;
-    for (const auto& vpt : vPts) {
-        Vip v;
-        v.id  = id++;
-        v.ch  = vpt.chainage;
-        v.el  = vpt.elevation;
-        v.lvc = vpt.lvc;
-        vips.append(v);
+
+    if (tcl->hasEditorVips()) {
+        // Restore exactly what the editor last saved
+        for (const QJsonValue& val : tcl->editorVips()) {
+            QJsonObject o = val.toObject();
+            Vip v;
+            v.id  = id++;
+            v.ch  = o["ch"].toDouble();
+            v.el  = o["el"].toDouble();
+            v.lvc = o["lvc"].toDouble();
+            vips.append(v);
+        }
+    } else {
+        // First time — build VIPs from the raw VerticalAlignment points.
+        // Collapse ALD triplets: skip records that are VC sub-entries
+        // (identified by having lvc==0 and same chainage range as next triplet).
+        // Simplest safe approach: take only records where lvc > 0 (PVI records)
+        // OR records not sandwiched between a lvc>0 neighbour.
+        const auto& vPts = tcl->vertical()->points();
+        for (int i = 0; i < vPts.size(); ++i) {
+            const auto& vpt = vPts[i];
+            // Skip sub-records of a triplet: a record is a sub-record if
+            // a neighbour has lvc > 0 and this record has lvc == 0.
+            bool isTripletSub = false;
+            if (vpt.lvc < 1e-6) {
+                if (i > 0 && vPts[i-1].lvc > 1e-6) isTripletSub = true;
+                if (i + 1 < vPts.size() && vPts[i+1].lvc > 1e-6) isTripletSub = true;
+            }
+            if (isTripletSub) continue;
+
+            Vip v;
+            v.id  = id++;
+            v.ch  = vpt.chainage;
+            v.el  = vpt.elevation;
+            v.lvc = vpt.lvc;
+            vips.append(v);
+        }
+        // If still empty (e.g. brand-new TCL), create two flat endpoints
+        if (vips.isEmpty()) {
+            Vip v0; v0.id = 1; v0.ch = 0.0;   v0.el = 0.0; vips.append(v0);
+            Vip v1; v1.id = 2; v1.ch = 1000.0; v1.el = 0.0; vips.append(v1);
+        }
     }
+
     m_profileView->setVips(vips);
 
     // Load horizontal elements
@@ -960,6 +997,27 @@ void VAlignEditorDockWidget::onCursorMoved(double ch, double el)
             .arg(ch, 8, 'f', 1)
             .arg(el, 8, 'f', 3)
         );
+}
+
+void VAlignEditorDockWidget::writeBackToTcl()
+{
+    if (!m_tcl) return;
+
+    const QVector<Vip> vips = m_profileView->vips();
+
+    // Serialise current Vips to JSON and store in TCL
+    QJsonArray arr;
+    for (const Vip& v : vips) {
+        QJsonObject o;
+        o["ch"]  = v.ch;
+        o["el"]  = v.el;
+        o["lvc"] = v.lvc;
+        arr.append(o);
+    }
+
+    // setEditorVips also rebuilds m_v for runtime queries
+    m_tcl->setEditorVips(arr);
+    qDebug() << "[VAlignEditor] writeBackToTcl:" << arr.size() << "VIPs";
 }
 
 } // namespace ui

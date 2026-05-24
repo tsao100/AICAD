@@ -75,6 +75,9 @@ public:
     /** 取得縱斷面視圖（供命令層設定 ctx.profileView）。 */
     VAlignProfileView* profileView() const { return m_profileView; }
 
+    /** Write the current profile-view VIPs back to the bound TrackCenterLine. */
+    void writeBackToTcl();
+
 Q_SIGNALS:
     /** Emitted whenever the user modifies the vertical alignment. */
     void alignmentChanged();
