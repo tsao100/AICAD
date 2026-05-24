@@ -19,14 +19,16 @@ namespace ui {
  */
 enum class ItemType {
     Base,
-    Folder,         ///< 資料夾
-    Origin,         ///< 原點
-    Plane,          ///< 平面
-    Axis,           ///< 軸
-    Point,          ///< 點
-    Sketch,         ///< 草圖
-    Extrude,        ///< 擠出
-    Feature         ///< 一般特徵
+    Folder,           ///< 資料夾
+    Origin,           ///< 原點
+    Plane,            ///< 平面
+    Axis,             ///< 軸
+    Point,            ///< 點
+    Sketch,           ///< 草圖
+    Extrude,          ///< 擠出
+    Feature,          ///< 一般特徵
+    Railway,          ///< Railway 資料夾節點
+    TrackCenterLine   ///< 單條線路實例
 };
 
 /**
@@ -53,14 +55,16 @@ struct FeatureTreeItem {
      */
     QString typeString() const {
         switch (type) {
-            case ItemType::Folder:  return "Folder";
-            case ItemType::Origin:  return "Origin";
-            case ItemType::Plane:   return "Plane";
-            case ItemType::Axis:    return "Axis";
-            case ItemType::Point:   return "Point";
-            case ItemType::Sketch:  return "Sketch";
-            case ItemType::Extrude: return "Extrude";
-            default:                return "Feature";
+            case ItemType::Folder:          return "Folder";
+            case ItemType::Origin:          return "Origin";
+            case ItemType::Plane:           return "Plane";
+            case ItemType::Axis:            return "Axis";
+            case ItemType::Point:           return "Point";
+            case ItemType::Sketch:          return "Sketch";
+            case ItemType::Extrude:         return "Extrude";
+            case ItemType::Railway:         return "Railway";
+            case ItemType::TrackCenterLine: return "TrackCenterLine";
+            default:                        return "Feature";
         }
     }
 };

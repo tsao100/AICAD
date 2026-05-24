@@ -51,6 +51,9 @@
 #include <QtMath>
 #include <QDebug>
 #include <QUndoStack>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QMessageBox>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -1292,6 +1295,67 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     d->cadView->setSectionPlane(sketch->plane()->toGpPln());
                     setStatusMessage(
                         tr("剖面：%1（再次右鍵選「剖面」可取消）").arg(sketch->name()), 0);
+                });
+
+        // ── TrackCenterLine — editAlignmentRequested ──────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::editAlignmentRequested,
+                this, [this, docMgr](const QString& tclId) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+
+                    if (tclId.isEmpty()) {
+                        // 空 id = 新增線路
+                        doc->addTrackCenterLine();
+                        return;
+                    }
+
+                    auto* tcl = doc->findTrackCenterLine(tclId);
+                    if (!tcl) return;
+
+                    d->vAlignDock->loadTrackCenterLine(tcl);
+                    d->vAlignDock->show();
+                    d->vAlignDock->raise();
+                });
+
+        // ── TrackCenterLine — renameTrackRequested ────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::renameTrackRequested,
+                this, [this, docMgr](const QString& tclId) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    auto* tcl = doc->findTrackCenterLine(tclId);
+                    if (!tcl) return;
+
+                    bool ok = false;
+                    QString newName = QInputDialog::getText(
+                        d->mainWindow,
+                        tr("重新命名線路"),
+                        tr("線路名稱:"),
+                        QLineEdit::Normal,
+                        tcl->name(),
+                        &ok);
+                    if (ok && !newName.trimmed().isEmpty()) {
+                        tcl->setName(newName.trimmed());
+                        doc->setModified(true);
+                        Q_EMIT doc->treeStructureChanged();
+                    }
+                });
+
+        // ── TrackCenterLine — deleteTrackRequested ────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::deleteTrackRequested,
+                this, [this, docMgr](const QString& tclId) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    auto* tcl = doc->findTrackCenterLine(tclId);
+                    if (!tcl) return;
+
+                    auto ret = QMessageBox::question(
+                        d->mainWindow,
+                        tr("刪除線路"),
+                        tr("確定要刪除「%1」嗎？").arg(tcl->name()),
+                        QMessageBox::Yes | QMessageBox::No,
+                        QMessageBox::No);
+                    if (ret == QMessageBox::Yes)
+                        doc->removeTrackCenterLine(tclId);
                 });
 
         // ── 取消選取時清除 grips ──────────────────────────────────────────────

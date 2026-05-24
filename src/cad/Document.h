@@ -11,6 +11,7 @@
 #include "ui/FeatureTreeItem.h"
 #include "DependencyGraph.h"
 #include "core/ParameterStore.h"
+#include "railway/RailwayAlignment.h"
 
 #include <QObject>
 #include <QString>
@@ -274,6 +275,12 @@ public:
     void setAlignmentData(const QJsonObject& data) { m_alignmentData = data; }
     QJsonObject alignmentData() const { return m_alignmentData; }
 
+    // ── TrackCenterLine 管理 ───────────────────────────────────────────────
+    railway::TrackCenterLine* addTrackCenterLine(const QString& name = QString());
+    void removeTrackCenterLine(const QString& id);
+    railway::TrackCenterLine* findTrackCenterLine(const QString& id) const;
+    const QList<railway::TrackCenterLine*>& trackCenterLines() const { return m_trackCenterLines; }
+
     cad::Extrude* lastExtrude() const;
 
     // 復原/重做（未來實作）
@@ -343,6 +350,8 @@ Q_SIGNALS:
 
     void featureShapeUpdated(Feature* feature);
 
+    void trackCenterLinesChanged();
+
 private Q_SLOTS:
     /**
      * @brief 處理特徵重建請求
@@ -403,6 +412,8 @@ private:
     DependencyGraph              m_depGraph;
     QJsonObject m_viewState;       // ✅ 儲存視圖狀態（camera eye/at/up/scale）
     QJsonObject m_alignmentData;   // passthrough — owned by UIManager::d->alignmentDoc
+
+    QList<railway::TrackCenterLine*> m_trackCenterLines;  ///< 線路中心線列表
 
     Q_DISABLE_COPY(Document)
 };

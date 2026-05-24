@@ -105,6 +105,11 @@ Q_SIGNALS:
     void editSketchRequested(const QString& featureId);
     void deleteFeatureRequested(const QString& featureId);
     void sectionViewRequested(const QString& featureId);
+
+    // TrackCenterLine context menu actions
+    void editAlignmentRequested(const QString& tclId);
+    void renameTrackRequested(const QString& tclId);
+    void deleteTrackRequested(const QString& tclId);
     
 private Q_SLOTS:
     void onItemClicked(QTreeWidgetItem* item, int column);

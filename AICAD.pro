@@ -236,6 +236,7 @@ SOURCES += \
     src/command/alignment/AlignmentFixTangentCommand.cpp \
     src/command/alignment/AlignmentFloatCurveCommand.cpp \
     src/command/alignment/AlignmentSCSCommand.cpp \
+    src/command/alignment/TrackCenterLineCommands.cpp \
     src/command/alignment/VAlignFloatVCurveCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
@@ -348,6 +349,7 @@ HEADERS += \
     src/command/alignment/AlignmentFloatCurveCommand.h \
     src/command/alignment/AlignmentSCSCommand.h \
     src/command/alignment/ProfileViewCommand.h \
+    src/command/alignment/TrackCenterLineCommands.h \
     src/command/alignment/VAlignCheckGradeCommand.h \
     src/command/alignment/VAlignFloatVCurveCommand.h \
     src/command/alignment/VAlignMovePVICommand.h \

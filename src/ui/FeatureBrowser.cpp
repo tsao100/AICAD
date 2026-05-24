@@ -81,7 +81,9 @@ public:
 
         // ── 3. Name text ─────────────────────────────────────────────────────────
         bool isFolder = (index.data(Qt::UserRole + 1).toInt()
-                         == static_cast<int>(ItemType::Folder));
+                         == static_cast<int>(ItemType::Folder) ||
+                         index.data(Qt::UserRole + 1).toInt()
+                         == static_cast<int>(ItemType::Railway));
         if (isFolder) {
             QFont f = p->font(); f.setBold(true); p->setFont(f);
         }
@@ -300,7 +302,8 @@ QTreeWidgetItem* FeatureBrowser::createTreeWidgetItem(const FeatureTreeItem& ite
     item->setData(0, Qt::UserRole + 1, static_cast<int>(itemData.type));
     item->setData(0, Qt::UserRole + 2, itemData.visible);
 
-    if (itemData.type == ItemType::Folder) {
+    if (itemData.type == ItemType::Folder ||
+        itemData.type == ItemType::Railway) {
         item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
     }
 
@@ -308,14 +311,16 @@ QTreeWidgetItem* FeatureBrowser::createTreeWidgetItem(const FeatureTreeItem& ite
 }
 QIcon FeatureBrowser::getIconForType(ItemType type) {
     switch (type) {
-    case ItemType::Folder:  return QIcon(":/icons/folder.png");
-    case ItemType::Origin:  return QIcon(":/icons/origin.png");
-    case ItemType::Plane:   return QIcon(":/icons/plane.png");
-    case ItemType::Axis:    return QIcon(":/icons/axis.png");
-    case ItemType::Point:   return QIcon(":/icons/point.png");
-    case ItemType::Sketch:  return QIcon(":/icons/sketch.png");
-    case ItemType::Extrude: return QIcon(":/icons/extrude.png");
-    default:                return QIcon();
+    case ItemType::Folder:          return QIcon(":/icons/folder.png");
+    case ItemType::Origin:          return QIcon(":/icons/origin.png");
+    case ItemType::Plane:           return QIcon(":/icons/plane.png");
+    case ItemType::Axis:            return QIcon(":/icons/axis.png");
+    case ItemType::Point:           return QIcon(":/icons/point.png");
+    case ItemType::Sketch:          return QIcon(":/icons/sketch.png");
+    case ItemType::Extrude:         return QIcon(":/icons/extrude.png");
+    case ItemType::Railway:         return QIcon(":/icons/folder.png");      // 路線資料夾
+    case ItemType::TrackCenterLine: return QIcon(":/icons/sketch.png");      // 單線路
+    default:                        return QIcon();
     }
 }
 
@@ -375,7 +380,8 @@ void FeatureBrowser::onItemClicked(QTreeWidgetItem* item, int column) {
     qDebug() << "[FeatureBrowser] Item clicked:" << item->text(0) << "ID:" << itemId;
 
     // 資料夾不發選取事件
-    if (static_cast<ItemType>(itemType) == ItemType::Folder) {
+    if (static_cast<ItemType>(itemType) == ItemType::Folder ||
+        static_cast<ItemType>(itemType) == ItemType::Railway) {
         return;
     }
 
@@ -406,6 +412,42 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
 
     if (itemType == ItemType::Folder || itemType == ItemType::Origin)
         return;
+
+    // ── Railway 資料夾：提供新增線路 ─────────────────────────────────────
+    if (itemType == ItemType::Railway) {
+        QMenu menu(this);
+        QAction* actAdd = menu.addAction(tr("新增線路中心線"));
+        connect(actAdd, &QAction::triggered, this, [this] {
+            Q_EMIT editAlignmentRequested(QString());  // 空 id = 新增
+        });
+        menu.exec(globalPos);
+        return;
+    }
+
+    // ── TrackCenterLine 專屬選單 ──────────────────────────────────────────
+    if (itemType == ItemType::TrackCenterLine) {
+        QMenu menu(this);
+
+        QAction* actEdit = menu.addAction(tr("編輯線形 (Edit Alignment)"));
+        connect(actEdit, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT editAlignmentRequested(itemId);
+        });
+
+        menu.addSeparator();
+
+        QAction* actRename = menu.addAction(tr("重新命名"));
+        connect(actRename, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT renameTrackRequested(itemId);
+        });
+
+        QAction* actDelete = menu.addAction(QIcon(":/icons/cut.png"), tr("刪除"));
+        connect(actDelete, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT deleteTrackRequested(itemId);
+        });
+
+        menu.exec(globalPos);
+        return;
+    }
 
     QMenu menu(this);
 

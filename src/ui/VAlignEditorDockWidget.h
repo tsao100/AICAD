@@ -58,6 +58,9 @@ public:
     void setTrackCenterLine(railway::TrackCenterLine* tcl);
     railway::TrackCenterLine* trackCenterLine() const;
 
+    /** Alias for setTrackCenterLine — used by UIManager/FeatureBrowser flow. */
+    void loadTrackCenterLine(railway::TrackCenterLine* tcl) { setTrackCenterLine(tcl); }
+
     /**
      * @brief Step 16：連接 AlignmentDocument（水平＋縱斷面聯動）。
      *

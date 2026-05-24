@@ -145,6 +145,14 @@ bool Document::save(const QString& fileName) {
         if (!m_alignmentData.isEmpty())
             docJson["alignment"] = m_alignmentData;
 
+        // ✅ 儲存 TrackCenterLine 資料
+        if (!m_trackCenterLines.isEmpty()) {
+            QJsonArray tclArray;
+            for (railway::TrackCenterLine* tcl : m_trackCenterLines)
+                tclArray.append(tcl->toJson());
+            docJson["trackCenterLines"] = tclArray;
+        }
+
         QFile file(saveFileName);
         if (!file.open(QIODevice::WriteOnly)) {
             qWarning() << "[Document] Cannot open file for writing:" << saveFileName;
@@ -277,6 +285,23 @@ bool Document::load(const QString& fileName) {
         // ✅ 讀取 alignment 資料（UIManager 在 DOCUMENT_OPENED 後取出）
         if (docJson.contains("alignment"))
             m_alignmentData = docJson["alignment"].toObject();
+
+        // ✅ 讀取 TrackCenterLine 資料
+        if (docJson.contains("trackCenterLines")) {
+            qDeleteAll(m_trackCenterLines);
+            m_trackCenterLines.clear();
+            for (const QJsonValue& val : docJson["trackCenterLines"].toArray()) {
+                auto* tcl = new railway::TrackCenterLine(this);
+                if (tcl->fromJson(val.toObject()))
+                    m_trackCenterLines.append(tcl);
+                else
+                    delete tcl;
+            }
+            if (!m_trackCenterLines.isEmpty()) {
+                Q_EMIT trackCenterLinesChanged();
+                Q_EMIT treeStructureChanged();
+            }
+        }
 
         setFileName(fileName);
         setModified(false);
@@ -486,6 +511,10 @@ void Document::clearFeatures() {
         delete feature;
         Q_EMIT featureRemoved();
     }
+
+    // ✅ 清除 TrackCenterLine
+    qDeleteAll(m_trackCenterLines);
+    m_trackCenterLines.clear();
 
     // ✅ 只移除 feature 類型的 tree items，保留 origin 資料夾
     m_treeItems.erase(
@@ -1178,7 +1207,69 @@ void Document::createOriginFolderItems() {
 }
 
 QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
-    return m_treeItems;
+    QVector<ui::FeatureTreeItem> items = m_treeItems;
+
+    // ── 永遠附加 Railway folder（即使空的也要顯示，讓使用者可右鍵新增）
+    ui::FeatureTreeItem railwayFolder;
+    railwayFolder.type       = ui::ItemType::Railway;
+    railwayFolder.id         = "__railway_folder__";
+    railwayFolder.name       = "Railway";
+    railwayFolder.parentId   = "";
+    railwayFolder.visible    = true;
+    railwayFolder.selectable = false;
+    items.append(railwayFolder);
+
+    for (railway::TrackCenterLine* tcl : m_trackCenterLines) {
+        ui::FeatureTreeItem tclItem;
+        tclItem.type       = ui::ItemType::TrackCenterLine;
+        tclItem.id         = tcl->id();
+        tclItem.name       = tcl->name();
+        tclItem.parentId   = "__railway_folder__";
+        tclItem.visible    = true;
+        tclItem.selectable = true;
+        items.append(tclItem);
+    }
+
+    return items;
+}
+
+// ── TrackCenterLine CRUD ───────────────────────────────────────────────────
+
+railway::TrackCenterLine* Document::addTrackCenterLine(const QString& name)
+{
+    auto* tcl = new railway::TrackCenterLine(this);
+    QString tclName = name.isEmpty()
+        ? QStringLiteral("Track %1").arg(m_trackCenterLines.size() + 1)
+        : name;
+    tcl->setName(tclName);
+    m_trackCenterLines.append(tcl);
+    setModified(true);
+    Q_EMIT trackCenterLinesChanged();
+    Q_EMIT treeStructureChanged();
+    return tcl;
+}
+
+void Document::removeTrackCenterLine(const QString& id)
+{
+    for (int i = 0; i < m_trackCenterLines.size(); ++i) {
+        if (m_trackCenterLines[i]->id() == id) {
+            railway::TrackCenterLine* tcl = m_trackCenterLines.takeAt(i);
+            tcl->deleteLater();
+            setModified(true);
+            Q_EMIT trackCenterLinesChanged();
+            Q_EMIT treeStructureChanged();
+            return;
+        }
+    }
+    qWarning() << "[Document] removeTrackCenterLine: id not found:" << id;
+}
+
+railway::TrackCenterLine* Document::findTrackCenterLine(const QString& id) const
+{
+    for (railway::TrackCenterLine* tcl : m_trackCenterLines) {
+        if (tcl->id() == id) return tcl;
+    }
+    return nullptr;
 }
 
 } // namespace cad
