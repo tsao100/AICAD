@@ -1,5 +1,5 @@
 # ============================================================
-# menu.txt (v2.1)
+# menu.txt (v2.2)
 # Single Source of Truth for UI / Commands / Scripting
 #
 # UI FORMAT
@@ -17,6 +17,10 @@
 # ======================
 # Toolbar : main
 # ======================
+
+toolbar|main|new|New Document|:/icons/new.png|Ctrl+N
+
+toolbar|main|separator|||
 
 toolbar|main|sketch|Create Sketch|:/icons/sketch.png|
 toolbar|main|extrude|Create Extrusion|:/icons/extrude.png|
@@ -56,6 +60,8 @@ toolbar|main|view_iso|Isometric|:/icons/isometric.png|I
 # Menu : File
 # ======================
 
+menu|File|new|New||Ctrl+N
+menu|File|separator|||
 menu|File|save|Save||Ctrl+S
 menu|File|saveas|Save As||Ctrl+Shift+A
 menu|File|load|Load||Ctrl+O
@@ -103,6 +109,8 @@ menu|View|view_iso|Isometric|I|
 # ======================
 # Commands (for CommandManager / Script)
 # ======================
+
+command|new|n|0
 
 command|sketch||0
 command|line|l|2

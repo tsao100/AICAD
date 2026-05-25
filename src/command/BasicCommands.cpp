@@ -12,13 +12,16 @@
 #include "cad/PlaneManager.h"
 #include "cad/Sketch.h"
 #include "core/Application.h"
+#include "core/CommandLineManager.h"
 #include "core/DocumentManager.h"
 #include "core/EventBus.h"
 #include "ui/UIManager.h"
 #include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
 #include <QFileDialog>
+#include <QJsonObject>
 #include <QSettings>
+#include <QTimer>
 
 namespace aicad {
 namespace command {
@@ -207,6 +210,121 @@ private:
 };
 
 REGISTER_COMMAND("sketch", SketchCommand);
+
+// ===========================================
+// New 命令  — create a clean empty document
+// ===========================================
+class NewCommand : public Command {
+public:
+    NewCommand() : Command("new", "New Document") {}
+
+    CommandResult execute(const CommandContext& context) override {
+        Application*     app    = Application::instance();
+        DocumentManager* docMgr = app->documentManager();
+        EventBus*        bus    = app->eventBus();
+
+        // ── 1. Confirm if there are unsaved changes ───────────────────
+        if (docMgr->hasUnsavedChanges()) {
+            // Publish a yes/no prompt and wait for the user's answer.
+            // We use the CommandLineManager's YESNO mechanism so it stays
+            // consistent with the rest of the command-line workflow.
+            core::CommandLineManager* clm = app->commandLineManager();
+            if (clm) {
+                clm->showPrompt("Unsaved changes will be lost. Continue? [Yes/No] <No>:");
+                clm->waitForInput(core::InputType::YesNo);
+
+                // Subscribe once to the answer
+                bus->subscribe(core::Events::YESNO_INPUT, this,
+                    [this, app, docMgr, bus, clm](const QVariant& answer) {
+                        bus->unsubscribe(core::Events::YESNO_INPUT, this);
+
+                        QString a = answer.toString().trimmed().toLower();
+                        bool accepted = (a == "y" || a == "yes");
+
+                        if (!accepted) {
+                            clm->printMessage("New document cancelled.");
+                            Q_EMIT finished(CommandResult::Failure("Cancelled"));
+                            return;
+                        }
+                        // Proceed with creating a new document
+                        createNew(app, docMgr, bus, clm);
+                    });
+
+                return CommandResult::Success("Waiting for confirmation...");
+            }
+        }
+
+        // ── No unsaved changes — proceed immediately ──────────────────
+        createNew(app, docMgr, bus, app->commandLineManager());
+        return CommandResult::Success("New document created");
+    }
+
+    QString getUsage() const override {
+        return "Usage: new";
+    }
+
+private:
+    /// Close the current document (if any), create a fresh one, and
+    /// reset the railway alignment data so the canvas is completely clean.
+    void createNew(Application*     app,
+                   DocumentManager* docMgr,
+                   EventBus*        bus,
+                   core::CommandLineManager* clm)
+    {
+        // 1. Cancel any active sketch / command
+        app->setActiveSketch(nullptr);
+
+        // 2. Close current document
+        cad::Document* current = docMgr->currentDocument();
+        if (current) {
+            docMgr->closeDocument(current, /*force=*/true);
+        }
+
+        // 3. Create a fresh, empty document
+        cad::Document* newDoc = docMgr->createDocument("Untitled");
+        if (!newDoc) {
+            if (clm) clm->printError("Failed to create new document.");
+            Q_EMIT finished(CommandResult::Failure("Failed to create document"));
+            return;
+        }
+
+        // 4. Reset railway alignment — load an empty JSON object so all
+        //    PI/VIP lists and solved results are cleared.
+        ui::UIManager* uiMgr = app->uiManager();
+        if (uiMgr) {
+            railway::AlignmentDocument* alignDoc = uiMgr->alignmentDocument();
+            if (alignDoc) {
+                alignDoc->fromJson(QJsonObject{});
+                // Also clear the stored passthrough on the document itself
+                newDoc->setAlignmentData(QJsonObject{});
+            }
+
+            // 5. Reset view to isometric and fit-all so the user sees a
+            //    clean workspace with the origin/reference geometry visible.
+            //    Note: DOCUMENT_CREATED event (subscribed in UIManager) has
+            //    already called cadView->setDocument(newDoc) and
+            //    onDocumentCreated() which sets Isometric + fitAll.
+            //    We issue an additional fitAll after a slightly longer delay
+            //    to ensure all reference geometry is fully displayed.
+            view::CadView* cadView = uiMgr->cadView();
+            if (cadView) {
+                QTimer::singleShot(250, [cadView]() {
+                    if (cadView) {
+                        cadView->setViewType(view::ViewType::Isometric);
+                        cadView->fitAll();
+                    }
+                });
+            }
+        }
+
+        // 6. Notify the rest of the system
+        if (clm) clm->printMessage("New document ready. Use SKETCH, LINE, HALINE, or other commands to begin.");
+
+        Q_EMIT finished(CommandResult::Success("New document created"));
+    }
+};
+
+REGISTER_COMMAND("new", NewCommand);
 
 // ===========================================
 // Save 命令

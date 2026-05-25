@@ -799,17 +799,21 @@ QJsonObject AlignmentDocument::toJson() const
 
 bool AlignmentDocument::fromJson(const QJsonObject& obj)
 {
+    // Always call sub-editor fromJson unconditionally, passing an empty
+    // QJsonObject when the key is absent.  This ensures that calling
+    // fromJson(QJsonObject{}) (e.g. from NewCommand) fully clears all
+    // PI points, VIP points, and solved results — not just the ones
+    // covered by keys that happen to exist in the supplied object.
     bool ok = true;
-    if (obj.contains("horizontal"))
-        ok &= m_horizontal->fromJson(obj["horizontal"].toObject());
-    if (obj.contains("vertical"))
-        ok &= m_vertical->fromJson(obj["vertical"].toObject());
+    ok &= m_horizontal->fromJson(obj.value("horizontal").toObject());
+    ok &= m_vertical->fromJson(obj.value("vertical").toObject());
 
-    // Re-solve so AlignmentRenderer gets refreshed after load
-    if (ok) {
-        m_horizontal->solve();
-        m_vertical->solve();
-    }
+    // Re-solve so AlignmentRenderer gets refreshed after load/clear.
+    // When the editors are empty, solve() calls result->clear() and
+    // emits changed() — which triggers AlignmentRenderer::refresh().
+    m_horizontal->solve();
+    m_vertical->solve();
+
     return ok;
 }
 
