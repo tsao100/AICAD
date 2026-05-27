@@ -32,7 +32,8 @@ enum class FeatureType {
     Fillet,         ///< 圓角特徵
     Chamfer,        ///< 倒角特徵
     Boolean,        ///< 布林運算
-    Pattern         ///< 陣列特徵
+    Pattern,        ///< 陣列特徵
+    SketchInstance  ///< 草圖副本（Phase 3）
 };
 
 /**

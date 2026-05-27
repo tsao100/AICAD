@@ -11,6 +11,7 @@
 #include "sketch/ConstraintSolver.h"
 #include "sketch/SketchConstraint.h"
 #include "sketch/SketchRegion.h"
+#include "../core/ParameterStore.h"
 
 #include <optional>
 #include <QVector>
@@ -223,7 +224,15 @@ public:
     void clearGeometry();
 
     QList<SketchGeometry*> geometries() const { return m_geometries; }
+    const QList<SketchGeometry*>& geometriesRef() const { return m_geometries; }
     int geometryCount() const { return m_geometries.size(); }
+
+    /// 草圖層 ParameterStore（parent 由 Document 設為 global store）
+    aicad::core::ParameterStore* parameterStore() {
+        if (!m_parameterStore)
+            m_parameterStore = new aicad::core::ParameterStore(this);
+        return m_parameterStore;
+    }
 
     // 便捷方法：加入基本幾何
     void addLine(const QVector2D& p1, const QVector2D& p2);
@@ -287,6 +296,8 @@ public:
 
     // 查詢
     const QList<SketchConstraint>& constraints() const { return m_constraints; }
+    /// 可寫存取，供 UIManager 直接修改 paramExpr / driving 等欄位
+    QList<SketchConstraint>& constraintsMutable() { return m_constraints; }
     SketchConstraint* findConstraint(const QString& uuid);
 
     // 根據幾何 UUID 找出所有相關約束
@@ -297,6 +308,13 @@ public:
 
     // 求解：回傳求解結果，成功後觸發 rebuild
     SolveResult solveConstraints();
+
+    /**
+     * 以指定的 ParameterStore 為上下文求值尺寸約束後重建幾何。
+     * master Sketch 呼叫 solveWithStore(m_ownParamStore)；
+     * SketchInstance 呼叫 masterSketch->solveWithStore(instanceStore)。
+     */
+    SolveResult solveWithStore(const aicad::core::ParameterStore* store);
 
     // 只計算 DOF，不求解
     int degreesOfFreedom() const;
@@ -349,6 +367,13 @@ Q_SIGNALS:
     void constraintAdded(const QString& uuid);
     void constraintRemoved(const QString& uuid);
     void constraintSolved(SolveResult result);
+
+public Q_SLOTS:
+    /**
+     * @brief 參數重算後排程重建（由 ParameterStore::parametersRecomputed 觸發）
+     * 需為 public 以供 Document::createSketch 連接。
+     */
+    void scheduleRebuild();
 
 private Q_SLOTS:
     /**
@@ -412,6 +437,7 @@ private:
     QList<Handle(AIS_Shape)>  m_constructionShapes;
     ConstraintSolver        m_solver;
     Handle(AIS_InteractiveContext) m_aisContext;
+    aicad::core::ParameterStore*  m_parameterStore = nullptr;  ///< 草圖層參數倉庫
 
     void applyConstructionStyle(Handle(AIS_Shape)& shape, GeomRole role);
 };

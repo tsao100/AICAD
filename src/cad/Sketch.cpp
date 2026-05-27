@@ -880,6 +880,22 @@ SolveResult Sketch::solveConstraints() {
     return result;
 }
 
+SolveResult Sketch::solveWithStore(const aicad::core::ParameterStore* store) {
+    // 用指定 store 求值所有尺寸約束（instance store 內含父子 fallback）
+    if (store) {
+        for (auto& c : m_constraints) {
+            if (c.isDimensional() && !c.paramExpr.isEmpty())
+                c.evaluateValue(store);
+        }
+    }
+    gp_Dir normal(0, 0, 1);
+    if (m_plane) {
+        QVector3D n = m_plane->normal();
+        normal = gp_Dir(n.x(), n.y(), n.z());
+    }
+    return m_solver.solve(m_geometries, m_constraints, normal);
+}
+
 int Sketch::degreesOfFreedom() const {
     return ConstraintSolver::computeDOF(m_geometries, m_constraints);
 }
@@ -1049,6 +1065,16 @@ void Sketch::onPlaneAboutToBeDeleted() {
 void Sketch::onPlaneGeometryChanged() {
     qDebug() << "[Sketch]" << name() << "plane geometry changed";
     Q_EMIT rebuildRequested();
+}
+
+void Sketch::scheduleRebuild() {
+    // 參數變更後重新求值尺寸約束並重建幾何
+    if (!m_parameterStore) return;
+    for (auto& c : m_constraints) {
+        if (c.isDimensional() && !c.paramExpr.isEmpty())
+            c.evaluateValue(m_parameterStore);
+    }
+    rebuild();
 }
 
 gp_Pnt Sketch::toWorld(const QVector2D& point) const {

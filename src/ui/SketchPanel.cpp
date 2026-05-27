@@ -16,6 +16,8 @@
 #include <QHeaderView>
 #include <QHash>
 #include <QDebug>
+#include <QInputDialog>
+#include <QCheckBox>
 
 using namespace aicad::cad;
 
@@ -107,22 +109,26 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
 
     struct BtnDef { QToolButton** ptr; QString text; QString tip; ConstraintType ct; };
     QVector<BtnDef> defs = {
-                            {&m_btnCoincident,    tr("重合"),    tr("Coincident：兩點重合"),              ConstraintType::Coincident},
-                            {&m_btnHorizontal,    tr("水平"),    tr("Horizontal：線段水平"),              ConstraintType::Horizontal},
-                            {&m_btnVertical,      tr("垂直"),    tr("Vertical：線段垂直"),                ConstraintType::Vertical},
-                            {&m_btnParallel,      tr("平行"),    tr("Parallel：兩線平行"),                ConstraintType::Parallel},
-                            {&m_btnPerpendicular, tr("垂直相交"), tr("Perpendicular：兩線互相垂直"),       ConstraintType::Perpendicular},
-                            {&m_btnTangent,       tr("相切"),    tr("Tangent：曲線相切"),                 ConstraintType::Tangent},
-                            {&m_btnEqualLen,      tr("等長"),    tr("Equal Length：兩線段等長"),          ConstraintType::EqualLength},
-                            {&m_btnEqualRad,      tr("等半徑"),  tr("Equal Radius：兩圓/弧等半徑"),       ConstraintType::EqualRadius},
-                            {&m_btnConcentric,    tr("同心"),    tr("Concentric：兩圓/弧同心"),           ConstraintType::Concentric},
-                            {&m_btnFixed,         tr("固定"),    tr("Fixed：幾何元素位置固定"),            ConstraintType::Fixed},
-                            };
+        {&m_btnCoincident,    tr("重合"),    tr("Coincident：兩點重合"),             ConstraintType::Coincident},
+        {&m_btnHorizontal,    tr("水平"),    tr("Horizontal：線段水平"),             ConstraintType::Horizontal},
+        {&m_btnVertical,      tr("垂直"),    tr("Vertical：線段垂直"),               ConstraintType::Vertical},
+        {&m_btnParallel,      tr("平行"),    tr("Parallel：兩線平行"),               ConstraintType::Parallel},
+        {&m_btnPerpendicular, tr("垂直相交"), tr("Perpendicular：兩線互相垂直"),      ConstraintType::Perpendicular},
+        {&m_btnTangent,       tr("相切"),    tr("Tangent：曲線相切"),                ConstraintType::Tangent},
+        {&m_btnEqualLen,      tr("等長"),    tr("Equal Length：兩線段等長"),         ConstraintType::EqualLength},
+        {&m_btnEqualRad,      tr("等半徑"),  tr("Equal Radius：兩圓/弧等半徑"),      ConstraintType::EqualRadius},
+        {&m_btnConcentric,    tr("同心"),    tr("Concentric：兩圓/弧同心"),          ConstraintType::Concentric},
+        {&m_btnFixed,         tr("固定"),    tr("Fixed：幾何元素位置固定"),           ConstraintType::Fixed},
+        {&m_btnMidpoint,      tr("中點"),    tr("Midpoint：點在線段中點"),            ConstraintType::Midpoint},
+        {&m_btnPointOnCurve,  tr("點在線"),  tr("PointOnCurve：點在曲線上"),         ConstraintType::PointOnCurve},
+        {&m_btnCollinear,     tr("共線"),    tr("Collinear：三點共線或線段共線"),     ConstraintType::Collinear},
+        {&m_btnSymmetric,     tr("對稱"),    tr("Symmetric：相對某軸對稱"),           ConstraintType::Symmetric},
+    };
 
     for (int i = 0; i < defs.size(); ++i) {
         auto& d  = defs[i];
         *d.ptr   = makeToolBtn(d.text, d.tip, grp);
-        geomGrid->addWidget(*d.ptr, i / 3, i % 3);
+        geomGrid->addWidget(*d.ptr, i / 4, i % 4);
         ConstraintType ct = d.ct;
         connect(*d.ptr, &QToolButton::clicked, this,
                 [this, ct]{ Q_EMIT requestConstraint(ct); });
@@ -138,28 +144,56 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
     m_btnRadius   = makeToolBtn(tr("半徑"), tr("Fixed Radius：設定圓/弧半徑"),  dimBox);
     m_btnAngle    = makeToolBtn(tr("角度"), tr("Fixed Angle：設定線段角度"),     dimBox);
 
-    m_valueInput  = new QDoubleSpinBox(dimBox);
+    // ── 數值 SpinBox ──────────────────────────────────────────────
+    m_valueInput = new QDoubleSpinBox(dimBox);
     m_valueInput->setRange(0.001, 1e6);
     m_valueInput->setDecimals(3);
     m_valueInput->setValue(10.0);
-    m_valueInput->setPrefix(tr("值: "));
     m_valueInput->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_valueInput->setToolTip(tr("尺寸數值（當表達式欄為空時採用此值）"));
 
-    dimGrid->addWidget(new QLabel(tr("數值:"), dimBox), 0, 0);
-    dimGrid->addWidget(m_valueInput,   0, 1, 1, 2);
-    dimGrid->addWidget(m_btnDistance,  1, 0);
-    dimGrid->addWidget(m_btnRadius,    1, 1);
-    dimGrid->addWidget(m_btnAngle,     1, 2);
+    // ── 參數表達式輸入：輸入 "width" 或 "width*2" 等 ──────────────
+    m_exprInput = new QLineEdit(dimBox);
+    m_exprInput->setPlaceholderText(tr("參數名或算式，如 width、height*2"));
+    m_exprInput->setToolTip(tr("留空則使用數值；填入參數名可與 ParameterPanel 聯動"));
+    m_exprInput->setClearButtonEnabled(true);
 
+    // ── Driving / 量測模式 ────────────────────────────────────────
+    m_drivingCheck = new QCheckBox(tr("驅動模式（Driving）"), dimBox);
+    m_drivingCheck->setChecked(true);
+    m_drivingCheck->setToolTip(tr("勾選：約束驅動幾何（Driving）\n取消：量測模式（Reference）"));
+
+    dimGrid->addWidget(new QLabel(tr("數值:"), dimBox),   0, 0);
+    dimGrid->addWidget(m_valueInput,   0, 1, 1, 3);
+    dimGrid->addWidget(new QLabel(tr("表達式:"), dimBox), 1, 0);
+    dimGrid->addWidget(m_exprInput,    1, 1, 1, 3);
+    dimGrid->addWidget(m_drivingCheck, 2, 0, 1, 4);
+    dimGrid->addWidget(m_btnDistance,  3, 0);
+    dimGrid->addWidget(m_btnRadius,    3, 1);
+    dimGrid->addWidget(m_btnAngle,     3, 2);
+    // FixedX / FixedY
+    m_btnFixedX = makeToolBtn(tr("固定X"), tr("FixedX：固定 X 座標"), dimBox);
+    m_btnFixedY = makeToolBtn(tr("固定Y"), tr("FixedY：固定 Y 座標"), dimBox);
+    dimGrid->addWidget(m_btnFixedX, 4, 0);
+    dimGrid->addWidget(m_btnFixedY, 4, 1);
+
+    // 表達式優先：若 m_exprInput 有內容則忽略 spinBox
     auto emitDim = [this](ConstraintType ct) {
-        Q_EMIT requestConstraintWithValue(ct, m_valueInput->value());
+        QString expr = m_exprInput->text().trimmed();
+        double  val  = m_valueInput->value();
+        bool    drv  = m_drivingCheck->isChecked();
+        Q_EMIT requestConstraintWithValueAndExpr(ct, val, expr, drv);
     };
     connect(m_btnDistance, &QToolButton::clicked, this,
-            [this, emitDim]{ emitDim(ConstraintType::FixedDistance); });
+            [emitDim]{ emitDim(ConstraintType::FixedDistance); });
     connect(m_btnRadius,   &QToolButton::clicked, this,
-            [this, emitDim]{ emitDim(ConstraintType::FixedRadius); });
+            [emitDim]{ emitDim(ConstraintType::FixedRadius); });
     connect(m_btnAngle,    &QToolButton::clicked, this,
-            [this, emitDim]{ emitDim(ConstraintType::FixedAngleDim); });
+            [emitDim]{ emitDim(ConstraintType::FixedAngleDim); });
+    connect(m_btnFixedX,   &QToolButton::clicked, this,
+            [emitDim]{ emitDim(ConstraintType::FixedX); });
+    connect(m_btnFixedY,   &QToolButton::clicked, this,
+            [emitDim]{ emitDim(ConstraintType::FixedY); });
 
     vbox->addWidget(dimBox);
 
@@ -176,16 +210,30 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
     m_constraintTree->header()->setStretchLastSection(true);
     m_constraintTree->header()->resizeSection(0, 90);
 
+    m_constraintTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
     m_btnRemove = new QPushButton(tr("刪除選取約束"), listBox);
     m_btnRemove->setEnabled(false);
 
+    m_btnToggleOverlay = new QPushButton(tr("隱藏約束符號"), listBox);
+    m_btnToggleOverlay->setCheckable(true);
+    m_btnToggleOverlay->setToolTip(tr("切換 3D 視埠中約束符號的顯示"));
+
     connect(m_constraintTree, &QTreeWidget::itemClicked,
             this, &SketchPanel::onConstraintItemClicked);
+    connect(m_constraintTree, &QTreeWidget::itemDoubleClicked,
+            this, &SketchPanel::onConstraintItemDoubleClicked);
     connect(m_btnRemove, &QPushButton::clicked,
             this, &SketchPanel::onRemoveConstraintClicked);
+    connect(m_btnToggleOverlay, &QPushButton::toggled,
+            this, &SketchPanel::onToggleOverlay);
+
+    auto* listBtnRow = new QHBoxLayout;
+    listBtnRow->addWidget(m_btnRemove);
+    listBtnRow->addWidget(m_btnToggleOverlay);
 
     listVbox->addWidget(m_constraintTree);
-    listVbox->addWidget(m_btnRemove);
+    listVbox->addLayout(listBtnRow);
     vbox->addWidget(listBox);
 
     layout->addWidget(grp);
@@ -335,14 +383,37 @@ void SketchPanel::refreshConstraintList()
     m_btnRemove->setEnabled(false);
     if (!m_sketch) return;
 
+    m_constraintTree->setColumnCount(3);
+    m_constraintTree->setHeaderLabels({tr("類型"), tr("幾何"), tr("值/表達式")});
+    m_constraintTree->header()->resizeSection(0, 80);
+    m_constraintTree->header()->resizeSection(1, 100);
+
     for (const auto& c : m_sketch->constraints()) {
         auto* item = new QTreeWidgetItem();
         item->setText(0, constraintTypeName(c.type));
-        // 顯示參與的幾何 UUID（縮短顯示）
+
+        // 幾何 UUID（縮短顯示）
         QStringList refs;
         for (const auto& r : c.refs)
             refs << r.geomUuid.left(8);
         item->setText(1, refs.join(", "));
+
+        // 尺寸約束：顯示 paramExpr（若有）或 value
+        if (c.isDimensional()) {
+            QString label = c.paramExpr.isEmpty()
+                ? QString::number(c.value, 'f', 3)
+                : QString("%1=%2").arg(c.paramExpr)
+                                  .arg(c.value, 0, 'f', 3);
+            // 量測模式用灰色斜體
+            item->setText(2, label);
+            if (!c.driving) {
+                QFont f = item->font(2);
+                f.setItalic(true);
+                item->setFont(2, f);
+                item->setForeground(2, QColor(0x888888));
+            }
+        }
+
         item->setData(0, Qt::UserRole, c.uuid);
         m_constraintTree->addTopLevelItem(item);
     }
@@ -393,6 +464,109 @@ QString SketchPanel::constraintTypeName(ConstraintType t) const
          {ConstraintType::Symmetric,     tr("對稱")},
          };
     return names.value(t, tr("未知"));
+}
+
+// ── Phase 6：Overlay 管理 ────────────────────────────────────────────────────
+
+void SketchPanel::enterSketchMode(
+        cad::Sketch* sketch,
+        const Handle(AIS_InteractiveContext)& ctx,
+        const gp_Trsf& toWorld)
+{
+    exitOverlayMode();
+    m_overlay = std::make_unique<cad::ConstraintOverlayManager>(ctx, this);
+    m_overlay->attachMaster(sketch, toWorld);
+    connect(m_overlay.get(),
+            &cad::ConstraintOverlayManager::dimensionConstraintClicked,
+            this, &SketchPanel::onDimensionClicked);
+}
+
+void SketchPanel::enterInstanceMode(
+        cad::SketchInstance* inst,
+        const Handle(AIS_InteractiveContext)& ctx,
+        const gp_Trsf& toWorld)
+{
+    exitOverlayMode();
+    m_overlay = std::make_unique<cad::ConstraintOverlayManager>(ctx, this);
+    m_overlay->attachInstance(inst, toWorld);
+    connect(m_overlay.get(),
+            &cad::ConstraintOverlayManager::dimensionConstraintClicked,
+            this, &SketchPanel::onDimensionClicked);
+}
+
+void SketchPanel::exitOverlayMode() {
+    if (m_overlay) {
+        m_overlay->detach();
+        m_overlay.reset();
+    }
+}
+
+void SketchPanel::onDimensionClicked(
+        const QString& uuid,
+        cad::ConstraintOverlayManager::Mode mode,
+        const QString& instanceId)
+{
+    Q_EMIT dimensionConstraintClicked(uuid, mode, instanceId);
+
+    // 同步填回尺寸輸入區（方便使用者快速修改）
+    if (!m_sketch) return;
+    for (const auto& c : m_sketch->constraints()) {
+        if (c.uuid != uuid) continue;
+        if (!c.paramExpr.isEmpty() && m_exprInput)
+            m_exprInput->setText(c.paramExpr);
+        else if (m_valueInput)
+            m_valueInput->setValue(c.value);
+        if (m_drivingCheck)
+            m_drivingCheck->setChecked(c.driving);
+        break;
+    }
+    qDebug() << "[SketchPanel] Dim clicked:" << uuid;
+}
+
+// ── 約束清單雙擊 → inline 編輯尺寸約束 ─────────────────────────────────────
+void SketchPanel::onConstraintItemDoubleClicked(QTreeWidgetItem* item, int /*col*/)
+{
+    if (!m_sketch || !item) return;
+    QString uuid = item->data(0, Qt::UserRole).toString();
+
+    // 找到對應約束
+    for (const auto& c : m_sketch->constraints()) {
+        if (c.uuid != uuid || !c.isDimensional()) continue;
+
+        // 彈出 inline 編輯對話框
+        bool ok = false;
+        QString current = c.paramExpr.isEmpty()
+                        ? QString::number(c.value, 'f', 3)
+                        : c.paramExpr;
+
+        QString newExpr = QInputDialog::getText(
+            this,
+            tr("編輯尺寸約束"),
+            tr("數值或參數表達式（如 50、width、height*2）："),
+            QLineEdit::Normal,
+            current,
+            &ok);
+
+        if (!ok || newExpr.trimmed().isEmpty()) return;
+
+        newExpr = newExpr.trimmed();
+
+        // 嘗試解析純數字
+        bool isNum = false;
+        double numVal = newExpr.toDouble(&isNum);
+
+        Q_EMIT requestEditConstraint(uuid, newExpr, isNum ? numVal : c.value, isNum);
+        break;
+    }
+}
+
+// ── Overlay 顯示/隱藏切換 ────────────────────────────────────────────────────
+void SketchPanel::onToggleOverlay()
+{
+    bool hidden = m_btnToggleOverlay->isChecked();
+    m_btnToggleOverlay->setText(hidden ? tr("顯示約束符號") : tr("隱藏約束符號"));
+    if (m_overlay)
+        m_overlay->setVisible(!hidden);
 }
 
 } // namespace aicad::ui

@@ -4,13 +4,17 @@
 #include <QButtonGroup>
 #include <QVBoxLayout>
 #include "cad/Sketch.h"
+#include "cad/SketchInstance.h"
 #include "cad/sketch/SketchConstraint.h"
+#include "cad/sketch/ConstraintOverlayManager.h"
+#include <memory>
 
+#include <QCheckBox>
 QT_BEGIN_NAMESPACE
 class QLabel; class QToolButton; class QComboBox;
 class QSpinBox; class QDoubleSpinBox; class QTreeWidget;
 class QTreeWidgetItem; class QStackedWidget; class QPushButton;
-class QGroupBox; class QLineEdit; class QSplitter;
+class QGroupBox; class QLineEdit; class QSplitter; class QCheckBox;
 QT_END_NAMESPACE
 
 namespace aicad::ui {
@@ -34,6 +38,18 @@ public:
     /** 離開草圖編輯模式 */
     void clearSketch();
 
+    // ── Phase 6 ─────────────────────────────────────────────────────────
+    /** 進入 master 草圖的約束覆蓋顯示模式 */
+    void enterSketchMode(cad::Sketch* sketch,
+                         const Handle(AIS_InteractiveContext)& ctx,
+                         const gp_Trsf& toWorld);
+    /** 進入 SketchInstance 的約束覆蓋顯示模式 */
+    void enterInstanceMode(cad::SketchInstance* inst,
+                           const Handle(AIS_InteractiveContext)& ctx,
+                           const gp_Trsf& toWorld);
+    /** 離開覆蓋模式（detach overlay） */
+    void exitOverlayMode();
+
 Q_SIGNALS:
     // ── 建構幾何 ────────────────────────────────────────────────
     void requestAddConstructionLine();
@@ -42,16 +58,31 @@ Q_SIGNALS:
 
     // ── 約束 ────────────────────────────────────────────────────
     void requestConstraint(cad::ConstraintType type);
-    /** 帶數值的約束（距離/半徑/角度） */
+    /** 帶數值的約束（距離/半徑/角度）— 相容舊介面 */
     void requestConstraintWithValue(cad::ConstraintType type, double value);
+    /** 帶數值 + 參數表達式 + driving 旗標的完整尺寸約束 */
+    void requestConstraintWithValueAndExpr(cad::ConstraintType type,
+                                           double value,
+                                           const QString& paramExpr,
+                                           bool driving);
     /** 刪除約束 */
     void requestRemoveConstraint(const QString& uuid);
+    /** 編輯尺寸約束（從清單雙擊觸發） */
+    void requestEditConstraint(const QString& uuid,
+                               const QString& newExpr,
+                               double         newValue,
+                               bool           isLiteralNumber);
 
     // ── Solver ──────────────────────────────────────────────────
     void requestSolve();
 
     void regionDetectionRequested();  // 使用者點選「偵測區域」
     void regionSelected(const QString& regionUuid);
+
+    // Phase 6：尺寸線點擊後向外廣播（UIManager 可轉發給 ParameterPanel）
+    void dimensionConstraintClicked(const QString& constraintUuid,
+                                    cad::ConstraintOverlayManager::Mode mode,
+                                    const QString& instanceId);
 
 private Q_SLOTS:
     void onConstraintAdded(const QString& uuid);
@@ -61,6 +92,14 @@ private Q_SLOTS:
     void onConstraintItemClicked(QTreeWidgetItem* item, int col);
     void onRemoveConstraintClicked();
     void onSolveClicked();
+    // Phase 6：尺寸線點擊處理
+    void onDimensionClicked(const QString& uuid,
+                            cad::ConstraintOverlayManager::Mode mode,
+                            const QString& instanceId);
+    // 約束清單雙擊 → inline 編輯
+    void onConstraintItemDoubleClicked(QTreeWidgetItem* item, int col);
+    // 覆蓋層顯示/隱藏切換
+    void onToggleOverlay();
 
 private:
     void setupUI();
@@ -72,6 +111,9 @@ private:
     QString constraintTypeName(cad::ConstraintType t) const;
 
     cad::Sketch* m_sketch = nullptr;
+
+    // Phase 6：約束覆蓋管理員
+    std::unique_ptr<cad::ConstraintOverlayManager> m_overlay;
 
     // 建構幾何按鈕
     QToolButton* m_btnConstrLine    = nullptr;
@@ -93,11 +135,23 @@ private:
     QToolButton* m_btnDistance      = nullptr;
     QToolButton* m_btnRadius        = nullptr;
     QToolButton* m_btnAngle         = nullptr;
+    QToolButton* m_btnFixedX        = nullptr;
+    QToolButton* m_btnFixedY        = nullptr;
     QDoubleSpinBox* m_valueInput    = nullptr;
+    // paramExpr 輸入：可輸入參數名（如 "width"）取代純數值
+    QLineEdit*   m_exprInput        = nullptr;
+    QCheckBox*   m_drivingCheck     = nullptr;  // Driving / 量測模式
+
+    // 缺少的幾何約束按鈕
+    QToolButton* m_btnMidpoint      = nullptr;
+    QToolButton* m_btnPointOnCurve  = nullptr;
+    QToolButton* m_btnCollinear     = nullptr;
+    QToolButton* m_btnSymmetric     = nullptr;
 
     // 約束清單
     QTreeWidget* m_constraintTree   = nullptr;
     QPushButton* m_btnRemove        = nullptr;
+    QPushButton* m_btnToggleOverlay = nullptr;  // 顯示/隱藏約束符號
 
     // Solver 狀態
     QPushButton* m_btnSolve         = nullptr;

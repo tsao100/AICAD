@@ -1,4 +1,5 @@
 #include "SketchConstraint.h"
+#include "../../core/ParameterStore.h"
 #include <QJsonArray>
 
 namespace aicad::cad {
@@ -85,6 +86,28 @@ SketchConstraint SketchConstraint::makeMidpoint(const GeomRef& pt, const QString
     c.refs = {pt, GeomRef(lineUuid, GeomHandle::Curve)}; return c;
 }
 
+bool SketchConstraint::isDimensional() const {
+    switch (type) {
+    case ConstraintType::FixedDistance:
+    case ConstraintType::FixedRadius:
+    case ConstraintType::FixedX:
+    case ConstraintType::FixedY:
+    case ConstraintType::FixedAngleDim:
+    case ConstraintType::FixedAngle:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool SketchConstraint::evaluateValue(const aicad::core::ParameterStore* store) {
+    if (paramExpr.isEmpty()) return true;
+    if (!store) return false;
+    auto [ok, v] = store->evaluate(paramExpr);
+    if (ok) value = v;
+    return ok;
+}
+
 int SketchConstraint::dofConsumed() const {
     switch (type) {
     case ConstraintType::Coincident:      return 2;
@@ -114,10 +137,11 @@ int SketchConstraint::dofConsumed() const {
 
 QJsonObject SketchConstraint::toJson() const {
     QJsonObject o;
-    o["uuid"]    = uuid;
-    o["type"]    = static_cast<int>(type);
-    o["value"]   = value;
-    o["driving"] = driving;
+    o["uuid"]      = uuid;
+    o["type"]      = static_cast<int>(type);
+    o["value"]     = value;
+    o["paramExpr"] = paramExpr;
+    o["driving"]   = driving;
     QJsonArray arr;
     for (const auto& r : refs) arr.append(r.toJson());
     o["refs"] = arr;
@@ -126,10 +150,11 @@ QJsonObject SketchConstraint::toJson() const {
 
 SketchConstraint SketchConstraint::fromJson(const QJsonObject& j) {
     SketchConstraint c;
-    c.uuid    = j["uuid"].toString(QUuid::createUuid().toString(QUuid::WithoutBraces));
-    c.type    = static_cast<ConstraintType>(j["type"].toInt());
-    c.value   = j["value"].toDouble(0.0);
-    c.driving = j["driving"].toBool(true);
+    c.uuid      = j["uuid"].toString(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    c.type      = static_cast<ConstraintType>(j["type"].toInt());
+    c.value     = j["value"].toDouble(0.0);
+    c.paramExpr = j["paramExpr"].toString();
+    c.driving   = j["driving"].toBool(true);
     for (const auto& rv : j["refs"].toArray())
         c.refs.append(GeomRef::fromJson(rv.toObject()));
     return c;

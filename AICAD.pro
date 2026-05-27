@@ -219,11 +219,15 @@ win32 {
 SOURCES += \
     src/cad/DependencyGraph.cpp \
     src/cad/PlaneManager.cpp \
+    src/cad/SketchInstance.cpp \
     src/cad/grips/AIS_GripHandle.cpp \
     src/cad/grips/AlignmentGripProvider.cpp \
     src/cad/grips/GripManager.cpp \
     src/cad/grips/SketchGripProvider.cpp \
+    src/cad/sketch/ConstraintOverlayManager.cpp \
     src/cad/sketch/ConstraintSolver.cpp \
+    src/cad/sketch/ConstraintSymbolAIS.cpp \
+    src/cad/sketch/DimensionLineAIS.cpp \
     src/cad/sketch/SketchConstraint.cpp \
     src/cad/sketch/SketchLoopFinder.cpp \
     src/cad/sketch/SketchRegion.cpp \
@@ -294,6 +298,7 @@ SOURCES += \
     src/ui/GripEventFilter.cpp \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
+    src/ui/ParameterPanel.cpp \
     src/ui/PropertyPanel.cpp \
     src/ui/SketchPanel.cpp \
     src/ui/ToolManager.cpp \
@@ -327,13 +332,17 @@ HEADERS += \
     # Core Module
     src/cad/DependencyGraph.h \
     src/cad/PlaneManager.h \
+    src/cad/SketchInstance.h \
     src/cad/grips/AIS_GripHandle.h \
     src/cad/grips/AlignmentGripProvider.h \
     src/cad/grips/GripManager.h \
     src/cad/grips/GripPoint.h \
     src/cad/grips/GripProvider.h \
     src/cad/grips/SketchGripProvider.h \
+    src/cad/sketch/ConstraintOverlayManager.h \
     src/cad/sketch/ConstraintSolver.h \
+    src/cad/sketch/ConstraintSymbolAIS.h \
+    src/cad/sketch/DimensionLineAIS.h \
     src/cad/sketch/SketchConstraint.h \
     src/cad/sketch/SketchLoopFinder.h \
     src/cad/sketch/SketchRegion.h \
@@ -407,6 +416,7 @@ HEADERS += \
     src/ui/GripEventFilter.h \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
+    src/ui/ParameterPanel.h \
     src/ui/PropertyPanel.h \
     src/ui/SketchPanel.h \
     src/ui/ToolManager.h \

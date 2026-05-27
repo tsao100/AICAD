@@ -4,6 +4,9 @@
 #include <QJsonObject>
 #include <QUuid>
 
+// Forward declare to avoid circular includes
+namespace aicad::core { class ParameterStore; }
+
 namespace aicad::cad {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,8 +95,20 @@ struct SketchConstraint {
     QString        uuid;
     ConstraintType type;
     QVector<GeomRef> refs;   ///< 參與約束的幾何參考（1~3個）
-    double         value = 0.0;  ///< 尺寸約束的目標值
+    double         value = 0.0;  ///< 尺寸約束的目標值（求值後的快取）
+    QString        paramExpr;    ///< 原始參數表達式（如 "width"、"width*2"）
     bool           driving = true;  ///< driving=true：約束驅動幾何；false：量測模式
+
+    /**
+     * 判斷此約束是否為尺寸約束（帶數值）
+     */
+    bool isDimensional() const;
+
+    /**
+     * 從指定 store（可為 instance store 或 master store）求值。
+     * store 內部已實作父子 fallback，呼叫者無需關心層級。
+     */
+    bool evaluateValue(const aicad::core::ParameterStore* store);
 
     SketchConstraint()
         : uuid(QUuid::createUuid().toString(QUuid::WithoutBraces))

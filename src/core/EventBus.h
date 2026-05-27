@@ -178,6 +178,13 @@ constexpr const char* SKETCH_EXITED  = "sketch.exited";
 // 草圖幾何選取（與 selection.featureSelected 分離）
 constexpr const char* SKETCH_GEOM_SELECTED = "sketch.geometrySelected";
 constexpr const char* SKETCH_GEOM_CLEARED  = "sketch.geometryCleared";
+
+// ── Phase 6：約束覆蓋 & SketchInstance 事件 ─────────────────────────────
+constexpr const char* CONSTRAINT_SYMBOL_TOGGLE      = "constraint.symbol.toggle";
+constexpr const char* CONSTRAINT_DIM_CLICKED        = "constraint.dim.clicked";
+constexpr const char* CONSTRAINT_DIM_EDIT_DONE      = "constraint.dim.edit.done";
+constexpr const char* SKETCH_INSTANCE_PARAM_CHANGED = "sketchinstance.param.changed";
+constexpr const char* SKETCH_INSTANCE_CREATED       = "sketchinstance.created";
 }
 
 } // namespace core

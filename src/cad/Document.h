@@ -170,7 +170,20 @@ public:
      * @brief 建立草圖
      */
     Sketch* createSketch(class Plane* plane, const QString& name = QString());
-    
+
+    /**
+     * @brief 建立草圖副本（Phase 3）
+     * @param master     主草圖
+     * @param plane      副本放置的平面
+     * @param overrides  初始覆寫參數 name→value（可空）
+     * @param name       副本名稱（空則自動命名）
+     */
+    class SketchInstance* createSketchInstance(
+        Sketch* master,
+        class Plane* plane,
+        const QHash<QString, double>& overrides = {},
+        const QString& name = QString());
+
     /**
      * @brief 建立擠出
      */

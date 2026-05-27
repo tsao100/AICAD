@@ -757,7 +757,7 @@ void VAlignProfileView::drawGradeLabels(QPainter& p,
                                    :                 Pal::GradeZero;
 
         // Badge background
-        QRectF badge(mx - 23, my - 10, 46, 14);
+        QRectF badge(mx - 23, my - 10, 50, 14);
         p.setPen(QPen(col, 0.6));
         p.setBrush(QColor(3, 8, 18, 220));
         p.drawRoundedRect(badge, 2, 2);

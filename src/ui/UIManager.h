@@ -14,6 +14,7 @@
 #include <QUndoStack>
 #include "osnap/OSnapToolbar.h"
 #include "cad/sketch/SketchRegion.h"
+#include "cad/SketchInstance.h"
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Edge.hxx>
 
@@ -218,6 +219,9 @@ Q_SIGNALS:
 public slots:
     void onSketchEditStarted(cad::Sketch* sketch);
     void onSketchEditEnded();
+
+    /** Phase 3/7：在 ParameterPanel 中顯示 SketchInstance 覆寫參數 */
+    void showInstanceInParameterPanel(cad::SketchInstance* instance);
 
     
 private:

@@ -36,6 +36,7 @@
 #include "cad/grips/AlignmentGripProvider.h"
 #include "ui/GripEventFilter.h"
 #include "SketchPanel.h"
+#include "ParameterPanel.h"  // Phase 7
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
 #include "command/LineCommand.h"
@@ -60,6 +61,12 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Dir.hxx>
+#include <gp_Pnt.hxx>
+#include <gp.hxx>
+#include "cad/SketchInstance.h"   // Phase 3
 
 using namespace aicad::core;
 using namespace aicad::cad;
@@ -110,6 +117,7 @@ public:
     AutoCompleteModel* autoCompleteModel;
     QUndoStack* undoStack;
     SketchPanel* sketchPanel = nullptr;
+    ParameterPanel* parameterPanel = nullptr;  // Phase 7
 
     // ── Railway alignment ──────────────────────────────────────
     railway::AlignmentDocument*  alignmentDoc      = nullptr;
@@ -1677,6 +1685,94 @@ void UIManager::setupSketchPanel()
                 if (d->cadView) d->cadView->clearSketchGeomSelection();
             });
 
+    // Phase 7：帶 paramExpr + driving 的完整尺寸約束
+    connect(d->sketchPanel, &SketchPanel::requestConstraintWithValueAndExpr,
+            this, [this](cad::ConstraintType type, double value,
+                         const QString& paramExpr, bool driving) {
+                auto* sketch = core::Application::instance()->activeSketch();
+                if (!sketch) return;
+                QStringList selected = d->cadView
+                                         ? d->cadView->selectedGeomUuids()
+                                         : QStringList{};
+
+                // 1. 若 paramExpr 非空且非純數字，先在草圖 store 登記
+                double evalVal = value;
+                if (!paramExpr.isEmpty()) {
+                    auto [ok, v] = sketch->parameterStore()->evaluate(paramExpr);
+                    if (ok) {
+                        evalVal = v;
+                        // 若 store 中尚未有此名稱，自動登記 (value 作為預設)
+                        if (!sketch->parameterStore()->has(paramExpr))
+                            sketch->parameterStore()->setLocal(paramExpr, value);
+                    }
+                }
+
+                // 2. 施加約束
+                applyConstraintToSketch(sketch, type, selected, evalVal);
+
+                // 3. 找到剛加入的約束，補填 paramExpr 和 driving
+                auto& constraints = sketch->constraintsMutable();
+                for (auto& c : constraints) {
+                    if (c.type == type && c.isDimensional()
+                        && qFuzzyCompare(c.value + 1.0, evalVal + 1.0)
+                        && c.paramExpr.isEmpty())
+                    {
+                        c.paramExpr = paramExpr;
+                        c.driving   = driving;
+                        break;
+                    }
+                }
+
+                // 4. 刷新 ParameterPanel
+                if (d->parameterPanel)
+                    d->parameterPanel->showMaster(
+                        sketch->parameterStore(), sketch->name(), {});
+
+                if (d->cadView) d->cadView->clearSketchGeomSelection();
+            });
+
+    // Phase 7：清單雙擊 inline 編輯約束
+    connect(d->sketchPanel, &SketchPanel::requestEditConstraint,
+            this, [this](const QString& uuid, const QString& newExpr,
+                         double newValue, bool isLiteralNumber) {
+                auto* sketch = core::Application::instance()->activeSketch();
+                if (!sketch) return;
+
+                auto& constraints = sketch->constraintsMutable();
+                for (auto& c : constraints) {
+                    if (c.uuid != uuid) continue;
+
+                    if (isLiteralNumber) {
+                        c.value     = newValue;
+                        c.paramExpr = QString();
+                    } else {
+                        // 表達式：向 store 求值
+                        auto [ok, v] = sketch->parameterStore()->evaluate(newExpr);
+                        if (!ok) {
+                            qWarning() << "[UIManager] Cannot evaluate:" << newExpr;
+                            return;
+                        }
+                        c.paramExpr = newExpr;
+                        c.value     = v;
+                        // 若 store 中尚未有此名稱，自動登記
+                        if (!sketch->parameterStore()->has(newExpr))
+                            sketch->parameterStore()->setLocal(newExpr, v);
+                    }
+                    break;
+                }
+
+                // 重新求解 + 重建
+                sketch->solveConstraints();
+                sketch->rebuild();
+
+                // 刷新 ParameterPanel
+                if (d->parameterPanel)
+                    d->parameterPanel->showMaster(
+                        sketch->parameterStore(), sketch->name(), {});
+
+                if (d->cadView) d->cadView->refreshView();
+            });
+
     connect(d->sketchPanel, &SketchPanel::requestRemoveConstraint,
             this, [this](const QString& uuid) {
                 auto* sketch = core::Application::instance()->activeSketch();
@@ -1742,6 +1838,35 @@ void UIManager::setupSketchPanel()
     // ── status message from CadView ───────────────────────────────────
     connect(d->cadView, &view::CadView::statusMessageRequested,
             this, &UIManager::setStatusMessage);
+
+    // ── Phase 7：ParameterPanel（透過 MainWindow 懶建立，避免重複 dock）──
+    d->parameterPanel = d->mainWindow->parameterPanel();
+    // tabify 在 SketchPanel 右側
+    d->mainWindow->tabifyDockWidget(d->sketchPanel, d->parameterPanel);
+    d->parameterPanel->hide();   // 初始隱藏，進入草圖模式才顯示
+
+    // 施加尺寸約束後刷新面板
+    connect(d->sketchPanel,
+            &SketchPanel::requestConstraintWithValue,
+            this, [this](cad::ConstraintType, double) {
+        if (Sketch* sk = currentActiveSketch())
+            d->parameterPanel->showMaster(
+                sk->parameterStore(), sk->name(), {});
+    });
+
+    // 尺寸線點擊（SketchPanel 的 slot 已處理，此處轉發給 ParameterPanel）
+    connect(d->sketchPanel,
+            &SketchPanel::dimensionConstraintClicked,
+            this, [this](const QString& uuid,
+                         cad::ConstraintOverlayManager::Mode mode,
+                         const QString& instanceId) {
+        Q_UNUSED(uuid)
+        if (mode == cad::ConstraintOverlayManager::Mode::Instance) {
+            // 找到對應 instance 並切換 ParameterPanel 顯示
+            // （Document 查找留給後續 command layer 實作）
+            Q_UNUSED(instanceId)
+        }
+    });
 
 }
 
@@ -2169,6 +2294,38 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         d->sketchPanel->setActiveSketch(sketch);
         d->sketchPanel->show();
         d->sketchPanel->raise();
+
+        // Phase 6：約束覆蓋符號 — 建構 sketch→world Trsf
+        if (d->cadView && sketch->plane()) {
+            auto* plane = sketch->plane();
+            QVector3D o  = plane->origin();
+            QVector3D xa = plane->xAxis();
+            QVector3D ya = plane->yAxis();
+            QVector3D n  = plane->normal();
+
+            gp_Ax3 ax3(
+                gp_Pnt(o.x(),  o.y(),  o.z()),
+                gp_Dir(n.x(),  n.y(),  n.z()),
+                gp_Dir(xa.x(), xa.y(), xa.z()));
+            gp_Trsf toWorld;
+            toWorld.SetTransformation(ax3, gp::XOY());
+
+            d->sketchPanel->enterSketchMode(sketch, d->cadView->context(), toWorld);
+        }
+    }
+
+    // Phase 7：ParameterPanel 顯示 master 參數
+    if (d->parameterPanel) {
+        d->parameterPanel->showMaster(
+            sketch->parameterStore(), sketch->name(), {});
+        d->parameterPanel->show();
+        d->parameterPanel->raise();
+    } else if (d->mainWindow) {
+        // 懶建立（若 UIManager 繞過 setupSketchPanel 路徑）
+        ParameterPanel* pp = d->mainWindow->parameterPanel();
+        pp->showMaster(sketch->parameterStore(), sketch->name(), {});
+        pp->show();
+        pp->raise();
     }
 
     bus->publish(core::Events::SKETCH_ENTERED, QVariant::fromValue(sketch));
@@ -2181,20 +2338,36 @@ void UIManager::onSketchEditEnded()
 
     auto* bus = core::Application::instance()->eventBus();
 
-    // SketchPanel
+    // SketchPanel + overlay 清除
     if (d->sketchPanel) {
         d->sketchPanel->clearSketch();
+        d->sketchPanel->exitOverlayMode();   // Phase 6
         d->sketchPanel->hide();
     }
 
+    // Phase 7：ParameterPanel 清空
+    ParameterPanel* pp = d->parameterPanel
+                       ? d->parameterPanel
+                       : (d->mainWindow ? d->mainWindow->parameterPanel() : nullptr);
+    if (pp) pp->clearPanel();
+
     // 統一發布 SKETCH_EXITED → 由 initGripSystem 的訂閱執行完整清理
-    // (OSnap 關閉、Grips detach、setMode(Idle) 都在那裡)
     bus->publish(core::Events::SKETCH_EXITED, QVariant{});
     bus->publish("sketch.editEnded", QVariant{});  // 保留向下相容
 }
 
 MainWindow* UIManager::mainWindow() const {
     return d->mainWindow;
+}
+
+void UIManager::showInstanceInParameterPanel(cad::SketchInstance* instance) {
+    ParameterPanel* pp = d->parameterPanel
+                       ? d->parameterPanel
+                       : (d->mainWindow ? d->mainWindow->parameterPanel() : nullptr);
+    if (!pp || !instance) return;
+    pp->showInstance(instance);
+    pp->show();
+    pp->raise();
 }
 
 FeatureBrowser* UIManager::featureBrowser() const {

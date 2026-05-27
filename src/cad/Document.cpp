@@ -12,6 +12,7 @@
 #include "Sketch.h"
 #include "Extrude.h"
 #include "Plane.h"
+#include "SketchInstance.h"
 #include "ui/FeatureTreeItem.h"
 
 #include <AIS_Point.hxx>
@@ -564,6 +565,13 @@ Sketch* Document::createSketch(Plane* plane, const QString& name) {
     }
     sketch->setName(sketchName);
 
+    // Phase 2: sketch store → global store（scope chain）
+    sketch->parameterStore()->setParentStore(m_parameterStore);
+
+    // 全域參數重算 → 草圖重建
+    connect(sketch->parameterStore(), &aicad::core::ParameterStore::parametersRecomputed,
+            sketch, &Sketch::scheduleRebuild, Qt::UniqueConnection);
+
     addFeature(sketch);
 
     // ✅ 加入 tree item
@@ -582,6 +590,56 @@ Sketch* Document::createSketch(Plane* plane, const QString& name) {
 
     qDebug() << "[Document] Sketch created:" << sketchName;
     return sketch;
+}
+
+SketchInstance* Document::createSketchInstance(
+        Sketch* master,
+        Plane* plane,
+        const QHash<QString, double>& overrides,
+        const QString& name)
+{
+    if (!master) {
+        qWarning() << "[Document] createSketchInstance: master is null";
+        return nullptr;
+    }
+    if (!plane) {
+        qWarning() << "[Document] createSketchInstance: plane is null";
+        return nullptr;
+    }
+
+    auto* inst = new SketchInstance(this);
+    inst->setName(name.isEmpty()
+        ? QString("%1_copy_%2").arg(master->name()).arg(m_nextFeatureNumber++)
+        : name);
+
+    inst->setMasterSketch(master);
+    inst->setPlane(plane);
+
+    // instance store parent 由 setMasterSketch() 已設定
+
+    // 套用初始覆寫
+    for (auto it = overrides.cbegin(); it != overrides.cend(); ++it)
+        inst->parameterStore()->setLocal(it.key(), it.value());
+
+    addFeature(inst);
+
+    // 加入 FeatureTree
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::Sketch;   // 複用 Sketch icon
+    item.id         = inst->id();
+    item.name       = inst->name();
+    item.parentId   = master->id();
+    item.visible    = inst->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(inst));
+    m_treeItems.append(item);
+    Q_EMIT treeStructureChanged();
+
+    inst->rebuild();
+
+    qDebug() << "[Document] SketchInstance created:" << inst->name()
+             << "from master:" << master->name();
+    return inst;
 }
 
 Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& name) {
