@@ -297,6 +297,14 @@ Q_SIGNALS:
     void pointAcquired(QVector2D point);
 
     /**
+     * @brief 取得點時（帶草圖點 ID）發出 — 用於距離/角度約束選點
+     * @param point     平面座標
+     * @param geomUuid  snap 到的草圖幾何 UUID（若無法辨識則為空）
+     * @param geomHandle snap 到的端點 handle（-1 = WholeGeom）
+     */
+    void geomRefPicked(QVector2D point, QString geomUuid, int geomHandle);
+
+    /**
      * @brief 取得點被取消時發出
      */
     void pointCancelled();

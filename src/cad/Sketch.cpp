@@ -10,6 +10,7 @@
 
 #include <QDebug>
 #include <QtMath>
+#include <QUuid>
 #include <TopoDS.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Compound.hxx>
@@ -938,6 +939,52 @@ QString Sketch::constrainDistance(const GeomRef& a, const GeomRef& b, double dis
 QString Sketch::constrainRadius(const QString& geomUuid, double radius) {
     return addConstraint(SketchConstraint::makeFixedRadius(geomUuid, radius));
 }
+
+// GeomRef overload：用於 ConstraintPickSession 選到的圓/弧 ref
+QString Sketch::constrainRadius(const GeomRef& ref, double radius) {
+    // FixedRadius 只需要幾何 UUID，handle 用 WholeGeom 即可
+    SketchConstraint c;
+    c.uuid    = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type    = ConstraintType::FixedRadius;
+    c.value   = radius;
+    c.refs    = { GeomRef(ref.geomUuid, GeomHandle::WholeGeom) };
+    c.driving = true;
+    return addConstraint(c);
+}
+
+// 固定某個端點的 X 座標
+QString Sketch::constrainFixedX(const GeomRef& point, double x) {
+    SketchConstraint c;
+    c.uuid    = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type    = ConstraintType::FixedX;
+    c.value   = x;
+    c.refs    = { point };
+    c.driving = true;
+    return addConstraint(c);
+}
+
+// 固定某個端點的 Y 座標
+QString Sketch::constrainFixedY(const GeomRef& point, double y) {
+    SketchConstraint c;
+    c.uuid    = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type    = ConstraintType::FixedY;
+    c.value   = y;
+    c.refs    = { point };
+    c.driving = true;
+    return addConstraint(c);
+}
+
+// 兩條線（各取一個點）的夾角（弧度）
+QString Sketch::constrainAngle(const GeomRef& a, const GeomRef& b, double angleRad) {
+    SketchConstraint c;
+    c.uuid    = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type    = ConstraintType::FixedAngleDim;
+    c.value   = angleRad;
+    c.refs    = { a, b };
+    c.driving = true;
+    return addConstraint(c);
+}
+
 QString Sketch::constrainPointOnCurve(const GeomRef& point, const QString& curveUuid) {
     return addConstraint(SketchConstraint::makePointOnCurve(point, curveUuid));
 }

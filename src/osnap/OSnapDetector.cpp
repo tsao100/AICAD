@@ -5,6 +5,7 @@
 
 #include "OSnapDetector.h"
 #include "../cad/Plane.h"   // aicad::cad::Plane
+#include "../cad/Sketch.h"  // 草圖幾何 geomUuid 對應
 #include "../railway/AlignmentDocument.h"  // aicad::railway::AlignmentDocument
 
 // OCCT topology
@@ -333,6 +334,58 @@ void OSnapDetector::detectEndpoints(
     TopTools_IndexedMapOfShape vertMap;
     TopExp::MapShapes(shape, TopAbs_VERTEX, vertMap);
 
+    // 建立 AIS shape → geomUuid 的快查表（只在有 activeSketch 時）
+    // 匹配規則：比對 3D 點座標與草圖幾何端點，找出 geomUuid + GeomHandle
+    auto resolveSketchRef = [this](const gp_Pnt& worldPt,
+                                   QString& outUuid, int& outHandle) {
+        if (!m_activeSketch) return;
+        double tol = 1e-4;
+        for (const cad::SketchGeometry* g : m_activeSketch->geometriesRef()) {
+            if (!g || g->points.size() < 2) {
+                // Circle/Arc 可能只有 center
+                if (g && g->points.size() == 1) {
+                    QVector3D w3 = m_activeSketch->plane()
+                                   ? m_activeSketch->plane()->toWorld(
+                                       g->points[0].x(), g->points[0].y())
+                                   : QVector3D(g->points[0].x(), g->points[0].y(), 0);
+                    gp_Pnt wp(w3.x(), w3.y(), w3.z());
+                    if (wp.Distance(worldPt) < tol) {
+                        outUuid   = g->uuid;
+                        outHandle = static_cast<int>(cad::GeomHandle::Center);
+                        return;
+                    }
+                }
+                continue;
+            }
+            // Start point
+            {
+                QVector3D w3 = m_activeSketch->plane()
+                               ? m_activeSketch->plane()->toWorld(
+                                   g->points.front().x(), g->points.front().y())
+                               : QVector3D(g->points.front().x(), g->points.front().y(), 0);
+                gp_Pnt wp(w3.x(), w3.y(), w3.z());
+                if (wp.Distance(worldPt) < tol) {
+                    outUuid   = g->uuid;
+                    outHandle = static_cast<int>(cad::GeomHandle::Start);
+                    return;
+                }
+            }
+            // End point
+            {
+                QVector3D w3 = m_activeSketch->plane()
+                               ? m_activeSketch->plane()->toWorld(
+                                   g->points.back().x(), g->points.back().y())
+                               : QVector3D(g->points.back().x(), g->points.back().y(), 0);
+                gp_Pnt wp(w3.x(), w3.y(), w3.z());
+                if (wp.Distance(worldPt) < tol) {
+                    outUuid   = g->uuid;
+                    outHandle = static_cast<int>(cad::GeomHandle::End);
+                    return;
+                }
+            }
+        }
+    };
+
     for (Standard_Integer i = 1; i <= vertMap.Extent(); ++i) {
         TopoDS_Vertex v = TopoDS::Vertex(vertMap(i));
         gp_Pnt pt = BRep_Tool::Pnt(v);
@@ -346,12 +399,13 @@ void OSnapDetector::detectEndpoints(
         c.screenDist   = screenDistance(view, pt, mouseX, mouseY);
         c.isValid      = true;
 
-        // 使用 OCCT convert 取得精確螢幕距離
+        // Phase: 填入草圖點 ID
+        resolveSketchRef(pt, c.geomUuid, c.geomHandle);
+
         double sx, sy;
         if (worldToScreen(view, pt, sx, sy)) {
-            // 實際滑鼠座標從外部傳入，這裡存世界距離
-            c.worldDist  = pt.Distance(gp_Pnt(0,0,0));  // 暫存
-            c.isValid    = true;
+            c.worldDist = pt.Distance(gp_Pnt(0,0,0));
+            c.isValid   = true;
         }
 
         out.append(c);
@@ -387,8 +441,10 @@ void OSnapDetector::detectMidpoints(
         c.sourceEdge  = edge;
         c.sourceAIS   = aisObj;
         c.paramOnEdge = 0.5;
-        c.screenDist   = screenDistance(view, midPt, mouseX, mouseY);
+        c.screenDist  = screenDistance(view, midPt, mouseX, mouseY);
         c.isValid     = true;
+        // Phase: Midpoint 對應整條幾何（Curve handle）— geomUuid 留空，
+        // 由上層根據 aisObj 查表補填（ConstraintPickSession 負責）
         out.append(c);
     }
 }

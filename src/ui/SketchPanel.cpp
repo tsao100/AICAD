@@ -178,7 +178,9 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
     dimGrid->addWidget(m_btnFixedY, 4, 1);
 
     // 表達式優先：若 m_exprInput 有內容則忽略 spinBox
+    // m_pickingActive 防止選點進行中重複觸發
     auto emitDim = [this](ConstraintType ct) {
+        if (m_pickingActive) return;   // 選點進行中，忽略
         QString expr = m_exprInput->text().trimmed();
         double  val  = m_valueInput->value();
         bool    drv  = m_drivingCheck->isChecked();
@@ -313,11 +315,32 @@ void SketchPanel::clearSketch()
 {
     if (m_sketch) m_sketch->disconnect(this);
     m_sketch = nullptr;
+    m_pickingActive = false;
     setEnabled(false);
     if (m_constraintTree) m_constraintTree->clear();
     if (m_dofLabel)       m_dofLabel->setText(tr("—"));
     if (m_statusLabel)    m_statusLabel->setText(tr("—"));
     if (m_residualLabel)  m_residualLabel->setText(tr("—"));
+    clearPickPrompt();
+}
+
+void SketchPanel::showPickPrompt(const QString& text)
+{
+    if (!m_statusLabel) return;
+    m_pickingActive = true;
+    // 橘色粗體提示 + ESC 取消說明
+    m_statusLabel->setText(
+        QString("<span style='color:#E07000;font-weight:bold;'>⊙ %1</span>"
+                " <span style='color:#888;font-size:10px;'>（ESC 取消）</span>")
+        .arg(text));
+    // 不 disable 按鈕 — 改用 m_pickingActive flag 防止重複觸發
+}
+
+void SketchPanel::clearPickPrompt()
+{
+    if (!m_statusLabel) return;
+    m_pickingActive = false;
+    m_statusLabel->setText(tr("—"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

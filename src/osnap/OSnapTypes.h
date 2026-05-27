@@ -115,6 +115,15 @@ struct SnapCandidate {
     double            paramOnEdge = 0.0;   ///< 邊上的參數（0~1）
     bool              isValid     = false;
 
+    // ── Phase: 草圖點 ID ─────────────────────────────────────────────────
+    /// 對應的草圖幾何 UUID（僅當 snap 到草圖幾何端點/中心時有效）
+    QString           geomUuid;
+    /// 對應的幾何 handle（Start/End/Center/Mid — 對應 GeomHandle enum）
+    int               geomHandle  = -1;   ///< -1 = 未對應
+
+    /// 是否帶有有效的草圖點 ID（可直接轉為 GeomRef）
+    bool hasSketchRef() const { return !geomUuid.isEmpty() && geomHandle >= 0; }
+
     /// 比較：用於排序（優先順序 + 螢幕距離）
     bool operator<(const SnapCandidate& o) const {
         int p1 = snapPriority(type);

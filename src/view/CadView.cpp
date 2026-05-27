@@ -1252,17 +1252,37 @@ void CadView::updateProjection() {
 void CadView::handlePointInput(const QPoint& screenPos) {
     QVector2D planePt = screenToPlane(screenPos);
 
-    // ✅ 同時發布到 EventBus，確保 Command 系統能收到
+    // 從 OSnapManager 取得目前鎖定的 snap 候選（含 geomUuid / geomHandle）
+    QString geomUuid;
+    int     geomHandle = -1;
+    if (m_snapManager && m_snapManager->isSnapActive()) {
+        auto snap = m_snapManager->currentSnap();
+        if (snap.has_value()) {
+            geomUuid   = snap->geomUuid;
+            geomHandle = snap->geomHandle;
+            // 若 snap 鎖定點存在，以 snap 的 planePoint 取代原始螢幕投影
+            if (!snap->planePoint.isNull())
+                planePt = snap->planePoint;
+        }
+    }
+
+    // 同時發布到 EventBus
     auto* bus = core::Application::instance()->eventBus();
     if (bus) {
         QVariantMap data;
-        data["point"] = QVariant::fromValue(planePt);
+        data["point"]      = QVariant::fromValue(planePt);
+        data["geomUuid"]   = geomUuid;
+        data["geomHandle"] = geomHandle;
         bus->publish(core::Events::POINT_ACQUIRED, data);
     }
 
-    qDebug() << "[CadView] Point acquired:" << planePt.x() << "," << planePt.y();
+    qDebug() << "[CadView] Point acquired:" << planePt.x() << "," << planePt.y()
+             << "geomUuid:" << geomUuid << "handle:" << geomHandle;
 
+    // 舊 signal（向下相容）
     Q_EMIT pointAcquired(planePt);
+    // 新 signal（帶 GeomRef 資訊）
+    Q_EMIT geomRefPicked(planePt, geomUuid, geomHandle);
 }
 
 void CadView::handleObjectSelection(const QPoint& screenPos) {

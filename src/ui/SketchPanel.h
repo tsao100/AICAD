@@ -38,6 +38,10 @@ public:
     /** 離開草圖編輯模式 */
     void clearSketch();
 
+    /** Phase: 顯示選點提示（點擊尺寸按鈕後進入選點狀態） */
+    void showPickPrompt(const QString& text);
+    void clearPickPrompt();
+
     // ── Phase 6 ─────────────────────────────────────────────────────────
     /** 進入 master 草圖的約束覆蓋顯示模式 */
     void enterSketchMode(cad::Sketch* sketch,
@@ -111,6 +115,8 @@ private:
     QString constraintTypeName(cad::ConstraintType t) const;
 
     cad::Sketch* m_sketch = nullptr;
+
+    bool m_pickingActive = false;  // 選點進行中，防止尺寸按鈕重複觸發
 
     // Phase 6：約束覆蓋管理員
     std::unique_ptr<cad::ConstraintOverlayManager> m_overlay;

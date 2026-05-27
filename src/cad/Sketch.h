@@ -332,6 +332,14 @@ public:
     QString constrainFixed(const QString& geomUuid);
     QString constrainDistance(const GeomRef& a, const GeomRef& b, double dist);
     QString constrainRadius(const QString& geomUuid, double radius);
+    /// 以 GeomRef 指定圓/弧端點（PickSession 使用）
+    QString constrainRadius(const GeomRef& ref, double radius);
+    /// 固定單一點的 X 座標
+    QString constrainFixedX(const GeomRef& point, double x);
+    /// 固定單一點的 Y 座標
+    QString constrainFixedY(const GeomRef& point, double y);
+    /// 兩個點/幾何的夾角（弧度）
+    QString constrainAngle(const GeomRef& a, const GeomRef& b, double angleRad);
     QString constrainPointOnCurve(const GeomRef& point, const QString& curveUuid);
 
     // ── 建構線便捷方法 ────────────────────────────────────────────

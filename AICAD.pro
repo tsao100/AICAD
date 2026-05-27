@@ -217,6 +217,7 @@ win32 {
 # ========================================
 
 SOURCES += \
+    src/cad/ConstraintPickSession.cpp \
     src/cad/DependencyGraph.cpp \
     src/cad/PlaneManager.cpp \
     src/cad/SketchInstance.cpp \
@@ -330,6 +331,7 @@ SOURCES += \
 
 HEADERS += \
     # Core Module
+    src/cad/ConstraintPickSession.h \
     src/cad/DependencyGraph.h \
     src/cad/PlaneManager.h \
     src/cad/SketchInstance.h \

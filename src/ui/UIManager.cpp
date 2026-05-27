@@ -67,6 +67,7 @@
 #include <gp_Pnt.hxx>
 #include <gp.hxx>
 #include "cad/SketchInstance.h"   // Phase 3
+#include "cad/ConstraintPickSession.h"  // Point-pick for dimension constraints
 
 using namespace aicad::core;
 using namespace aicad::cad;
@@ -118,6 +119,7 @@ public:
     QUndoStack* undoStack;
     SketchPanel* sketchPanel = nullptr;
     ParameterPanel* parameterPanel = nullptr;  // Phase 7
+    cad::ConstraintPickSession* pickSession = nullptr;  // Point-pick for dim constraints
 
     // ── Railway alignment ──────────────────────────────────────
     railway::AlignmentDocument*  alignmentDoc      = nullptr;
@@ -284,6 +286,17 @@ void UIManager::initGripSystem()
                        // 此時 GripManager 的 provider 由 selection.featureSelected 設定
                        if (d->cadView){
                            d->cadView->displayAllFeatures();      // ← ADD
+                       }
+                   });
+
+    // ESC 取消 PickSession（若正在選點中）
+    bus->subscribe(core::Events::POINT_CANCELLED, this,
+                   [this](const QVariant&) {
+                       if (d->pickSession && d->pickSession->isActive()) {
+                           d->pickSession->cancel();
+                           if (d->cadView)
+                               d->cadView->setMode(view::InteractionMode::Sketching);
+                           setStatusMessage(tr("已取消選點"));
                        }
                    });
 
@@ -1691,43 +1704,42 @@ void UIManager::setupSketchPanel()
                          const QString& paramExpr, bool driving) {
                 auto* sketch = core::Application::instance()->activeSketch();
                 if (!sketch) return;
+
+                // 尺寸約束需要讓使用者點選幾何端點
+                const bool needsPick =
+                    type == cad::ConstraintType::FixedDistance  ||
+                    type == cad::ConstraintType::FixedRadius     ||
+                    type == cad::ConstraintType::FixedX          ||
+                    type == cad::ConstraintType::FixedY          ||
+                    type == cad::ConstraintType::FixedAngleDim;
+
+                if (needsPick) {
+                    // 若 paramExpr 非空，先在 store 登記
+                    double evalVal = value;
+                    if (!paramExpr.isEmpty()) {
+                        auto [ok, v] = sketch->parameterStore()->evaluate(paramExpr);
+                        if (ok) {
+                            evalVal = v;
+                            if (!sketch->parameterStore()->has(paramExpr))
+                                sketch->parameterStore()->setLocal(paramExpr, value);
+                        }
+                    }
+
+                    // 啟動 PickSession
+                    d->pickSession->begin(sketch, type, evalVal, paramExpr, driving);
+                    if (d->cadView) {
+                        d->cadView->setMode(view::InteractionMode::GetPoint);
+                        // 顯示提示
+                        setStatusMessage(d->pickSession->promptText());
+                    }
+                    return;
+                }
+
+                // 幾何約束（非尺寸）：沿用原有邏輯
                 QStringList selected = d->cadView
                                          ? d->cadView->selectedGeomUuids()
                                          : QStringList{};
-
-                // 1. 若 paramExpr 非空且非純數字，先在草圖 store 登記
-                double evalVal = value;
-                if (!paramExpr.isEmpty()) {
-                    auto [ok, v] = sketch->parameterStore()->evaluate(paramExpr);
-                    if (ok) {
-                        evalVal = v;
-                        // 若 store 中尚未有此名稱，自動登記 (value 作為預設)
-                        if (!sketch->parameterStore()->has(paramExpr))
-                            sketch->parameterStore()->setLocal(paramExpr, value);
-                    }
-                }
-
-                // 2. 施加約束
-                applyConstraintToSketch(sketch, type, selected, evalVal);
-
-                // 3. 找到剛加入的約束，補填 paramExpr 和 driving
-                auto& constraints = sketch->constraintsMutable();
-                for (auto& c : constraints) {
-                    if (c.type == type && c.isDimensional()
-                        && qFuzzyCompare(c.value + 1.0, evalVal + 1.0)
-                        && c.paramExpr.isEmpty())
-                    {
-                        c.paramExpr = paramExpr;
-                        c.driving   = driving;
-                        break;
-                    }
-                }
-
-                // 4. 刷新 ParameterPanel
-                if (d->parameterPanel)
-                    d->parameterPanel->showMaster(
-                        sketch->parameterStore(), sketch->name(), {});
-
+                applyConstraintToSketch(sketch, type, selected, value);
                 if (d->cadView) d->cadView->clearSketchGeomSelection();
             });
 
@@ -1844,6 +1856,82 @@ void UIManager::setupSketchPanel()
     // tabify 在 SketchPanel 右側
     d->mainWindow->tabifyDockWidget(d->sketchPanel, d->parameterPanel);
     d->parameterPanel->hide();   // 初始隱藏，進入草圖模式才顯示
+
+    // ── Point-Pick Session：尺寸約束選點狀態機 ────────────────────────
+    d->pickSession = new cad::ConstraintPickSession(this);
+
+    // pickSession 收齊點 → 施加約束
+    connect(d->pickSession, &cad::ConstraintPickSession::constraintReady,
+            this, [this](QList<cad::GeomRef> refs,
+                         double value, QString paramExpr,
+                         bool driving, cad::ConstraintType type) {
+        auto* sketch = core::Application::instance()->activeSketch();
+        if (!sketch) return;
+
+        // 1. 呼叫 Sketch 約束 API
+        QString uuid;
+        if (type == cad::ConstraintType::FixedDistance && refs.size() >= 2) {
+            uuid = sketch->constrainDistance(refs[0], refs[1], value);
+        } else if (type == cad::ConstraintType::FixedRadius && refs.size() >= 1) {
+            uuid = sketch->constrainRadius(refs[0], value);
+        } else if (type == cad::ConstraintType::FixedX && refs.size() >= 1) {
+            uuid = sketch->constrainFixedX(refs[0], value);
+        } else if (type == cad::ConstraintType::FixedY && refs.size() >= 1) {
+            uuid = sketch->constrainFixedY(refs[0], value);
+        } else if (type == cad::ConstraintType::FixedAngleDim && refs.size() >= 2) {
+            uuid = sketch->constrainAngle(refs[0], refs[1], value);
+        }
+
+        // 2. 補填 paramExpr + driving
+        if (!uuid.isEmpty() && (!paramExpr.isEmpty() || !driving)) {
+            for (auto& c : sketch->constraintsMutable()) {
+                if (c.uuid == uuid) {
+                    c.paramExpr = paramExpr;
+                    c.driving   = driving;
+                    break;
+                }
+            }
+        }
+
+        // 3. 求解 + 重建
+        sketch->solveConstraints();
+
+        // 4. 刷新 UI
+        if (d->parameterPanel)
+            d->parameterPanel->showMaster(
+                sketch->parameterStore(), sketch->name(), {});
+
+        // 5. 切回 Sketching 模式
+        if (d->cadView)
+            d->cadView->setMode(view::InteractionMode::Sketching);
+        setStatusMessage(tr("約束已施加"));
+    });
+
+    // pickSession 結束（含取消）→ 切回 Sketching 模式
+    // pickSession 提示變更 → status bar + SketchPanel
+    connect(d->pickSession, &cad::ConstraintPickSession::promptChanged,
+            this, [this](const QString& text) {
+        setStatusMessage(text);
+        if (d->sketchPanel) d->sketchPanel->showPickPrompt(text);
+    });
+
+    connect(d->pickSession, &cad::ConstraintPickSession::sessionEnded,
+            this, [this] {
+        if (d->sketchPanel) d->sketchPanel->clearPickPrompt();
+        if (!d->pickSession->isActive())
+            if (d->cadView)
+                d->cadView->setMode(view::InteractionMode::Sketching);
+    });
+    if (d->cadView) {
+        connect(d->cadView, &view::CadView::geomRefPicked,
+                this, [this](QVector2D planePt, QString geomUuid, int geomHandle) {
+            if (!d->pickSession->isActive()) return;
+            d->pickSession->feedPoint(planePt, geomUuid, geomHandle);
+            // 更新 status bar 提示
+            if (d->pickSession->isActive())
+                setStatusMessage(d->pickSession->promptText());
+        });
+    }
 
     // 施加尺寸約束後刷新面板
     connect(d->sketchPanel,
