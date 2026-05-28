@@ -50,10 +50,10 @@ toolbar|main|exportpdf|Export PDF|:/icons/export_pdf.png|
 
 toolbar|main|separator|||
 
-toolbar|main|view_top|Top View|:/icons/top.png|U
-toolbar|main|view_front|Front View|:/icons/front.png|F
-toolbar|main|view_right|Right View|:/icons/right.png|R
-toolbar|main|view_iso|Isometric|:/icons/isometric.png|I
+toolbar|main|view_top|Top View|:/icons/top.png|
+toolbar|main|view_front|Front View|:/icons/front.png|
+toolbar|main|view_right|Right View|:/icons/right.png|
+toolbar|main|view_iso|Isometric|:/icons/isometric.png|
 
 
 # ======================
@@ -99,11 +99,11 @@ menu|Features|extrude|Create Extrusion||
 # Menu : View
 # ======================
 
-menu|View|view_top|Top (XY)|U|
-menu|View|view_front|Front (XZ)|F|
-menu|View|view_right|Right (YZ)|R|
+menu|View|view_top|Top (XY)||
+menu|View|view_front|Front (XZ)||
+menu|View|view_right|Right (YZ)||
 menu|View|separator|||
-menu|View|view_iso|Isometric|I|
+menu|View|view_iso|Isometric||
 
 
 # ======================

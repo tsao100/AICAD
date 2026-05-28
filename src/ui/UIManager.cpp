@@ -1510,14 +1510,22 @@ void UIManager::connectCommandLineEvents() {
     // ── 使用者輸入命令 ───────────────────────────────────────────────
     connect(d->commandLine, &CommandLineWidget::commandSubmitted,
             this, [this](const QString& cmd) {
-                QString resolved = d->commandAlias->resolveAlias(cmd);
-                d->autoCompleteModel->incrementUsage(resolved);
+                // 判斷目前是否正在等待資料輸入（數值、座標、選項等）
+                // 若是，則此次 signal 攜帶的是「資料」而非「命令名稱」，
+                // 不應更新命令歷程、自動完成計數、recentCommands 等。
+                const bool isData = d->commandLineManager->isWaitingForInput();
 
-                // ✅ 以 resolved 名稱修正 widget 內的所有歷程
-                d->commandLine->recordResolvedCommand(resolved);
-
-                // CommandLineManager 內部的 addToHistory 也是 resolved
-                d->commandLineManager->executeCommand(resolved);
+                if (!isData) {
+                    QString resolved = d->commandAlias->resolveAlias(cmd);
+                    d->autoCompleteModel->incrementUsage(resolved);
+                    // 以 resolved 名稱更新 widget 內的 recentCommands / inputEdit history
+                    d->commandLine->recordResolvedCommand(resolved);
+                    // CommandLineManager 內部的 addToHistory 也是 resolved
+                    d->commandLineManager->executeCommand(resolved);
+                } else {
+                    // 資料輸入：直接送給 CommandLineManager，不碰任何歷程
+                    d->commandLineManager->executeCommand(cmd);
+                }
             });
 
     // ── 使用者選了選項按鈕 ──────────────────────────────────────────
@@ -2518,8 +2526,11 @@ void UIManager::setupMenusFromParser() {
                     action->setIcon(QIcon(item.icon));
                 }
 
-                // 設定快捷鍵
-                if (!item.shortcut.isEmpty()) {
+                // 設定快捷鍵（純字母快捷鍵跳過，避免攔截命令列輸入）
+                auto isSingleLetter = [](const QString& s) {
+                    return s.length() == 1 && s[0].isLetter();
+                };
+                if (!item.shortcut.isEmpty() && !isSingleLetter(item.shortcut)) {
                     action->setShortcut(QKeySequence(item.shortcut));
                 }
 
@@ -2560,14 +2571,17 @@ void UIManager::setupToolbarsFromParser() {
                     action->setIcon(QIcon(item.icon));
                 }
 
-                // 設定快捷鍵
-                if (!item.shortcut.isEmpty()) {
+                // 設定快捷鍵（純字母快捷鍵跳過，避免攔截命令列輸入）
+                auto isSingleLetter2 = [](const QString& s) {
+                    return s.length() == 1 && s[0].isLetter();
+                };
+                if (!item.shortcut.isEmpty() && !isSingleLetter2(item.shortcut)) {
                     action->setShortcut(QKeySequence(item.shortcut));
                 }
 
                 // 設定工具提示
                 QString tooltip = item.label;
-                if (!item.shortcut.isEmpty()) {
+                if (!item.shortcut.isEmpty() && !isSingleLetter2(item.shortcut)) {
                     tooltip += QString(" (%1)").arg(item.shortcut);
                 }
                 action->setToolTip(tooltip);

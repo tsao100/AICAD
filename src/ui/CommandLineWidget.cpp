@@ -54,6 +54,10 @@ CommandLineWidget::CommandLineWidget(QWidget* cadView, QWidget* parent)
         if (auto* win = m_cadView->window(); win && win != m_cadView)
             win->installEventFilter(this);
     }
+
+    // 全局鍵盤攔截：安裝到 Application 層級，
+    // 讓任何視窗的按鍵都能導向命令列，不需先點擊 CadView。
+    qApp->installEventFilter(this);
 }
 
 CommandLineWidget::~CommandLineWidget() = default;
@@ -307,6 +311,52 @@ void CommandLineWidget::resizeEvent(QResizeEvent* event) {
 
 bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
 
+    // ── 全局鍵盤攔截：任何來源的按鍵都導向命令列 ──────────────────
+    // qApp->installEventFilter(this) 讓所有 QObject（包含 QWindow）的事件都
+    // 流經這裡。在任何 widget 被點擊之前，OS 鍵盤事件是送到 QWindow 而非
+    // QWidget，因此必須同時處理兩種情況。
+    if (event->type() == QEvent::KeyPress && isVisible()) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        const int key = ke->key();
+        const bool isModifierOnly =
+            (key == Qt::Key_unknown  ||
+             key == Qt::Key_Control  || key == Qt::Key_Shift ||
+             key == Qt::Key_Alt      || key == Qt::Key_Meta  ||
+             key == Qt::Key_CapsLock);
+
+        if (!isModifierOnly) {
+            auto* srcWidget = qobject_cast<QWidget*>(obj);
+            auto* srcWindow = qobject_cast<QWindow*>(obj);
+
+            bool shouldCapture = false;
+
+            if (srcWidget) {
+                // ── obj 是 QWidget（某個 widget 已持有焦點）──
+                // 跳過命令列自身內部的 widget，以及 Dialog / Popup 視窗。
+                if (!isAncestorOf(srcWidget) && srcWidget != this) {
+                    QWidget* top = srcWidget->window();
+                    const bool isDialogOrPopup =
+                        top && ((top->windowFlags() & Qt::Dialog) ||
+                                (top->windowFlags() & Qt::Popup));
+                    shouldCapture = !isDialogOrPopup;
+                }
+            } else if (srcWindow) {
+                // ── obj 是 QWindow（尚無 widget 持有焦點，例如剛啟動時）──
+                // 只要不是 Dialog / Popup 類型的原生視窗就攔截。
+                const bool isDialogOrPopup =
+                    (srcWindow->flags() & Qt::Dialog) ||
+                    (srcWindow->flags() & Qt::Popup);
+                shouldCapture = !isDialogOrPopup;
+            }
+
+            if (shouldCapture) {
+                m_inputEdit->setFocus();
+                QApplication::sendEvent(m_inputEdit, event);
+                return true;   // 消費原始事件，避免重複處理
+            }
+        }
+    }
+
     // ── 子 Widget hover：轉換座標後更新 resize 游標 ──
     if (event->type() == QEvent::MouseMove) {
         if (auto* cw = qobject_cast<QWidget*>(obj);
@@ -332,6 +382,27 @@ bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
     // cadView resize/move 跟隨（原有邏輯）
     if (obj == m_cadView) {
         switch (event->type()) {
+
+            // ── Fix 1：CadView 按鍵導向命令列 ──
+            // 只攔截來自視口的按鍵，工具列/選單快捷鍵完全不受影響
+        case QEvent::KeyPress: {
+            if (isVisible()) {
+                auto* ke = static_cast<QKeyEvent*>(event);
+                const int key = ke->key();
+                // 跳過單獨的修飾鍵
+                const bool isModifierOnly =
+                    (key == Qt::Key_Control || key == Qt::Key_Shift  ||
+                     key == Qt::Key_Alt     || key == Qt::Key_Meta   ||
+                     key == Qt::Key_CapsLock|| key == Qt::Key_unknown);
+                if (!isModifierOnly) {
+                    m_inputEdit->setFocus();
+                    // 轉送按鍵到 m_inputEdit，讓首次按鍵就被接收，不需多按一次
+                    QApplication::sendEvent(m_inputEdit, event);
+                    return true;  // 消費原始事件
+                }
+            }
+            break;
+        }
 
             // CadView 首次顯示：延一個 event loop 再對齊
             // 確保 mapToGlobal 已有正確的 window 座標
@@ -677,7 +748,12 @@ void CommandLineWidget::onInputSubmit(const QString& text) {
         return;
     }
 
-    appendHistory(text, false);
+    // ── Fix 3：只有不在「等待輸入」狀態時，輸入的才是命令名稱，才加入歷程 ──
+    // 當 isWaitingForInput() == true，代表目前命令正在等待數值或 keyword 選擇，
+    // 這類輸入（如半徑、選項字母）不應記錄進 CommandHistory 顯示列表。
+    if (!clm->isWaitingForInput())
+        appendHistory(text, false);
+
     emit commandSubmitted(text);
 }
 

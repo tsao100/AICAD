@@ -1,4 +1,5 @@
 #include "CommandHistoryPopup.h"
+#include <QApplication>
 #include <QVBoxLayout>
 #include <QScrollBar>
 
@@ -29,7 +30,23 @@ CommandHistoryPopup::CommandHistoryPopup(QWidget* parent)
     lay->addWidget(m_textEdit);
     setMinimumHeight(0);
 
+    // ── Fix 2：任何滑鼠按下即收起 ──
+    // 安裝 Application-level event filter，監聽 popup 外部的滑鼠按下事件
+    qApp->installEventFilter(this);
+
     hide();
+}
+
+// ── Fix 2：任何滑鼠按下即收起 ──
+bool CommandHistoryPopup::eventFilter(QObject* obj, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonPress && isVisible()) {
+        auto* w = qobject_cast<QWidget*>(obj);
+        // 如果按下的目標不在 popup 自身或其子 widget 內，就收起
+        if (w && !isAncestorOf(w) && w != this) {
+            slideOut();
+        }
+    }
+    return QWidget::eventFilter(obj, event);
 }
 
 void CommandHistoryPopup::buildToolbar() {

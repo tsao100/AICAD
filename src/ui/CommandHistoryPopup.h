@@ -26,6 +26,9 @@ public:
     int  slideHeight() const { return m_slideH; }
     void setSlideHeight(int h);
 
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;  // Fix 2：任何滑鼠按下即收起
+
 private slots:
     void copySelected();                  // ← 新增
     void copyAll();                       // ← 新增

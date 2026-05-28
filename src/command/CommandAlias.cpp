@@ -34,9 +34,9 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("L", "LINE", "Draw a line", true);
     registerAlias("C", "CIRCLE", "Draw a circle", true);
     registerAlias("A", "ARC", "Draw an arc", true);
-    registerAlias("PL", "PLINE", "Draw a polyline", true);
+    registerAlias("PL", "POLYLINE", "Draw a polyline", true);
     registerAlias("POL", "POLYGON", "Draw a polygon", true);
-    registerAlias("REC", "RECTANGLE", "Draw a rectangle", true);
+    registerAlias("REC", "RECT", "Draw a rectangle", true);
     registerAlias("EL", "ELLIPSE", "Draw an ellipse", true);
     registerAlias("SPL", "SPLINE", "Draw a spline", true);
 
