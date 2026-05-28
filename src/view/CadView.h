@@ -369,6 +369,11 @@ protected:
     /**
      * @brief 滑鼠按下事件
      */
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    void enterEvent(QEnterEvent* event) override;
+#else
+    void enterEvent(QEvent* event) override;
+#endif
     void mousePressEvent(QMouseEvent* event) override;
 
     /**

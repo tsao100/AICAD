@@ -1590,6 +1590,15 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     Q_EMIT viewClicked(event->pos(), event->button());
 }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+void CadView::enterEvent(QEnterEvent* event) {
+#else
+void CadView::enterEvent(QEvent* event) {
+#endif
+    QWidget::enterEvent(event);
+    setFocus(Qt::MouseFocusReason);
+}
+
 void CadView::mouseMoveEvent(QMouseEvent* event) {
     int x = event->x();
     int y = event->y();

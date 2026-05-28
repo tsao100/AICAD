@@ -22,6 +22,8 @@ CommandLineWidget::CommandLineWidget(QWidget* cadView, QWidget* parent)
 {
     setAttribute(Qt::WA_StyledBackground);
     setAttribute(Qt::WA_NativeWindow);
+    // ── 關鍵屬性：Tool 視窗顯示時不搶走 MainWindow 的 active 狀態 ──
+    setAttribute(Qt::WA_ShowWithoutActivating);
     setMouseTracking(true);
     setMinimumHeight(SINGLE_ROW_HEIGHT);
     setMinimumWidth(600);
@@ -38,6 +40,10 @@ CommandLineWidget::CommandLineWidget(QWidget* cadView, QWidget* parent)
     buildSingleRow();
     //buildMultiRow();
     //alignToCadView(); CadView 尚未就緒
+
+    // ── 設定 FocusProxy：CommandLineWidget 的焦點代理是 m_inputEdit ──
+    // 當程式呼叫 commandLineWidget->setFocus() 時，實際上會給 m_inputEdit。
+    setFocusProxy(m_inputEdit);
 
     connect(m_inputEdit, &CommandInputEdit::optionChipClicked,
             this, &CommandLineWidget::optionSelected);
@@ -312,9 +318,15 @@ void CommandLineWidget::resizeEvent(QResizeEvent* event) {
 bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
 
     // ── 全局鍵盤攔截：任何來源的按鍵都導向命令列 ──────────────────
-    // qApp->installEventFilter(this) 讓所有 QObject（包含 QWindow）的事件都
-    // 流經這裡。在任何 widget 被點擊之前，OS 鍵盤事件是送到 QWindow 而非
-    // QWidget，因此必須同時處理兩種情況。
+    // 根本原因：CommandLineWidget 是 Qt::Tool 視窗，沒有 active window 身份。
+    // 當 m_inputEdit->setFocus() 被呼叫時，若 CommandLineWidget 的視窗不是
+    // active window，Qt 不允許非 active 視窗的 widget 取得鍵盤焦點，
+    // 因此 setFocus() 無效。
+    //
+    // 修復：直接用 QApplication::sendEvent 把事件送給 m_inputEdit，
+    // 不依賴 setFocus()。同時用 Qt::Tool 視窗的 activateWindow() 確保
+    // m_inputEdit 能真正接收輸入（activateWindow 對 Tool 視窗只是讓它
+    // 成為 key focus window，不搶走 MainWindow 的 active 狀態）。
     if (event->type() == QEvent::KeyPress && isVisible()) {
         auto* ke = static_cast<QKeyEvent*>(event);
         const int key = ke->key();
@@ -332,21 +344,32 @@ bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
 
             if (srcWidget) {
                 // ── obj 是 QWidget（某個 widget 已持有焦點）──
-                // 跳過命令列自身內部的 widget，以及 Dialog / Popup 視窗。
+                // 跳過命令列自身內部的 widget（包含 m_inputEdit），
+                // 以及 Dialog / Popup 視窗。
                 if (!isAncestorOf(srcWidget) && srcWidget != this) {
                     QWidget* top = srcWidget->window();
-                    const bool isDialogOrPopup =
-                        top && ((top->windowFlags() & Qt::Dialog) ||
-                                (top->windowFlags() & Qt::Popup));
-                    shouldCapture = !isDialogOrPopup;
+                    // 也跳過 CommandLineWidget 自己（Tool window）
+                    if (top == this) {
+                        // 來自自身 → 不攔截，避免無限循環
+                    } else {
+                        const bool isDialogOrPopup =
+                            top && ((top->windowFlags() & Qt::Dialog) ||
+                                    (top->windowFlags() & Qt::Popup));
+                        shouldCapture = !isDialogOrPopup;
+                    }
                 }
             } else if (srcWindow) {
                 // ── obj 是 QWindow（尚無 widget 持有焦點，例如剛啟動時）──
-                // 只要不是 Dialog / Popup 類型的原生視窗就攔截。
-                const bool isDialogOrPopup =
-                    (srcWindow->flags() & Qt::Dialog) ||
-                    (srcWindow->flags() & Qt::Popup);
-                shouldCapture = !isDialogOrPopup;
+                // 跳過 CommandLineWidget 自己的 QWindow（避免自我觸發）。
+                QWindow* myWindow = windowHandle();
+                if (srcWindow == myWindow) {
+                    // 來自自身 QWindow → 不攔截
+                } else {
+                    const bool isDialogOrPopup =
+                        (srcWindow->flags() & Qt::Dialog) ||
+                        (srcWindow->flags() & Qt::Popup);
+                    shouldCapture = !isDialogOrPopup;
+                }
             }
 
             if (shouldCapture) {

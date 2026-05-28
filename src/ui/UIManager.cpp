@@ -1493,6 +1493,12 @@ void UIManager::setupCommandLine() {
                        // VIEW_READY 只需處理一次，對齊後取消訂閱
                        d->commandLine->alignToCadView();
                        d->commandLine->show();
+                       // CadView 有 Qt::StrongFocus，把焦點給它即可。
+                       // 之後按任意鍵，CadView 的 keyPressEvent 會觸發，
+                       // CommandLineWidget 的 eventFilter 也會攔截到，
+                       // 命令列自然能接收鍵盤輸入，不需要先點擊 CadView。
+                       if (d->cadView)
+                           d->cadView->setFocus();
                        auto* bus = core::Application::instance()->eventBus();
                        bus->unsubscribe(core::Events::VIEW_READY, d->commandLine);
                    });
