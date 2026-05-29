@@ -311,6 +311,7 @@ SOURCES += \
     src/ui/VAlignCommandBar.cpp \
     src/ui/VAlignEditorDockWidget.cpp \
     src/ui/VAlignProfileView.cpp \
+    src/ui/VAlignTheme.cpp \
     src/view/AlignmentRenderer.cpp \
     src/view/ViewManager.cpp \
     src/view/CadView.cpp \
@@ -430,6 +431,7 @@ HEADERS += \
     src/ui/VAlignCommandBar.h \
     src/ui/VAlignEditorDockWidget.h \
     src/ui/VAlignProfileView.h \
+    src/ui/VAlignTheme.h \
     src/view/AlignmentRenderer.h \
     src/view/ViewManager.h \
     src/view/CadView.h \

@@ -9,6 +9,7 @@
 #include "VAlignEditorDockWidget.h"
 #include "VAlignProfileView.h"
 #include "VAlignCommandBar.h"              // Step 13
+#include "VAlignTheme.h"
 #include "railway/RailwayAlignment.h"
 #include "railway/AlignmentDocument.h"     // Step 16
 
@@ -29,6 +30,7 @@
 #include <QFrame>
 #include <QFont>
 #include <QFontDatabase>
+#include <QComboBox>
 #include <QDebug>
 #include <cmath>
 
@@ -47,7 +49,13 @@ class VAlignPropertiesPanel : public QWidget
     Q_OBJECT
 
 public:
+    // Theme is defined in VAlignTheme.h — alias it here for convenience
+    using Theme = aicad::ui::Theme;
+
     explicit VAlignPropertiesPanel(QWidget* parent = nullptr);
+
+    void applyTheme(const Theme& t);
+    static Theme makeTheme(ColorScheme s);
 
     /** Show data for VIP at index i in the vips list. -1 = clear. */
     void showVip(int index, const QVector<Vip>& vips,
@@ -114,11 +122,14 @@ private:
 
     // VIP list
     QListWidget* m_vipList = nullptr;
+    QLabel*      m_vipListHeader = nullptr;
 
     QWidget* m_editArea  = nullptr;   // hide when nothing selected
     QWidget* m_emptyHint = nullptr;   // show when nothing selected
 
     int m_currentIdx = -1;
+
+    Theme m_theme;   // current active theme (for dynamic label recoloring)
 
     // Styling helpers
     void styleValueLabel(QLabel* lbl, const QColor& col) const;
@@ -150,7 +161,7 @@ QFrame* VAlignPropertiesPanel::makeSeparator() const
     auto* sep = new QFrame;
     sep->setFrameShape(QFrame::HLine);
     sep->setFixedHeight(1);
-    sep->setStyleSheet("background-color: #0b1a2c; border: none;");
+    sep->setStyleSheet("background-color: palette(mid); border: none;");
     return sep;
 }
 
@@ -307,10 +318,10 @@ void VAlignPropertiesPanel::setupUI()
     rootLayout->addWidget(makeSeparator());
 
     // ── VIP list ──────────────────────────────────────────────────────────────
-    auto* listHeader = makeLabel("VIP LIST", 7, QColor("#0c2438"));
-    listHeader->setContentsMargins(10, 4, 0, 3);
-    listHeader->setStyleSheet("background:#04070e; color:#0c2438; padding: 4px 10px;");
-    rootLayout->addWidget(listHeader);
+    m_vipListHeader = makeLabel("VIP LIST", 7, QColor("#0c2438"));
+    m_vipListHeader->setContentsMargins(10, 4, 0, 3);
+    m_vipListHeader->setObjectName("vipListHeader");
+    rootLayout->addWidget(m_vipListHeader);
 
     m_vipList = new QListWidget;
     m_vipList->setMaximumHeight(148);
@@ -327,81 +338,149 @@ void VAlignPropertiesPanel::setupUI()
             this, &VAlignPropertiesPanel::vipSelectedFromList);
 }
 
-void VAlignPropertiesPanel::applyDarkStyle()
+// ─────────────────────────────────────────────────────────────────────────────
+//  Theme factory — delegates to VAlignTheme.cpp (single source of truth)
+// ─────────────────────────────────────────────────────────────────────────────
+
+VAlignPropertiesPanel::Theme
+VAlignPropertiesPanel::makeTheme(ColorScheme s)
 {
-    setStyleSheet(R"(
+    return aicad::ui::makeTheme(s);
+}
+
+// ── applyTheme: 把 Theme struct 轉成所有 setStyleSheet 呼叫 ─────────────────
+
+void VAlignPropertiesPanel::applyTheme(const Theme& t)
+{
+    m_theme = t;   // store for dynamic recolouring in showVip
+    // ── header labels ──────────────────────────────────────────────────────────
+    if (m_headerTitle) m_headerTitle->setStyleSheet(
+        QString("color: %1;").arg(t.textTitle.name()));
+    if (m_headerSub)   m_headerSub->setStyleSheet(
+        QString("color: %1;").arg(t.textSub.name()));
+
+    // ── section headers (grade, vc, h-align) ──────────────────────────────────
+    for (QLabel* lbl : {m_lblVcSection, m_lblHSection}) {
+        if (lbl) lbl->setStyleSheet(QString("color: %1;").arg(t.textSub.name()));
+    }
+
+    // ── empty hint ─────────────────────────────────────────────────────────────
+    // Find hintIcon and hintText inside m_emptyHint
+    if (m_emptyHint) {
+        const auto children = m_emptyHint->findChildren<QLabel*>();
+        if (children.size() >= 2) {
+            children[0]->setStyleSheet(QString("color: rgba(%1,%2,%3,%4);")
+                .arg(t.hintIcon.red()).arg(t.hintIcon.green())
+                .arg(t.hintIcon.blue()).arg(t.hintIcon.alpha()));
+            children[1]->setStyleSheet(QString("color: %1;").arg(t.hintText.name()));
+        }
+    }
+
+    // ── main stylesheet ────────────────────────────────────────────────────────
+    setStyleSheet(QString(R"(
         VAlignPropertiesPanel {
-            background-color: #050810;
-            color: #2a5070;
+            background-color: %1;
+            color: %2;
         }
         QWidget#panelHeader {
-            background-color: #04070e;
-            border-bottom: 1px solid #0b1a2c;
+            background-color: %3;
+            border-bottom: 1px solid %4;
         }
-        QScrollArea { background: #050810; border: none; }
-        QScrollArea > QWidget { background: #050810; }
+        QScrollArea { background: %1; border: none; }
+        QScrollArea > QWidget { background: %1; }
 
         QDoubleSpinBox {
-            background-color: #020509;
-            border: 1px solid #0b1c2e;
+            background-color: %5;
+            border: 1px solid %6;
             border-radius: 2px;
-            color: #1470b8;
+            color: %7;
             padding: 2px 5px;
-            selection-background-color: #143a60;
+            selection-background-color: %8;
         }
         QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
             width: 14px;
-            background-color: #06101e;
-            border-left: 1px solid #0b1c2e;
+            background-color: %3;
+            border-left: 1px solid %6;
         }
 
         QPushButton#btnApply {
-            background-color: #061428;
-            border: 1px solid #144268;
+            background-color: %9;
+            border: 1px solid %10;
             border-radius: 2px;
-            color: #1878c0;
+            color: %11;
             padding: 4px 0;
             font-family: 'Courier New';
             font-size: 8pt;
             letter-spacing: 1px;
             text-transform: uppercase;
         }
-        QPushButton#btnApply:hover { background-color: #0a1e38; border-color: #1e60a0; }
+        QPushButton#btnApply:hover { background-color: %3; border-color: %10; }
 
         QPushButton#btnDelete {
-            background-color: #140810;
-            border: 1px solid #320e1c;
+            background-color: %12;
+            border: 1px solid %13;
             border-radius: 2px;
-            color: #b03050;
+            color: %14;
             padding: 4px 0;
             font-family: 'Courier New';
             font-size: 8pt;
             letter-spacing: 1px;
         }
-        QPushButton#btnDelete:hover { background-color: #1c0a14; border-color: #482030; }
-        QPushButton#btnDelete:disabled { opacity: 0.3; }
+        QPushButton#btnDelete:hover { background-color: %3; border-color: %13; }
+        QPushButton#btnDelete:disabled { opacity: 0.35; }
 
         QListWidget {
-            background-color: #040710;
+            background-color: %1;
             border: none;
-            border-top: 1px solid #0b1a2c;
-            color: #123450;
+            border-top: 1px solid %4;
+            color: %15;
             font-family: 'Courier New';
             font-size: 8pt;
             outline: none;
         }
         QListWidget::item {
             padding: 3px 10px;
-            border-bottom: 1px solid #07101e;
+            border-bottom: 1px solid %4;
         }
         QListWidget::item:selected {
-            background-color: #081628;
-            color: #1868b0;
+            background-color: %16;
+            color: %17;
         }
-        QListWidget::item:hover { background-color: #060e1c; }
-        QScrollBar:vertical { width: 6px; background: #04070e; }
-        QScrollBar::handle:vertical { background: #0e2438; border-radius: 3px; min-height: 20px; }
-    )");
+        QListWidget::item:hover { background-color: %18; }
+        QScrollBar:vertical { width: 6px; background: %3; }
+        QScrollBar::handle:vertical { background: %19; border-radius: 3px; min-height: 20px; }
+    )")
+    .arg(t.bg.name())           // %1  main bg
+    .arg(t.textMain.name())     // %2  main text
+    .arg(t.bgPanel.name())      // %3  panel bg
+    .arg(t.border.name())       // %4  border
+    .arg(t.bgInput.name())      // %5  input bg
+    .arg(t.borderInput.name())  // %6  input border
+    .arg(t.textInput.name())    // %7  input text
+    .arg(t.bgListSel.name())    // %8  selection bg (spinbox)
+    .arg(t.bgApply.name())      // %9  apply bg
+    .arg(t.borderApply.name())  // %10 apply border
+    .arg(t.textApply.name())    // %11 apply text
+    .arg(t.bgDelete.name())     // %12 delete bg
+    .arg(t.borderDelete.name()) // %13 delete border
+    .arg(t.textDelete.name())   // %14 delete text
+    .arg(t.textListNorm.name()) // %15 list normal text
+    .arg(t.bgListSel.name())    // %16 list selected bg
+    .arg(t.textListSel.name())  // %17 list selected text
+    .arg(t.bgListHov.name())    // %18 list hover bg
+    .arg(t.bgScrollHandle.name()) // %19 scrollbar handle
+    );
+    // ── VIP list section header ────────────────────────────────────────────────
+    if (m_vipListHeader) {
+        m_vipListHeader->setStyleSheet(
+            QString("background:%1; color:%2; padding: 4px 10px;")
+            .arg(t.bgPanel.name()).arg(t.textSub.name()));
+    }
+}
+
+void VAlignPropertiesPanel::applyDarkStyle()
+{
+    applyTheme(makeTheme(ColorScheme::A_OriginalDark));
 }
 
 void VAlignPropertiesPanel::clearSelection()
@@ -440,18 +519,22 @@ void VAlignPropertiesPanel::showVip(int index, const QVector<Vip>& vips,
     if (index > 0 && index - 1 < grades.size()) {
         double g = grades[index - 1];
         m_lblGradeIn->setText(gradeStr(g));
+        const QString col = g > 0 ? m_theme.accentGradePos.name()
+                          : g < 0 ? m_theme.accentGradeNeg.name()
+                                  : m_theme.accentGradeZero.name();
         m_lblGradeIn->setStyleSheet(
-            QString("color: %1; font-family:'Courier New'; font-size:10pt; font-weight:bold;")
-                .arg(g > 0 ? "#38c858" : g < 0 ? "#d84040" : "#4488a0"));
+            QString("color: %1; font-family:'Courier New'; font-size:10pt; font-weight:bold;").arg(col));
     } else {
         m_lblGradeIn->setText("—");
     }
     if (index < grades.size()) {
         double g = grades[index];
         m_lblGradeOut->setText(gradeStr(g));
+        const QString col = g > 0 ? m_theme.accentGradePos.name()
+                          : g < 0 ? m_theme.accentGradeNeg.name()
+                                  : m_theme.accentGradeZero.name();
         m_lblGradeOut->setStyleSheet(
-            QString("color: %1; font-family:'Courier New'; font-size:10pt; font-weight:bold;")
-                .arg(g > 0 ? "#38c858" : g < 0 ? "#d84040" : "#4488a0"));
+            QString("color: %1; font-family:'Courier New'; font-size:10pt; font-weight:bold;").arg(col));
     } else {
         m_lblGradeOut->setText("—");
     }
@@ -484,9 +567,9 @@ void VAlignPropertiesPanel::showVip(int index, const QVector<Vip>& vips,
             QString typeStr = el.type == HElemType::Tangent  ? "Tangent"
                               : el.type == HElemType::Circular ? "Circular"
                                                                :                                  "Spiral";
-            QString col = el.type == HElemType::Tangent  ? "#1c60c8"
-                          : el.type == HElemType::Circular ? "#00a8cc"
-                                                           :                                  "#6828d8";
+            QString col = el.type == HElemType::Tangent  ? m_theme.accentHTangent.name()
+                          : el.type == HElemType::Circular ? m_theme.accentHCircular.name()
+                                                           : m_theme.accentHSpiral.name();
             m_lblHType->setText(typeStr);
             m_lblHType->setStyleSheet(
                 QString("color:%1; font-family:'Courier New'; font-size:10pt; font-weight:bold;").arg(col));
@@ -638,6 +721,27 @@ void VAlignEditorDockWidget::setupToolbar()
     m_toolbar->addWidget(spacer);
     m_toolbar->addWidget(m_cursorLabel);
 
+    // ── 主題切換 Combo ────────────────────────────────────────────────────────
+    m_schemeCombo = new QComboBox;
+    m_schemeCombo->setFont(QFont("Courier New", 8));
+    m_schemeCombo->setFixedWidth(148);
+    m_schemeCombo->setToolTip("Color scheme");
+    m_schemeCombo->addItem("A — Original Dark",   int(ColorScheme::A_OriginalDark));
+    m_schemeCombo->addItem("B — Slate Dark",       int(ColorScheme::B_SlateDark));
+    m_schemeCombo->addItem("C — Forest Dark",      int(ColorScheme::C_ForestDark));
+    m_schemeCombo->addItem("D — Charcoal Amber",   int(ColorScheme::D_CharcoalAmber));
+    m_schemeCombo->addItem("E — Light Steel",      int(ColorScheme::E_LightSteel));
+    m_schemeCombo->addItem("F — Warm Ivory",       int(ColorScheme::F_WarmIvory));
+    m_schemeCombo->addItem("G — Mint White",       int(ColorScheme::G_MintWhite));
+    m_schemeCombo->addItem("H — Paper White",      int(ColorScheme::H_PaperWhite));
+    m_toolbar->addWidget(m_schemeCombo);
+
+    connect(m_schemeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+                setColorScheme(static_cast<ColorScheme>(
+                    m_schemeCombo->itemData(idx).toInt()));
+            });
+
     // Connect tool group
     connect(toolGroup, &QActionGroup::triggered,
             this,      &VAlignEditorDockWidget::onToolChanged);
@@ -714,9 +818,105 @@ void VAlignEditorDockWidget::setupContent()
 
     connect(m_propsPanel, &VAlignPropertiesPanel::vipSelectedFromList,
             this,         &VAlignEditorDockWidget::onVipSelected);
+
+    // Apply the initial (default) colour scheme so all sub-widgets are in sync.
+    setColorScheme(m_currentScheme);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+void VAlignEditorDockWidget::setColorScheme(ColorScheme scheme)
+{
+    if (m_currentScheme == scheme) return;
+    m_currentScheme = scheme;
+
+    // Sync combo without re-triggering the signal
+    if (m_schemeCombo) {
+        const QSignalBlocker blocker(m_schemeCombo);
+        for (int i = 0; i < m_schemeCombo->count(); ++i) {
+            if (m_schemeCombo->itemData(i).toInt() == int(scheme)) {
+                m_schemeCombo->setCurrentIndex(i);
+                break;
+            }
+        }
+    }
+
+    // Build theme
+    const Theme t = aicad::ui::makeTheme(scheme);
+
+    // ── Apply to PropertiesPanel ───────────────────────────────────────────────
+    if (m_propsPanel)
+        m_propsPanel->applyTheme(t);
+
+    // ── Apply to ProfileView ──────────────────────────────────────────────────
+    if (m_profileView)
+        m_profileView->setColorScheme(scheme);
+
+    // ── Apply to Toolbar ──────────────────────────────────────────────────────
+    if (m_toolbar) {
+        m_toolbar->setStyleSheet(QString(R"(
+            QToolBar {
+                background-color: %1;
+                border-bottom: 1px solid %2;
+                spacing: 2px;
+                padding: 3px 6px;
+            }
+            QToolButton {
+                background: transparent;
+                border: 1px solid %3;
+                border-radius: 3px;
+                color: %4;
+                padding: 4px 8px;
+                font-family: 'Courier New';
+                font-size: 8pt;
+                min-width: 36px;
+            }
+            QToolButton:checked  { background-color: %5; border-color: %6; color: %7; }
+            QToolButton:hover    { background-color: %8; border-color: %3; color: %4; }
+            QToolButton:pressed  { background-color: %5; }
+            QToolBar::separator  { background: %9; width: 1px; margin: 3px 4px; }
+            QComboBox {
+                background: %10;
+                border: 1px solid %3;
+                border-radius: 3px;
+                color: %4;
+                padding: 2px 4px;
+                font-family: 'Courier New';
+                font-size: 8pt;
+            }
+            QComboBox::drop-down { border: none; width: 14px; }
+            QComboBox QAbstractItemView {
+                background: %10;
+                color: %11;
+                border: 1px solid %3;
+                selection-background-color: %12;
+            }
+        )")
+        .arg(t.tbBg.name())                         // %1  toolbar bg
+        .arg(t.tbBorder.name())                     // %2  toolbar border
+        .arg(t.tbBtnBorder.name())                  // %3  button border
+        .arg(t.tbBtnText.name())                    // %4  button text
+        .arg(t.tbBtnCheckedBg.name())               // %5  checked bg
+        .arg(t.tbBtnCheckedBorder.name())           // %6  checked border
+        .arg(t.tbBtnCheckedText.name())             // %7  checked text
+        .arg(t.tbBg.lighter(t.dark ? 115 : 95).name()) // %8 hover bg
+        .arg(t.tbSeparator.name())                  // %9  separator
+        .arg(t.bgPanel.name())                      // %10 combo bg
+        .arg(t.textMain.name())                     // %11 combo dropdown text
+        .arg(t.bgListSel.name())                    // %12 combo selection bg
+        );
+        // cursor label text
+        if (m_cursorLabel)
+            m_cursorLabel->setStyleSheet(
+                QString("color: %1;").arg(t.textCursor.name()));
+    }
+
+    // ── Apply to Splitter ─────────────────────────────────────────────────────
+    if (m_splitter)
+        m_splitter->setStyleSheet(
+            QString("QSplitter::handle { background-color: %1; }")
+            .arg(t.splitterHandle.name()));
+}
 
 void VAlignEditorDockWidget::setTrackCenterLine(railway::TrackCenterLine* tcl)
 {

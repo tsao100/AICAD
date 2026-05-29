@@ -32,6 +32,7 @@
 #include <QFont>
 #include <QColor>
 #include <QPen>
+#include "VAlignTheme.h"
 
 namespace aicad {
 namespace railway {
@@ -142,6 +143,9 @@ public:
     void setShowGrade(bool v);
     void setShowVC   (bool v);
     void setShowKVal (bool v);
+
+    /** Apply one of the shared colour schemes. */
+    void setColorScheme(aicad::ui::ColorScheme scheme);
 
     // ── Selection ────────────────────────────────────────────────────────────
 

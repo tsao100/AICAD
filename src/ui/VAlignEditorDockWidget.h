@@ -22,6 +22,7 @@
 
 #include <QDockWidget>
 #include <QPointer>
+#include "VAlignTheme.h"
 
 // Forward declarations
 class QToolBar;
@@ -29,6 +30,7 @@ class QAction;
 class QActionGroup;
 class QSplitter;
 class QLabel;
+class QComboBox;
 
 // Railway / alignment
 namespace aicad { namespace railway { class AlignmentDocument; } }
@@ -53,6 +55,9 @@ class VAlignEditorDockWidget : public QDockWidget
 public:
     explicit VAlignEditorDockWidget(QWidget* parent = nullptr);
     ~VAlignEditorDockWidget() override;
+
+    /** 套用指定主題（同時更新 Toolbar、PropertiesPanel）。 */
+    void setColorScheme(ColorScheme scheme);
 
     /** Bind to a live TrackCenterLine.  Ownership stays with the caller. */
     void setTrackCenterLine(railway::TrackCenterLine* tcl);
@@ -104,6 +109,7 @@ private:
     VAlignPropertiesPanel* m_propsPanel = nullptr;
     QLabel*               m_cursorLabel = nullptr;
     VAlignCommandBar*     m_commandBar  = nullptr;   ///< Step 13
+    QComboBox*            m_schemeCombo = nullptr;   ///< 主題切換
 
     // ── Actions ────────────────────────────────────────────────────────────
     QAction* m_actSelect  = nullptr;
@@ -117,6 +123,8 @@ private:
     // ── Data ───────────────────────────────────────────────────────────────
     QPointer<railway::TrackCenterLine>   m_tcl;
     QPointer<railway::AlignmentDocument> m_alignDoc;  ///< Step 16
+
+    ColorScheme m_currentScheme = ColorScheme::A_OriginalDark;
 };
 
 } // namespace ui

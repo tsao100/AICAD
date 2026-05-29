@@ -6,6 +6,7 @@
  */
 
 #include "VAlignProfileView.h"
+#include "VAlignTheme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -23,67 +24,148 @@ namespace ui {
 // ─────────────────────────────────────────────────────────────────────────────
 //  Colour palette
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Colour palette  (mutable — overwritten by setColorScheme)
+// ─────────────────────────────────────────────────────────────────────────────
 namespace Pal {
-const QColor BgProfile   ("#050c1c");
-const QColor BgStrip     ("#030610");
-const QColor BgWindow    ("#03050d");
-const QColor GridMajor   ("#0d1e34");
-const QColor GridMinor   ("#080f1c");
-const QColor AxisLabel   ("#1e3c5a");
-const QColor AxisTitle   ("#0e2440");
-const QColor BorderPane  ("#0c1c30");
+QColor BgProfile   ("#050c1c");
+QColor BgStrip     ("#030610");
+QColor BgWindow    ("#03050d");
+QColor GridMajor   ("#0d1e34");
+QColor GridMinor   ("#080f1c");
+QColor AxisLabel   ("#1e3c5a");
+QColor AxisTitle   ("#0e2440");
+QColor BorderPane  ("#0c1c30");
 
-const QColor ProfileLine ("#1880f0");
-const QColor ProfileFill ("#1880f0");   // semi-transparent
-const QColor VCLine      ("#00dcc8");
-const QColor VCFill      ("#00dcc8");   // semi-transparent
+QColor ProfileLine ("#1880f0");
+QColor ProfileFill ("#1880f0");
+QColor VCLine      ("#00dcc8");
+QColor VCFill      ("#00dcc8");
 
-const QColor GradePos    ("#38d060");
-const QColor GradeNeg    ("#d84040");
-const QColor GradeZero   ("#4488a0");
-const QColor GradeDash   (14, 56, 96, 110);
+QColor GradePos    ("#38d060");
+QColor GradeNeg    ("#d84040");
+QColor GradeZero   ("#4488a0");
+QColor GradeDash   (14, 56, 96, 110);
 
-const QColor KvalLine    ("#5020b0");
-const QColor KvalText    ("#8840d8");
+QColor KvalLine    ("#5020b0");
+QColor KvalText    ("#8840d8");
 
-const QColor VipFill     ("#030a18");
-const QColor VipBorder   ("#165080");
-const QColor VipSelFill  ("#1a0e00");
-const QColor VipSelBord  ("#ffbb20");
-const QColor VipSelDot   ("#ffcc40");
-const QColor VipDot      ("#1860a0");
-const QColor VipLabel    ("#1a5a78");
-const QColor VipLabelSel ("#ffcc40");
-const QColor VipDrop     ("#0c2040");
-const QColor VipDropSel  ("#ffaa00");
+QColor VipFill     ("#030a18");
+QColor VipBorder   ("#165080");
+QColor VipSelFill  ("#1a0e00");
+QColor VipSelBord  ("#ffbb20");
+QColor VipSelDot   ("#ffcc40");
+QColor VipDot      ("#1860a0");
+QColor VipLabel    ("#1a5a78");
+QColor VipLabelSel ("#ffcc40");
+QColor VipDrop     ("#0c2040");
+QColor VipDropSel  ("#ffaa00");
 
-const QColor CursorLine  ("#122a44");
-const QColor CursorRing  ("#1a5880");
+QColor CursorLine  ("#122a44");
+QColor CursorRing  ("#1a5880");
 
-const QColor VcBoundary  ("#00ccb8");
-const QColor VcAnnText   ("#009888");
+QColor VcBoundary  ("#00ccb8");
+QColor VcAnnText   ("#009888");
 
 // Strip colours by element type
-const QColor TElemBg   ("#06101c");
-const QColor TElemBd   ("#14426c");
-const QColor TElemTx   ("#1c60c8");
-const QColor CElemBg   ("#03100f");  // slightly cyan tint
-const QColor CElemBd   ("#005e8a");
-const QColor CElemTx   ("#00a8cc");
-const QColor SElemBg   ("#0e0820");
-const QColor SElemBd   ("#3c1498");
-const QColor SElemTx   ("#6828d8");
+QColor TElemBg   ("#06101c");
+QColor TElemBd   ("#14426c");
+QColor TElemTx   ("#1c60c8");
+QColor CElemBg   ("#03100f");
+QColor CElemBd   ("#005e8a");
+QColor CElemTx   ("#00a8cc");
+QColor SElemBg   ("#0e0820");
+QColor SElemBd   ("#3c1498");
+QColor SElemTx   ("#6828d8");
 
-const QColor StripCL   ("#0c1c2c");
-const QColor PlanTrace ("#00c8de");
-const QColor PlanFill  ("#00c8de");
-const QColor VipTickN  ("#122840");
-const QColor VipTickS  ("#ffaa00");
-const QColor VipDotN   ("#1050a0");
-const QColor VipDotNBd ("#1870c0");
-const QColor Divider   ("#02040a");
-const QColor DivText   ("#0a1c2c");
+QColor StripCL   ("#0c1c2c");
+QColor PlanTrace ("#00c8de");
+QColor PlanFill  ("#00c8de");
+QColor VipTickN  ("#122840");
+QColor VipTickS  ("#ffaa00");
+QColor VipDotN   ("#1050a0");
+QColor VipDotNBd ("#1870c0");
+QColor Divider   ("#02040a");
+QColor DivText   ("#0a1c2c");
+
+// ── setPalette: map a Theme to every Pal entry ──────────────────────────────
+void setPalette(const aicad::ui::Theme& th)
+{
+    const bool d = th.dark;
+
+    // Backgrounds
+    BgWindow  = th.bg;
+    BgProfile = d ? th.bg.lighter(108) : th.bg.darker(103);
+    BgStrip   = d ? th.bg.darker(120)  : th.bg.darker(106);
+
+    // Grid / axes
+    GridMajor  = th.border;
+    GridMinor  = d ? th.border.darker(150) : th.border.lighter(115);
+    AxisLabel  = th.textSub;
+    AxisTitle  = th.textSub.darker(d ? 120 : 80);
+    BorderPane = th.border;
+    Divider    = d ? th.bg.darker(150) : th.border;
+    DivText    = th.textSub;
+
+    // Profile line + fill
+    ProfileLine = th.accentLen.lighter(d ? 140 : 80);
+    ProfileFill = ProfileLine;
+
+    // Vertical curve
+    VCLine     = th.accentVcType;
+    VCFill     = th.accentVcType;
+    VcBoundary = th.accentVcType;
+    VcAnnText  = th.accentVcType.darker(d ? 110 : 130);
+
+    // Grades
+    GradePos  = th.accentGradePos;
+    GradeNeg  = th.accentGradeNeg;
+    GradeZero = th.accentGradeZero;
+    GradeDash = QColor(th.accentGradeZero.red(),
+                       th.accentGradeZero.green(),
+                       th.accentGradeZero.blue(), 90);
+
+    // K value
+    KvalLine = th.accentKval.darker(d ? 110 : 130);
+    KvalText = th.accentKval;
+
+    // VIPs
+    VipFill    = d ? th.bg.darker(130) : th.bgPanel;
+    VipBorder  = th.accentLen;
+    VipSelFill = d ? QColor("#1a0e00") : QColor("#fff8e0");
+    VipSelBord = QColor("#ffbb20");
+    VipSelDot  = QColor("#ffcc40");
+    VipDot     = th.accentLen.lighter(d ? 130 : 80);
+    VipLabel   = th.textSub;
+    VipLabelSel= QColor("#ffcc40");
+    VipDrop    = th.border;
+    VipDropSel = QColor("#ffaa00");
+
+    // Cursor
+    CursorLine = th.border.lighter(d ? 140 : 80);
+    CursorRing = th.accentLen;
+
+    // Strip element types
+    TElemBg = d ? th.bg.darker(115) : th.bgPanel.darker(103);
+    TElemBd = th.accentHTangent.darker(d ? 110 : 130);
+    TElemTx = th.accentHTangent;
+    CElemBg = d ? th.bg.darker(118) : th.bgPanel.darker(103);
+    CElemBd = th.accentHCircular.darker(d ? 110 : 130);
+    CElemTx = th.accentHCircular;
+    SElemBg = d ? th.bg.darker(120) : th.bgPanel.darker(103);
+    SElemBd = th.accentHSpiral.darker(d ? 110 : 130);
+    SElemTx = th.accentHSpiral;
+
+    // Strip misc
+    StripCL   = th.border;
+    PlanTrace = th.accentVcType.lighter(d ? 110 : 90);
+    PlanFill  = PlanTrace;
+    VipTickN  = th.border.lighter(d ? 160 : 80);
+    VipTickS  = QColor("#ffaa00");
+    VipDotN   = th.accentLen;
+    VipDotNBd = th.accentLen.lighter(d ? 130 : 85);
 }
+} // namespace Pal
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Construction
@@ -151,6 +233,12 @@ void VAlignProfileView::setShowGrid (bool v) { m_showGrid  = v; update(); }
 void VAlignProfileView::setShowGrade(bool v) { m_showGrade = v; update(); }
 void VAlignProfileView::setShowVC   (bool v) { m_showVC    = v; update(); }
 void VAlignProfileView::setShowKVal (bool v) { m_showKVal  = v; update(); }
+
+void VAlignProfileView::setColorScheme(aicad::ui::ColorScheme scheme)
+{
+    Pal::setPalette(aicad::ui::makeTheme(scheme));
+    update();
+}
 
 void VAlignProfileView::setSelectedVip(int index)
 {
@@ -526,7 +614,7 @@ void VAlignProfileView::paintEvent(QPaintEvent*)
     {
         QFont f = font(); f.setPointSize(7); p.setFont(f);
         const int axY = kMT + profileH();
-        QPen tickPen(QColor("#112030")); tickPen.setWidthF(1.0);
+        QPen tickPen(Pal::GridMajor); tickPen.setWidthF(1.0);
         for (double c : chTicks) {
             int x = int(tx(c));
             p.setPen(tickPen);
@@ -1191,8 +1279,8 @@ void VAlignProfileView::drawStripVipTicks(QPainter& p) const
             }
         }
         int dy = int(stripDevY(planDev));
-        p.setPen(QPen(sel ? QColor("#ffcc40") : Pal::VipDotNBd, 1.0));
-        p.setBrush(sel ? QColor("#ffaa00") : Pal::VipDotN);
+        p.setPen(QPen(sel ? Pal::VipSelDot : Pal::VipDotNBd, 1.0));
+        p.setBrush(sel ? Pal::VipDropSel : Pal::VipDotN);
         p.drawEllipse(QPointF(sx, dy), 3.0, 3.0);
     }
     p.restore();
