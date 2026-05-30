@@ -854,6 +854,15 @@ bool Sketch::removeConstraint(const QString& uuid) {
     return false;
 }
 
+SketchConstraint* Sketch::findConstraint(const QString& uuid)
+{
+    for (SketchConstraint& c : m_constraints) {
+        if (c.uuid == uuid)
+            return &c;
+    }
+    return nullptr;
+}
+
 void Sketch::removeConstraintsOf(const QString& geomUuid) {
     m_constraints.erase(
         std::remove_if(m_constraints.begin(), m_constraints.end(),

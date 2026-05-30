@@ -20,6 +20,8 @@
 #include "core/Application.h"
 #include "core/DocumentManager.h"
 #include "core/EventBus.h"
+#include "cad/Sketch.h"
+#include "cad/sketch/SketchConstraint.h"
 
 #include <QDebug>
 #include <QVector2D>
@@ -656,7 +658,7 @@ void LispBindings::registerConstraintAPI()
             QString expr = isNum ? QString() : args[4].toString();
             if (!isNum) {
                 auto* store = sk->parameterStore();
-                v = store ? store->evaluate(expr) : 0.0;
+                v = store ? store->evaluate(expr).second : 0.0;
             }
             return sk->constrainDistance(GeomRef(args[0].toString(), h1),
                                           GeomRef(args[2].toString(), h2), v);
@@ -671,7 +673,7 @@ void LispBindings::registerConstraintAPI()
             double v = args[1].toDouble(&isNum);
             if (!isNum) {
                 auto* store = sk->parameterStore();
-                v = store ? store->evaluate(args[1].toString()) : 0.0;
+                v = store ? store->evaluate(args[1].toString()).second : 0.0;
             }
             return sk->constrainRadius(args[0].toString(), v);
         }, 2, 2);
@@ -765,7 +767,7 @@ void LispBindings::registerConstraintAPI()
             QString expr = isNum ? QString() : args[1].toString();
             if (!isNum) {
                 auto* store = sk->parameterStore();
-                v = store ? store->evaluate(expr) : 0.0;
+                v = store ? store->evaluate(expr).second : 0.0;
             }
             c->value     = v;
             c->paramExpr = expr;

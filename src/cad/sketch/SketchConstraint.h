@@ -1,4 +1,5 @@
 #pragma once
+#include <QList>
 #include <QString>
 #include <QVector2D>
 #include <QJsonObject>
@@ -105,7 +106,7 @@ enum class DistanceMode {
 struct SketchConstraint {
     QString        uuid;
     ConstraintType type;
-    QVector<GeomRef> refs;   ///< 參與約束的幾何參考（1~3個）
+    QList<GeomRef> refs;   ///< 參與約束的幾何參考（1~3個）
     double         value = 0.0;  ///< 尺寸約束的目標值（求值後的快取）
     QString        paramExpr;    ///< 原始參數表達式（如 "width"、"width*2"）
     bool           driving = true;  ///< driving=true：約束驅動幾何；false：量測模式

@@ -8,7 +8,6 @@
 #include "cad/SketchInstance.h"
 #include "cad/sketch/SketchConstraint.h"
 #include "cad/sketch/ConstraintOverlayManager.h"
-#include "cad/ConstraintPickSession.h"
 #include <memory>
 
 #include <QCheckBox>
@@ -18,6 +17,8 @@ class QSpinBox; class QDoubleSpinBox; class QTreeWidget;
 class QTreeWidgetItem; class QStackedWidget; class QPushButton;
 class QGroupBox; class QLineEdit; class QSplitter; class QCheckBox;
 QT_END_NAMESPACE
+
+namespace aicad::cad { class ConstraintPickSession; }
 
 namespace aicad::ui {
 

@@ -1,5 +1,7 @@
 // src/ui/SketchPanel.cpp
 #include "SketchPanel.h"
+#include "cad/ConstraintPickSession.h"   // full definition needed for connect() and method calls
+#include "core/CommandLineManager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -18,6 +20,7 @@
 #include <QDebug>
 #include <QInputDialog>
 #include <QCheckBox>
+#include "core/CommandLineManager.h"
 
 using namespace aicad::cad;
 
