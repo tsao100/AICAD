@@ -60,8 +60,25 @@ QString ConstraintPickSession::promptText() const {
 
     switch (m_type) {
     case ConstraintType::FixedDistance:
-        if (picked == 0) return tr("選取第一個點（端點/中心點）…");
-        return tr("選取第二個點…");
+        if (picked == 0)
+            return tr("選取第一個元素（端點 / 線段）…");
+        if (picked == 1) {
+            // 根據第一個 ref 是點還是線，給出更明確的第二步提示
+            bool firstIsPoint = false;
+            if (m_sketch && !m_refs[0].geomUuid.isEmpty()) {
+                const SketchGeometry* g = m_sketch->findGeometry(m_refs[0].geomUuid);
+                firstIsPoint = g && (
+                    g->type == SketchGeometryType::Point ||
+                    m_refs[0].handle == GeomHandle::Start ||
+                    m_refs[0].handle == GeomHandle::End   ||
+                    m_refs[0].handle == GeomHandle::Center);
+            }
+            if (firstIsPoint)
+                return tr("選取第二個元素（端點 → 點點距；線段 → 點線距）…");
+            else
+                return tr("選取第二個元素（線段 → 線線距；端點 → 點線距）…");
+        }
+        return tr("選取第 %1/%2 個元素…").arg(picked + 1).arg(total);
     case ConstraintType::FixedRadius:
         return tr("選取圓或弧…");
     case ConstraintType::FixedX:
@@ -83,11 +100,29 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
                                        const QVector2D& planePt)
 {
     if (!geomUuid.isEmpty() && geomHandle >= 0) {
-        // snap 到已知草圖幾何端點 → 精確 GeomRef
+        // OSnap 鎖定到已知草圖端點（Start/End/Center…）→ 精確 GeomRef
         return GeomRef(geomUuid, static_cast<GeomHandle>(geomHandle));
     }
 
-    // 自由點：找最近的幾何端點（容差 5 mm），否則建立新的 FixedPoint 幾何
+    if (!geomUuid.isEmpty() && geomHandle < 0) {
+        // OSnap snap 到線段本體（Nearest/Midpoint 等，不對應特定端點）
+        // 或使用者直接點擊線段本體 → 回傳 WholeGeom，代表「整條線」
+        // 這支援 PointToLine 和 LineToLine 距離約束
+        if (m_sketch) {
+            const SketchGeometry* g = m_sketch->findGeometry(geomUuid);
+            if (g) {
+                // 點幾何：用 WholeGeom 仍可識別為「點」
+                // 線幾何：WholeGeom 表示「整條線」（PointToLine / LineToLine）
+                qDebug() << "[PickSession] Line/curve body picked:"
+                         << geomUuid << "type:" << static_cast<int>(g->type);
+                return GeomRef(geomUuid, GeomHandle::WholeGeom);
+            }
+        }
+        // uuid 有效但找不到幾何（罕見）：仍回傳 WholeGeom ref
+        return GeomRef(geomUuid, GeomHandle::WholeGeom);
+    }
+
+    // geomUuid 為空 → 自由點：找最近的幾何端點（容差 5 mm）
     if (m_sketch) {
         constexpr float kTol = 5.0f;
         float bestDist = kTol;
@@ -118,8 +153,6 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
         if (!bestUuid.isEmpty())
             return GeomRef(bestUuid, bestHandle);
 
-        // 找不到最近點：建立一個 FixedPoint（代表草圖中的自由點）
-        // 此處只回傳空 ref，讓 ConstraintSolver 以 value 中的座標處理
         qWarning() << "[PickSession] Free point at" << planePt
                    << "— no nearby geom found, using WholeGeom fallback";
     }
@@ -178,13 +211,21 @@ DistanceMode ConstraintPickSession::resolveDistanceMode() const
 {
     if (m_refs.size() < 2) return DistanceMode::Invalid;
 
-    auto isPointRef = [this](const GeomRef& r) {
-        if (r.handle == GeomHandle::Start || r.handle == GeomHandle::End ||
-            r.handle == GeomHandle::Center) return true;
-        // WholeGeom + SketchPoint 類型
-        if (m_sketch) {
-            auto* g = m_sketch->findGeometry(r.geomUuid);
-            if (g && g->type == SketchGeometryType::Point) return true;
+    // 判斷一個 GeomRef 是否代表「點」（端點/圓心/獨立點）
+    // 若為 WholeGeom 且幾何類型不是 Point，則視為「線/曲線」
+    auto isPointRef = [this](const GeomRef& r) -> bool {
+        // 明確的端點 handle：一定是點
+        if (r.handle == GeomHandle::Start  ||
+            r.handle == GeomHandle::End    ||
+            r.handle == GeomHandle::Center)
+            return true;
+
+        // WholeGeom：取決於幾何類型
+        if (r.handle == GeomHandle::WholeGeom && m_sketch && !r.geomUuid.isEmpty()) {
+            const auto* g = m_sketch->findGeometry(r.geomUuid);
+            if (!g) return false;
+            // 只有 Point 幾何的 WholeGeom 才算「點」
+            return g->type == SketchGeometryType::Point;
         }
         return false;
     };
@@ -195,22 +236,25 @@ DistanceMode ConstraintPickSession::resolveDistanceMode() const
     if (r1IsPoint && r2IsPoint) return DistanceMode::PointToPoint;
     if (r1IsPoint || r2IsPoint) return DistanceMode::PointToLine;
 
-    // 兩者皆為線：檢查是否平行
+    // 兩者皆為線：檢查是否平行（LineToLine 才有意義）
     if (m_sketch) {
-        auto* g1 = m_sketch->findGeometry(m_refs[0].geomUuid);
-        auto* g2 = m_sketch->findGeometry(m_refs[1].geomUuid);
-        auto* l1 = dynamic_cast<SketchLine*>(g1);
-        auto* l2 = dynamic_cast<SketchLine*>(g2);
+        const auto* g1 = m_sketch->findGeometry(m_refs[0].geomUuid);
+        const auto* g2 = m_sketch->findGeometry(m_refs[1].geomUuid);
+        const auto* l1 = dynamic_cast<const SketchLine*>(g1);
+        const auto* l2 = dynamic_cast<const SketchLine*>(g2);
         if (l1 && l2) {
             QVector2D d1 = (l1->end - l1->start).normalized();
             QVector2D d2 = (l2->end - l2->start).normalized();
             double cross = std::abs(d1.x() * d2.y() - d1.y() * d2.x());
             if (cross > 0.01) {
-                // 不平行
-                return DistanceMode::Invalid;
+                // 兩線不平行：線線距無意義，降級為 PointToLine（取各自端點）
+                qWarning() << "[PickSession] Two lines are not parallel"
+                           << "— LineToLine distance is undefined, treating as PointToLine";
+                return DistanceMode::PointToLine;
             }
             return DistanceMode::LineToLine;
         }
+        // 其中有非直線的曲線（弧/圓）：視為 PointToLine（點到曲線最短距）
     }
     return DistanceMode::PointToLine;
 }
