@@ -152,4 +152,74 @@ void ConstraintPickSession::feedPoint(const QVector2D& planePt,
     Q_EMIT sessionEnded();
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2：幾何選取（幾何約束命令用）
+// ─────────────────────────────────────────────────────────────────────────────
+void ConstraintPickSession::feedGeom(const QString& geomUuid, GeomHandle handle)
+{
+    if (!m_active) return;
+    GeomRef ref(geomUuid, handle);
+    m_refs.append(ref);
+
+    if (m_refs.size() >= m_required) {
+        m_active = false;
+        Q_EMIT constraintReady(m_refs, m_value, m_paramExpr, m_driving, m_type);
+        Q_EMIT sessionEnded();
+    } else {
+        Q_EMIT promptChanged(promptText());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3B：距離子類型判斷
+// ─────────────────────────────────────────────────────────────────────────────
+DistanceMode ConstraintPickSession::resolveDistanceMode() const
+{
+    if (m_refs.size() < 2) return DistanceMode::Invalid;
+
+    auto isPointRef = [this](const GeomRef& r) {
+        if (r.handle == GeomHandle::Start || r.handle == GeomHandle::End ||
+            r.handle == GeomHandle::Center) return true;
+        // WholeGeom + SketchPoint 類型
+        if (m_sketch) {
+            auto* g = m_sketch->findGeometry(r.geomUuid);
+            if (g && g->type == SketchGeometryType::Point) return true;
+        }
+        return false;
+    };
+
+    bool r1IsPoint = isPointRef(m_refs[0]);
+    bool r2IsPoint = isPointRef(m_refs[1]);
+
+    if (r1IsPoint && r2IsPoint) return DistanceMode::PointToPoint;
+    if (r1IsPoint || r2IsPoint) return DistanceMode::PointToLine;
+
+    // 兩者皆為線：檢查是否平行
+    if (m_sketch) {
+        auto* g1 = m_sketch->findGeometry(m_refs[0].geomUuid);
+        auto* g2 = m_sketch->findGeometry(m_refs[1].geomUuid);
+        auto* l1 = dynamic_cast<SketchLine*>(g1);
+        auto* l2 = dynamic_cast<SketchLine*>(g2);
+        if (l1 && l2) {
+            QVector2D d1 = (l1->end - l1->start).normalized();
+            QVector2D d2 = (l2->end - l2->start).normalized();
+            double cross = std::abs(d1.x() * d2.y() - d1.y() * d2.x());
+            if (cross > 0.01) {
+                // 不平行
+                return DistanceMode::Invalid;
+            }
+            return DistanceMode::LineToLine;
+        }
+    }
+    return DistanceMode::PointToLine;
+}
+
+void ConstraintPickSession::confirmDimLineOffset(double offsetX, double offsetY)
+{
+    // 將 dimLineOffset 儲存起來，讓命令可以讀取並寫入約束
+    m_dimLineOffsetX = offsetX;
+    m_dimLineOffsetY = offsetY;
+}
+
 } // namespace aicad::cad

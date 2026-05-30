@@ -1874,48 +1874,38 @@ void UIManager::setupSketchPanel()
     // ── Point-Pick Session：尺寸約束選點狀態機 ────────────────────────
     d->pickSession = new cad::ConstraintPickSession(this);
 
-    // pickSession 收齊點 → 施加約束
+    // Phase 7：注入 pickSession 到 SketchPanel 以便 Phase 6 slot 使用
+    if (d->sketchPanel) {
+        d->sketchPanel->setPickSession(d->pickSession);
+    }
+
+    // Phase 7：pickSession 收齊選取 → 委派給 SketchPanel::onConstraintReadyFromSession
+    // SketchPanel 負責呼叫 Sketch API、求解、UI 更新 (Phase 6)
     connect(d->pickSession, &cad::ConstraintPickSession::constraintReady,
             this, [this](QList<cad::GeomRef> refs,
                          double value, QString paramExpr,
                          bool driving, cad::ConstraintType type) {
-        auto* sketch = core::Application::instance()->activeSketch();
-        if (!sketch) return;
-
-        // 1. 呼叫 Sketch 約束 API
-        QString uuid;
-        if (type == cad::ConstraintType::FixedDistance && refs.size() >= 2) {
-            uuid = sketch->constrainDistance(refs[0], refs[1], value);
-        } else if (type == cad::ConstraintType::FixedRadius && refs.size() >= 1) {
-            uuid = sketch->constrainRadius(refs[0], value);
-        } else if (type == cad::ConstraintType::FixedX && refs.size() >= 1) {
-            uuid = sketch->constrainFixedX(refs[0], value);
-        } else if (type == cad::ConstraintType::FixedY && refs.size() >= 1) {
-            uuid = sketch->constrainFixedY(refs[0], value);
-        } else if (type == cad::ConstraintType::FixedAngleDim && refs.size() >= 2) {
-            uuid = sketch->constrainAngle(refs[0], refs[1], value);
+        if (d->sketchPanel) {
+            // 委派 SketchPanel 處理（Phase 6 slot）
+            QMetaObject::invokeMethod(d->sketchPanel,
+                "onConstraintReadyFromSession",
+                Qt::DirectConnection,
+                Q_ARG(QList<cad::GeomRef>, refs),
+                Q_ARG(double, value),
+                Q_ARG(QString, paramExpr),
+                Q_ARG(bool, driving),
+                Q_ARG(cad::ConstraintType, type));
+        } else {
+            // Fallback：直接處理
+            auto* sketch = core::Application::instance()->activeSketch();
+            if (!sketch) return;
+            cad::SketchConstraint c;
+            c.type = type; c.refs = refs; c.value = value;
+            c.paramExpr = paramExpr; c.driving = driving;
+            sketch->addConstraint(c);
+            sketch->solveConstraints();
         }
-
-        // 2. 補填 paramExpr + driving
-        if (!uuid.isEmpty() && (!paramExpr.isEmpty() || !driving)) {
-            for (auto& c : sketch->constraintsMutable()) {
-                if (c.uuid == uuid) {
-                    c.paramExpr = paramExpr;
-                    c.driving   = driving;
-                    break;
-                }
-            }
-        }
-
-        // 3. 求解 + 重建
-        sketch->solveConstraints();
-
-        // 4. 刷新 UI
-        if (d->parameterPanel)
-            d->parameterPanel->showMaster(
-                sketch->parameterStore(), sketch->name(), {});
-
-        // 5. 切回 Sketching 模式
+        // 切回 Sketching 模式
         if (d->cadView)
             d->cadView->setMode(view::InteractionMode::Sketching);
         setStatusMessage(tr("約束已施加"));
@@ -2769,6 +2759,11 @@ void UIManager::onCurrentDocumentChanged(cad::Document* doc) {
 
     if (d->propertyPanel)
         d->propertyPanel->clear();
+}
+
+cad::ConstraintPickSession* UIManager::constraintPickSession() const
+{
+    return d->pickSession;
 }
 
 } // namespace ui

@@ -115,6 +115,7 @@ public:
     void registerUtilityAPI();
 
     void registerSnapAPI();
+    void registerConstraintAPI();  ///< Phase 8：Lisp 約束 API
     
 private:
     class Private;

@@ -84,6 +84,29 @@ void CommandAlias::registerSystemAliases() {
     // ── Step 19 ───────────────────────────────────────────────────────────────
     registerAlias("PV",  "PROFILEVIEW",      "Show vertical alignment profile view",         true);
     registerAlias("VCG", "VALIGNCHECKGRADE", "Check grades against limit, highlight violations", true);
+
+    // ── Phase 9：草圖約束命令別名 ─────────────────────────────────────────────
+    // Geometric
+    registerAlias("COI", "COINCIDENT",    "Coincident constraint",             true);
+    registerAlias("HOR", "HORIZONTAL",    "Horizontal constraint",             true);
+    registerAlias("VER", "VERTICAL",      "Vertical constraint",               true);
+    registerAlias("PAR", "PARALLEL",      "Parallel constraint",               true);
+    registerAlias("PER", "PERPENDICULAR", "Perpendicular constraint",          true);
+    registerAlias("TAN", "TANGENT",       "Tangent constraint",                true);
+    registerAlias("CCN", "CONCENTRIC",    "Concentric constraint",             true);
+    registerAlias("EQL", "EQUALLEN",      "Equal length constraint",           true);
+    registerAlias("EQR", "EQUALRAD",      "Equal radius constraint",           true);
+    registerAlias("COL", "COLLINEAR",     "Collinear constraint",              true);
+    registerAlias("MID", "MIDPOINT",      "Midpoint constraint",               true);
+    registerAlias("SYM", "SYMMETRIC",     "Symmetric constraint",              true);
+    registerAlias("POC", "POINTONCURVE",  "Point on curve constraint",         true);
+    // Dimensional
+    registerAlias("DIM", "DIST",          "Distance dimension constraint",     true);
+    registerAlias("ANG", "ANGLE",         "Angle dimension constraint",        true);
+    // Management
+    registerAlias("DCO", "DELCON",        "Delete constraint",                 true);
+    registerAlias("ECO", "EDITCON",       "Edit dimension constraint",         true);
+    registerAlias("LSC", "LISTCON",       "List all constraints",              true);
 }
 
 void CommandAlias::registerAlias(const QString& alias, const QString& command, const QString& description, bool isSystem) {

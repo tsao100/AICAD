@@ -26,6 +26,7 @@ namespace cad {
     class Feature;
     class Sketch;
     class SketchGeometry;
+    class ConstraintPickSession;   // Phase 7
     enum class ConstraintType;
     struct SketchRegion;
 }
@@ -147,6 +148,9 @@ public:
      */
     void setStatusMessage(const QString& message, int timeout = 0);
     view::CadView* cadView() const;
+
+    // Phase 7：供 DimConstraintCommand 取得 pickSession
+    cad::ConstraintPickSession* constraintPickSession() const;
 
     void setupMenusFromParser();
     void setupToolbarsFromParser();

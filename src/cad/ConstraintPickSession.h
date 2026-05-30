@@ -60,6 +60,25 @@ public:
      * @param geomUuid   snap 到的草圖幾何 UUID（空 = 自由點）
      * @param geomHandle snap 到的端點 handle（-1 = WholeGeom）
      */
+    // ── Phase 2：幾何選取 ───────────────────────────────────────────────────
+    /**
+     * 餵入幾何元素（用於幾何約束命令，如 PAR/TAN）
+     */
+    void feedGeom(const QString& geomUuid,
+                  GeomHandle handle = GeomHandle::WholeGeom);
+
+    // ── Phase 3B：距離子類型判斷 ─────────────────────────────────────────
+    /**
+     * 根據已選取的兩個 ref，判斷距離子類型
+     * 若不平行（L2L 情況），回傳 DistanceMode::Invalid 並 emit warning
+     */
+    DistanceMode resolveDistanceMode() const;
+
+    /**
+     * 確認尺寸線偏移量（使用者在視窗中點擊後呼叫）
+     */
+    void confirmDimLineOffset(double offsetX, double offsetY);
+
     void feedPoint(const QVector2D& planePt,
                    const QString& geomUuid,
                    int geomHandle);
@@ -78,6 +97,9 @@ Q_SIGNALS:
     /** 取消或完成 */
     void sessionEnded();
 
+public:
+    double dimLineOffsetX() const { return m_dimLineOffsetX; }
+    double dimLineOffsetY() const { return m_dimLineOffsetY; }
 private:
     int requiredPointCount(ConstraintType type) const;
     GeomRef makeRef(const QString& geomUuid, int geomHandle,
@@ -91,6 +113,8 @@ private:
     bool           m_active   = false;
     int            m_required = 0;
     QList<GeomRef> m_refs;
+    double         m_dimLineOffsetX = 0.0;  ///< Phase 3B：確認的尺寸線偏移 X
+    double         m_dimLineOffsetY = 0.0;  ///< Phase 3B：確認的尺寸線偏移 Y
 };
 
 } // namespace aicad::cad

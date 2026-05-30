@@ -225,4 +225,33 @@ void ConstraintOverlayManager::onConstraintRemoved(const QString& uuid) {
     if (!m_ctx.IsNull()) m_ctx->UpdateCurrentViewer();
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3B 新增：輕量尺寸線更新 & dimLineAIS 查詢
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ConstraintOverlayManager::updateDimLine(const QString& uuid,
+                                              double newOffsetX,
+                                              double newOffsetY)
+{
+    auto it = m_dimLines.find(uuid);
+    if (it == m_dimLines.end()) return;
+
+    Handle(AIS_DimensionLine) dimAIS = it.value();
+    if (dimAIS.IsNull()) return;
+
+    dimAIS->setDimLineOffset(newOffsetX, newOffsetY);
+
+    if (!m_ctx.IsNull()) {
+        m_ctx->RecomputePrsOnly(dimAIS, Standard_False);
+        m_ctx->UpdateCurrentViewer();
+    }
+}
+
+Handle(AIS_DimensionLine) ConstraintOverlayManager::dimLineAISForConstraint(
+    const QString& constraintUuid) const
+{
+    return m_dimLines.value(constraintUuid);
+}
+
 } // namespace aicad::cad

@@ -304,6 +304,19 @@ void SketchPanel::setActiveSketch(Sketch* sketch)
     connect(sketch, &Sketch::geometryChanged,
             this, &SketchPanel::onGeometryChanged);
 
+    // Phase 6：ConstraintPickSession → Sketch 自動施加約束
+    if (auto* session = m_pickSession) {
+        connect(session, &cad::ConstraintPickSession::constraintReady,
+                this, &SketchPanel::onConstraintReadyFromSession,
+                Qt::UniqueConnection);
+        connect(session, &cad::ConstraintPickSession::sessionEnded,
+                this, &SketchPanel::clearPickPrompt,
+                Qt::UniqueConnection);
+        connect(session, &cad::ConstraintPickSession::promptChanged,
+                this, &SketchPanel::showPickPrompt,
+                Qt::UniqueConnection);
+    }
+
     refreshConstraintList();
     // 顯示初始 DOF
     int dof = sketch->degreesOfFreedom();
@@ -590,6 +603,65 @@ void SketchPanel::onToggleOverlay()
     m_btnToggleOverlay->setText(hidden ? tr("顯示約束符號") : tr("隱藏約束符號"));
     if (m_overlay)
         m_overlay->setVisible(!hidden);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 6：ConstraintPickSession 回呼 — 自動施加約束
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SketchPanel::onConstraintReadyFromSession(
+    const QList<cad::GeomRef>& refs,
+    double value,
+    const QString& paramExpr,
+    bool driving,
+    cad::ConstraintType type)
+{
+    if (!m_sketch) return;
+
+    cad::SketchConstraint c;
+    c.type      = type;
+    c.refs      = refs;
+    c.value     = value;
+    c.paramExpr = paramExpr;
+    c.driving   = driving;
+
+    // Phase 3B：若有尺寸線偏移，也存入 constraint
+    if (m_pickSession) {
+        c.dimLineOffsetX = m_pickSession->dimLineOffsetX();
+        c.dimLineOffsetY = m_pickSession->dimLineOffsetY();
+
+        // DIST 命令：判斷距離子類型
+        if (type == cad::ConstraintType::FixedDistance) {
+            cad::DistanceMode dm = m_pickSession->resolveDistanceMode();
+            if (dm == cad::DistanceMode::Invalid) {
+                auto* cmdMgr = core::CommandLineManager::instance();
+                if (cmdMgr)
+                    cmdMgr->printError(
+                        "DIST: two non-parallel lines selected — "
+                        "distance is undefined. Select P2P, P2L or parallel L2L.");
+                clearPickPrompt();
+                return;
+            }
+            c.distMode = dm;
+        }
+    }
+
+    int dofBefore = m_sketch->degreesOfFreedom();
+    m_sketch->addConstraint(c);
+    cad::SolveResult result = m_sketch->solveConstraints();
+    int dofAfter = m_sketch->degreesOfFreedom();
+
+    // 命令列回報
+    auto* cmdMgr = core::CommandLineManager::instance();
+    if (cmdMgr) {
+        cmdMgr->printSuccess(
+            QString("✅ Constraint applied. DOF: %1 → %2")
+            .arg(dofBefore).arg(dofAfter));
+        command::reportSolveResult(result, cmdMgr);
+    }
+
+    clearPickPrompt();
 }
 
 } // namespace aicad::ui

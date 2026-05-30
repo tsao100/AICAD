@@ -1265,6 +1265,214 @@ bool Sketch::hasExtrudableProfile() const {
         edges, Precision::Confusion(), Standard_False, closed);
     return !closed->IsEmpty();
 }
+// ═════════════════════════════════════════════════════════════════════════════
+// Phase 0B：SketchPoint 一等公民 — 點管理 API 實作
+// ═════════════════════════════════════════════════════════════════════════════
+
+QString Sketch::addPoint(const QVector2D& pos, SketchPoint::Origin origin)
+{
+    auto* pt = new SketchPoint(pos, origin);
+    m_points.insert(pt->uuid, pt);
+    // 同時加入 m_geometries 以便 Solver 處理
+    m_geometries.append(pt);
+    return pt->uuid;
+}
+
+SketchPoint* Sketch::point(const QString& uuid) const
+{
+    return m_points.value(uuid, nullptr);
+}
+
+QList<SketchPoint*> Sketch::points() const
+{
+    return m_points.values();
+}
+
+void Sketch::movePoint(const QString& uuid, const QVector2D& newPos)
+{
+    auto* pt = m_points.value(uuid, nullptr);
+    if (!pt) return;
+
+    pt->pos = newPos;
+    pt->points[0] = newPos;
+
+    // 同步所有引用此點的曲線的 start/end 座標
+    syncGeometryFromPoints();
+    Q_EMIT geometryChanged();
+}
+
+void Sketch::mergePoints(const QString& fromUuid, const QString& toUuid)
+{
+    if (fromUuid == toUuid) return;
+    if (!m_points.contains(fromUuid) || !m_points.contains(toUuid)) return;
+
+    // 更新所有引用 fromUuid 的曲線
+    for (auto* g : m_geometries) {
+        if (auto* line = dynamic_cast<SketchLine*>(g)) {
+            if (line->startUuid == fromUuid) line->startUuid = toUuid;
+            if (line->endUuid   == fromUuid) line->endUuid   = toUuid;
+        }
+        if (auto* arc = dynamic_cast<SketchArc*>(g)) {
+            if (arc->startUuid  == fromUuid) arc->startUuid  = toUuid;
+            if (arc->endUuid    == fromUuid) arc->endUuid    = toUuid;
+            if (arc->centerUuid == fromUuid) arc->centerUuid = toUuid;
+        }
+        if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
+            if (circ->centerUuid == fromUuid) circ->centerUuid = toUuid;
+        }
+    }
+
+    // 刪除 from 點
+    SketchPoint* fromPt = m_points.take(fromUuid);
+    m_geometries.removeAll(fromPt);
+    delete fromPt;
+
+    syncGeometryFromPoints();
+    Q_EMIT geometryChanged();
+}
+
+QList<SketchGeometry*> Sketch::curvesReferencingPoint(const QString& ptUuid) const
+{
+    QList<SketchGeometry*> result;
+    for (auto* g : m_geometries) {
+        if (auto* line = dynamic_cast<SketchLine*>(g)) {
+            if (line->startUuid == ptUuid || line->endUuid == ptUuid)
+                result.append(g);
+        } else if (auto* arc = dynamic_cast<SketchArc*>(g)) {
+            if (arc->startUuid == ptUuid || arc->endUuid == ptUuid || arc->centerUuid == ptUuid)
+                result.append(g);
+        } else if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
+            if (circ->centerUuid == ptUuid)
+                result.append(g);
+        }
+    }
+    return result;
+}
+
+QString Sketch::addLineGeom(const QVector2D& p1, const QVector2D& p2,
+                             const QString& reuseStart, const QString& reuseEnd)
+{
+    QString startUuid = reuseStart.isEmpty()
+        ? addPoint(p1, SketchPoint::Origin::Endpoint)
+        : reuseStart;
+    QString endUuid = reuseEnd.isEmpty()
+        ? addPoint(p2, SketchPoint::Origin::Endpoint)
+        : reuseEnd;
+
+    auto* line = new SketchLine(p1, p2);
+    line->startUuid = startUuid;
+    line->endUuid   = endUuid;
+    m_geometries.append(line);
+
+    Q_EMIT geometryChanged();
+    Q_EMIT rebuildRequested();
+    return line->uuid;
+}
+
+QString Sketch::addCircleGeom(const QVector2D& center, double radius)
+{
+    QString centerUuid = addPoint(center, SketchPoint::Origin::Center);
+
+    auto* circ = new SketchCircle(center, radius);
+    circ->centerUuid = centerUuid;
+    m_geometries.append(circ);
+
+    Q_EMIT geometryChanged();
+    Q_EMIT rebuildRequested();
+    return circ->uuid;
+}
+
+void Sketch::syncGeometryFromPoints()
+{
+    for (auto* g : m_geometries) {
+        if (auto* line = dynamic_cast<SketchLine*>(g)) {
+            if (auto* ps = m_points.value(line->startUuid)) {
+                line->start = ps->pos;
+                if (!line->points.isEmpty()) line->points[0] = ps->pos;
+            }
+            if (auto* pe = m_points.value(line->endUuid)) {
+                line->end = pe->pos;
+                if (line->points.size() > 1) line->points[1] = pe->pos;
+            }
+        } else if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
+            if (auto* pc = m_points.value(circ->centerUuid)) {
+                circ->center = pc->pos;
+            }
+        }
+    }
+}
+
+void Sketch::migrateFromLegacyFormat(const QJsonObject& json)
+{
+    // 舊格式沒有 "points" 陣列，從幾何座標重建
+    // 相同座標的點視為同一點（模擬舊版 Coincident 語意）
+    QHash<QString, QString> coordToPointUuid;  // "x,y" → pointUuid
+
+    auto getOrCreate = [&](double x, double y) -> QString {
+        QString key = QString("%1,%2").arg(x, 0, 'f', 6).arg(y, 0, 'f', 6);
+        if (!coordToPointUuid.contains(key)) {
+            coordToPointUuid[key] = addPoint(QVector2D(x, y), SketchPoint::Origin::Endpoint);
+        }
+        return coordToPointUuid[key];
+    };
+
+    for (const auto& gv : json["geometries"].toArray()) {
+        QJsonObject g = gv.toObject();
+        if (g["type"].toString() == "Line") {
+            QString lineUuid; // will be set when line is added later by fromJson
+            Q_UNUSED(getOrCreate(g["x1"].toDouble(), g["y1"].toDouble()));
+            Q_UNUSED(getOrCreate(g["x2"].toDouble(), g["y2"].toDouble()));
+        }
+    }
+    qDebug() << "[Sketch] migrateFromLegacyFormat: created" << m_points.size() << "points";
+}
+
+QList<Sketch::PointInfo> Sketch::listPoints() const
+{
+    QList<PointInfo> result;
+    for (auto* pt : m_points) {
+        PointInfo info;
+        info.uuid   = pt->uuid;
+        info.pos    = pt->pos;
+        info.origin = pt->origin;
+
+        for (auto* g : m_geometries) {
+            if (auto* line = dynamic_cast<SketchLine*>(g)) {
+                if (line->startUuid == pt->uuid)
+                    info.referencedBy.append(line->uuid.left(8) + ".Start");
+                if (line->endUuid == pt->uuid)
+                    info.referencedBy.append(line->uuid.left(8) + ".End");
+            } else if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
+                if (circ->centerUuid == pt->uuid)
+                    info.referencedBy.append(circ->uuid.left(8) + ".Ctr");
+            }
+        }
+        result.append(info);
+    }
+    return result;
+}
+
+// ── Phase 0B：新增 Constraint 便捷方法 ─────────────────────────────────────
+
+QString Sketch::constrainMidpoint(const GeomRef& point, const QString& lineUuid) {
+    return addConstraint(SketchConstraint::makeMidpoint(point, lineUuid));
+}
+
+QString Sketch::constrainSymmetric(const GeomRef& a, const GeomRef& b, const QString& axisUuid) {
+    SketchConstraint c;
+    c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type  = ConstraintType::Symmetric;
+    c.refs  = { a, b, GeomRef(axisUuid, GeomHandle::Curve) };
+    return addConstraint(c);
+}
+
+QString Sketch::constrainCollinear(const QString& lineA, const QString& lineB) {
+    SketchConstraint c;
+    c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type  = ConstraintType::Collinear;
+    c.refs  = { GeomRef(lineA, GeomHandle::Curve), GeomRef(lineB, GeomHandle::Curve) };
+    return addConstraint(c);
+}
 
 } // namespace cad
 } // namespace aicad

@@ -142,6 +142,9 @@ QJsonObject SketchConstraint::toJson() const {
     o["value"]     = value;
     o["paramExpr"] = paramExpr;
     o["driving"]   = driving;
+    o["distMode"]  = static_cast<int>(distMode);
+    o["dimOffX"]   = dimLineOffsetX;
+    o["dimOffY"]   = dimLineOffsetY;
     QJsonArray arr;
     for (const auto& r : refs) arr.append(r.toJson());
     o["refs"] = arr;
@@ -155,8 +158,26 @@ SketchConstraint SketchConstraint::fromJson(const QJsonObject& j) {
     c.value     = j["value"].toDouble(0.0);
     c.paramExpr = j["paramExpr"].toString();
     c.driving   = j["driving"].toBool(true);
+    c.distMode  = static_cast<DistanceMode>(j["distMode"].toInt(0));
+    c.dimLineOffsetX = j["dimOffX"].toDouble(0.0);
+    c.dimLineOffsetY = j["dimOffY"].toDouble(0.0);
     for (const auto& rv : j["refs"].toArray())
         c.refs.append(GeomRef::fromJson(rv.toObject()));
+    return c;
+}
+
+
+SketchConstraint SketchConstraint::makeSymmetric(const GeomRef& a, const GeomRef& b, const QString& axisUuid) {
+    SketchConstraint c;
+    c.type = ConstraintType::Symmetric;
+    c.refs = { a, b, GeomRef(axisUuid, GeomHandle::Curve) };
+    return c;
+}
+
+SketchConstraint SketchConstraint::makeCollinear(const QString& lineA, const QString& lineB) {
+    SketchConstraint c;
+    c.type = ConstraintType::Collinear;
+    c.refs = { GeomRef(lineA, GeomHandle::Curve), GeomRef(lineB, GeomHandle::Curve) };
     return c;
 }
 

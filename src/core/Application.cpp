@@ -21,6 +21,7 @@
 #include "view/ViewManager.h"
 #include "scripting/LispEngine.h"
 #include "scripting/LispBindings.h"
+#include "../command/ConstraintCommands.h"  // Phase 9
 #include <optional>
 #include "cad/sketch/SketchRegion.h"
 
@@ -251,6 +252,10 @@ bool Application::initialize() {
             // 回退到註冊預設命令
             registerDefaultCommands();
         }
+
+        // Phase 9：註冊所有約束命令（別名已在 registerConstraintCommands 內建立）
+        command::registerConstraintCommands(this);
+        qDebug() << "[Application] Phase 9: Constraint commands registered.";
 
         d->initialized = true;
         qDebug() << "[Application] Initialization completed successfully";

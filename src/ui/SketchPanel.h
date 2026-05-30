@@ -1,5 +1,6 @@
 // src/ui/SketchPanel.h
 #pragma once
+#include "../command/ConstraintCommands.h"
 #include <QDockWidget>
 #include <QButtonGroup>
 #include <QVBoxLayout>
@@ -7,6 +8,7 @@
 #include "cad/SketchInstance.h"
 #include "cad/sketch/SketchConstraint.h"
 #include "cad/sketch/ConstraintOverlayManager.h"
+#include "cad/ConstraintPickSession.h"
 #include <memory>
 
 #include <QCheckBox>
@@ -102,6 +104,13 @@ private Q_SLOTS:
                             const QString& instanceId);
     // 約束清單雙擊 → inline 編輯
     void onConstraintItemDoubleClicked(QTreeWidgetItem* item, int col);
+
+    // Phase 6
+    void onConstraintReadyFromSession(const QList<cad::GeomRef>& refs,
+                                      double value,
+                                      const QString& paramExpr,
+                                      bool driving,
+                                      cad::ConstraintType type);
     // 覆蓋層顯示/隱藏切換
     void onToggleOverlay();
 
@@ -116,7 +125,13 @@ private:
 
     cad::Sketch* m_sketch = nullptr;
 
-    bool m_pickingActive = false;  // 選點進行中，防止尺寸按鈕重複觸發
+    bool m_pickingActive = false;
+    cad::ConstraintPickSession* m_pickSession = nullptr;  ///< Phase 6：從 UIManager 注入
+public:
+    void setPickSession(cad::ConstraintPickSession* session) {
+        m_pickSession = session;
+    }
+private:  // 選點進行中，防止尺寸按鈕重複觸發
 
     // Phase 6：約束覆蓋管理員
     std::unique_ptr<cad::ConstraintOverlayManager> m_overlay;

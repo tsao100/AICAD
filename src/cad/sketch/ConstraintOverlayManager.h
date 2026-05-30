@@ -46,6 +46,17 @@ public:
 
     // ── 更新 ─────────────────────────────────────────────────────────────
     void rebuildAll();
+
+    // ── Phase 3B 擴充 ─────────────────────────────────────────────────────
+    /**
+     * 輕量更新：僅移動尺寸線，不重建所有 Overlay
+     */
+    void updateDimLine(const QString& constraintUuid, double newOffsetX, double newOffsetY);
+
+    /**
+     * 取得指定約束的尺寸線 AIS 物件（供 GripProvider 使用）
+     */
+    Handle(AIS_DimensionLine) dimLineAISForConstraint(const QString& constraintUuid) const;
     void setVisible(bool v);
     void setTypeVisible(ConstraintType type, bool v);
 

@@ -61,7 +61,8 @@ void LispBindings::registerAll() {
     registerQueryAPI();
     registerUtilityAPI();
     registerSnapAPI();
-    
+    registerConstraintAPI();  // Phase 8
+
     qDebug() << "[LispBindings] All API functions registered";
 }
 
@@ -508,6 +509,271 @@ void LispBindings::registerSnapAPI() {
                                     d->app->eventBus()->publish("scripting.osnap-set", types);
                                     return true;
                                 }, 0, -1);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 8：Lisp 約束 API
+// ─────────────────────────────────────────────────────────────────────────────
+
+void LispBindings::registerConstraintAPI()
+{
+    using namespace aicad::cad;
+
+    auto getSketch = [this]() -> Sketch* {
+        return d->app ? d->app->activeSketch() : nullptr;
+    };
+
+    // (sk-constrain-coincident geom-uuid-1 handle-1 geom-uuid-2 handle-2)
+    // handle: 0=WholeGeom 1=Start 2=End 3=Center
+    d->engine->registerFunction("SK-CONSTRAIN-COINCIDENT",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 4) return QVariant();
+            auto* sk = getSketch();
+            if (!sk) return QVariant();
+            QString u1 = args[0].toString();
+            GeomHandle h1 = static_cast<GeomHandle>(args[1].toInt());
+            QString u2 = args[2].toString();
+            GeomHandle h2 = static_cast<GeomHandle>(args[3].toInt());
+            return sk->constrainCoincident(GeomRef(u1,h1), GeomRef(u2,h2));
+        }, 4, 4);
+
+    // (sk-constrain-horizontal line-uuid)
+    d->engine->registerFunction("SK-CONSTRAIN-HORIZONTAL",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.isEmpty()) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainHorizontal(args[0].toString());
+        }, 1, 1);
+
+    // (sk-constrain-vertical line-uuid)
+    d->engine->registerFunction("SK-CONSTRAIN-VERTICAL",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.isEmpty()) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainVertical(args[0].toString());
+        }, 1, 1);
+
+    // (sk-constrain-parallel line-uuid-1 line-uuid-2)
+    d->engine->registerFunction("SK-CONSTRAIN-PARALLEL",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainParallel(args[0].toString(), args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-perpendicular line-uuid-1 line-uuid-2)
+    d->engine->registerFunction("SK-CONSTRAIN-PERPENDICULAR",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainPerpendicular(args[0].toString(), args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-tangent geom-uuid-1 geom-uuid-2)
+    d->engine->registerFunction("SK-CONSTRAIN-TANGENT",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainTangent(args[0].toString(), args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-concentric uuid-1 uuid-2)
+    d->engine->registerFunction("SK-CONSTRAIN-CONCENTRIC",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainConcentric(args[0].toString(), args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-equal-length line-uuid-1 line-uuid-2)
+    d->engine->registerFunction("SK-CONSTRAIN-EQUAL-LENGTH",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainEqualLength(args[0].toString(), args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-equal-radius uuid-1 uuid-2)
+    d->engine->registerFunction("SK-CONSTRAIN-EQUAL-RADIUS",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainEqualRadius(args[0].toString(), args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-collinear line-uuid-1 line-uuid-2)
+    d->engine->registerFunction("SK-CONSTRAIN-COLLINEAR",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainCollinear(args[0].toString(), args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-midpoint point-uuid line-uuid)
+    d->engine->registerFunction("SK-CONSTRAIN-MIDPOINT",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainMidpoint(
+                GeomRef(args[0].toString(), GeomHandle::WholeGeom),
+                args[1].toString());
+        }, 2, 2);
+
+    // (sk-constrain-symmetric uuid-a handle-a uuid-b handle-b axis-uuid)
+    d->engine->registerFunction("SK-CONSTRAIN-SYMMETRIC",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 5) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            GeomHandle ha = static_cast<GeomHandle>(args[1].toInt());
+            GeomHandle hb = static_cast<GeomHandle>(args[3].toInt());
+            return sk->constrainSymmetric(
+                GeomRef(args[0].toString(), ha),
+                GeomRef(args[2].toString(), hb),
+                args[4].toString());
+        }, 5, 5);
+
+    // (sk-constrain-fixed geom-uuid)
+    d->engine->registerFunction("SK-CONSTRAIN-FIXED",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.isEmpty()) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainFixed(args[0].toString());
+        }, 1, 1);
+
+    // ── 尺寸約束 ─────────────────────────────────────────────────────────────
+
+    // (sk-constrain-dist uuid-1 handle-1 uuid-2 handle-2 dist)
+    //   or (sk-constrain-dist uuid-1 handle-1 uuid-2 handle-2 "expr")
+    d->engine->registerFunction("SK-CONSTRAIN-DIST",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 5) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            GeomHandle h1 = static_cast<GeomHandle>(args[1].toInt());
+            GeomHandle h2 = static_cast<GeomHandle>(args[3].toInt());
+            bool isNum;
+            double v = args[4].toDouble(&isNum);
+            QString expr = isNum ? QString() : args[4].toString();
+            if (!isNum) {
+                auto* store = sk->parameterStore();
+                v = store ? store->evaluate(expr) : 0.0;
+            }
+            return sk->constrainDistance(GeomRef(args[0].toString(), h1),
+                                          GeomRef(args[2].toString(), h2), v);
+        }, 5, 5);
+
+    // (sk-constrain-radius geom-uuid radius-or-expr)
+    d->engine->registerFunction("SK-CONSTRAIN-RADIUS",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            bool isNum;
+            double v = args[1].toDouble(&isNum);
+            if (!isNum) {
+                auto* store = sk->parameterStore();
+                v = store ? store->evaluate(args[1].toString()) : 0.0;
+            }
+            return sk->constrainRadius(args[0].toString(), v);
+        }, 2, 2);
+
+    // (sk-constrain-angle uuid-1 h1 uuid-2 h2 angle-deg)
+    d->engine->registerFunction("SK-CONSTRAIN-ANGLE",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 5) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            GeomHandle h1 = static_cast<GeomHandle>(args[1].toInt());
+            GeomHandle h2 = static_cast<GeomHandle>(args[3].toInt());
+            double angleDeg = args[4].toDouble();
+            double angleRad = angleDeg * M_PI / 180.0;
+            return sk->constrainAngle(GeomRef(args[0].toString(), h1),
+                                       GeomRef(args[2].toString(), h2),
+                                       angleRad);
+        }, 5, 5);
+
+    // (sk-constrain-fix-x geom-uuid x-val)
+    d->engine->registerFunction("SK-CONSTRAIN-FIX-X",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainFixedX(GeomRef(args[0].toString(), GeomHandle::WholeGeom),
+                                        args[1].toDouble());
+        }, 2, 2);
+
+    // (sk-constrain-fix-y geom-uuid y-val)
+    d->engine->registerFunction("SK-CONSTRAIN-FIX-Y",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return QVariant();
+            auto* sk = getSketch(); if (!sk) return QVariant();
+            return sk->constrainFixedY(GeomRef(args[0].toString(), GeomHandle::WholeGeom),
+                                        args[1].toDouble());
+        }, 2, 2);
+
+    // ── 管理 ─────────────────────────────────────────────────────────────────
+
+    // (sk-remove-constraint uuid)
+    d->engine->registerFunction("SK-REMOVE-CONSTRAINT",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.isEmpty()) return false;
+            auto* sk = getSketch(); if (!sk) return false;
+            return sk->removeConstraint(args[0].toString());
+        }, 1, 1);
+
+    // (sk-list-constraints)  → list of maps: {uuid, type, value, refs}
+    d->engine->registerFunction("SK-LIST-CONSTRAINTS",
+        [getSketch](const QVariantList&) -> QVariant {
+            auto* sk = getSketch();
+            if (!sk) return QVariantList();
+            QVariantList result;
+            for (const auto& c : sk->constraints()) {
+                QVariantMap m;
+                m["uuid"]    = c.uuid;
+                m["type"]    = static_cast<int>(c.type);
+                m["value"]   = c.value;
+                m["expr"]    = c.paramExpr;
+                m["driving"] = c.driving;
+                result.append(m);
+            }
+            return result;
+        }, 0, 0);
+
+    // (sk-dof)  → int
+    d->engine->registerFunction("SK-DOF",
+        [getSketch](const QVariantList&) -> QVariant {
+            auto* sk = getSketch();
+            return sk ? sk->degreesOfFreedom() : -999;
+        }, 0, 0);
+
+    // (sk-solve)  → t/nil
+    d->engine->registerFunction("SK-SOLVE",
+        [getSketch](const QVariantList&) -> QVariant {
+            auto* sk = getSketch();
+            if (!sk) return false;
+            SolveResult r = sk->solveConstraints();
+            return r.status == SolveStatus::FullyConstrained ||
+                   r.status == SolveStatus::UnderConstrained;
+        }, 0, 0);
+
+    // (sk-edit-constraint uuid new-value-or-expr)
+    d->engine->registerFunction("SK-EDIT-CONSTRAINT",
+        [getSketch](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) return false;
+            auto* sk = getSketch(); if (!sk) return false;
+            SketchConstraint* c = sk->findConstraint(args[0].toString());
+            if (!c || !c->isDimensional()) return false;
+            bool isNum;
+            double v = args[1].toDouble(&isNum);
+            QString expr = isNum ? QString() : args[1].toString();
+            if (!isNum) {
+                auto* store = sk->parameterStore();
+                v = store ? store->evaluate(expr) : 0.0;
+            }
+            c->value     = v;
+            c->paramExpr = expr;
+            sk->solveConstraints();
+            return true;
+        }, 2, 2);
+
+    qDebug() << "[LispBindings] Phase 8: Constraint API registered (23 functions)";
 }
 
 } // namespace scripting

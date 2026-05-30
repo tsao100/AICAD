@@ -89,6 +89,17 @@ struct GeomRef {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Phase 3B：DistanceMode — 必須在 SketchConstraint 之前定義
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum class DistanceMode {
+    PointToPoint,   ///< 兩端點之間直線距離
+    PointToLine,    ///< 點到直線的最短（垂直）距離
+    LineToLine,     ///< 兩平行線之間的垂直距離
+    Invalid,        ///< 判斷失敗（如不平行的兩線）
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 約束結構體
 // ─────────────────────────────────────────────────────────────────────────────
 struct SketchConstraint {
@@ -98,6 +109,10 @@ struct SketchConstraint {
     double         value = 0.0;  ///< 尺寸約束的目標值（求值後的快取）
     QString        paramExpr;    ///< 原始參數表達式（如 "width"、"width*2"）
     bool           driving = true;  ///< driving=true：約束驅動幾何；false：量測模式
+    // Phase 3B 新增欄位
+    DistanceMode    distMode = DistanceMode::PointToPoint;  ///< 距離子類型
+    double          dimLineOffsetX = 0.0;  ///< 尺寸線偏移 X（草圖平面座標）
+    double          dimLineOffsetY = 0.0;  ///< 尺寸線偏移 Y
 
     /**
      * 判斷此約束是否為尺寸約束（帶數值）
@@ -131,6 +146,8 @@ struct SketchConstraint {
     static SketchConstraint makeFixedY(const GeomRef& point, double y);
     static SketchConstraint makePointOnCurve(const GeomRef& point, const QString& curveUuid);
     static SketchConstraint makeMidpoint(const GeomRef& point, const QString& lineUuid);
+    static SketchConstraint makeSymmetric(const GeomRef& a, const GeomRef& b, const QString& axisUuid);
+    static SketchConstraint makeCollinear(const QString& lineA, const QString& lineB);
 
     // DOF 消耗量（用於 under/over 約束檢查）
     int dofConsumed() const;
@@ -159,3 +176,7 @@ struct SolveResult {
 };
 
 } // namespace aicad::cad
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 0B / Phase 3B 擴充（DistanceMode 已移至 SketchConstraint 之前）
+// ─────────────────────────────────────────────────────────────────────────────
+

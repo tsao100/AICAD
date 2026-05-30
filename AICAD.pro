@@ -235,6 +235,7 @@ SOURCES += \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
+    src/command/ConstraintCommands.cpp \
     src/command/ExtrudeCommand.cpp \
     src/command/alignment/AlignmentEditCommand.cpp \
     src/command/alignment/AlignmentFixCurveCommand.cpp \
@@ -352,6 +353,7 @@ HEADERS += \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
     src/command/CommandAlias.h \
+    src/command/ConstraintCommands.h \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
     src/command/alignment/AlignmentCommandBase.h \

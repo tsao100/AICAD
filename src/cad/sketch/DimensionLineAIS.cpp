@@ -272,4 +272,28 @@ void AIS_DimensionLine::ComputeSelection(
     sel->Add(sens);
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3B：尺寸線拖曳支援
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AIS_DimensionLine::setDimLineOffset(double offsetX, double offsetY)
+{
+    m_dimOffsetX = offsetX;
+    m_dimOffsetY = offsetY;
+}
+
+gp_Pnt AIS_DimensionLine::dimLineAnchorPoint3D() const
+{
+    gp_Pnt p1, p2;
+    if (!getRefPoints(p1, p2)) return gp_Pnt(0,0,0);
+    // 尺寸線中點 + 偏移
+    gp_Pnt mid(
+        (p1.X() + p2.X()) * 0.5 + m_dimOffsetX,
+        (p1.Y() + p2.Y()) * 0.5 + m_dimOffsetY,
+        (p1.Z() + p2.Z()) * 0.5
+    );
+    return mid;
+}
+
 } // namespace aicad::cad

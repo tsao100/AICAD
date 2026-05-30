@@ -43,6 +43,12 @@ public:
 
     const QString& constraintUuid() const { return m_constraint.uuid; }
 
+    // Phase 3B：尺寸線拖曳支援
+    void    setDimLineOffset(double offsetX, double offsetY);
+    double  dimOffsetX() const { return m_dimOffsetX; }
+    double  dimOffsetY() const { return m_dimOffsetY; }
+    gp_Pnt  dimLineAnchorPoint3D() const;
+
 private:
     void Compute(const Handle(PrsMgr_PresentationManager)&,
                  const Handle(Prs3d_Presentation)& prs,
@@ -65,6 +71,11 @@ private:
     gp_Trsf                  m_sketchToWorld;
     SolveStatus              m_status;
     double                   m_offsetDist = 8.0;  // mm，尺寸線偏移量
+
+    // Phase 3B 新增
+    DistanceMode             m_distMode   = DistanceMode::PointToPoint;
+    double                   m_dimOffsetX = 0.0;   ///< 草圖平面偏移 X
+    double                   m_dimOffsetY = 0.0;   ///< 草圖平面偏移 Y
 };
 
 } // namespace aicad::cad

@@ -153,7 +153,30 @@ void AutoCompleteModel::updateFromAlias() {
         info.name = cmd;
         info.alias = aliasStr;
         info.description = def.description;
-        info.category = "General";
+
+        // Phase 9：依命令名稱分配類別
+        static const QStringList sketchConstraintCmds = {
+            "COINCIDENT","HORIZONTAL","VERTICAL","PARALLEL","PERPENDICULAR",
+            "TANGENT","CONCENTRIC","EQUALLEN","EQUALRAD","COLLINEAR",
+            "MIDPOINT","SYMMETRIC","POINTONCURVE","FIX",
+            "COI","HOR","VER","PAR","PER","TAN","CCN","EQL","EQR","COL","MID","SYM","POC"
+        };
+        static const QStringList sketchDimCmds = {
+            "DIST","RAD","ANGLE","FIXX","FIXY","DIM","ANG"
+        };
+        static const QStringList sketchMgmtCmds = {
+            "DELCON","EDITCON","LISTCON","CONINFO","SOLVE","DOF","CONVIS","LISTPOINTS",
+            "DCO","ECO","LSC"
+        };
+
+        if (sketchConstraintCmds.contains(cmd.toUpper()))
+            info.category = "Sketch Constraint";
+        else if (sketchDimCmds.contains(cmd.toUpper()))
+            info.category = "Sketch Dimension";
+        else if (sketchMgmtCmds.contains(cmd.toUpper()))
+            info.category = "Sketch Management";
+        else
+            info.category = "General";
 
         m_allCommands.append(info);
     }
