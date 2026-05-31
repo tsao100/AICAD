@@ -63,6 +63,8 @@ enum class InteractionMode {
     Selecting,      ///< 選擇物件
     Measuring,      ///< 測量
     GetPoint,       ///< 取得點輸入
+    GetGeom,        ///< ✅ Task E: 點擊回報 geomUuid+handle（幾何約束互動選取）
+    PlaceDimLine,   ///< ✅ Task E: 移動預覽尺寸線位置，點擊確認
     Navigation
 };
 
@@ -135,6 +137,9 @@ public:
      * @param mode 互動模式
      */
     void setMode(InteractionMode mode);
+
+    /// ✅ Task E: 啟動 PlaceDimLine 模式，設定用於計算偏移的錨點（兩端點中心，草圖平面座標）
+    void beginPlaceDimLine(const QVector2D& anchorPos2D);
 
     /**
      * @brief 取得當前互動模式
@@ -303,6 +308,12 @@ Q_SIGNALS:
      * @param geomHandle snap 到的端點 handle（-1 = WholeGeom）
      */
     void geomRefPicked(QVector2D point, QString geomUuid, int geomHandle);
+
+    /// ✅ Task E: PlaceDimLine 模式 — 滑鼠移動時的預覽偏移
+    void dimLinePosPreview(double offsetX, double offsetY);
+
+    /// ✅ Task E: PlaceDimLine 模式 — 滑鼠點擊確認偏移
+    void dimLinePosConfirmed(double offsetX, double offsetY);
 
     /**
      * @brief 取得點被取消時發出

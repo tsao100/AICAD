@@ -123,6 +123,7 @@ public:
     bool isDisplayingAllFeatures = false;
 
     QList<OverlayEntry> overlayObjects;
+    QVector2D            dimLineAnchor2D;  // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
 
     Private()
         : document(nullptr)
@@ -722,6 +723,13 @@ void CadView::setMode(InteractionMode mode) {
 
 InteractionMode CadView::mode() const {
     return d->mode;
+}
+
+// ✅ Task E: 啟動 PlaceDimLine 模式
+void CadView::beginPlaceDimLine(const QVector2D& anchorPos2D)
+{
+    d->dimLineAnchor2D = anchorPos2D;
+    setMode(InteractionMode::PlaceDimLine);
 }
 
 Handle(AIS_InteractiveContext) CadView::context() const {
@@ -1422,7 +1430,8 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
     if (event->button() == Qt::LeftButton &&
         (d->mode == InteractionMode::Sketching ||
-         d->mode == InteractionMode::GetPoint))
+         d->mode == InteractionMode::GetPoint  ||
+         d->mode == InteractionMode::GetGeom))
     {
         auto* cmdMgr = Application::instance()->commandManager();
         const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
@@ -1510,12 +1519,20 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             switch (d->mode) {
             case InteractionMode::Sketching:
             case InteractionMode::GetPoint:
+            case InteractionMode::GetGeom:   // ✅ Task E: 與 GetPoint 共用 handlePointInput
                 handlePointInput(event->pos());
                 break;
             case InteractionMode::Selecting:
                 d->context->SelectDetected(AIS_SelectionScheme_Replace);
                 handleObjectSelection(event->pos());
                 break;
+            case InteractionMode::PlaceDimLine: {  // ✅ Task E: 確認尺寸線位置
+                QVector2D planePt = screenToPlane(event->pos());
+                QVector2D offset  = planePt - d->dimLineAnchor2D;
+                Q_EMIT dimLinePosConfirmed(offset.x(), offset.y());
+                setMode(InteractionMode::Sketching);
+                break;
+            }
             default:
                 break;
             }
@@ -1643,6 +1660,13 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         } else {
             unsetCursor();
         }
+    }
+
+    // ✅ Task E: PlaceDimLine 模式 — 滑鼠移動時發出偏移預覽
+    if (d->mode == InteractionMode::PlaceDimLine) {
+        QVector2D planePt = screenToPlane(event->pos());
+        QVector2D offset  = planePt - d->dimLineAnchor2D;
+        Q_EMIT dimLinePosPreview(offset.x(), offset.y());
     }
 
     // 右鍵拖曳旋轉

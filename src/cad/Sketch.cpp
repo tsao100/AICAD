@@ -226,6 +226,8 @@ QList<SketchGeometry*> Sketch::constructionGeometries() const {
 }
 
 SketchGeometry* Sketch::findGeometry(const QString& uuid) const {
+    // ✅ Task C: 先搜尋 m_points（SketchPoint 也是 SketchGeometry 子類別）
+    if (auto* pt = m_points.value(uuid, nullptr)) return pt;
     for (auto* g : m_geometries)
         if (g->uuid == uuid) return g;
     return nullptr;
@@ -879,7 +881,14 @@ SolveResult Sketch::solveConstraints() {
         QVector3D n = m_plane->normal();
         normal = gp_Dir(n.x(), n.y(), n.z());
     }
-    auto result = m_solver.solve(m_geometries, m_constraints, normal);
+    // ✅ Task B.5: 將 SketchPoint 也納入 Solver 的 geoms 列表
+    QList<SketchGeometry*> geoms;
+    for (auto* pt : m_points)   // 點先放，layout 前段穩定
+        geoms.append(pt);
+    for (auto* g : m_geometries)
+        if (g->type != SketchGeometryType::Point)
+            geoms.append(g);
+    auto result = m_solver.solve(geoms, m_constraints, normal);
     Q_EMIT constraintSolved(result);
     if (result.status != SolveStatus::Conflict &&
         result.status != SolveStatus::SolverError) {
@@ -907,7 +916,11 @@ SolveResult Sketch::solveWithStore(const aicad::core::ParameterStore* store) {
 }
 
 int Sketch::degreesOfFreedom() const {
-    return ConstraintSolver::computeDOF(m_geometries, m_constraints);
+    QList<SketchGeometry*> geoms;
+    for (auto* pt : m_points) geoms.append(pt);
+    for (auto* g : m_geometries)
+        if (g->type != SketchGeometryType::Point) geoms.append(g);
+    return ConstraintSolver::computeDOF(geoms, m_constraints);
 }
 
 // ── 便捷 API ──────────────────────────────────────────────────────────────
@@ -1407,6 +1420,17 @@ void Sketch::syncGeometryFromPoints()
             if (auto* pc = m_points.value(circ->centerUuid)) {
                 circ->center = pc->pos;
             }
+        } else if (auto* arc = dynamic_cast<SketchArc*>(g)) {
+            // ✅ GAP 1 Fix: Arc 的 SketchPoint 同步回 arc->points[]
+            // Arc 以 OCCT curve 為主，points[] 只作顯示用
+            // [0]=起點 [1]=中點 [2]=終點 (若存在)
+            if (auto* ps = m_points.value(arc->startUuid)) {
+                if (!arc->points.isEmpty()) arc->points[0] = ps->pos;
+            }
+            if (auto* pe = m_points.value(arc->endUuid)) {
+                if (arc->points.size() > 2) arc->points[2] = pe->pos;
+            }
+            // centerUuid 指向圓心 — 不直接暴露在 points[] 中，略過
         }
     }
 }

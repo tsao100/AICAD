@@ -2,6 +2,7 @@
 #include "SketchConstraint.h"
 #include "ConstraintSymbolAIS.h"
 #include "DimensionLineAIS.h"
+#include "SketchPointAIS.h"
 #include <QObject>
 #include <QHash>
 #include <QSet>
@@ -57,6 +58,9 @@ public:
      * 取得指定約束的尺寸線 AIS 物件（供 GripProvider 使用）
      */
     Handle(AIS_DimensionLine) dimLineAISForConstraint(const QString& constraintUuid) const;
+
+    /// ✅ GAP 3: 供 UIManager modeChanged 啟用/停用點 AIS 選取
+    const QHash<QString, Handle(SketchPointAIS)>& pointAISMap() const { return m_pointAISMap; }
     void setVisible(bool v);
     void setTypeVisible(ConstraintType type, bool v);
 
@@ -91,6 +95,9 @@ private:
     void removeSymbolFor  (const QString& uuid);
     void clearAll();
 
+    // ✅ Task D: 重建 SketchPoint AIS 物件
+    void rebuildPoints();
+
     Handle(AIS_InteractiveContext)                m_ctx;
     Mode                                          m_mode = Mode::Master;
     Sketch*                                       m_sketch   = nullptr;
@@ -101,6 +108,7 @@ private:
 
     QHash<QString, Handle(AIS_ConstraintSymbol)>  m_geomSymbols;
     QHash<QString, Handle(AIS_DimensionLine)>     m_dimLines;
+    QHash<QString, Handle(SketchPointAIS)>        m_pointAISMap;  // ✅ Task D
 };
 
 } // namespace aicad::cad

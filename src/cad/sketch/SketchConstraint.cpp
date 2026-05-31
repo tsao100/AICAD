@@ -1,5 +1,6 @@
 #include "SketchConstraint.h"
 #include "../../core/ParameterStore.h"
+#include "../Sketch.h"
 #include <QJsonArray>
 
 namespace aicad::cad {
@@ -16,6 +17,61 @@ QJsonObject GeomRef::toJson() const {
 GeomRef GeomRef::fromJson(const QJsonObject& j) {
     return GeomRef(j["geomUuid"].toString(),
                    static_cast<GeomHandle>(j["handle"].toInt()));
+}
+
+// ── Task C: GeomRef point resolution ─────────────────────────────────────────
+QString GeomRef::resolvedPointUuid(const Sketch* sketch) const
+{
+    if (!sketch || geomUuid.isEmpty()) return {};
+    auto* geom = sketch->findGeometry(geomUuid);
+    if (!geom) return {};
+
+    // 直接引用 SketchPoint
+    if (geom->type == SketchGeometryType::Point)
+        return geomUuid;
+
+    // Line：Start / End
+    if (auto* line = dynamic_cast<const SketchLine*>(geom)) {
+        if (handle == GeomHandle::Start) return line->startUuid;
+        if (handle == GeomHandle::End)   return line->endUuid;
+    }
+
+    // Arc：Start / End / Center
+    if (auto* arc = dynamic_cast<const SketchArc*>(geom)) {
+        if (handle == GeomHandle::Start)  return arc->startUuid;
+        if (handle == GeomHandle::End)    return arc->endUuid;
+        if (handle == GeomHandle::Center) return arc->centerUuid;
+    }
+
+    // Circle：Center or WholeGeom
+    if (auto* circ = dynamic_cast<const SketchCircle*>(geom)) {
+        if (handle == GeomHandle::Center ||
+            handle == GeomHandle::WholeGeom) return circ->centerUuid;
+    }
+
+    return {};
+}
+
+bool GeomRef::isDirectPoint(const Sketch* sketch) const
+{
+    if (!sketch) return false;
+    auto* g = sketch->findGeometry(geomUuid);
+    return g && g->type == SketchGeometryType::Point;
+}
+
+QVector2D GeomRef::resolvePosition(const Sketch* sketch) const
+{
+    if (!sketch) return {};
+    QString ptUuid = resolvedPointUuid(sketch);
+    if (!ptUuid.isEmpty()) {
+        if (auto* pt = sketch->point(ptUuid))
+            return pt->pos;
+    }
+    // Fallback：直接從 geom->points 取得
+    auto* geom = sketch->findGeometry(geomUuid);
+    if (!geom) return {};
+    if (!geom->points.isEmpty()) return geom->points[0];
+    return {};
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -25,7 +25,8 @@ enum class GripType {
     Quadrant,    ///< 圓弧四分點
     Rotation,    ///< 旋轉控制點
     Scale,       ///< 縮放控制點
-    Mirror       ///< 鏡像基準點
+    Mirror,      ///< 鏡像基準點
+    DimLine      ///< ✅ Task F: 尺寸線拖曳菱形 Grip
 };
 
 /// 單一 Grip 控制點

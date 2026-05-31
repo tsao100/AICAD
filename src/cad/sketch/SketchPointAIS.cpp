@@ -1,0 +1,141 @@
+// src/cad/sketch/SketchPointAIS.cpp
+#include "SketchPointAIS.h"
+#include "ConstraintSolver.h"
+#include <Graphic3d_ArrayOfPolylines.hxx>
+#include <Graphic3d_AspectLine3d.hxx>
+#include <Graphic3d_Group.hxx>
+#include <Quantity_Color.hxx>
+#include <Select3D_SensitivePoint.hxx>
+#include <SelectMgr_EntityOwner.hxx>
+#include <gp_Vec.hxx>
+
+namespace aicad::cad {
+
+IMPLEMENT_STANDARD_RTTIEXT(SketchPointAIS, AIS_InteractiveObject)
+
+SketchPointAIS::SketchPointAIS(const SketchPoint* pt, const gp_Ax3& sketchPlane)
+    : m_uuid(pt->uuid)
+    , m_origin(pt->origin)
+    , m_plane(sketchPlane)
+    , m_pos3D(toWorld(pt->pos))
+    , m_status(SolveStatus::UnderConstrained)
+{
+    SetInfiniteState(Standard_False);
+}
+
+void SketchPointAIS::updatePosition(const QVector2D& newPos)
+{
+    m_pos3D = toWorld(newPos);
+    SetToUpdate();
+}
+
+void SketchPointAIS::updateSolveStatus(SolveStatus status)
+{
+    if (m_status == status) return;
+    m_status = status;
+    SetToUpdate();
+}
+
+gp_Pnt SketchPointAIS::toWorld(const QVector2D& pos2D) const
+{
+    // 草圖平面 2D → 世界 3D
+    // plane: XDirection = U axis, YDirection = V axis, Location = origin
+    gp_Pnt origin = m_plane.Location();
+    gp_Dir xDir   = m_plane.XDirection();
+    gp_Dir yDir   = m_plane.YDirection();
+    return gp_Pnt(origin.X() + pos2D.x() * xDir.X() + pos2D.y() * yDir.X(),
+                  origin.Y() + pos2D.x() * xDir.Y() + pos2D.y() * yDir.Y(),
+                  origin.Z() + pos2D.x() * xDir.Z() + pos2D.y() * yDir.Z());
+}
+
+void SketchPointAIS::Compute(const Handle(PrsMgr_PresentationManager)& /*pm*/,
+                               const Handle(Prs3d_Presentation)& prs,
+                               const Standard_Integer /*mode*/)
+{
+    prs->Clear();
+
+    // ── 顏色 ──
+    Quantity_Color color;
+    if (m_origin == SketchPoint::Origin::Explicit) {
+        color = Quantity_Color(Quantity_NOC_YELLOW);
+    } else {
+        switch (m_status) {
+        case SolveStatus::FullyConstrained: color = Quantity_Color(Quantity_NOC_GREEN3); break;
+        case SolveStatus::OverConstrained:  color = Quantity_Color(Quantity_NOC_RED);    break;
+        default:                            color = Quantity_Color(Quantity_NOC_CYAN1);  break;
+        }
+    }
+
+    // ── 大小（半邊長，mm） ──
+    double halfSize;
+    switch (m_origin) {
+    case SketchPoint::Origin::Center:   halfSize = 1.5; break;
+    case SketchPoint::Origin::Explicit: halfSize = 1.2; break;
+    default:                            halfSize = 1.0; break;
+    }
+
+    drawSymbol(prs, color, halfSize);
+}
+
+void SketchPointAIS::drawSymbol(const Handle(Prs3d_Presentation)& prs,
+                                 const Quantity_Color& color,
+                                 double halfSize) const
+{
+    Handle(Graphic3d_Group) grp = prs->NewGroup();
+
+    // 線寬
+    Handle(Graphic3d_AspectLine3d) aspect = new Graphic3d_AspectLine3d(color, Aspect_TOL_SOLID, 1.5f);
+    grp->SetGroupPrimitivesAspect(aspect);
+
+    gp_Pnt p = m_pos3D;
+    gp_Dir xDir = m_plane.XDirection();
+    gp_Dir yDir = m_plane.YDirection();
+
+    auto offset = [&](double dx, double dy) -> gp_Pnt {
+        return gp_Pnt(p.X() + dx * xDir.X() + dy * yDir.X(),
+                      p.Y() + dx * xDir.Y() + dy * yDir.Y(),
+                      p.Z() + dx * xDir.Z() + dy * yDir.Z());
+    };
+
+    if (m_origin == SketchPoint::Origin::Center) {
+        // 加號 +
+        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(4, 2);
+        seg->AddVertex(offset(-halfSize, 0.0));
+        seg->AddVertex(offset( halfSize, 0.0));
+        seg->AddBound(2);
+        seg->AddVertex(offset(0.0, -halfSize));
+        seg->AddVertex(offset(0.0,  halfSize));
+        grp->AddPrimitiveArray(seg);
+    } else if (m_origin == SketchPoint::Origin::Explicit) {
+        // 菱形 ◇（4 邊）
+        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(5, 1);
+        seg->AddVertex(offset( 0.0,       halfSize));
+        seg->AddVertex(offset( halfSize,  0.0));
+        seg->AddVertex(offset( 0.0,      -halfSize));
+        seg->AddVertex(offset(-halfSize,  0.0));
+        seg->AddVertex(offset( 0.0,       halfSize));
+        seg->AddBound(5);
+        grp->AddPrimitiveArray(seg);
+    } else {
+        // 正方形 □（Endpoint）
+        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(5, 1);
+        seg->AddVertex(offset(-halfSize, -halfSize));
+        seg->AddVertex(offset( halfSize, -halfSize));
+        seg->AddVertex(offset( halfSize,  halfSize));
+        seg->AddVertex(offset(-halfSize,  halfSize));
+        seg->AddVertex(offset(-halfSize, -halfSize));
+        seg->AddBound(5);
+        grp->AddPrimitiveArray(seg);
+    }
+}
+
+void SketchPointAIS::ComputeSelection(const Handle(SelectMgr_Selection)& sel,
+                                       const Standard_Integer /*mode*/)
+{
+    // Sensitivity 6 > 曲線典型 3，確保點優先被 snap 到
+    Handle(SelectMgr_EntityOwner) owner = new SelectMgr_EntityOwner(this, 6);
+    Handle(Select3D_SensitivePoint) pt  = new Select3D_SensitivePoint(owner, m_pos3D);
+    sel->Add(pt);
+}
+
+} // namespace aicad::cad

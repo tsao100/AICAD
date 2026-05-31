@@ -103,10 +103,21 @@ void CommandAlias::registerSystemAliases() {
     // Dimensional
     registerAlias("DIM", "DIST",          "Distance dimension constraint",     true);
     registerAlias("ANG", "ANGLE",         "Angle dimension constraint",        true);
+    // ✅ Task H: 補全尺寸約束命令別名與說明
+    registerAlias("RAD",       "RAD",        "Fix radius of circle/arc",          true);
+    registerAlias("FIXX",      "FIXX",       "Fix X coordinate of a point",       true);
+    registerAlias("FIXY",      "FIXY",       "Fix Y coordinate of a point",       true);
+    registerAlias("FIX",       "FIX",        "Fully fix geometry position",        true);
     // Management
     registerAlias("DCO", "DELCON",        "Delete constraint",                 true);
     registerAlias("ECO", "EDITCON",       "Edit dimension constraint",         true);
     registerAlias("LSC", "LISTCON",       "List all constraints",              true);
+    // ✅ Task H: 補全管理命令別名與說明
+    registerAlias("DOF",        "DOF",        "Show degrees of freedom analysis",  true);
+    registerAlias("CONVIS",     "CONVIS",     "Toggle constraint symbols (ON/OFF/type)", true);
+    registerAlias("CONINFO",    "CONINFO",    "Show details of a constraint",      true);
+    registerAlias("SOLVE",      "SOLVE",      "Manually trigger constraint solver",true);
+    registerAlias("LISTPOINTS", "LISTPOINTS", "List all sketch points (debug)",    true);
 }
 
 void CommandAlias::registerAlias(const QString& alias, const QString& command, const QString& description, bool isSystem) {

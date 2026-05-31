@@ -231,6 +231,7 @@ SOURCES += \
     src/cad/sketch/DimensionLineAIS.cpp \
     src/cad/sketch/SketchConstraint.cpp \
     src/cad/sketch/SketchLoopFinder.cpp \
+    src/cad/sketch/SketchPointAIS.cpp \
     src/cad/sketch/SketchRegion.cpp \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
@@ -349,6 +350,7 @@ HEADERS += \
     src/cad/sketch/DimensionLineAIS.h \
     src/cad/sketch/SketchConstraint.h \
     src/cad/sketch/SketchLoopFinder.h \
+    src/cad/sketch/SketchPointAIS.h \
     src/cad/sketch/SketchRegion.h \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \

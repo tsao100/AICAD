@@ -382,6 +382,13 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
             vl.dof = 5;
             break;
         }
+        case SketchGeometryType::Point: {
+            // ✅ Task B.1: SketchPoint 進入 Solver 變數佈局
+            const auto* pt = static_cast<const SketchPoint*>(g);
+            vars << pt->pos.x() << pt->pos.y();
+            vl.dof = 2;
+            break;
+        }
         default:
             // Polyline / Spline：逐點打包
             for (const QVector2D& pt : g->points)
@@ -434,6 +441,12 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
             e->majorRadius = vars[off+2];
             e->minorRadius = vars[off+3];
             e->angle       = vars[off+4];
+            break;
+        }
+        case SketchGeometryType::Point: {
+            // ✅ Task B.2: SketchPoint 從 Solver 回寫
+            auto* pt = static_cast<SketchPoint*>(g);
+            pt->pos = QVector2D(vars[off+0], vars[off+1]);
             break;
         }
         default:
@@ -622,6 +635,7 @@ int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
         case SketchGeometryType::Circle:  totalDOF += 3; break;
         case SketchGeometryType::Arc:     totalDOF += 5; break;
         case SketchGeometryType::Ellipse: totalDOF += 5; break;
+        case SketchGeometryType::Point:   totalDOF += 2; break;  // ✅ Task B.3
         default: totalDOF += g->points.size() * 2; break;
         }
     }

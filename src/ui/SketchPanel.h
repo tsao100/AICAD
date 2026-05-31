@@ -57,6 +57,9 @@ public:
     /** 離開覆蓋模式（detach overlay） */
     void exitOverlayMode();
 
+    /// ✅ Task E: 取得 ConstraintOverlayManager（供 UIManager PlaceDimLine 預覽用）
+    cad::ConstraintOverlayManager* overlay() const { return m_overlay.get(); }
+
 Q_SIGNALS:
     // ── 建構幾何 ────────────────────────────────────────────────
     void requestAddConstructionLine();

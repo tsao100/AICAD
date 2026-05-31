@@ -5,6 +5,8 @@
 
 namespace aicad::cad {
 
+class ConstraintOverlayManager;
+
 class SketchGripProvider : public IGripProvider {
 public:
     // ✅ -1 = all geometries (old behaviour), >= 0 = specific geometry
@@ -18,6 +20,10 @@ public:
                        const gp_Pnt& startPos,
                        const gp_Pnt& endPos) override;
     void restoreSnapshot();
+
+    /// ✅ Task F: 為尺寸約束提供可拖曳 Grip（菱形），供 UIManager 呼叫
+    QVector<GripPoint> gripsForConstraint(const QString& constraintUuid,
+                                          ConstraintOverlayManager* overlay) const;
 
 private:
     Sketch*                     m_sketch;

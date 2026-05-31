@@ -128,13 +128,43 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
         {&m_btnSymmetric,     tr("對稱"),    tr("Symmetric：相對某軸對稱"),           ConstraintType::Symmetric},
     };
 
+    // ✅ Task G: 幾何約束按鈕走命令列路徑（記錄歷史 + 觸發互動選取）
+    // constraintType → 命令名稱對照表
+    static const QHash<ConstraintType, QString> kCmdMap = {
+        {ConstraintType::Coincident,    QStringLiteral("COINCIDENT")},
+        {ConstraintType::Horizontal,    QStringLiteral("HORIZONTAL")},
+        {ConstraintType::Vertical,      QStringLiteral("VERTICAL")},
+        {ConstraintType::Parallel,      QStringLiteral("PARALLEL")},
+        {ConstraintType::Perpendicular, QStringLiteral("PERPENDICULAR")},
+        {ConstraintType::Tangent,       QStringLiteral("TANGENT")},
+        {ConstraintType::EqualLength,   QStringLiteral("EQUALLEN")},
+        {ConstraintType::EqualRadius,   QStringLiteral("EQUALRAD")},
+        {ConstraintType::Concentric,    QStringLiteral("CONCENTRIC")},
+        {ConstraintType::Fixed,         QStringLiteral("FIX")},
+        {ConstraintType::Midpoint,      QStringLiteral("MIDPOINT")},
+        {ConstraintType::PointOnCurve,  QStringLiteral("POINTONCURVE")},
+        {ConstraintType::Collinear,     QStringLiteral("COLLINEAR")},
+        {ConstraintType::Symmetric,     QStringLiteral("SYMMETRIC")},
+    };
+
     for (int i = 0; i < defs.size(); ++i) {
         auto& d  = defs[i];
         *d.ptr   = makeToolBtn(d.text, d.tip, grp);
         geomGrid->addWidget(*d.ptr, i / 4, i % 4);
         ConstraintType ct = d.ct;
-        connect(*d.ptr, &QToolButton::clicked, this,
-                [this, ct]{ Q_EMIT requestConstraint(ct); });
+        connect(*d.ptr, &QToolButton::clicked, this, [this, ct] {
+            QString cmd = kCmdMap.value(ct);
+            if (!cmd.isEmpty()) {
+                // 走命令列：保存歷史記錄，並觸發互動選取流程
+                auto* cmdMgr = core::CommandLineManager::instance();
+                if (cmdMgr) {
+                    cmdMgr->executeCommand(cmd);
+                    return;
+                }
+            }
+            // Fallback（CommandLineManager 不可用時）：直接 emit（向後相容）
+            Q_EMIT requestConstraint(ct);
+        });
     }
     vbox->addLayout(geomGrid);
 

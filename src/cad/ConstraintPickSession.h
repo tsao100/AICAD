@@ -100,6 +100,15 @@ Q_SIGNALS:
 public:
     double dimLineOffsetX() const { return m_dimLineOffsetX; }
     double dimLineOffsetY() const { return m_dimLineOffsetY; }
+
+    /**
+     * ✅ Task E: 尺寸約束選點完成後、constraintReady 發出前，
+     * UIManager 可用此取得尚在 PlaceDimLine 模式的約束 UUID。
+     * 目前回傳空字串（尺寸線放置前 UUID 尚未建立，由 overlay preview 機制處理）。
+     * 若 overlayManager 持有 pendingAIS，需另由 UIManager 持有 m_pendingDimUuid。
+     */
+    QString pendingConstraintUuid() const { return m_pendingConstraintUuid; }
+    void    setPendingConstraintUuid(const QString& uuid) { m_pendingConstraintUuid = uuid; }
 private:
     int requiredPointCount(ConstraintType type) const;
     GeomRef makeRef(const QString& geomUuid, int geomHandle,
@@ -115,6 +124,7 @@ private:
     QList<GeomRef> m_refs;
     double         m_dimLineOffsetX = 0.0;  ///< Phase 3B：確認的尺寸線偏移 X
     double         m_dimLineOffsetY = 0.0;  ///< Phase 3B：確認的尺寸線偏移 Y
+    QString        m_pendingConstraintUuid; ///< ✅ Task E: 尺寸線放置中的約束 UUID
 };
 
 } // namespace aicad::cad

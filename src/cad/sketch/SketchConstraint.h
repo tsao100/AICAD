@@ -8,6 +8,9 @@
 // Forward declare to avoid circular includes
 namespace aicad::core { class ParameterStore; }
 
+// Forward declare Sketch for GeomRef methods
+namespace aicad::cad { class Sketch; }
+
 namespace aicad::cad {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +90,21 @@ struct GeomRef {
 
     QJsonObject toJson() const;
     static GeomRef fromJson(const QJsonObject&);
+
+    // ── Phase 0B / Task C ────────────────────────────────────────────────────
+    /// 解析此 ref 在 Sketch 中對應的 SketchPoint UUID。
+    /// - 直接指向 SketchPoint → 回傳 geomUuid
+    /// - 指向 SketchLine  + Start/End      → startUuid / endUuid
+    /// - 指向 SketchArc   + Start/End/Center → 對應 UUID
+    /// - 指向 SketchCircle Center/WholeGeom → centerUuid
+    /// - 其他 → 回傳 {}
+    QString resolvedPointUuid(const Sketch* sketch) const;
+
+    /// 判斷此 ref 是否直接引用一個 SketchPoint（非曲線）
+    bool isDirectPoint(const Sketch* sketch) const;
+
+    /// 解析此 ref 對應的 2D 草圖座標
+    QVector2D resolvePosition(const Sketch* sketch) const;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

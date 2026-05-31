@@ -1,6 +1,8 @@
 // src/cad/grips/SketchGripProvider.cpp
 #include "SketchGripProvider.h"
 #include "../Plane.h"
+#include "../sketch/ConstraintOverlayManager.h"
+#include "../sketch/DimensionLineAIS.h"
 #include <QtMath>
 #include <QDebug>
 #include <GC_MakeArcOfCircle.hxx>
@@ -44,11 +46,20 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                 gp.position = gp_Pnt(w.x(), w.y(), w.z());
                 gp.type     = GripType::Vertex;
                 gp.onDrag   = [this, gi, pi](const gp_Pnt& np, bool) {
-                    // ✅ 用 normalGeometries() 保持索引一致
                     auto* g = m_sketch->normalGeometries()[gi];
-                    g->points[pi] = m_sketch->plane()->toPlane(
+                    QVector2D newPos = m_sketch->plane()->toPlane(
                         QVector3D(np.X(), np.Y(), np.Z()));
-                    // ✅ 輕量更新：僅重建 shape，不走 Document 路徑
+                    // ✅ Task A.1: 透過 movePoint 更新 SketchPoint，避免 Solver 覆蓋
+                    QString ptUuid;
+                    if (auto* line = dynamic_cast<SketchLine*>(g)) {
+                        ptUuid = (pi == 0) ? line->startUuid : line->endUuid;
+                    }
+                    if (!ptUuid.isEmpty()) {
+                        m_sketch->movePoint(ptUuid, newPos);
+                    } else {
+                        // Polyline 或無 UUID：維持舊行為
+                        g->points[pi] = newPos;
+                    }
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
@@ -76,8 +87,16 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                         QVector3D(np.X(), np.Y(), np.Z()));
                     QVector2D delta = newMid -
                                       (g->points[si] + g->points[ni]) * 0.5f;
-                    g->points[si] += delta;
-                    g->points[ni] += delta;
+                    // ✅ Task A.2: Line 中點拖曳：透過 movePoint 同時更新兩端 SketchPoint
+                    if (auto* line = dynamic_cast<SketchLine*>(g)) {
+                        if (!line->startUuid.isEmpty())
+                            m_sketch->movePoint(line->startUuid, g->points[si] + delta);
+                        if (!line->endUuid.isEmpty())
+                            m_sketch->movePoint(line->endUuid, g->points[ni] + delta);
+                    } else {
+                        g->points[si] += delta;
+                        g->points[ni] += delta;
+                    }
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
@@ -97,9 +116,14 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
             cGrip.onDrag   = [this, gi](const gp_Pnt& np, bool) {
                 auto* c = static_cast<SketchCircle*>(
                     m_sketch->normalGeometries()[gi]);
-                // ✅ 取消 comment，實際更新 center
-                c->center = m_sketch->plane()->toPlane(
+                QVector2D newCenter = m_sketch->plane()->toPlane(
                     QVector3D(np.X(), np.Y(), np.Z()));
+                // ✅ Task A.3: 透過 movePoint 更新 SketchPoint，避免 Solver 覆蓋
+                if (!c->centerUuid.isEmpty()) {
+                    m_sketch->movePoint(c->centerUuid, newCenter);
+                } else {
+                    c->center = newCenter;
+                }
                 m_sketch->rebuildShapesOnly();
             };
             grips.append(cGrip);
@@ -155,7 +179,15 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                 gp.onDrag   = [this, gi, fixedMid, fixedEnd](const gp_Pnt& np, bool) {
                     auto* a = static_cast<SketchArc*>(m_sketch->normalGeometries()[gi]);
                     GC_MakeArcOfCircle maker(np, fixedMid, fixedEnd);
-                    if (maker.IsDone()) a->curve = maker.Value();
+                    if (maker.IsDone()) {
+                        a->curve = maker.Value();
+                        // ✅ GAP 2: 同步起點 SketchPoint
+                        if (!a->startUuid.isEmpty()) {
+                            QVector2D p2d = m_sketch->plane()->toPlane(
+                                QVector3D(np.X(), np.Y(), np.Z()));
+                            m_sketch->movePoint(a->startUuid, p2d);
+                        }
+                    }
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
@@ -171,6 +203,7 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                     auto* a = static_cast<SketchArc*>(m_sketch->normalGeometries()[gi]);
                     GC_MakeArcOfCircle maker(fixedStart, np, fixedEnd);
                     if (maker.IsDone()) a->curve = maker.Value();
+                    // 弧中點無對應 SketchPoint UUID，不需 movePoint
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
@@ -185,7 +218,15 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                 gp.onDrag   = [this, gi, fixedStart, fixedMid](const gp_Pnt& np, bool) {
                     auto* a = static_cast<SketchArc*>(m_sketch->normalGeometries()[gi]);
                     GC_MakeArcOfCircle maker(fixedStart, fixedMid, np);
-                    if (maker.IsDone()) a->curve = maker.Value();
+                    if (maker.IsDone()) {
+                        a->curve = maker.Value();
+                        // ✅ GAP 2: 同步終點 SketchPoint
+                        if (!a->endUuid.isEmpty()) {
+                            QVector2D p2d = m_sketch->plane()->toPlane(
+                                QVector3D(np.X(), np.Y(), np.Z()));
+                            m_sketch->movePoint(a->endUuid, p2d);
+                        }
+                    }
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
@@ -204,7 +245,17 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
                     gp_Pnt newMid   = fixedMid.Translated(delta);
                     gp_Pnt newEnd   = fixedEnd.Translated(delta);
                     GC_MakeArcOfCircle maker(newStart, newMid, newEnd);
-                    if (maker.IsDone()) a->curve = maker.Value();
+                    if (maker.IsDone()) {
+                        a->curve = maker.Value();
+                        // ✅ GAP 2: 同步起/終點 SketchPoint（圓心 UUID 無 points[] 對應）
+                        auto toPlane = [&](const gp_Pnt& p) {
+                            return m_sketch->plane()->toPlane(QVector3D(p.X(), p.Y(), p.Z()));
+                        };
+                        if (!a->startUuid.isEmpty())
+                            m_sketch->movePoint(a->startUuid, toPlane(newStart));
+                        if (!a->endUuid.isEmpty())
+                            m_sketch->movePoint(a->endUuid, toPlane(newEnd));
+                    }
                     m_sketch->rebuildShapesOnly();
                 };
                 grips.append(gp);
@@ -348,6 +399,63 @@ void SketchGripProvider::restoreSnapshot()
         }
     }
     m_sketch->rebuildShapesOnly();
+}
+
+// ── Task F: 尺寸線 Grip ──────────────────────────────────────────────────────
+QVector<GripPoint> SketchGripProvider::gripsForConstraint(
+    const QString& constraintUuid,
+    ConstraintOverlayManager* overlay) const
+{
+    QVector<GripPoint> grips;
+    if (!m_sketch || !overlay) return grips;
+
+    auto* con = m_sketch->findConstraint(constraintUuid);
+    if (!con) return grips;
+
+    // 僅尺寸型約束提供可拖曳 Grip
+    const bool isDim =
+        con->type == ConstraintType::FixedDistance ||
+        con->type == ConstraintType::FixedRadius   ||
+        con->type == ConstraintType::FixedX        ||
+        con->type == ConstraintType::FixedY        ||
+        con->type == ConstraintType::FixedAngleDim;
+    if (!isDim) return grips;
+
+    // 取得尺寸線 AIS 物件，從中取錨點位置
+    Handle(AIS_DimensionLine) dimAIS = overlay->dimLineAISForConstraint(constraintUuid);
+    if (dimAIS.IsNull()) return grips;
+
+    GripPoint grip;
+    grip.id       = constraintUuid + QLatin1String("_dim");
+    grip.position = dimAIS->dimLineAnchorPoint3D();
+    grip.type     = GripType::DimLine;  // ✅ Task F: 菱形 Grip
+
+    grip.onDrag = [this, constraintUuid, overlay](const gp_Pnt& np, bool /*snapped*/) {
+        SketchConstraint* c = m_sketch->findConstraint(constraintUuid);
+        if (!c || !m_sketch->plane()) return;
+
+        QVector2D newPlanePt = m_sketch->plane()->toPlane(
+            QVector3D(np.X(), np.Y(), np.Z()));
+
+        // 計算中心點（兩 ref 的中點，用於計算偏移量）
+        QVector2D p1, p2;
+        if (!c->refs.isEmpty())
+            p1 = c->refs[0].resolvePosition(m_sketch);
+        p2 = (c->refs.size() > 1) ? c->refs[1].resolvePosition(m_sketch) : p1;
+        QVector2D center = (p1 + p2) * 0.5f;
+
+        // 將新位置轉換為相對偏移量並儲存
+        c->dimLineOffsetX = static_cast<double>(newPlanePt.x() - center.x());
+        c->dimLineOffsetY = static_cast<double>(newPlanePt.y() - center.y());
+
+        // 即時更新 AIS 顯示
+        overlay->updateDimLine(constraintUuid,
+                               c->dimLineOffsetX,
+                               c->dimLineOffsetY);
+    };
+
+    grips.append(grip);
+    return grips;
 }
 
 } // namespace aicad::cad

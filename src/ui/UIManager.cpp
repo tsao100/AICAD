@@ -1742,7 +1742,8 @@ void UIManager::setupSketchPanel()
                     // 啟動 PickSession
                     d->pickSession->begin(sketch, type, evalVal, paramExpr, driving);
                     if (d->cadView) {
-                        d->cadView->setMode(view::InteractionMode::GetPoint);
+                        // ✅ GAP 4: 使用 GetGeom mode（可識別 SketchPointAIS）
+                        d->cadView->setMode(view::InteractionMode::GetGeom);
                         // 顯示提示
                         setStatusMessage(d->pickSession->promptText());
                     }
@@ -1934,6 +1935,42 @@ void UIManager::setupSketchPanel()
             // 更新 status bar 提示
             if (d->pickSession->isActive())
                 setStatusMessage(d->pickSession->promptText());
+        });
+
+        // ✅ GAP 3: modeChanged — GetGeom 時啟用 SketchPointAIS 的 AIS 選取，離開時停用
+        connect(d->cadView, &view::CadView::modeChanged,
+                this, [this](view::InteractionMode mode) {
+            auto* overlay = d->sketchPanel ? d->sketchPanel->overlay() : nullptr;
+            if (!overlay) return;
+            auto ctx = d->cadView->context();
+            if (ctx.IsNull()) return;
+
+            const bool enterGetGeom = (mode == view::InteractionMode::GetGeom);
+            for (auto& ais : overlay->pointAISMap()) {
+                if (enterGetGeom)
+                    ctx->Activate(ais, 0, Standard_False);   // 啟用 Selection mode 0
+                else
+                    ctx->Deactivate(ais);
+            }
+            ctx->UpdateCurrentViewer();
+        });
+
+        // ✅ Task E: PlaceDimLine 模式 — 預覽尺寸線位置
+        connect(d->cadView, &view::CadView::dimLinePosPreview,
+                this, [this](double ox, double oy) {
+            if (!d->sketchPanel || !d->sketchPanel->overlay()) return;
+            const QString uuid = d->pickSession
+                                  ? d->pickSession->pendingConstraintUuid()
+                                  : QString();
+            if (!uuid.isEmpty())
+                d->sketchPanel->overlay()->updateDimLine(uuid, ox, oy);
+        });
+
+        // ✅ Task E: PlaceDimLine 模式 — 確認尺寸線位置
+        connect(d->cadView, &view::CadView::dimLinePosConfirmed,
+                this, [this](double ox, double oy) {
+            if (d->pickSession)
+                d->pickSession->confirmDimLineOffset(ox, oy);
         });
     }
 

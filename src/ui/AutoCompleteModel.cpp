@@ -140,6 +140,40 @@ void AutoCompleteModel::updateFromAlias() {
 
     QStringList commands = alias->allCommands();
 
+    // ✅ Task H: 為約束命令補充參數語法提示（顯示在 description 欄後面）
+    static const QHash<QString, QString> kArgHints = {
+        // 幾何約束
+        {QStringLiteral("COINCIDENT"),    QStringLiteral(" — [geom1] [geom2]")},
+        {QStringLiteral("HORIZONTAL"),    QStringLiteral(" — [lineUuid]")},
+        {QStringLiteral("VERTICAL"),      QStringLiteral(" — [lineUuid]")},
+        {QStringLiteral("PARALLEL"),      QStringLiteral(" — [uuid1] [uuid2]")},
+        {QStringLiteral("PERPENDICULAR"), QStringLiteral(" — [uuid1] [uuid2]")},
+        {QStringLiteral("TANGENT"),       QStringLiteral(" — [uuid1] [uuid2]")},
+        {QStringLiteral("CONCENTRIC"),    QStringLiteral(" — [uuid1] [uuid2]")},
+        {QStringLiteral("EQUALLEN"),      QStringLiteral(" — [uuid1] [uuid2]")},
+        {QStringLiteral("EQUALRAD"),      QStringLiteral(" — [uuid1] [uuid2]")},
+        {QStringLiteral("COLLINEAR"),     QStringLiteral(" — [uuid1] [uuid2]")},
+        {QStringLiteral("MIDPOINT"),      QStringLiteral(" — [pointUuid] [lineUuid]")},
+        {QStringLiteral("POINTONCURVE"),  QStringLiteral(" — [pointUuid] [curveUuid]")},
+        {QStringLiteral("SYMMETRIC"),     QStringLiteral(" — [uuid1] [uuid2] [axisUuid]")},
+        {QStringLiteral("FIX"),           QStringLiteral(" — [uuid]")},
+        // 尺寸約束
+        {QStringLiteral("DIST"),          QStringLiteral(" — [value|expr]  → 選兩點")},
+        {QStringLiteral("RAD"),           QStringLiteral(" — [value|expr]  → 選圓/弧")},
+        {QStringLiteral("ANGLE"),         QStringLiteral(" — [value|expr]  → 選兩線")},
+        {QStringLiteral("FIXX"),          QStringLiteral(" — [value|expr]  → 選點")},
+        {QStringLiteral("FIXY"),          QStringLiteral(" — [value|expr]  → 選點")},
+        // 管理
+        {QStringLiteral("DELCON"),        QStringLiteral(" — [uuid]")},
+        {QStringLiteral("EDITCON"),       QStringLiteral(" — [uuid] [newExpr]")},
+        {QStringLiteral("LISTCON"),       QStringLiteral("")},
+        {QStringLiteral("CONINFO"),       QStringLiteral(" — [uuid]")},
+        {QStringLiteral("SOLVE"),         QStringLiteral("")},
+        {QStringLiteral("DOF"),           QStringLiteral("")},
+        {QStringLiteral("CONVIS"),        QStringLiteral(" — [ON|OFF|type]")},
+        {QStringLiteral("LISTPOINTS"),    QStringLiteral("")},
+    };
+
     beginResetModel();
     m_allCommands.clear();
 
@@ -150,9 +184,10 @@ void AutoCompleteModel::updateFromAlias() {
         command::AliasDefinition def = alias->getDefinition(aliasStr);
 
         CommandInfo info;
-        info.name = cmd;
+        info.name  = cmd;
         info.alias = aliasStr;
-        info.description = def.description;
+        // 附加參數語法提示
+        info.description = def.description + kArgHints.value(cmd.toUpper());
 
         // Phase 9：依命令名稱分配類別
         static const QStringList sketchConstraintCmds = {
@@ -170,13 +205,13 @@ void AutoCompleteModel::updateFromAlias() {
         };
 
         if (sketchConstraintCmds.contains(cmd.toUpper()))
-            info.category = "Sketch Constraint";
+            info.category = QStringLiteral("Sketch Constraint");
         else if (sketchDimCmds.contains(cmd.toUpper()))
-            info.category = "Sketch Dimension";
+            info.category = QStringLiteral("Sketch Dimension");
         else if (sketchMgmtCmds.contains(cmd.toUpper()))
-            info.category = "Sketch Management";
+            info.category = QStringLiteral("Sketch Management");
         else
-            info.category = "General";
+            info.category = QStringLiteral("General");
 
         m_allCommands.append(info);
     }

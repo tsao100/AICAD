@@ -165,10 +165,13 @@ void ConstraintOverlayManager::clearAll() {
     if (!m_ctx.IsNull()) {
         for (auto& sym : m_geomSymbols) m_ctx->Remove(sym, Standard_False);
         for (auto& dim : m_dimLines)    m_ctx->Remove(dim, Standard_False);
+        // ✅ Task D: 清除點 AIS
+        for (auto& pt  : m_pointAISMap) m_ctx->Remove(pt,  Standard_False);
         m_ctx->UpdateCurrentViewer();
     }
     m_geomSymbols.clear();
     m_dimLines.clear();
+    m_pointAISMap.clear();  // ✅ Task D
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,6 +185,9 @@ void ConstraintOverlayManager::rebuildAll() {
 
     for (const SketchConstraint& c : *constraints)
         createSymbolFor(c);
+
+    // ✅ Task D: 重建 SketchPoint AIS 物件
+    rebuildPoints();
 
     if (!m_ctx.IsNull())
         m_ctx->UpdateCurrentViewer();
@@ -254,4 +260,37 @@ Handle(AIS_DimensionLine) ConstraintOverlayManager::dimLineAISForConstraint(
     return m_dimLines.value(constraintUuid);
 }
 
+// ── Task D: SketchPoint AIS 重建 ─────────────────────────────────────────────
+void ConstraintOverlayManager::rebuildPoints()
+{
+    // 只在 master 模式且有 sketch 時執行
+    if (m_mode != Mode::Master || !m_sketch || m_ctx.IsNull()) return;
+
+    SolveStatus status = lastSolveStatus();
+    const auto pts = m_sketch->points();
+
+    // 取得草圖平面的 OCCT Ax3
+    gp_Ax3 ax3;
+    if (m_sketch->plane()) {
+        QVector3D orig = m_sketch->plane()->origin();
+        QVector3D xDir = m_sketch->plane()->xAxis();
+        QVector3D yDir = m_sketch->plane()->yAxis();
+        ax3 = gp_Ax3(gp_Pnt(orig.x(), orig.y(), orig.z()),
+                     gp_Dir(m_sketch->plane()->normal().x(),
+                            m_sketch->plane()->normal().y(),
+                            m_sketch->plane()->normal().z()),
+                     gp_Dir(xDir.x(), xDir.y(), xDir.z()));
+    }
+
+    for (auto* pt : pts) {
+        // Intersection 點（臨時交點）不顯示
+        if (pt->origin == SketchPoint::Origin::Intersection) continue;
+
+        Handle(SketchPointAIS) ais = new SketchPointAIS(pt, ax3);
+        ais->updateSolveStatus(status);
+        m_ctx->Display(ais, Standard_False);
+        m_ctx->Deactivate(ais);   // 預設關閉選取，由 GetGeom mode 主動激活
+        m_pointAISMap.insert(pt->uuid, ais);
+    }
+}
 } // namespace aicad::cad
