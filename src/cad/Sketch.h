@@ -262,7 +262,14 @@ public:
     QString addLineGeom(const QVector2D& p1, const QVector2D& p2,
                         const QString& reuseStart = QString(),
                         const QString& reuseEnd   = QString());
-    QString addCircleGeom(const QVector2D& center, double radius);
+    QString addCircleGeom(const QVector2D& center, double radius,
+                          const QString& reuseCenterUuid = QString());
+    QString addArcGeom(const QVector2D& startPoint,
+                       const QVector2D& midPoint,
+                       const QVector2D& endPoint,
+                       const QString& reuseStartUuid  = QString(),
+                       const QString& reuseEndUuid    = QString(),
+                       const QString& reuseCenterUuid = QString());
 
     // 向後相容的舊版方法（void，包裝新版）
     void addLine(const QVector2D& p1, const QVector2D& p2);

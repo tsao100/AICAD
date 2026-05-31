@@ -30,6 +30,7 @@
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <Geom_Circle.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
@@ -106,20 +107,16 @@ void Sketch::removeGeometry(int index) {
 void Sketch::clearGeometry() {
     qDeleteAll(m_geometries);
     m_geometries.clear();
+    // ✅ Phase 0B：同步清除 SketchPoint 資料
+    qDeleteAll(m_points);
+    m_points.clear();
+    m_pointAisObjects.clear();
     Q_EMIT geometryChanged();
 }
 
 void Sketch::addLine(const QVector2D& p1, const QVector2D& p2) {
-    SketchLine* line = new SketchLine(p1, p2);
-    addGeometry(line);
-
-    if (hasValidPlane()) {
-        QVector3D w1 = m_plane->toWorld(p1);
-        QVector3D w2 = m_plane->toWorld(p2);
-        qDebug() << "[Sketch]" << name() << "added line:"
-                 << "Plane(" << p1 << "->" << p2 << ")"
-                 << "World(" << w1 << "->" << w2 << ")";
-    }
+    // ✅ 改為呼叫 addLineGeom，確保 SketchPoint 被建立
+    addLineGeom(p1, p2);
 }
 
 void Sketch::addPolyline(const QVector<QVector2D>& points, bool closed) {
@@ -135,7 +132,8 @@ void Sketch::addSpline(const QVector<QVector2D>& points) {
 }
 
 void Sketch::addCircle(const QVector2D& center, double radius) {
-    addGeometry(new SketchCircle(center, radius));
+    // ✅ 改為呼叫 addCircleGeom，確保 SketchPoint 被建立
+    addCircleGeom(center, radius);
 }
 
 void Sketch::addEllipse(const QVector2D& center, double majorRadius, double minorRadius, double angle) {
@@ -167,6 +165,17 @@ void Sketch::addArc(const QVector2D& startPoint,
                     const QVector2D& midPoint,
                     const QVector2D& endPoint)
 {
+    // ✅ 改為呼叫 addArcGeom，確保 SketchPoint 被建立
+    addArcGeom(startPoint, midPoint, endPoint);
+}
+
+QString Sketch::addArcGeom(const QVector2D& startPoint,
+                            const QVector2D& midPoint,
+                            const QVector2D& endPoint,
+                            const QString& reuseStartUuid,
+                            const QString& reuseEndUuid,
+                            const QString& reuseCenterUuid)
+{
     try {
         QVector3D w1 = planeToWorld(startPoint);
         QVector3D w2 = planeToWorld(midPoint);
@@ -178,15 +187,39 @@ void Sketch::addArc(const QVector2D& startPoint,
 
         GC_MakeArcOfCircle arcMaker(gp1, gp2, gp3);
         if (!arcMaker.IsDone()) {
-            qWarning() << "[Sketch]" << name() << "addArc: failed (points may be collinear)";
-            return;
+            qWarning() << "[Sketch]" << name() << "addArcGeom: failed (points may be collinear)";
+            return QString();
         }
 
         Handle(Geom_TrimmedCurve) arc = arcMaker.Value();
-        addGeometry(new SketchArc(arc));
-        qDebug() << "[Sketch]" << name() << "Arc added";
+        auto* arcGeom = new SketchArc(arc);
+
+        // ✅ Phase 0B：建立或重用起點/終點/圓心 SketchPoint
+        arcGeom->startUuid  = reuseStartUuid.isEmpty()
+            ? addPoint(startPoint, SketchPoint::Origin::Endpoint)
+            : reuseStartUuid;
+        arcGeom->endUuid    = reuseEndUuid.isEmpty()
+            ? addPoint(endPoint,   SketchPoint::Origin::Endpoint)
+            : reuseEndUuid;
+
+        if (reuseCenterUuid.isEmpty()) {
+            // 計算圓心 2D 座標並建立 Center 點
+            gp_Pnt gcCenter = Handle(Geom_Circle)::DownCast(arc->BasisCurve())->Location();
+            QVector2D centerPos = m_plane->toPlane(
+                QVector3D(gcCenter.X(), gcCenter.Y(), gcCenter.Z()));
+            arcGeom->centerUuid = addPoint(centerPos, SketchPoint::Origin::Center);
+        } else {
+            arcGeom->centerUuid = reuseCenterUuid;
+        }
+
+        m_geometries.append(arcGeom);
+        Q_EMIT geometryChanged();
+        Q_EMIT rebuildRequested();
+        qDebug() << "[Sketch]" << name() << "Arc added with SketchPoints";
+        return arcGeom->uuid;
     } catch (Standard_Failure const& e) {
         qWarning() << "[Sketch] OCCT error:" << e.GetMessageString();
+        return QString();
     }
 }
 
@@ -578,6 +611,18 @@ QJsonObject Sketch::toJson() const {
         }
         geomJson["points"] = pointsArray;
 
+        // ✅ Phase 0B：儲存各幾何的點 UUID 引用
+        if (const auto* line = dynamic_cast<const SketchLine*>(geom)) {
+            geomJson["startUuid"]  = line->startUuid;
+            geomJson["endUuid"]    = line->endUuid;
+        } else if (const auto* circle = dynamic_cast<const SketchCircle*>(geom)) {
+            geomJson["centerUuid"] = circle->centerUuid;
+        } else if (const auto* arc = dynamic_cast<const SketchArc*>(geom)) {
+            geomJson["startUuid"]  = arc->startUuid;
+            geomJson["endUuid"]    = arc->endUuid;
+            geomJson["centerUuid"] = arc->centerUuid;
+        }
+
         // 各幾何類型的額外屬性
         switch (geom->type) {
         case SketchGeometryType::Circle: {
@@ -637,6 +682,19 @@ QJsonObject Sketch::toJson() const {
         geomsArray.append(geomJson);
     }
     json["geometries"] = geomsArray;
+
+    // ✅ Phase 0B：儲存 SketchPoint 資料
+    QJsonArray pointsArr;
+    for (auto it = m_points.cbegin(); it != m_points.cend(); ++it) {
+        const SketchPoint* pt = it.value();
+        QJsonObject ptJson;
+        ptJson["uuid"]   = pt->uuid;
+        ptJson["x"]      = pt->pos.x();
+        ptJson["y"]      = pt->pos.y();
+        ptJson["origin"] = static_cast<int>(pt->origin);
+        pointsArr.append(ptJson);
+    }
+    json["sketchPoints"] = pointsArr;
 
     QJsonArray conArr;
     for (const auto& c : m_constraints)
@@ -710,6 +768,25 @@ bool Sketch::fromJson(const QJsonObject& json) {
     //                         Spline / Arc(跳過) / Ellipse）
     // ================================================================
     clearGeometry();
+
+    // ✅ Phase 0B：先還原 SketchPoint（幾何需要 UUID 引用）
+    if (json.contains("sketchPoints")) {
+        for (const QJsonValue& v : json["sketchPoints"].toArray()) {
+            QJsonObject ptJson = v.toObject();
+            QString uuid = ptJson["uuid"].toString();
+            QVector2D pos(ptJson["x"].toDouble(), ptJson["y"].toDouble());
+            SketchPoint::Origin origin =
+                static_cast<SketchPoint::Origin>(ptJson["origin"].toInt(
+                    static_cast<int>(SketchPoint::Origin::Endpoint)));
+            auto* pt = new SketchPoint(pos, origin);
+            pt->uuid = uuid;  // 恢復原 UUID
+            m_points.insert(uuid, pt);
+            // ✅ 同時加入 m_geometries，供 Solver 使用（與 addPoint() 行為一致）
+            m_geometries.append(pt);
+        }
+        qDebug() << "[Sketch]" << name() << "Loaded" << m_points.size() << "SketchPoints";
+    }
+
     if (json.contains("geometries")) {
         QJsonArray geomsArray = json["geometries"].toArray();
 
@@ -730,7 +807,11 @@ bool Sketch::fromJson(const QJsonObject& json) {
             switch (type) {
             case SketchGeometryType::Line:
                 if (points.size() >= 2) {
-                    addLine(points[0], points[1]);
+                    // ✅ Phase 0B：傳遞儲存的 UUID，避免重建新 SketchPoint
+                    QString startUuid = geomJson["startUuid"].toString();
+                    QString endUuid   = geomJson["endUuid"].toString();
+                    // 若舊格式無 uuid（legacy），addLineGeom 會自動建立點
+                    addLineGeom(points[0], points[1], startUuid, endUuid);
                 }
                 // 通用：在每個 case 的 addXxx() 之後加：
                 if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
@@ -755,7 +836,9 @@ bool Sketch::fromJson(const QJsonObject& json) {
                                  geomJson["centerY"].toDouble());
                 double radius = geomJson["radius"].toDouble();
                 if (radius > 0.0) {
-                    addCircle(center, radius);
+                    // ✅ Phase 0B：傳入已儲存的 centerUuid 重用已載入的 SketchPoint
+                    QString savedCenterUuid = geomJson["centerUuid"].toString();
+                    addCircleGeom(center, radius, savedCenterUuid);
                 }
                 if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
                     m_geometries.last()->uuid = geomJson["uuid"].toString();
@@ -763,8 +846,6 @@ bool Sketch::fromJson(const QJsonObject& json) {
                     m_geometries.last()->role = static_cast<GeomRole>(geomJson["role"].toInt());
                 break;
             }
-
-
 
             case SketchGeometryType::Spline:
                 if (points.size() >= 3) {
@@ -785,13 +866,20 @@ bool Sketch::fromJson(const QJsonObject& json) {
                     return QVector2D(o["x"].toDouble(), o["y"].toDouble());
                 };
 
+                // ✅ Phase 0B：傳入已儲存的 UUID 重用已載入的 SketchPoint
+                QString savedStartUuid  = geomJson["startUuid"].toString();
+                QString savedEndUuid    = geomJson["endUuid"].toString();
+                QString savedCenterUuid = geomJson["centerUuid"].toString();
+
                 if (geomJson.contains("startPt") &&
                     geomJson.contains("midPt")   &&
                     geomJson.contains("endPt")) {
-                    addArc(readPt("startPt"), readPt("midPt"), readPt("endPt"));
+                    addArcGeom(readPt("startPt"), readPt("midPt"), readPt("endPt"),
+                               savedStartUuid, savedEndUuid, savedCenterUuid);
                 } else if (points.size() >= 3) {
                     // legacy fallback
-                    addArc(points[0], points[1], points[2]);
+                    addArcGeom(points[0], points[1], points[2],
+                               savedStartUuid, savedEndUuid, savedCenterUuid);
                 } else {
                     qWarning() << "[Sketch]" << name()
                                << "Arc skipped: no key points in JSON";
@@ -1426,9 +1514,12 @@ QString Sketch::addLineGeom(const QVector2D& p1, const QVector2D& p2,
     return line->uuid;
 }
 
-QString Sketch::addCircleGeom(const QVector2D& center, double radius)
+QString Sketch::addCircleGeom(const QVector2D& center, double radius,
+                               const QString& reuseCenterUuid)
 {
-    QString centerUuid = addPoint(center, SketchPoint::Origin::Center);
+    QString centerUuid = reuseCenterUuid.isEmpty()
+        ? addPoint(center, SketchPoint::Origin::Center)
+        : reuseCenterUuid;
 
     auto* circ = new SketchCircle(center, radius);
     circ->centerUuid = centerUuid;
