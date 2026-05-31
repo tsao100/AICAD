@@ -733,9 +733,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            QVector2D startPoint = lineData["startPoint"].value<QVector2D>();
                            QVector2D endPoint = lineData["endPoint"].value<QVector2D>();
 
-                           // Create the line in the sketch
-                           sketch->addLine(startPoint, endPoint);
-                           sketch->rebuild();
+                           // Create the line in the sketch (addLineGeom creates SketchPoints)
+                           sketch->addLineGeom(startPoint, endPoint);
+                           // rebuildRequested signal auto-triggers Document::rebuildFeature
+                           // → eraseFromContext + rebuild + displayInContext
+                           // DO NOT call rebuild() again here: it would clear m_pointAisObjects
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -779,7 +781,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            // }
 
                            sketch->addPolyline(vertices, false);
-                           sketch->rebuild();
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -835,9 +836,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                return;
                            }
 
-                           // Create the line
-                           sketch->addLine(QVector2D(x1, y1), QVector2D(x2, y2));
-                           sketch->rebuild();
+                           // Create the line in the sketch (addLineGeom creates SketchPoints)
+                           sketch->addLineGeom(QVector2D(x1, y1), QVector2D(x2, y2));
 
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
                            bus->publish(Events::COMMAND_EXECUTED, "Line created");
@@ -863,7 +863,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            QVector2D corner2 = rectData["Corner2"].value<QVector2D>();
 
                            sketch->addRectangle(corner1, corner2);
-                           sketch->rebuild();
 
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
                            bus->publish(Events::COMMAND_EXECUTED, "Rectangle created");
@@ -893,8 +892,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                return;
                            }
 
-                           sketch->addCircle(center, radius);
-                           sketch->rebuild();
+                           sketch->addCircleGeom(center, radius);
 
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
                            bus->publish(Events::COMMAND_EXECUTED,
@@ -928,7 +926,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
                            // Create the ellipse in the sketch
                            sketch->addEllipse(center, majorRadius, minorRadius, angle);
-                           sketch->rebuild();
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -974,7 +971,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
                            // ── 寫入 Sketch ──────────────────────────────────────────
                             sketch->addArc(startPoint, midPoint, endPoint);
-                            sketch->rebuild();
 
                            // ── 廣播更新 ─────────────────────────────────────────────
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -1037,8 +1033,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            //     sketch->addLine(vertices[i], vertices[nextIndex]);
                            // }
 
-                           sketch->rebuild();
-
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
 
@@ -1079,7 +1073,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
                            // Create the spline in the sketch
                            sketch->addSpline(controlPoints);
-                           sketch->rebuild();
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -1134,7 +1127,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
                            // Create the spline in the sketch
                            sketch->addSpline(controlPoints);
-                           sketch->rebuild();
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());

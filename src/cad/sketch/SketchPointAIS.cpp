@@ -78,13 +78,12 @@ void SketchPointAIS::Compute(const Handle(PrsMgr_PresentationManager)& /*pm*/,
 }
 
 void SketchPointAIS::drawSymbol(const Handle(Prs3d_Presentation)& prs,
-                                 const Quantity_Color& color,
-                                 double halfSize) const
+                                const Quantity_Color& color,
+                                double halfSize) const
 {
     Handle(Graphic3d_Group) grp = prs->NewGroup();
-
-    // 線寬
-    Handle(Graphic3d_AspectLine3d) aspect = new Graphic3d_AspectLine3d(color, Aspect_TOL_SOLID, 1.5f);
+    Handle(Graphic3d_AspectLine3d) aspect =
+        new Graphic3d_AspectLine3d(color, Aspect_TOL_SOLID, 1.5f);
     grp->SetGroupPrimitivesAspect(aspect);
 
     gp_Pnt p = m_pos3D;
@@ -100,31 +99,32 @@ void SketchPointAIS::drawSymbol(const Handle(Prs3d_Presentation)& prs,
     if (m_origin == SketchPoint::Origin::Center) {
         // 加號 +
         Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(4, 2);
+        seg->AddBound(2);                          // ← 必須在 vertex 之前
         seg->AddVertex(offset(-halfSize, 0.0));
         seg->AddVertex(offset( halfSize, 0.0));
-        seg->AddBound(2);
+        seg->AddBound(2);                          // ← 必須在 vertex 之前
         seg->AddVertex(offset(0.0, -halfSize));
         seg->AddVertex(offset(0.0,  halfSize));
         grp->AddPrimitiveArray(seg);
     } else if (m_origin == SketchPoint::Origin::Explicit) {
-        // 菱形 ◇（4 邊）
+        // 菱形 ◇
         Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(5, 1);
+        seg->AddBound(5);                          // ← 必須在 vertex 之前
         seg->AddVertex(offset( 0.0,       halfSize));
         seg->AddVertex(offset( halfSize,  0.0));
         seg->AddVertex(offset( 0.0,      -halfSize));
         seg->AddVertex(offset(-halfSize,  0.0));
         seg->AddVertex(offset( 0.0,       halfSize));
-        seg->AddBound(5);
         grp->AddPrimitiveArray(seg);
     } else {
         // 正方形 □（Endpoint）
         Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(5, 1);
+        seg->AddBound(5);                          // ← 必須在 vertex 之前
         seg->AddVertex(offset(-halfSize, -halfSize));
         seg->AddVertex(offset( halfSize, -halfSize));
         seg->AddVertex(offset( halfSize,  halfSize));
         seg->AddVertex(offset(-halfSize,  halfSize));
         seg->AddVertex(offset(-halfSize, -halfSize));
-        seg->AddBound(5);
         grp->AddPrimitiveArray(seg);
     }
 }

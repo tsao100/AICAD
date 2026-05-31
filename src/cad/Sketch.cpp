@@ -7,6 +7,8 @@
 #include "Document.h"
 #include "PlaneManager.h"
 #include "sketch/SketchLoopFinder.h"
+#include "sketch/SketchPointAIS.h"
+#include <gp_Ax3.hxx>
 
 #include <QDebug>
 #include <QtMath>
@@ -249,6 +251,7 @@ bool Sketch::rebuild() {
         m_aisShapes.clear();
         m_aisShapeUuids.clear();
         m_constructionShapes.clear();
+        m_pointAisObjects.clear();
 
         if (m_geometries.isEmpty()) {
             setShape(TopoDS_Shape());
@@ -261,6 +264,8 @@ bool Sketch::rebuild() {
 
         for (const SketchGeometry* geom : m_geometries) {
             if (!geom) continue;
+            // ── Point：不產生 wire，由 SketchPointAIS 單獨處理 ────────────────
+            if (geom->type == SketchGeometryType::Point) continue;
 
             TopoDS_Wire wire;
             bool wireCreated = false;
@@ -453,6 +458,19 @@ bool Sketch::rebuild() {
 
         setShape(compound);
 
+        // ── 建立 SketchPointAIS ───────────────────────────────────────
+        {
+            gp_Pnt org(m_plane->origin().x(), m_plane->origin().y(), m_plane->origin().z());
+            gp_Dir xd (m_plane->xAxis().x(),  m_plane->xAxis().y(),  m_plane->xAxis().z());
+            gp_Dir nd (m_plane->normal().x(), m_plane->normal().y(), m_plane->normal().z());
+            gp_Ax3 ax3(org, nd, xd);
+
+            for (auto it = m_points.cbegin(); it != m_points.cend(); ++it) {
+                Handle(SketchPointAIS) ptAis = new SketchPointAIS(it.value(), ax3);
+                m_pointAisObjects.insert(it.key(), ptAis);  // 隱含向上轉型
+            }
+        }
+
         qDebug() << "[Sketch]" << name() << "rebuilt with"
                  << m_wires.size() << "wires and"
                  << m_aisShapes.size() << "AIS shapes";
@@ -477,6 +495,8 @@ bool Sketch::rebuildShapesOnly()
         if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
     for (const Handle(AIS_Shape)& s : m_constructionShapes)
         if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
+    for (auto& ptAis : m_pointAisObjects)
+        if (!ptAis.IsNull()) m_aisContext->Erase(ptAis, Standard_False);
 
     // ② 重建 TopoDS + 更新 m_aisShapes（建立全新 handle）
     if (!rebuild()) return false;
@@ -488,6 +508,12 @@ bool Sketch::rebuildShapesOnly()
         if (!s.IsNull()) {
             m_aisContext->Display(s, Standard_False);
             m_aisContext->Deactivate(s);
+        }
+    }
+    for (auto& ptAis : m_pointAisObjects) {
+        if (!ptAis.IsNull()) {
+            m_aisContext->Display(ptAis, Standard_False);
+            m_aisContext->Activate(ptAis, 0);
         }
     }
 
@@ -1219,6 +1245,13 @@ QList<Handle(AIS_Shape)> Sketch::displayInContext(
         }
     }
 
+    for (auto& ptAis : m_pointAisObjects) {
+        if (!ptAis.IsNull()) {
+            context->Display(ptAis, Standard_False);
+            context->Activate(ptAis, 0);
+        }
+    }
+
     context->UpdateCurrentViewer();
     return m_aisShapes;   // 只回傳 normal shapes
 }
@@ -1229,6 +1262,8 @@ void Sketch::eraseFromContext(const Handle(AIS_InteractiveContext)& context) {
         if (!s.IsNull()) context->Erase(s, Standard_False);
     for (const Handle(AIS_Shape)& s : m_constructionShapes)   // ← 新增
         if (!s.IsNull()) context->Erase(s, Standard_False);
+    for (auto& ptAis : m_pointAisObjects)
+        if (!ptAis.IsNull()) context->Erase(ptAis, Standard_False);
     context->UpdateCurrentViewer();
 }
 

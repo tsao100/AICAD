@@ -427,6 +427,7 @@ private:
     QList<QString>            m_aisShapeUuids;
     QList<SketchConstraint> m_constraints;
     QList<Handle(AIS_Shape)>  m_constructionShapes;
+    QHash<QString, Handle(AIS_InteractiveObject)> m_pointAisObjects;  ///< Phase 0B：點 UUID → SketchPointAIS
     ConstraintSolver        m_solver;
     Handle(AIS_InteractiveContext) m_aisContext;
     aicad::core::ParameterStore*  m_parameterStore = nullptr;
