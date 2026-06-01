@@ -149,6 +149,7 @@ struct SketchArc : public SketchGeometry
  */
 struct SketchPolyline : public SketchGeometry {
     bool closed;
+    QVector<QString> vertexUuids;  ///< 各頂點對應的 SketchPoint UUID（Phase 0B）
 
     SketchPolyline(const QVector<QVector2D>& pts, bool isClosed,
                    GeomRole role = GeomRole::Normal)
@@ -162,6 +163,7 @@ struct SketchPolyline : public SketchGeometry {
  * @brief 草圖樣條
  */
 struct SketchSpline : public SketchGeometry {
+    QVector<QString> controlPointUuids;  ///< 各控制點對應的 SketchPoint UUID（Phase 0B）
 
     SketchSpline(const QVector<QVector2D>& pts,
                  GeomRole role = GeomRole::Normal)
@@ -205,6 +207,7 @@ struct SketchCircle : public SketchGeometry {
  * @brief 草圖橢圓
  */
 struct SketchEllipse : public SketchGeometry {
+    QString   centerUuid;  ///< 橢圓圓心 UUID（Phase 0B）
     QVector2D center;
     double majorRadius;
     double minorRadius;
@@ -271,6 +274,13 @@ public:
                        const QString& reuseStartUuid  = QString(),
                        const QString& reuseEndUuid    = QString(),
                        const QString& reuseCenterUuid = QString());
+    QString addPolylineGeom(const QVector<QVector2D>& pts, bool closed,
+                            const QVector<QString>& reuseVertexUuids = {});
+    QString addSplineGeom(const QVector<QVector2D>& pts,
+                          const QVector<QString>& reuseControlPointUuids = {});
+    QString addEllipseGeom(const QVector2D& center,
+                           double majorRadius, double minorRadius, double angle,
+                           const QString& reuseCenterUuid = QString());
 
     // 向後相容的舊版方法（void，包裝新版）
     void addLine(const QVector2D& p1, const QVector2D& p2);

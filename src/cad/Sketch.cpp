@@ -117,7 +117,7 @@ void Sketch::addLine(const QVector2D& p1, const QVector2D& p2) {
 }
 
 void Sketch::addPolyline(const QVector<QVector2D>& points, bool closed) {
-    addGeometry(new SketchPolyline(points, closed));
+    addPolylineGeom(points, closed);
 }
 
 void Sketch::addSpline(const QVector<QVector2D>& points) {
@@ -125,7 +125,7 @@ void Sketch::addSpline(const QVector<QVector2D>& points) {
         qWarning() << "[Sketch]" << name() << "spline needs at least 3 points";
         return;
     }
-    addGeometry(new SketchSpline(points));
+    addSplineGeom(points);
 }
 
 void Sketch::addCircle(const QVector2D& center, double radius) {
@@ -142,7 +142,7 @@ void Sketch::addEllipse(const QVector2D& center, double majorRadius, double mino
         qWarning() << "[Sketch]" << name() << "major radius must be >= minor radius";
         return;
     }
-    addGeometry(new SketchEllipse(center, majorRadius, minorRadius, angle));
+    addEllipseGeom(center, majorRadius, minorRadius, angle);
 }
 
 void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {
@@ -627,6 +627,21 @@ QJsonObject Sketch::toJson() const {
             geomJson["startUuid"]  = arc->startUuid;
             geomJson["endUuid"]    = arc->endUuid;
             geomJson["centerUuid"] = arc->centerUuid;
+        } else if (const auto* pline = dynamic_cast<const SketchPolyline*>(geom)) {
+            // Phase 0B：序列化各頂點 UUID
+            QJsonArray vertexUuidsArray;
+            for (const QString& uuid : pline->vertexUuids)
+                vertexUuidsArray.append(uuid);
+            geomJson["vertexUuids"] = vertexUuidsArray;
+        } else if (const auto* splineG = dynamic_cast<const SketchSpline*>(geom)) {
+            // Phase 0B：序列化各控制點 UUID
+            QJsonArray cpUuidsArray;
+            for (const QString& uuid : splineG->controlPointUuids)
+                cpUuidsArray.append(uuid);
+            geomJson["controlPointUuids"] = cpUuidsArray;
+        } else if (const auto* ellipseG = dynamic_cast<const SketchEllipse*>(geom)) {
+            // Phase 0B：序列化橢圓圓心 UUID
+            geomJson["centerUuid"] = ellipseG->centerUuid;
         }
 
         // 各幾何類型的額外屬性
@@ -849,7 +864,13 @@ bool Sketch::fromJson(const QJsonObject& json) {
             case SketchGeometryType::Polyline: {
                 bool closed = geomJson["closed"].toBool(false);
                 if (points.size() >= 2) {
-                    addPolyline(points, closed);
+                    // ✅ Phase 0B：傳入已儲存的 vertexUuids 重用已載入的 SketchPoint
+                    QVector<QString> savedVertexUuids;
+                    if (geomJson.contains("vertexUuids")) {
+                        for (const auto& v : geomJson["vertexUuids"].toArray())
+                            savedVertexUuids.append(v.toString());
+                    }
+                    addPolylineGeom(points, closed, savedVertexUuids);
                 }
                 if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
                     m_geometries.last()->uuid = geomJson["uuid"].toString();
@@ -876,7 +897,13 @@ bool Sketch::fromJson(const QJsonObject& json) {
 
             case SketchGeometryType::Spline:
                 if (points.size() >= 3) {
-                    addSpline(points);
+                    // ✅ Phase 0B：傳入已儲存的 controlPointUuids 重用已載入的 SketchPoint
+                    QVector<QString> savedCpUuids;
+                    if (geomJson.contains("controlPointUuids")) {
+                        for (const auto& v : geomJson["controlPointUuids"].toArray())
+                            savedCpUuids.append(v.toString());
+                    }
+                    addSplineGeom(points, savedCpUuids);
                 } else {
                     qWarning() << "[Sketch]" << name()
                                << "Spline skipped: need >= 3 points, got" << points.size();
@@ -924,7 +951,9 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 double minor = geomJson["minorRadius"].toDouble();
                 double angle = geomJson["angle"].toDouble(0.0);
                 if (major > 0.0 && minor > 0.0) {
-                    addEllipse(center, major, minor, angle);
+                    // ✅ Phase 0B：傳入已儲存的 centerUuid 重用已載入的 SketchPoint
+                    QString savedCenterUuid = geomJson["centerUuid"].toString();
+                    addEllipseGeom(center, major, minor, angle, savedCenterUuid);
                 }
                 if (!m_geometries.isEmpty() && geomJson.contains("uuid"))
                     m_geometries.last()->uuid = geomJson["uuid"].toString();
@@ -1501,6 +1530,17 @@ void Sketch::mergePoints(const QString& fromUuid, const QString& toUuid)
         if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
             if (circ->centerUuid == fromUuid) circ->centerUuid = toUuid;
         }
+        if (auto* pline = dynamic_cast<SketchPolyline*>(g)) {
+            for (auto& uuid : pline->vertexUuids)
+                if (uuid == fromUuid) uuid = toUuid;
+        }
+        if (auto* spline = dynamic_cast<SketchSpline*>(g)) {
+            for (auto& uuid : spline->controlPointUuids)
+                if (uuid == fromUuid) uuid = toUuid;
+        }
+        if (auto* ellipse = dynamic_cast<SketchEllipse*>(g)) {
+            if (ellipse->centerUuid == fromUuid) ellipse->centerUuid = toUuid;
+        }
     }
 
     // 刪除 from 點（從 m_geometries 中移除並釋放）
@@ -1524,6 +1564,15 @@ QList<SketchGeometry*> Sketch::curvesReferencingPoint(const QString& ptUuid) con
                 result.append(g);
         } else if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
             if (circ->centerUuid == ptUuid)
+                result.append(g);
+        } else if (auto* pline = dynamic_cast<SketchPolyline*>(g)) {
+            if (pline->vertexUuids.contains(ptUuid))
+                result.append(g);
+        } else if (auto* spline = dynamic_cast<SketchSpline*>(g)) {
+            if (spline->controlPointUuids.contains(ptUuid))
+                result.append(g);
+        } else if (auto* ellipse = dynamic_cast<SketchEllipse*>(g)) {
+            if (ellipse->centerUuid == ptUuid)
                 result.append(g);
         }
     }
@@ -1566,6 +1615,84 @@ QString Sketch::addCircleGeom(const QVector2D& center, double radius,
     return circ->uuid;
 }
 
+QString Sketch::addPolylineGeom(const QVector<QVector2D>& pts, bool closed,
+                                 const QVector<QString>& reuseVertexUuids)
+{
+    auto* pline = new SketchPolyline(pts, closed);
+
+    for (int i = 0; i < pts.size(); ++i) {
+        QString uuid;
+        if (i < reuseVertexUuids.size() && !reuseVertexUuids[i].isEmpty()) {
+            uuid = reuseVertexUuids[i];
+        } else {
+            // 首尾共點（closed）：最後一點複用第一點
+            if (closed && i == pts.size() - 1 && !pline->vertexUuids.isEmpty()) {
+                uuid = pline->vertexUuids.first();
+            } else {
+                uuid = addPoint(pts[i], SketchPoint::Origin::Endpoint);
+            }
+        }
+        pline->vertexUuids.append(uuid);
+    }
+
+    m_geometries.append(pline);
+    Q_EMIT geometryChanged();
+    Q_EMIT rebuildRequested();
+    return pline->uuid;
+}
+
+QString Sketch::addSplineGeom(const QVector<QVector2D>& pts,
+                               const QVector<QString>& reuseControlPointUuids)
+{
+    if (pts.size() < 3) {
+        qWarning() << "[Sketch]" << name() << "spline needs at least 3 points";
+        return {};
+    }
+
+    auto* spline = new SketchSpline(pts);
+
+    for (int i = 0; i < pts.size(); ++i) {
+        QString uuid;
+        if (i < reuseControlPointUuids.size() && !reuseControlPointUuids[i].isEmpty()) {
+            uuid = reuseControlPointUuids[i];
+        } else {
+            uuid = addPoint(pts[i], SketchPoint::Origin::Endpoint);
+        }
+        spline->controlPointUuids.append(uuid);
+    }
+
+    m_geometries.append(spline);
+    Q_EMIT geometryChanged();
+    Q_EMIT rebuildRequested();
+    return spline->uuid;
+}
+
+QString Sketch::addEllipseGeom(const QVector2D& center,
+                                double majorRadius, double minorRadius, double angle,
+                                const QString& reuseCenterUuid)
+{
+    if (majorRadius <= 0 || minorRadius <= 0) {
+        qWarning() << "[Sketch]" << name() << "ellipse radii must be positive";
+        return {};
+    }
+    if (majorRadius < minorRadius) {
+        qWarning() << "[Sketch]" << name() << "major radius must be >= minor radius";
+        return {};
+    }
+
+    QString centerUuid = reuseCenterUuid.isEmpty()
+        ? addPoint(center, SketchPoint::Origin::Center)
+        : reuseCenterUuid;
+
+    auto* ellipse = new SketchEllipse(center, majorRadius, minorRadius, angle);
+    ellipse->centerUuid = centerUuid;
+    m_geometries.append(ellipse);
+
+    Q_EMIT geometryChanged();
+    Q_EMIT rebuildRequested();
+    return ellipse->uuid;
+}
+
 void Sketch::syncGeometryFromPoints()
 {
     for (auto* g : m_geometries) {
@@ -1592,7 +1719,27 @@ void Sketch::syncGeometryFromPoints()
             if (auto* pe = point(arc->endUuid)) {
                 if (arc->points.size() > 2) arc->points[2] = pe->pos;
             }
-            // centerUuid 指向圓心 — 不直接暴露在 points[] 中，略過
+        } else if (auto* pline = dynamic_cast<SketchPolyline*>(g)) {
+            // Phase 0B：同步 Polyline 各頂點座標
+            for (int i = 0; i < pline->vertexUuids.size(); ++i) {
+                if (auto* pt = point(pline->vertexUuids[i])) {
+                    if (i < pline->points.size())
+                        pline->points[i] = pt->pos;
+                }
+            }
+        } else if (auto* spline = dynamic_cast<SketchSpline*>(g)) {
+            // Phase 0B：同步 Spline 各控制點座標
+            for (int i = 0; i < spline->controlPointUuids.size(); ++i) {
+                if (auto* pt = point(spline->controlPointUuids[i])) {
+                    if (i < spline->points.size())
+                        spline->points[i] = pt->pos;
+                }
+            }
+        } else if (auto* ellipse = dynamic_cast<SketchEllipse*>(g)) {
+            // Phase 0B：同步 Ellipse 圓心座標
+            if (auto* pc = point(ellipse->centerUuid)) {
+                ellipse->center = pc->pos;
+            }
         }
     }
 }
@@ -1642,6 +1789,19 @@ QList<Sketch::PointInfo> Sketch::listPoints() const
             } else if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
                 if (circ->centerUuid == pt->uuid)
                     info.referencedBy.append(circ->uuid.left(8) + ".Ctr");
+            } else if (auto* pline = dynamic_cast<SketchPolyline*>(g)) {
+                for (int i = 0; i < pline->vertexUuids.size(); ++i) {
+                    if (pline->vertexUuids[i] == pt->uuid)
+                        info.referencedBy.append(pline->uuid.left(8) + ".V" + QString::number(i));
+                }
+            } else if (auto* spline = dynamic_cast<SketchSpline*>(g)) {
+                for (int i = 0; i < spline->controlPointUuids.size(); ++i) {
+                    if (spline->controlPointUuids[i] == pt->uuid)
+                        info.referencedBy.append(spline->uuid.left(8) + ".CP" + QString::number(i));
+                }
+            } else if (auto* ellipse = dynamic_cast<SketchEllipse*>(g)) {
+                if (ellipse->centerUuid == pt->uuid)
+                    info.referencedBy.append(ellipse->uuid.left(8) + ".Ctr");
             }
         }
         result.append(info);
