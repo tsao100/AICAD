@@ -423,9 +423,9 @@ void CadView::initializeViewer() {
                                    d->gripFilter->clearSketchPlane();
 
                                    // ② 再清除 map 條目
-                                   for (const Handle(AIS_Shape)& s : sketch->aisShapes()) {
-                                       if (!s.IsNull()) {
-                                           d->aisToFeatureId.remove(s.get());
+                                   for (const auto& obj : sketch->aisShapes()) {
+                                       if (!obj.IsNull()) {
+                                           d->aisToFeatureId.remove(obj.get());
                                        }
                                    }
 
@@ -434,7 +434,7 @@ void CadView::initializeViewer() {
 
                                } else {
                                    // visible: 顯示並重新註冊
-                                   QList<Handle(AIS_Shape)> shapes =
+                                   QList<Handle(AIS_InteractiveObject)> shapes =
                                        sketch->displayInContext(d->context);
 
                                    // 清除舊條目
@@ -761,7 +761,7 @@ void CadView::displayAllFeatures() {
 
             if (feature->isVisible()) {
                 // ✅ visible: 正常顯示並註冊
-                QList<Handle(AIS_Shape)> shapes =
+                QList<Handle(AIS_InteractiveObject)> shapes =
                     sketch->displayInContext(d->context);
                 const QList<QString>& uuids = sketch->aisShapeUuids();
                 for (int i = 0; i < shapes.size(); ++i) {
@@ -777,8 +777,9 @@ void CadView::displayAllFeatures() {
                 //    rebuild() 會 emit shapeChanged → featureShapeUpdated → displayAllFeatures 死循環
                 // 不呼叫 displayInContext，shapes 存在但不顯示
                 const QList<QString>& uuids = sketch->aisShapeUuids();
-                for (int i = 0; i < sketch->aisShapes().size(); ++i) {
-                    const auto& s = sketch->aisShapes()[i];
+                const auto& allObjs = sketch->aisShapes();
+                for (int i = 0; i < allObjs.size(); ++i) {
+                    const auto& s = allObjs[i];
                     if (!s.IsNull()) {
                         d->aisToFeatureId[s.get()] = feature->id();
                         d->aisToGeomUuid[s.get()] = (i < uuids.size()) ? uuids[i] : QString();
@@ -1044,7 +1045,7 @@ void CadView::onSketchRebuilt()
     }
 
     const QList<QString>& uuids = sketch->aisShapeUuids();
-    const QList<Handle(AIS_Shape)>& shapes = sketch->aisShapes();
+    const auto& shapes = sketch->aisShapes();
     for (int i = 0; i < shapes.size(); ++i) {
         if (!shapes[i].IsNull()) {
             d->aisToFeatureId[shapes[i].get()] = fid;
@@ -1452,17 +1453,17 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                  d->context->MoreSelected();
                  d->context->NextSelected())
             {
-                Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
-                    d->context->SelectedInteractive());
-                if (s.IsNull()) continue;
+                // 統一處理 AIS_Shape（幾何曲線）和 SketchPointAIS（點）
+                Handle(AIS_InteractiveObject) obj = d->context->SelectedInteractive();
+                if (obj.IsNull()) continue;
 
-                QString uuid = d->aisToGeomUuid.value(s.get());
+                QString uuid = d->aisToGeomUuid.value(obj.get());
                 if (!uuid.isEmpty()) uuids << uuid;
 
-                QString featureId = d->aisToFeatureId.value(s.get());
+                QString featureId = d->aisToFeatureId.value(obj.get());
                 if (featureId.isEmpty()) continue;
 
-                int geomIndex = d->aisToGeomIndex.value(s.get(), -1);
+                int geomIndex = d->aisToGeomIndex.value(obj.get(), -1);
                 if (geomIndex >= 0)
                     selectionMap[featureId].insert(geomIndex);
                 else

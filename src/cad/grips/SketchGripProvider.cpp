@@ -34,6 +34,27 @@ QVector<GripPoint> SketchGripProvider::computeGrips() const
         const SketchGeometry* geom = geoms[gi];
         if (!geom) continue;
 
+        // ── Point（Explicit 才有可拖曳 Grip）──────────────────────────
+        if (geom->type == SketchGeometryType::Point) {
+            const auto* pt = static_cast<const SketchPoint*>(geom);
+            // Endpoint / Center 由所屬曲線的 Grip 控制，此處跳過
+            if (pt->origin != SketchPoint::Origin::Explicit) continue;
+
+            QVector3D w = plane->toWorld(pt->pos.x(), pt->pos.y());
+            GripPoint gp;
+            gp.id       = QString("pt_%1").arg(pt->uuid);
+            gp.position = gp_Pnt(w.x(), w.y(), w.z());
+            gp.type     = GripType::Vertex;
+            gp.onDrag   = [this, uuid = pt->uuid](const gp_Pnt& np, bool) {
+                QVector2D newPos = m_sketch->plane()->toPlane(
+                    QVector3D(np.X(), np.Y(), np.Z()));
+                m_sketch->movePoint(uuid, newPos);
+                m_sketch->rebuildShapesOnly();
+            };
+            grips.append(gp);
+            continue;
+        }
+
         // ── Line ───────────────────────────────────────────────────────
         if (geom->type == SketchGeometryType::Line ||
             geom->type == SketchGeometryType::Polyline)

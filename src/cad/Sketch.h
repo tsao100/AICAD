@@ -22,6 +22,7 @@
 #include <QUuid>
 #include <TopoDS_Wire.hxx>
 #include <AIS_Shape.hxx>
+#include <AIS_InteractiveObject.hxx>
 #include <Geom_TrimmedCurve.hxx>
 
 namespace aicad {
@@ -317,9 +318,9 @@ public:
     // ==================== OCCT ====================
 
     QList<TopoDS_Wire> wires() const;
-    QList<Handle(AIS_Shape)> aisShapes() const;
+    QList<Handle(AIS_InteractiveObject)> aisShapes() const;
     const QList<QString>& aisShapeUuids() const;
-    QList<Handle(AIS_Shape)> displayInContext(const Handle(AIS_InteractiveContext)& context);
+    QList<Handle(AIS_InteractiveObject)> displayInContext(const Handle(AIS_InteractiveContext)& context);
     void eraseFromContext(const Handle(AIS_InteractiveContext)& context);
     TopoDS_Wire mainWire() const;
     bool hasClosedProfile() const;
@@ -428,13 +429,12 @@ private:
 private:
     Plane* m_plane;
     QList<SketchGeometry*> m_geometries;
-    QHash<QString, SketchPoint*> m_points;   ///< Phase 0B：點 UUID → SketchPoint
+    mutable QHash<QString, int> m_uuidToGeomIndex;  ///< UUID → m_geometries 索引（O(1) 查找 cache）
     QList<TopoDS_Wire> m_wires;
-    QList<Handle(AIS_Shape)> m_aisShapes;
+    QList<Handle(AIS_InteractiveObject)> m_aisShapes;
     QList<QString>            m_aisShapeUuids;
     QList<SketchConstraint> m_constraints;
     QList<Handle(AIS_Shape)>  m_constructionShapes;
-    QHash<QString, Handle(AIS_InteractiveObject)> m_pointAisObjects;  ///< Phase 0B：點 UUID → SketchPointAIS
     ConstraintSolver        m_solver;
     Handle(AIS_InteractiveContext) m_aisContext;
     aicad::core::ParameterStore*  m_parameterStore = nullptr;

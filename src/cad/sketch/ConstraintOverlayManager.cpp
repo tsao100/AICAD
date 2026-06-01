@@ -263,34 +263,19 @@ Handle(AIS_DimensionLine) ConstraintOverlayManager::dimLineAISForConstraint(
 // ── Task D: SketchPoint AIS 重建 ─────────────────────────────────────────────
 void ConstraintOverlayManager::rebuildPoints()
 {
-    // 只在 master 模式且有 sketch 時執行
-    if (m_mode != Mode::Master || !m_sketch || m_ctx.IsNull()) return;
+    // ✅ Phase 1 重構後：SketchPointAIS 已統一在 Sketch::m_aisShapes 中，
+    //    由 Sketch::displayInContext() 統一顯示與管理。
+    //    Overlay 僅需建立 pointAISMap 索引（從 sketch->aisShapes() 轉型），
+    //    供 UIManager 的 GetGeom Activate/Deactivate 使用。
+    if (m_mode != Mode::Master || !m_sketch) return;
 
-    SolveStatus status = lastSolveStatus();
-    const auto pts = m_sketch->points();
+    m_pointAISMap.clear();
 
-    // 取得草圖平面的 OCCT Ax3
-    gp_Ax3 ax3;
-    if (m_sketch->plane()) {
-        QVector3D orig = m_sketch->plane()->origin();
-        QVector3D xDir = m_sketch->plane()->xAxis();
-        QVector3D yDir = m_sketch->plane()->yAxis();
-        ax3 = gp_Ax3(gp_Pnt(orig.x(), orig.y(), orig.z()),
-                     gp_Dir(m_sketch->plane()->normal().x(),
-                            m_sketch->plane()->normal().y(),
-                            m_sketch->plane()->normal().z()),
-                     gp_Dir(xDir.x(), xDir.y(), xDir.z()));
-    }
-
-    for (auto* pt : pts) {
-        // Intersection 點（臨時交點）不顯示
-        if (pt->origin == SketchPoint::Origin::Intersection) continue;
-
-        Handle(SketchPointAIS) ais = new SketchPointAIS(pt, ax3);
-        ais->updateSolveStatus(status);
-        m_ctx->Display(ais, Standard_False);
-        m_ctx->Deactivate(ais);   // 預設關閉選取，由 GetGeom mode 主動激活
-        m_pointAISMap.insert(pt->uuid, ais);
+    // 從 Sketch 的主 AIS 列表中找出 SketchPointAIS，填入 pointAISMap
+    for (const auto& obj : m_sketch->aisShapes()) {
+        if (auto ptAis = Handle(SketchPointAIS)::DownCast(obj)) {
+            m_pointAISMap.insert(ptAis->pointUuid(), ptAis);
+        }
     }
 }
 } // namespace aicad::cad

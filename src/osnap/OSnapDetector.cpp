@@ -6,6 +6,7 @@
 #include "OSnapDetector.h"
 #include "../cad/Plane.h"   // aicad::cad::Plane
 #include "../cad/Sketch.h"  // 草圖幾何 geomUuid 對應
+#include "../cad/sketch/SketchPointAIS.h"  // ✅ Step 14: SketchPoint snap
 #include "../railway/AlignmentDocument.h"  // aicad::railway::AlignmentDocument
 
 // OCCT topology
@@ -234,6 +235,19 @@ void OSnapDetector::collectCandidateShapes(
         }
         if (excluded) continue;
 
+        // ✅ Step 14: 偵測 SketchPointAIS（點比曲線端點更精確）
+        if (auto ptAis = Handle(aicad::cad::SketchPointAIS)::DownCast(obj)) {
+            // 用螢幕距離快速篩選
+            gp_Pnt pos = ptAis->position3D();
+            double dist = screenDistance(view, pos, mouseX, mouseY);
+            if (dist < pickRadius * 2.0) {
+                aisObjects.append(ptAis);
+                // SketchPointAIS 沒有 TopoDS_Shape，用空 shape 佔位
+                shapes.append(TopoDS_Shape());
+            }
+            continue;
+        }
+
         // 只處理 AIS_Shape
         Handle(AIS_Shape) aisShape = Handle(AIS_Shape)::DownCast(obj);
         if (aisShape.IsNull()) continue;
@@ -289,6 +303,31 @@ void OSnapDetector::detectOnShape(
     QVector<SnapCandidate>& candidates)
 {
     const SnapTypes& enabled = m_settings.enabledTypes;
+
+    // ✅ Step 14: SketchPointAIS 優先偵測（點優先於曲線端點）
+    if (auto ptAis = Handle(aicad::cad::SketchPointAIS)::DownCast(aisObj)) {
+        if (enabled.testFlag(SnapType::Endpoint) ||
+            enabled.testFlag(SnapType::Center)) {
+            gp_Pnt pos = ptAis->position3D();
+            double screenDist = screenDistance(view, pos, mouseX, mouseY);
+            if (screenDist < m_settings.pickPixelRadius * 2.0) {
+                SnapType stype = (ptAis->origin() == aicad::cad::SketchPoint::Origin::Center)
+                                 ? SnapType::Center : SnapType::Endpoint;
+                SnapCandidate c;
+                c.type       = stype;
+                c.worldPoint = pos;
+                c.geomUuid   = ptAis->pointUuid();
+                c.geomHandle = static_cast<int>(aicad::cad::GeomHandle::WholeGeom);
+                // 轉回平面座標
+                if (m_activePlane) {
+                    c.planePoint = m_activePlane->toPlane(
+                        QVector3D(pos.X(), pos.Y(), pos.Z()));
+                }
+                candidates.append(c);
+            }
+        }
+        return;  // SketchPointAIS 不走後續曲線 detect 路徑
+    }
 
     if (enabled.testFlag(SnapType::Endpoint) ||
         enabled.testFlag(SnapType::Node)) {

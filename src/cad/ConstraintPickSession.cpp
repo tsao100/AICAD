@@ -105,20 +105,21 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
     }
 
     if (!geomUuid.isEmpty() && geomHandle < 0) {
-        // OSnap snap 到線段本體（Nearest/Midpoint 等，不對應特定端點）
-        // 或使用者直接點擊線段本體 → 回傳 WholeGeom，代表「整條線」
-        // 這支援 PointToLine 和 LineToLine 距離約束
         if (m_sketch) {
             const SketchGeometry* g = m_sketch->findGeometry(geomUuid);
             if (g) {
-                // 點幾何：用 WholeGeom 仍可識別為「點」
-                // 線幾何：WholeGeom 表示「整條線」（PointToLine / LineToLine）
+                // ✅ Step 9: 直接引用 SketchPoint
+                if (g->type == SketchGeometryType::Point) {
+                    const auto* pt = static_cast<const SketchPoint*>(g);
+                    GeomRef ref(geomUuid, GeomHandle::WholeGeom);
+                    return ref;
+                }
+                // 線幾何：WholeGeom 表示「整條線」
                 qDebug() << "[PickSession] Line/curve body picked:"
                          << geomUuid << "type:" << static_cast<int>(g->type);
                 return GeomRef(geomUuid, GeomHandle::WholeGeom);
             }
         }
-        // uuid 有效但找不到幾何（罕見）：仍回傳 WholeGeom ref
         return GeomRef(geomUuid, GeomHandle::WholeGeom);
     }
 

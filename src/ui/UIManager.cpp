@@ -28,6 +28,7 @@
 #include "core/MenuParser.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
+#include "cad/sketch/SketchPointAIS.h"
 #include "cad/Plane.h"
 #include "cad/PlaneManager.h"
 #include "cad/Extrude.h"
@@ -737,7 +738,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            sketch->addLineGeom(startPoint, endPoint);
                            // rebuildRequested signal auto-triggers Document::rebuildFeature
                            // → eraseFromContext + rebuild + displayInContext
-                           // DO NOT call rebuild() again here: it would clear m_pointAisObjects
+                           // DO NOT call rebuild() again here: SketchPointAIS are managed by Sketch
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -1929,21 +1930,44 @@ void UIManager::setupSketchPanel()
                 setStatusMessage(d->pickSession->promptText());
         });
 
-        // ✅ GAP 3: modeChanged — GetGeom 時啟用 SketchPointAIS 的 AIS 選取，離開時停用
+        // ✅ Step 5/GAP 3: modeChanged — GetGeom 時啟用 SketchPointAIS 選取，離開時停用
+        // SketchPointAIS 已統一在 sketch->aisShapes() 中，Activate/Deactivate 統一管理
         connect(d->cadView, &view::CadView::modeChanged,
                 this, [this](view::InteractionMode mode) {
-            auto* overlay = d->sketchPanel ? d->sketchPanel->overlay() : nullptr;
-            if (!overlay) return;
             auto ctx = d->cadView->context();
             if (ctx.IsNull()) return;
 
             const bool enterGetGeom = (mode == view::InteractionMode::GetGeom);
-            for (auto& ais : overlay->pointAISMap()) {
-                if (enterGetGeom)
-                    ctx->Activate(ais, 0, Standard_False);   // 啟用 Selection mode 0
-                else
-                    ctx->Deactivate(ais);
+
+            // ✅ Step 16: GetGeom 模式下停用 GripEventFilter，避免 AIS_GripHandle
+            // 搶先消費點擊事件，干擾約束選點流程。離開 GetGeom 時恢復。
+            if (d->gripFilter) d->gripFilter->setEnabled(!enterGetGeom);
+            if (d->gripManager) d->gripManager->setEnabled(!enterGetGeom);
+
+            // 從 overlay pointAISMap（Constraint overlay 建立的點）
+            auto* overlay = d->sketchPanel ? d->sketchPanel->overlay() : nullptr;
+            if (overlay) {
+                for (auto& ais : overlay->pointAISMap()) {
+                    if (enterGetGeom)
+                        ctx->Activate(ais, 0, Standard_False);
+                    else
+                        ctx->Deactivate(ais);
+                }
             }
+
+            // 從 sketch->aisShapes()（主 AIS 列表中的 SketchPointAIS）
+            auto* app = aicad::core::Application::instance();
+            if (auto* sketch = app ? app->activeSketch() : nullptr) {
+                for (const auto& obj : sketch->aisShapes()) {
+                    if (Handle(aicad::cad::SketchPointAIS)::DownCast(obj)) {
+                        if (enterGetGeom)
+                            ctx->Activate(obj, 0, Standard_False);
+                        else
+                            ctx->Deactivate(obj);
+                    }
+                }
+            }
+
             ctx->UpdateCurrentViewer();
         });
 

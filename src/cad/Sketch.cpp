@@ -107,10 +107,7 @@ void Sketch::removeGeometry(int index) {
 void Sketch::clearGeometry() {
     qDeleteAll(m_geometries);
     m_geometries.clear();
-    // ✅ Phase 0B：同步清除 SketchPoint 資料
-    qDeleteAll(m_points);
-    m_points.clear();
-    m_pointAisObjects.clear();
+    m_uuidToGeomIndex.clear();
     Q_EMIT geometryChanged();
 }
 
@@ -261,10 +258,21 @@ QList<SketchGeometry*> Sketch::constructionGeometries() const {
 }
 
 SketchGeometry* Sketch::findGeometry(const QString& uuid) const {
-    // ✅ Task C: 先搜尋 m_points（SketchPoint 也是 SketchGeometry 子類別）
-    if (auto* pt = m_points.value(uuid, nullptr)) return pt;
-    for (auto* g : m_geometries)
-        if (g->uuid == uuid) return g;
+    // O(1) cache lookup
+    auto it = m_uuidToGeomIndex.find(uuid);
+    if (it != m_uuidToGeomIndex.end()) {
+        int idx = it.value();
+        if (idx >= 0 && idx < m_geometries.size() && m_geometries[idx]->uuid == uuid)
+            return m_geometries[idx];
+        // cache stale — fall through to linear scan
+    }
+    // linear fallback（rebuild 後 index 可能改變）
+    for (int i = 0; i < m_geometries.size(); ++i) {
+        if (m_geometries[i]->uuid == uuid) {
+            m_uuidToGeomIndex[uuid] = i;  // refresh cache
+            return m_geometries[i];
+        }
+    }
     return nullptr;
 }
 
@@ -284,7 +292,6 @@ bool Sketch::rebuild() {
         m_aisShapes.clear();
         m_aisShapeUuids.clear();
         m_constructionShapes.clear();
-        m_pointAisObjects.clear();
 
         if (m_geometries.isEmpty()) {
             setShape(TopoDS_Shape());
@@ -297,8 +304,20 @@ bool Sketch::rebuild() {
 
         for (const SketchGeometry* geom : m_geometries) {
             if (!geom) continue;
-            // ── Point：不產生 wire，由 SketchPointAIS 單獨處理 ────────────────
-            if (geom->type == SketchGeometryType::Point) continue;
+            // ── Point：建立 SketchPointAIS 並納入 m_aisShapes ────────────────
+            if (geom->type == SketchGeometryType::Point) {
+                const auto* pt = static_cast<const SketchPoint*>(geom);
+                gp_Pnt org(m_plane->origin().x(), m_plane->origin().y(), m_plane->origin().z());
+                gp_Dir xd (m_plane->xAxis().x(),  m_plane->xAxis().y(),  m_plane->xAxis().z());
+                gp_Dir nd (m_plane->normal().x(), m_plane->normal().y(), m_plane->normal().z());
+                gp_Ax3 ax3(org, nd, xd);
+                Handle(SketchPointAIS) ptAis = new SketchPointAIS(pt, ax3);
+                if (!geom->isConstruction()) {
+                    m_aisShapes.append(ptAis);
+                    m_aisShapeUuids.append(pt->uuid);
+                }
+                continue;
+            }
 
             TopoDS_Wire wire;
             bool wireCreated = false;
@@ -491,18 +510,7 @@ bool Sketch::rebuild() {
 
         setShape(compound);
 
-        // ── 建立 SketchPointAIS ───────────────────────────────────────
-        {
-            gp_Pnt org(m_plane->origin().x(), m_plane->origin().y(), m_plane->origin().z());
-            gp_Dir xd (m_plane->xAxis().x(),  m_plane->xAxis().y(),  m_plane->xAxis().z());
-            gp_Dir nd (m_plane->normal().x(), m_plane->normal().y(), m_plane->normal().z());
-            gp_Ax3 ax3(org, nd, xd);
-
-            for (auto it = m_points.cbegin(); it != m_points.cend(); ++it) {
-                Handle(SketchPointAIS) ptAis = new SketchPointAIS(it.value(), ax3);
-                m_pointAisObjects.insert(it.key(), ptAis);  // 隱含向上轉型
-            }
-        }
+        // SketchPointAIS 已在上方迴圈中建立並加入 m_aisShapes
 
         qDebug() << "[Sketch]" << name() << "rebuilt with"
                  << m_wires.size() << "wires and"
@@ -523,30 +531,28 @@ bool Sketch::rebuildShapesOnly()
     if (!hasValidPlane()) return false;
     if (m_aisContext.IsNull()) return false;
 
-    // ① 把舊 AIS_Shape 從 context 先 Erase（保留 handle 本身）
-    for (const Handle(AIS_Shape)& s : m_aisShapes)
+    // ① 把舊 AIS 物件從 context 先 Erase（保留 handle 本身）
+    for (const auto& s : m_aisShapes)
         if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
     for (const Handle(AIS_Shape)& s : m_constructionShapes)
         if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
-    for (auto& ptAis : m_pointAisObjects)
-        if (!ptAis.IsNull()) m_aisContext->Erase(ptAis, Standard_False);
 
     // ② 重建 TopoDS + 更新 m_aisShapes（建立全新 handle）
     if (!rebuild()) return false;
 
-    // ③ 把新 AIS_Shape Display 回 context
-    for (const Handle(AIS_Shape)& s : m_aisShapes)
-        if (!s.IsNull()) m_aisContext->Display(s, Standard_False);
+    // ③ 把新 AIS 物件 Display 回 context
+    for (const auto& obj : m_aisShapes) {
+        if (obj.IsNull()) continue;
+        m_aisContext->Display(obj, Standard_False);
+        // SketchPointAIS 需要明確啟用 selection
+        if (Handle(SketchPointAIS)::DownCast(obj)) {
+            m_aisContext->Activate(obj, 0, Standard_False);
+        }
+    }
     for (const Handle(AIS_Shape)& s : m_constructionShapes) {
         if (!s.IsNull()) {
             m_aisContext->Display(s, Standard_False);
             m_aisContext->Deactivate(s);
-        }
-    }
-    for (auto& ptAis : m_pointAisObjects) {
-        if (!ptAis.IsNull()) {
-            m_aisContext->Display(ptAis, Standard_False);
-            m_aisContext->Activate(ptAis, 0);
         }
     }
 
@@ -625,6 +631,14 @@ QJsonObject Sketch::toJson() const {
 
         // 各幾何類型的額外屬性
         switch (geom->type) {
+        case SketchGeometryType::Point: {
+            // ✅ Step 15: Point 序列化（origin + pos 已在 points[] 中，額外存 origin 欄位）
+            const auto* pt = static_cast<const SketchPoint*>(geom);
+            geomJson["px"]     = pt->pos.x();
+            geomJson["py"]     = pt->pos.y();
+            geomJson["origin"] = static_cast<int>(pt->origin);
+            break;
+        }
         case SketchGeometryType::Circle: {
             const SketchCircle* c = static_cast<const SketchCircle*>(geom);
             geomJson["radius"]  = c->radius;
@@ -683,18 +697,7 @@ QJsonObject Sketch::toJson() const {
     }
     json["geometries"] = geomsArray;
 
-    // ✅ Phase 0B：儲存 SketchPoint 資料
-    QJsonArray pointsArr;
-    for (auto it = m_points.cbegin(); it != m_points.cend(); ++it) {
-        const SketchPoint* pt = it.value();
-        QJsonObject ptJson;
-        ptJson["uuid"]   = pt->uuid;
-        ptJson["x"]      = pt->pos.x();
-        ptJson["y"]      = pt->pos.y();
-        ptJson["origin"] = static_cast<int>(pt->origin);
-        pointsArr.append(ptJson);
-    }
-    json["sketchPoints"] = pointsArr;
+    // Phase 1 重構後：Point 已統一在 "geometries" 陣列中，不需要獨立儲存
 
     QJsonArray conArr;
     for (const auto& c : m_constraints)
@@ -771,6 +774,7 @@ bool Sketch::fromJson(const QJsonObject& json) {
 
     // ✅ Phase 0B：先還原 SketchPoint（幾何需要 UUID 引用）
     if (json.contains("sketchPoints")) {
+        // 舊格式：SketchPoints 在獨立陣列中
         for (const QJsonValue& v : json["sketchPoints"].toArray()) {
             QJsonObject ptJson = v.toObject();
             QString uuid = ptJson["uuid"].toString();
@@ -779,21 +783,44 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 static_cast<SketchPoint::Origin>(ptJson["origin"].toInt(
                     static_cast<int>(SketchPoint::Origin::Endpoint)));
             auto* pt = new SketchPoint(pos, origin);
-            pt->uuid = uuid;  // 恢復原 UUID
-            m_points.insert(uuid, pt);
-            // ✅ 同時加入 m_geometries，供 Solver 使用（與 addPoint() 行為一致）
+            pt->uuid = uuid;
             m_geometries.append(pt);
+            m_uuidToGeomIndex[uuid] = m_geometries.size() - 1;
         }
-        qDebug() << "[Sketch]" << name() << "Loaded" << m_points.size() << "SketchPoints";
+        qDebug() << "[Sketch]" << name() << "Loaded"
+                 << points().size() << "SketchPoints (legacy format)";
     }
 
     if (json.contains("geometries")) {
         QJsonArray geomsArray = json["geometries"].toArray();
 
+        // ── 第一遍：只載入 Point（曲線需要先有 UUID 才能引用）────────
         for (const QJsonValue& val : geomsArray) {
             QJsonObject geomJson = val.toObject();
             SketchGeometryType type =
                 static_cast<SketchGeometryType>(geomJson["type"].toInt());
+            if (type != SketchGeometryType::Point) continue;
+
+            QString uuid = geomJson["uuid"].toString();
+            if (uuid.isEmpty() || findGeometry(uuid)) continue;  // 已由 legacy 載入
+
+            QVector2D pos(geomJson["px"].toDouble(), geomJson["py"].toDouble());
+            SketchPoint::Origin origin =
+                static_cast<SketchPoint::Origin>(geomJson["origin"].toInt(
+                    static_cast<int>(SketchPoint::Origin::Endpoint)));
+            auto* pt = new SketchPoint(pos, origin);
+            pt->uuid = uuid;
+            pt->role = static_cast<GeomRole>(geomJson["role"].toInt());
+            m_geometries.append(pt);
+            m_uuidToGeomIndex[uuid] = m_geometries.size() - 1;
+        }
+
+        // ── 第二遍：載入曲線（可安全引用已存在的 Point UUID）──────────
+        for (const QJsonValue& val : geomsArray) {
+            QJsonObject geomJson = val.toObject();
+            SketchGeometryType type =
+                static_cast<SketchGeometryType>(geomJson["type"].toInt());
+            if (type == SketchGeometryType::Point) continue;  // 已在第一遍處理
 
             // 通用：讀取點陣列
             QVector<QVector2D> points;
@@ -911,8 +938,8 @@ bool Sketch::fromJson(const QJsonObject& json) {
                            << "Unknown geometry type:" << static_cast<int>(type);
                 break;
             }
-        }
-    }
+        }  // 第二遍 for loop
+    }  // json.contains("geometries")
 
 
     qDebug() << "[Sketch]" << name() << "fromJson complete:"
@@ -995,21 +1022,29 @@ SolveResult Sketch::solveConstraints() {
         QVector3D n = m_plane->normal();
         normal = gp_Dir(n.x(), n.y(), n.z());
     }
-    // ✅ Task B.5: 將 SketchPoint 也納入 Solver 的 geoms 列表
-    QList<SketchGeometry*> geoms;
-    for (auto* pt : m_points)   // 點先放，layout 前段穩定
-        geoms.append(pt);
-    for (auto* g : m_geometries)
-        if (g->type != SketchGeometryType::Point)
-            geoms.append(g);
+    // 統一從 normalGeometries() 取得幾何列表（含 SketchPoint）
+    auto geoms = normalGeometries();
     auto result = m_solver.solve(geoms, m_constraints, normal);
     Q_EMIT constraintSolved(result);
     if (result.status != SolveStatus::Conflict &&
         result.status != SolveStatus::SolverError) {
-        // 求解後幾何已被修改，觸發重建
+        // ✅ Step 12: Solver 回寫 SketchPoint.pos 後，同步曲線座標
+        syncGeometryFromPoints();
         markDirty();
         Q_EMIT geometryChanged();
     }
+
+    // ✅ Step 13: 將全域 SolveStatus 傳遞給所有 SketchPointAIS，即時更新顏色
+    if (!m_aisContext.IsNull()) {
+        for (const auto& obj : m_aisShapes) {
+            if (auto ptAis = Handle(SketchPointAIS)::DownCast(obj)) {
+                ptAis->updateSolveStatus(result.status);
+                m_aisContext->Redisplay(ptAis, Standard_False);
+            }
+        }
+        m_aisContext->UpdateCurrentViewer();
+    }
+
     return result;
 }
 
@@ -1030,11 +1065,7 @@ SolveResult Sketch::solveWithStore(const aicad::core::ParameterStore* store) {
 }
 
 int Sketch::degreesOfFreedom() const {
-    QList<SketchGeometry*> geoms;
-    for (auto* pt : m_points) geoms.append(pt);
-    for (auto* g : m_geometries)
-        if (g->type != SketchGeometryType::Point) geoms.append(g);
-    return ConstraintSolver::computeDOF(geoms, m_constraints);
+    return ConstraintSolver::computeDOF(normalGeometries(), m_constraints);
 }
 
 // ── 便捷 API ──────────────────────────────────────────────────────────────
@@ -1309,7 +1340,7 @@ QList<TopoDS_Wire> Sketch::wires() const {
     return m_wires;
 }
 
-QList<Handle(AIS_Shape)> Sketch::aisShapes() const {
+QList<Handle(AIS_InteractiveObject)> Sketch::aisShapes() const {
     return m_aisShapes;
 }
 
@@ -1317,41 +1348,39 @@ const QList<QString>& Sketch::aisShapeUuids() const {
     return m_aisShapeUuids;
 }
 
-QList<Handle(AIS_Shape)> Sketch::displayInContext(
+QList<Handle(AIS_InteractiveObject)> Sketch::displayInContext(
     const Handle(AIS_InteractiveContext)& context) {
     m_aisContext = context;
     if (context.IsNull()) return {};
 
-    for (const Handle(AIS_Shape)& s : m_aisShapes)
-        if (!s.IsNull()) context->Display(s, Standard_False);
-
-    // ← 新增：建構線也顯示，但不可選（避免誤選）
-    for (const Handle(AIS_Shape)& s : m_constructionShapes) {
-        if (!s.IsNull()) {
-            context->Display(s, Standard_False);
-            context->Deactivate(s);    // 不參與選擇
+    // 顯示所有幾何 AIS（含 SketchPointAIS）
+    for (const auto& obj : m_aisShapes) {
+        if (obj.IsNull()) continue;
+        context->Display(obj, Standard_False);
+        // SketchPointAIS 需要明確啟用 selection mode 0
+        if (Handle(SketchPointAIS)::DownCast(obj)) {
+            context->Activate(obj, 0, Standard_False);
         }
     }
 
-    for (auto& ptAis : m_pointAisObjects) {
-        if (!ptAis.IsNull()) {
-            context->Display(ptAis, Standard_False);
-            context->Activate(ptAis, 0);
+    // 建構線：顯示但不可選
+    for (const Handle(AIS_Shape)& s : m_constructionShapes) {
+        if (!s.IsNull()) {
+            context->Display(s, Standard_False);
+            context->Deactivate(s);
         }
     }
 
     context->UpdateCurrentViewer();
-    return m_aisShapes;   // 只回傳 normal shapes
+    return m_aisShapes;
 }
 
 void Sketch::eraseFromContext(const Handle(AIS_InteractiveContext)& context) {
     if (context.IsNull()) return;
-    for (const Handle(AIS_Shape)& s : m_aisShapes)
+    for (const auto& obj : m_aisShapes)
+        if (!obj.IsNull()) context->Erase(obj, Standard_False);
+    for (const Handle(AIS_Shape)& s : m_constructionShapes)
         if (!s.IsNull()) context->Erase(s, Standard_False);
-    for (const Handle(AIS_Shape)& s : m_constructionShapes)   // ← 新增
-        if (!s.IsNull()) context->Erase(s, Standard_False);
-    for (auto& ptAis : m_pointAisObjects)
-        if (!ptAis.IsNull()) context->Erase(ptAis, Standard_False);
     context->UpdateCurrentViewer();
 }
 
@@ -1417,25 +1446,30 @@ bool Sketch::hasExtrudableProfile() const {
 QString Sketch::addPoint(const QVector2D& pos, SketchPoint::Origin origin)
 {
     auto* pt = new SketchPoint(pos, origin);
-    m_points.insert(pt->uuid, pt);
-    // 同時加入 m_geometries 以便 Solver 處理
     m_geometries.append(pt);
+    m_uuidToGeomIndex[pt->uuid] = m_geometries.size() - 1;
     return pt->uuid;
 }
 
 SketchPoint* Sketch::point(const QString& uuid) const
 {
-    return m_points.value(uuid, nullptr);
+    auto* g = findGeometry(uuid);
+    return (g && g->type == SketchGeometryType::Point)
+           ? static_cast<SketchPoint*>(g) : nullptr;
 }
 
 QList<SketchPoint*> Sketch::points() const
 {
-    return m_points.values();
+    QList<SketchPoint*> result;
+    for (auto* g : m_geometries)
+        if (g->type == SketchGeometryType::Point)
+            result.append(static_cast<SketchPoint*>(g));
+    return result;
 }
 
 void Sketch::movePoint(const QString& uuid, const QVector2D& newPos)
 {
-    auto* pt = m_points.value(uuid, nullptr);
+    auto* pt = point(uuid);
     if (!pt) return;
 
     pt->pos = newPos;
@@ -1449,7 +1483,9 @@ void Sketch::movePoint(const QString& uuid, const QVector2D& newPos)
 void Sketch::mergePoints(const QString& fromUuid, const QString& toUuid)
 {
     if (fromUuid == toUuid) return;
-    if (!m_points.contains(fromUuid) || !m_points.contains(toUuid)) return;
+    auto* fromPt = point(fromUuid);
+    auto* toPt   = point(toUuid);
+    if (!fromPt || !toPt) return;
 
     // 更新所有引用 fromUuid 的曲線
     for (auto* g : m_geometries) {
@@ -1467,9 +1503,9 @@ void Sketch::mergePoints(const QString& fromUuid, const QString& toUuid)
         }
     }
 
-    // 刪除 from 點
-    SketchPoint* fromPt = m_points.take(fromUuid);
+    // 刪除 from 點（從 m_geometries 中移除並釋放）
     m_geometries.removeAll(fromPt);
+    m_uuidToGeomIndex.remove(fromUuid);
     delete fromPt;
 
     syncGeometryFromPoints();
@@ -1534,26 +1570,26 @@ void Sketch::syncGeometryFromPoints()
 {
     for (auto* g : m_geometries) {
         if (auto* line = dynamic_cast<SketchLine*>(g)) {
-            if (auto* ps = m_points.value(line->startUuid)) {
+            if (auto* ps = point(line->startUuid)) {
                 line->start = ps->pos;
                 if (!line->points.isEmpty()) line->points[0] = ps->pos;
             }
-            if (auto* pe = m_points.value(line->endUuid)) {
+            if (auto* pe = point(line->endUuid)) {
                 line->end = pe->pos;
                 if (line->points.size() > 1) line->points[1] = pe->pos;
             }
         } else if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
-            if (auto* pc = m_points.value(circ->centerUuid)) {
+            if (auto* pc = point(circ->centerUuid)) {
                 circ->center = pc->pos;
             }
         } else if (auto* arc = dynamic_cast<SketchArc*>(g)) {
             // ✅ GAP 1 Fix: Arc 的 SketchPoint 同步回 arc->points[]
             // Arc 以 OCCT curve 為主，points[] 只作顯示用
             // [0]=起點 [1]=中點 [2]=終點 (若存在)
-            if (auto* ps = m_points.value(arc->startUuid)) {
+            if (auto* ps = point(arc->startUuid)) {
                 if (!arc->points.isEmpty()) arc->points[0] = ps->pos;
             }
-            if (auto* pe = m_points.value(arc->endUuid)) {
+            if (auto* pe = point(arc->endUuid)) {
                 if (arc->points.size() > 2) arc->points[2] = pe->pos;
             }
             // centerUuid 指向圓心 — 不直接暴露在 points[] 中，略過
@@ -1583,13 +1619,15 @@ void Sketch::migrateFromLegacyFormat(const QJsonObject& json)
             Q_UNUSED(getOrCreate(g["x2"].toDouble(), g["y2"].toDouble()));
         }
     }
-    qDebug() << "[Sketch] migrateFromLegacyFormat: created" << m_points.size() << "points";
+    qDebug() << "[Sketch] migrateFromLegacyFormat: created" << points().size() << "points";
 }
 
 QList<Sketch::PointInfo> Sketch::listPoints() const
 {
     QList<PointInfo> result;
-    for (auto* pt : m_points) {
+    for (auto* g : m_geometries) {
+        if (g->type != SketchGeometryType::Point) continue;
+        auto* pt = static_cast<SketchPoint*>(g);
         PointInfo info;
         info.uuid   = pt->uuid;
         info.pos    = pt->pos;
