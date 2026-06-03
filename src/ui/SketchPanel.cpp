@@ -173,9 +173,13 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
     auto* dimGrid = new QGridLayout(dimBox);
     dimGrid->setSpacing(3);
 
-    m_btnDistance = makeToolBtn(tr("距離"), tr("Fixed Distance：設定兩點距離"), dimBox);
-    m_btnRadius   = makeToolBtn(tr("半徑"), tr("Fixed Radius：設定圓/弧半徑"),  dimBox);
-    m_btnAngle    = makeToolBtn(tr("角度"), tr("Fixed Angle：設定線段角度"),     dimBox);
+    m_btnGeneralDim = makeToolBtn(
+        tr("一般尺寸 (GDIM)"),
+        tr("General Dimension：自動判斷尺寸類型\n"
+           "• 線段→長度  • 圓→直徑  • 弧→半徑/弧長\n"
+           "• 兩點→距離  • 兩線→夾角\n"
+           "指令：GDIM 或 GD"),
+        dimBox);
 
     // ── 數值 SpinBox ──────────────────────────────────────────────
     m_valueInput = new QDoubleSpinBox(dimBox);
@@ -200,35 +204,17 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
     dimGrid->addWidget(m_valueInput,   0, 1, 1, 3);
     dimGrid->addWidget(new QLabel(tr("表達式:"), dimBox), 1, 0);
     dimGrid->addWidget(m_exprInput,    1, 1, 1, 3);
-    dimGrid->addWidget(m_drivingCheck, 2, 0, 1, 4);
-    dimGrid->addWidget(m_btnDistance,  3, 0);
-    dimGrid->addWidget(m_btnRadius,    3, 1);
-    dimGrid->addWidget(m_btnAngle,     3, 2);
-    // FixedX / FixedY
-    m_btnFixedX = makeToolBtn(tr("固定X"), tr("FixedX：固定 X 座標"), dimBox);
-    m_btnFixedY = makeToolBtn(tr("固定Y"), tr("FixedY：固定 Y 座標"), dimBox);
-    dimGrid->addWidget(m_btnFixedX, 4, 0);
-    dimGrid->addWidget(m_btnFixedY, 4, 1);
+    dimGrid->addWidget(m_drivingCheck,  2, 0, 1, 4);
+    dimGrid->addWidget(m_btnGeneralDim, 3, 0, 1, 4);
 
-    // 表達式優先：若 m_exprInput 有內容則忽略 spinBox
-    // m_pickingActive 防止選點進行中重複觸發
-    auto emitDim = [this](ConstraintType ct) {
-        if (m_pickingActive) return;   // 選點進行中，忽略
-        QString expr = m_exprInput->text().trimmed();
-        double  val  = m_valueInput->value();
-        bool    drv  = m_drivingCheck->isChecked();
-        Q_EMIT requestConstraintWithValueAndExpr(ct, val, expr, drv);
-    };
-    connect(m_btnDistance, &QToolButton::clicked, this,
-            [emitDim]{ emitDim(ConstraintType::FixedDistance); });
-    connect(m_btnRadius,   &QToolButton::clicked, this,
-            [emitDim]{ emitDim(ConstraintType::FixedRadius); });
-    connect(m_btnAngle,    &QToolButton::clicked, this,
-            [emitDim]{ emitDim(ConstraintType::FixedAngleDim); });
-    connect(m_btnFixedX,   &QToolButton::clicked, this,
-            [emitDim]{ emitDim(ConstraintType::FixedX); });
-    connect(m_btnFixedY,   &QToolButton::clicked, this,
-            [emitDim]{ emitDim(ConstraintType::FixedY); });
+    connect(m_btnGeneralDim, &QToolButton::clicked, this, [this] {
+        QString expr = m_exprInput   ? m_exprInput->text().trimmed() : QString();
+        bool    drv  = m_drivingCheck ? m_drivingCheck->isChecked()  : true;
+        QString cmd  = "GDIM";
+        if (!expr.isEmpty()) cmd += " " + expr;
+        if (!drv)            cmd += " -measured";
+        core::CommandLineManager::instance()->executeCommand(cmd);
+    });
 
     vbox->addWidget(dimBox);
 

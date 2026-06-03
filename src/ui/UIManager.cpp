@@ -1923,11 +1923,22 @@ void UIManager::setupSketchPanel()
     if (d->cadView) {
         connect(d->cadView, &view::CadView::geomRefPicked,
                 this, [this](QVector2D planePt, QString geomUuid, int geomHandle) {
-            if (!d->pickSession->isActive()) return;
-            d->pickSession->feedPoint(planePt, geomUuid, geomHandle);
-            // 更新 status bar 提示
-            if (d->pickSession->isActive())
-                setStatusMessage(d->pickSession->promptText());
+            // 舊路徑：pickSession（DimConstraintCommand 使用）
+            if (d->pickSession->isActive()) {
+                d->pickSession->feedPoint(planePt, geomUuid, geomHandle);
+                // 更新 status bar 提示
+                if (d->pickSession->isActive())
+                    setStatusMessage(d->pickSession->promptText());
+                return;
+            }
+            // 新路徑：透過 EventBus 發佈，供 GeneralDimCommand 訂閱
+            QVariantMap payload;
+            payload["geomUuid"]  = geomUuid;
+            payload["handle"]    = geomHandle;
+            payload["planePtX"]  = static_cast<double>(planePt.x());
+            payload["planePtY"]  = static_cast<double>(planePt.y());
+            auto* bus = core::Application::instance()->eventBus();
+            if (bus) bus->publish(core::Events::GEOM_PICKED, payload);
         });
 
         // ✅ Step 5/GAP 3: modeChanged — GetGeom 時啟用 SketchPointAIS 選取，離開時停用
@@ -1974,19 +1985,36 @@ void UIManager::setupSketchPanel()
         // ✅ Task E: PlaceDimLine 模式 — 預覽尺寸線位置
         connect(d->cadView, &view::CadView::dimLinePosPreview,
                 this, [this](double ox, double oy) {
-            if (!d->sketchPanel || !d->sketchPanel->overlay()) return;
-            const QString uuid = d->pickSession
-                                  ? d->pickSession->pendingConstraintUuid()
-                                  : QString();
-            if (!uuid.isEmpty())
-                d->sketchPanel->overlay()->updateDimLine(uuid, ox, oy);
+            // 舊路徑：pickSession（DimConstraintCommand）
+            if (d->sketchPanel && d->sketchPanel->overlay()) {
+                const QString uuid = d->pickSession
+                                      ? d->pickSession->pendingConstraintUuid()
+                                      : QString();
+                if (!uuid.isEmpty()) {
+                    d->sketchPanel->overlay()->updateDimLine(uuid, ox, oy);
+                    return;
+                }
+            }
+            // 新路徑：供 GeneralDimCommand 訂閱
+            QVariantMap payload;
+            payload["offsetX"] = ox;
+            payload["offsetY"] = oy;
+            auto* bus = core::Application::instance()->eventBus();
+            if (bus) bus->publish(core::Events::DIM_LINE_PREVIEW, payload);
         });
 
         // ✅ Task E: PlaceDimLine 模式 — 確認尺寸線位置
         connect(d->cadView, &view::CadView::dimLinePosConfirmed,
                 this, [this](double ox, double oy) {
+            // 舊路徑
             if (d->pickSession)
                 d->pickSession->confirmDimLineOffset(ox, oy);
+            // 新路徑：供 GeneralDimCommand 訂閱
+            QVariantMap payload;
+            payload["offsetX"] = ox;
+            payload["offsetY"] = oy;
+            auto* bus = core::Application::instance()->eventBus();
+            if (bus) bus->publish(core::Events::DIM_LINE_CONFIRMED, payload);
         });
     }
 

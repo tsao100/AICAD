@@ -327,6 +327,122 @@ void FixedEquation::jacobian(const QVector<double>&, int r0,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// General Dimension 新增方程式
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── FixedLengthEquation：F = sqrt((x2-x1)²+(y2-y1)²) - value ────────────
+void FixedLengthEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) { out[0] = 0; return; }
+    // Line layout: offset+0=x1, +1=y1, +2=x2, +3=y2
+    double x1 = v[it->offset+0], y1 = v[it->offset+1];
+    double x2 = v[it->offset+2], y2 = v[it->offset+3];
+    double dx = x2 - x1, dy = y2 - y1;
+    double len = std::sqrt(dx*dx + dy*dy);
+    out[0] = len - constraint().value;
+}
+void FixedLengthEquation::jacobian(const QVector<double>& v, int r0,
+                                   QVector<QVector<double>>& J) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) return;
+    double x1 = v[it->offset+0], y1 = v[it->offset+1];
+    double x2 = v[it->offset+2], y2 = v[it->offset+3];
+    double dx = x2 - x1, dy = y2 - y1;
+    double len = std::sqrt(dx*dx + dy*dy);
+    if (len < 1e-12) return;
+    J[r0][it->offset+0] = -dx/len;
+    J[r0][it->offset+1] = -dy/len;
+    J[r0][it->offset+2] =  dx/len;
+    J[r0][it->offset+3] =  dy/len;
+}
+
+// ── FixedDiameterEquation：F = r - value/2 ───────────────────────────────
+void FixedDiameterEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) { out[0] = 0; return; }
+    // Circle/Arc layout: offset+0=cx, +1=cy, +2=r
+    out[0] = v[it->offset+2] - constraint().value / 2.0;
+}
+void FixedDiameterEquation::jacobian(const QVector<double>&, int r0,
+                                     QVector<QVector<double>>& J) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) return;
+    J[r0][it->offset+2] = 1.0;
+}
+
+// ── FixedHorizDistEquation：F = (x2 - x1) - value ────────────────────────
+void FixedHorizDistEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    int i0 = varIdx(constraint().refs[0]);
+    int i1 = varIdx(constraint().refs[1]);
+    if (i0 < 0 || i1 < 0) { out[0] = 0; return; }
+    out[0] = (v[i1] - v[i0]) - constraint().value;
+}
+void FixedHorizDistEquation::jacobian(const QVector<double>&, int r0,
+                                      QVector<QVector<double>>& J) const {
+    int i0 = varIdx(constraint().refs[0]);
+    int i1 = varIdx(constraint().refs[1]);
+    if (i0 < 0 || i1 < 0) return;
+    J[r0][i0] = -1.0;
+    J[r0][i1] =  1.0;
+}
+
+// ── FixedVertDistEquation：F = (y2 - y1) - value ─────────────────────────
+void FixedVertDistEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    int i0 = varIdx(constraint().refs[0]);
+    int i1 = varIdx(constraint().refs[1]);
+    if (i0 < 0 || i1 < 0) { out[0] = 0; return; }
+    // +1 = y component
+    out[0] = (v[i1+1] - v[i0+1]) - constraint().value;
+}
+void FixedVertDistEquation::jacobian(const QVector<double>&, int r0,
+                                     QVector<QVector<double>>& J) const {
+    int i0 = varIdx(constraint().refs[0]);
+    int i1 = varIdx(constraint().refs[1]);
+    if (i0 < 0 || i1 < 0) return;
+    J[r0][i0+1] = -1.0;
+    J[r0][i1+1] =  1.0;
+}
+
+// ── FixedArcLengthEquation：F = r * |t1 - t0| - value ────────────────────
+// Arc layout: offset+0=cx, +1=cy, +2=r, +3=t0, +4=t1
+void FixedArcLengthEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) { out[0] = 0; return; }
+    double r  = v[it->offset+2];
+    double t0 = v[it->offset+3];
+    double t1 = v[it->offset+4];
+    out[0] = r * std::abs(t1 - t0) - constraint().value;
+}
+void FixedArcLengthEquation::jacobian(const QVector<double>& v, int r0,
+                                      QVector<QVector<double>>& J) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) return;
+    double r  = v[it->offset+2];
+    double t0 = v[it->offset+3];
+    double t1 = v[it->offset+4];
+    double span = t1 - t0;
+    double sign = (span >= 0) ? 1.0 : -1.0;
+    J[r0][it->offset+2] = std::abs(span);      // ∂F/∂r
+    J[r0][it->offset+3] = -r * sign;            // ∂F/∂t0
+    J[r0][it->offset+4] =  r * sign;            // ∂F/∂t1
+}
+
+// ── CoordinateDimEquation：F1 = px - value ; F2 = py - value2 ────────────
+void CoordinateDimEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    int ix = varIdx(constraint().refs[0]);
+    if (ix < 0) { out[0] = out[1] = 0; return; }
+    out[0] = v[ix]   - constraint().value;
+    out[1] = v[ix+1] - constraint().value2;
+}
+void CoordinateDimEquation::jacobian(const QVector<double>&, int r0,
+                                     QVector<QVector<double>>& J) const {
+    int ix = varIdx(constraint().refs[0]);
+    if (ix < 0) return;
+    J[r0  ][ix]   = 1.0;   // ∂F1/∂px
+    J[r0+1][ix+1] = 1.0;   // ∂F2/∂py
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // ConstraintSolver
 // ════════════════════════════════════════════════════════════════════════════
 ConstraintSolver::ConstraintSolver()
@@ -485,6 +601,18 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
             eq = new FixedXEquation(c, &layout); break;
         case ConstraintType::FixedY:
             eq = new FixedYEquation(c, &layout); break;
+        case ConstraintType::FixedLength:
+            eq = new FixedLengthEquation(c, &layout); break;
+        case ConstraintType::FixedDiameter:
+            eq = new FixedDiameterEquation(c, &layout); break;
+        case ConstraintType::FixedHorizDist:
+            eq = new FixedHorizDistEquation(c, &layout); break;
+        case ConstraintType::FixedVertDist:
+            eq = new FixedVertDistEquation(c, &layout); break;
+        case ConstraintType::FixedArcLength:
+            eq = new FixedArcLengthEquation(c, &layout); break;
+        case ConstraintType::CoordinateDim:
+            eq = new CoordinateDimEquation(c, &layout); break;
         case ConstraintType::Fixed: {
             // Fixed：從 layout 取出 offset+dof，記錄 snapshot
             auto it = layout.find(c.refs[0].geomUuid);

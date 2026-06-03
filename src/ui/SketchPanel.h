@@ -157,11 +157,7 @@ private:  // 選點進行中，防止尺寸按鈕重複觸發
     QToolButton* m_btnConcentric    = nullptr;
     QToolButton* m_btnFixed         = nullptr;
     // 尺寸型約束
-    QToolButton* m_btnDistance      = nullptr;
-    QToolButton* m_btnRadius        = nullptr;
-    QToolButton* m_btnAngle         = nullptr;
-    QToolButton* m_btnFixedX        = nullptr;
-    QToolButton* m_btnFixedY        = nullptr;
+    QToolButton* m_btnGeneralDim    = nullptr;  ///< GDIM：一般尺寸（取代舊5個按鈕）
     QDoubleSpinBox* m_valueInput    = nullptr;
     // paramExpr 輸入：可輸入參數名（如 "width"）取代純數值
     QLineEdit*   m_exprInput        = nullptr;

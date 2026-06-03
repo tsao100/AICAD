@@ -72,6 +72,14 @@ enum class ConstraintType {
 
     // ── 鎖定 ───────────────────────────────────
     Fixed,              ///< 整個幾何元素固定（消耗所有 DOF）
+
+    // ── General Dimension 新增 ─────────────────────────────────
+    FixedLength,        ///< 一條線段的長度 = value
+    FixedDiameter,      ///< 圓/弧直徑 = value（顯示 Ø 符號）
+    FixedHorizDist,     ///< 兩點水平距離 = value
+    FixedVertDist,      ///< 兩點垂直距離 = value
+    FixedArcLength,     ///< 圓弧弧長 = value
+    CoordinateDim,      ///< 點相對原點的 (x, y) 座標尺寸（消耗 2 DOF）
 };
 
 inline size_t qHash(const aicad::cad::ConstraintType &key, size_t seed = 0) noexcept {
@@ -126,6 +134,7 @@ struct SketchConstraint {
     ConstraintType type;
     QList<GeomRef> refs;   ///< 參與約束的幾何參考（1~3個）
     double         value = 0.0;  ///< 尺寸約束的目標值（求值後的快取）
+    double         value2 = 0.0; ///< 第二數值（CoordinateDim 的 Y 值）
     QString        paramExpr;    ///< 原始參數表達式（如 "width"、"width*2"）
     bool           driving = true;  ///< driving=true：約束驅動幾何；false：量測模式
     // Phase 3B 新增欄位
@@ -167,6 +176,14 @@ struct SketchConstraint {
     static SketchConstraint makeMidpoint(const GeomRef& point, const QString& lineUuid);
     static SketchConstraint makeSymmetric(const GeomRef& a, const GeomRef& b, const QString& axisUuid);
     static SketchConstraint makeCollinear(const QString& lineA, const QString& lineB);
+
+    // General Dimension 工廠方法
+    static SketchConstraint makeFixedLength    (const QString& lineUuid, double len);
+    static SketchConstraint makeFixedDiameter  (const QString& geomUuid, double dia);
+    static SketchConstraint makeFixedHorizDist (const GeomRef& a, const GeomRef& b, double d);
+    static SketchConstraint makeFixedVertDist  (const GeomRef& a, const GeomRef& b, double d);
+    static SketchConstraint makeFixedArcLength (const QString& arcUuid, double len);
+    static SketchConstraint makeCoordinateDim  (const GeomRef& point, double x, double y);
 
     // DOF 消耗量（用於 under/over 約束檢查）
     int dofConsumed() const;

@@ -150,6 +150,12 @@ bool SketchConstraint::isDimensional() const {
     case ConstraintType::FixedY:
     case ConstraintType::FixedAngleDim:
     case ConstraintType::FixedAngle:
+    case ConstraintType::FixedLength:
+    case ConstraintType::FixedDiameter:
+    case ConstraintType::FixedHorizDist:
+    case ConstraintType::FixedVertDist:
+    case ConstraintType::FixedArcLength:
+    case ConstraintType::CoordinateDim:
         return true;
     default:
         return false;
@@ -187,6 +193,12 @@ int SketchConstraint::dofConsumed() const {
     case ConstraintType::FixedY:          return 1;
     case ConstraintType::FixedAngleDim:   return 1;
     case ConstraintType::Fixed:           return 999; // all DOF
+    case ConstraintType::FixedLength:     return 1;
+    case ConstraintType::FixedDiameter:   return 1;
+    case ConstraintType::FixedHorizDist:  return 1;
+    case ConstraintType::FixedVertDist:   return 1;
+    case ConstraintType::FixedArcLength:  return 1;
+    case ConstraintType::CoordinateDim:   return 2;
     default: return 0;
     }
 }
@@ -196,6 +208,7 @@ QJsonObject SketchConstraint::toJson() const {
     o["uuid"]      = uuid;
     o["type"]      = static_cast<int>(type);
     o["value"]     = value;
+    o["value2"]    = value2;
     o["paramExpr"] = paramExpr;
     o["driving"]   = driving;
     o["distMode"]  = static_cast<int>(distMode);
@@ -212,6 +225,7 @@ SketchConstraint SketchConstraint::fromJson(const QJsonObject& j) {
     c.uuid      = j["uuid"].toString(QUuid::createUuid().toString(QUuid::WithoutBraces));
     c.type      = static_cast<ConstraintType>(j["type"].toInt());
     c.value     = j["value"].toDouble(0.0);
+    c.value2    = j["value2"].toDouble(0.0);
     c.paramExpr = j["paramExpr"].toString();
     c.driving   = j["driving"].toBool(true);
     c.distMode  = static_cast<DistanceMode>(j["distMode"].toInt(0));
@@ -235,6 +249,39 @@ SketchConstraint SketchConstraint::makeCollinear(const QString& lineA, const QSt
     c.type = ConstraintType::Collinear;
     c.refs = { GeomRef(lineA, GeomHandle::Curve), GeomRef(lineB, GeomHandle::Curve) };
     return c;
+}
+
+// ── General Dimension 工廠方法 ───────────────────────────────────────────────
+
+SketchConstraint SketchConstraint::makeFixedLength(const QString& lineUuid, double len) {
+    SketchConstraint c; c.type = ConstraintType::FixedLength; c.value = len;
+    c.refs = { GeomRef(lineUuid, GeomHandle::Curve) }; return c;
+}
+
+SketchConstraint SketchConstraint::makeFixedDiameter(const QString& geomUuid, double dia) {
+    SketchConstraint c; c.type = ConstraintType::FixedDiameter; c.value = dia;
+    c.refs = { GeomRef(geomUuid, GeomHandle::WholeGeom) }; return c;
+}
+
+SketchConstraint SketchConstraint::makeFixedHorizDist(const GeomRef& a, const GeomRef& b, double d) {
+    SketchConstraint c; c.type = ConstraintType::FixedHorizDist; c.value = d;
+    c.refs = {a, b}; return c;
+}
+
+SketchConstraint SketchConstraint::makeFixedVertDist(const GeomRef& a, const GeomRef& b, double d) {
+    SketchConstraint c; c.type = ConstraintType::FixedVertDist; c.value = d;
+    c.refs = {a, b}; return c;
+}
+
+SketchConstraint SketchConstraint::makeFixedArcLength(const QString& arcUuid, double len) {
+    SketchConstraint c; c.type = ConstraintType::FixedArcLength; c.value = len;
+    c.refs = { GeomRef(arcUuid, GeomHandle::WholeGeom) }; return c;
+}
+
+SketchConstraint SketchConstraint::makeCoordinateDim(const GeomRef& point, double x, double y) {
+    SketchConstraint c; c.type = ConstraintType::CoordinateDim;
+    c.value = x; c.value2 = y;
+    c.refs = {point}; return c;
 }
 
 } // namespace aicad::cad

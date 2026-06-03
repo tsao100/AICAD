@@ -43,11 +43,23 @@ void AIS_DimensionLine::Update(
 }
 
 QString AIS_DimensionLine::labelText() const {
+    const double v = m_constraint.value;
+    QString base;
+    switch (m_constraint.type) {
+    case ConstraintType::FixedDiameter:
+        base = QString("Ø%1").arg(v, 0, 'f', 2);
+        break;
+    case ConstraintType::CoordinateDim:
+        // drawCoordinateDimension 各自畫 X/Y 標籤；此處回傳 X 標籤
+        base = QString("X=%1").arg(v, 0, 'f', 2);
+        break;
+    default:
+        base = QString::number(v, 'f', 2);
+        break;
+    }
     if (!m_constraint.paramExpr.isEmpty())
-        return QString("%1 = %2")
-               .arg(m_constraint.paramExpr)
-               .arg(m_constraint.value, 0, 'f', 2);
-    return QString::number(m_constraint.value, 'f', 2);
+        return QString("%1 = %2").arg(m_constraint.paramExpr, base);
+    return base;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,6 +124,18 @@ void AIS_DimensionLine::Compute(
     case ConstraintType::FixedAngleDim:
     case ConstraintType::FixedAngle:
         drawAngleDim(prs);         break;
+    case ConstraintType::FixedLength:
+        drawLengthDimension(prs);  break;
+    case ConstraintType::FixedDiameter:
+        drawDiameterDimension(prs); break;
+    case ConstraintType::FixedHorizDist:
+        drawHorizontalDim(prs);    break;  // 複用既有
+    case ConstraintType::FixedVertDist:
+        drawVerticalDim(prs);      break;  // 複用既有
+    case ConstraintType::FixedArcLength:
+        drawArcLengthDimension(prs); break;
+    case ConstraintType::CoordinateDim:
+        drawCoordinateDimension(prs); break;
     case ConstraintType::FixedDistance:
     default:
         drawLinearDimension(prs);  break;
@@ -247,6 +271,92 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
     addDimLine(prs, p1, p2, m_offsetDist,
                dimColor(m_constraint.driving, m_status),
                labelText() + "°");
+}
+
+// ── General Dimension 新增繪製函式 ────────────────────────────────────────
+
+void AIS_DimensionLine::drawLengthDimension(const Handle(Prs3d_Presentation)& prs) {
+    // 線段長度：端點必定取 refs[0] 的 Start/End（不依中心計算）
+    if (m_geoms.isEmpty()) return;
+    auto* g = m_geoms[0];
+    if (!g || g->points.size() < 2) {
+        drawLinearDimension(prs);
+        return;
+    }
+    gp_Pnt p1(g->points[0].x(), g->points[0].y(), 0.0);
+    gp_Pnt p2(g->points[1].x(), g->points[1].y(), 0.0);
+    p1.Transform(m_sketchToWorld);
+    p2.Transform(m_sketchToWorld);
+    addDimLine(prs, p1, p2, m_offsetDist,
+               dimColor(m_constraint.driving, m_status),
+               labelText());
+}
+
+void AIS_DimensionLine::drawDiameterDimension(const Handle(Prs3d_Presentation)& prs) {
+    // 直徑：尺寸線穿越圓心，兩端點落在圓周對稱位置
+    gp_Pnt ctr, dummy;
+    if (!getRefPoints(ctr, dummy)) return;
+    double r = m_constraint.value / 2.0;
+    gp_Pnt p1(ctr.X() - r, ctr.Y(), ctr.Z());
+    gp_Pnt p2(ctr.X() + r, ctr.Y(), ctr.Z());
+    Quantity_Color col = dimColor(m_constraint.driving, m_status);
+
+    Handle(Graphic3d_Group) grp = prs->NewGroup();
+    Handle(Graphic3d_AspectLine3d) asp =
+        new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
+    grp->SetPrimitivesAspect(asp);
+
+    Handle(Graphic3d_ArrayOfPolylines) line =
+        new Graphic3d_ArrayOfPolylines(2, 1);
+    line->AddBound(2); line->AddVertex(p1); line->AddVertex(p2);
+    grp->AddPrimitiveArray(line);
+
+    gp_Vec along(p2.X()-p1.X(), p2.Y()-p1.Y(), 0.0);
+    along.Normalize();
+    addArrow(prs, p1, along * -1.0, col);
+    addArrow(prs, p2, along,        col);
+
+    // 標籤（含 Ø 前綴）
+    gp_Pnt mid((p1.X()+p2.X())*0.5, (p1.Y()+p2.Y())*0.5 + 1.5, 0.0);
+    Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
+    ta->SetColor(col);
+    ta->SetHeight(12.0);
+    ta->Aspect()->SetFont("Courier");
+    TCollection_ExtendedString txt(labelText().toUtf8().constData(), Standard_True);
+    Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
+}
+
+void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)& prs) {
+    // 弧長：以同心弧（半徑略大）為尺寸線，標籤加 ~ 前綴
+    gp_Pnt ctr, dummy;
+    if (!getRefPoints(ctr, dummy)) return;
+    // 簡化：用線性尺寸線顯示（弧幾何複雜，實際實作可再改進）
+    if (m_geoms.isEmpty()) return;
+    auto* g = m_geoms[0];
+    if (!g || g->points.size() < 2) return;
+    gp_Pnt p1(g->points.first().x(), g->points.first().y(), 0.0);
+    gp_Pnt p2(g->points.last().x(),  g->points.last().y(),  0.0);
+    p1.Transform(m_sketchToWorld);
+    p2.Transform(m_sketchToWorld);
+    addDimLine(prs, p1, p2, m_offsetDist,
+               dimColor(m_constraint.driving, m_status),
+               "~" + labelText());
+}
+
+void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)& prs) {
+    // 座標尺寸：從點畫兩條引線（水平 X，垂直 Y），各自加標籤
+    gp_Pnt pt, dummy;
+    if (!getRefPoints(pt, dummy)) return;
+    Quantity_Color col = dimColor(m_constraint.driving, m_status);
+    gp_Pnt origin(0.0, 0.0, pt.Z());
+    // 水平引線（X 軸方向）
+    gp_Pnt px(m_constraint.value, pt.Y(), pt.Z());
+    addDimLine(prs, pt, px, 0.0, col,
+               QString("X=%1").arg(m_constraint.value, 0, 'f', 2));
+    // 垂直引線（Y 軸方向）
+    gp_Pnt py(pt.X(), m_constraint.value2, pt.Z());
+    addDimLine(prs, pt, py, 0.0, col,
+               QString("Y=%1").arg(m_constraint.value2, 0, 'f', 2));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

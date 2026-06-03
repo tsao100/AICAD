@@ -237,6 +237,8 @@ SOURCES += \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
     src/command/ConstraintCommands.cpp \
+    src/command/GeneralDimCommand.cpp \
+    src/cad/sketch/GeneralDimClassifier.cpp \
     src/command/ExtrudeCommand.cpp \
     src/command/alignment/AlignmentEditCommand.cpp \
     src/command/alignment/AlignmentFixCurveCommand.cpp \
@@ -356,6 +358,8 @@ HEADERS += \
     src/command/CircleCommand.h \
     src/command/CommandAlias.h \
     src/command/ConstraintCommands.h \
+    src/command/GeneralDimCommand.h \
+    src/cad/sketch/GeneralDimClassifier.h \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
     src/command/alignment/AlignmentCommandBase.h \

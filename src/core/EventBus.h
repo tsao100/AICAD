@@ -185,6 +185,11 @@ constexpr const char* CONSTRAINT_DIM_CLICKED        = "constraint.dim.clicked";
 constexpr const char* CONSTRAINT_DIM_EDIT_DONE      = "constraint.dim.edit.done";
 constexpr const char* SKETCH_INSTANCE_PARAM_CHANGED = "sketchinstance.param.changed";
 constexpr const char* SKETCH_INSTANCE_CREATED       = "sketchinstance.created";
+
+// ── General Dimension 互動事件 ──────────────────────────────────────────────
+constexpr const char* GEOM_PICKED        = "input.geom_picked";
+constexpr const char* DIM_LINE_CONFIRMED = "input.dim_line_confirmed";
+constexpr const char* DIM_LINE_PREVIEW   = "input.dim_line_preview";  ///< 拖曳預覽（非 pickSession 路徑）
 }
 
 } // namespace core

@@ -6,6 +6,7 @@
 #include "ConstraintCommands.h"
 #include "CommandAlias.h"
 #include "CommandManager.h"
+#include "GeneralDimCommand.h"
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
 #include "../cad/Sketch.h"
@@ -414,6 +415,28 @@ CommandResult EditConCommand::execute(const CommandContext& ctx)
         QString oldExpr = con->paramExpr.isEmpty()
             ? QString::number(con->value) : con->paramExpr;
 
+        // CoordinateDim：支援 "x,y" 逗號分隔格式
+        if (con->type == ConstraintType::CoordinateDim && newExpr.contains(',')) {
+            QStringList parts = newExpr.split(',');
+            if (parts.size() == 2) {
+                bool ok1, ok2;
+                double x = parts[0].trimmed().toDouble(&ok1);
+                double y = parts[1].trimmed().toDouble(&ok2);
+                if (!ok1 || !ok2)
+                    return CommandResult::Failure(
+                        QString("Invalid coordinate format: '%1' (expected x,y)").arg(newExpr));
+                con->value  = x;
+                con->value2 = y;
+                con->paramExpr.clear();
+                SolveResult result = sk->solveConstraints();
+                cmdMgr->printSuccess(
+                    QString("✅ CoordinateDim updated: X=%1, Y=%2. Solved.").arg(x).arg(y));
+                reportSolveResult(result, cmdMgr);
+                triggerOverlayRebuild(app);
+                return CommandResult::Success();
+            }
+        }
+
         bool isNumber;
         double newValue = newExpr.toDouble(&isNumber);
         if (!isNumber) {
@@ -432,6 +455,14 @@ CommandResult EditConCommand::execute(const CommandContext& ctx)
 
         con->paramExpr = isNumber ? QString() : newExpr;
         con->value     = newValue;
+
+        // CoordinateDim：若第三參數提供 Y 值，一併更新（空格分隔備用格式）
+        if (con->type == ConstraintType::CoordinateDim && ctx.args.size() >= 3) {
+            bool ok2;
+            double y2 = ctx.args[2].toDouble(&ok2);
+            if (ok2)
+                con->value2 = y2;
+        }
 
         SolveResult result = sk->solveConstraints();
         cmdMgr->printSuccess(
@@ -495,6 +526,12 @@ CommandResult ListConCommand::execute(const CommandContext& /*ctx*/)
         case ConstraintType::FixedX:        return "FixedX";
         case ConstraintType::FixedY:        return "FixedY";
         case ConstraintType::FixedAngleDim: return "FixedAngle";
+        case ConstraintType::FixedLength:   return "FixedLength";
+        case ConstraintType::FixedDiameter: return "FixedDiam";
+        case ConstraintType::FixedHorizDist:return "HorizDist";
+        case ConstraintType::FixedVertDist: return "VertDist";
+        case ConstraintType::FixedArcLength:return "ArcLength";
+        case ConstraintType::CoordinateDim: return "CoordDim";
         default: return QString::number(static_cast<int>(t));
         }
     };
@@ -835,7 +872,12 @@ void registerConstraintCommands(core::Application* app)
     aliasMgr->registerAlias("ECO", "EDITCON",       "Edit constraint",           true);
     aliasMgr->registerAlias("LSC", "LISTCON",       "List constraints",          true);
 
-    qDebug() << "[ConstraintCommands] Registered" << 23 << "constraint commands and aliases.";
+    // General Dimension
+    cmdMgr->registerCommand("GDIM", QStringList{"GD"},
+        []() -> Command* { return new GeneralDimCommand(); });
+    aliasMgr->registerAlias("GD", "GDIM", "General Dimension", true);
+
+    qDebug() << "[ConstraintCommands] Registered" << 24 << "constraint commands and aliases.";
 }
 
 } // namespace command

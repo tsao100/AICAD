@@ -62,6 +62,10 @@ private:
     void drawHorizontalDim   (const Handle(Prs3d_Presentation)& prs);
     void drawVerticalDim     (const Handle(Prs3d_Presentation)& prs);
     void drawAngleDim        (const Handle(Prs3d_Presentation)& prs);
+    void drawLengthDimension    (const Handle(Prs3d_Presentation)& prs);
+    void drawDiameterDimension  (const Handle(Prs3d_Presentation)& prs);
+    void drawArcLengthDimension (const Handle(Prs3d_Presentation)& prs);
+    void drawCoordinateDimension(const Handle(Prs3d_Presentation)& prs);
 
     // 輔助：從約束 refs 取得世界座標點
     bool getRefPoints(gp_Pnt& p1, gp_Pnt& p2) const;

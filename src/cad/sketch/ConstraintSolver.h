@@ -188,6 +188,62 @@ public:
     void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
 };
 
+// ── General Dimension 新增方程式 ─────────────────────────────────────────────
+
+/// F(x) = sqrt((x2-x1)²+(y2-y1)²) - value = 0  (線段長度)
+class FixedLengthEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// F(x) = r - value/2 = 0  (直徑約束，refs[0]=圓/弧)
+class FixedDiameterEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// F(x) = (x2 - x1) - value = 0  (水平距離，refs[0/1]=兩點)
+class FixedHorizDistEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// F(x) = (y2 - y1) - value = 0  (垂直距離，refs[0/1]=兩點)
+class FixedVertDistEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// F(x) = r * |endAngle - startAngle| - value = 0  (弧長，refs[0]=弧)
+class FixedArcLengthEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// F1(x) = px - value = 0 ; F2(x) = py - value2 = 0  (點座標，refs[0]=點)
+class CoordinateDimEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 2; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
+};
+
 // Fixed = 用多條 FixedX/Y 方程式固定整個幾何
 class FixedEquation : public ConstraintEquation {
 public:
