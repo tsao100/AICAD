@@ -132,6 +132,8 @@ void ConstraintOverlayManager::createSymbolFor(const SketchConstraint& c) {
             if (!rp1.isNull() || !rp2.isNull())
                 dim->setRefPositions(rp1, rp2);
         }
+        // 套用已儲存的尺寸線偏移（使用者拖曳後存入 constraint）
+        dim->setDimLineOffset(c.dimLineOffsetX, c.dimLineOffsetY);
         m_dimLines[c.uuid] = dim;
         m_ctx->Display(dim, Standard_False);
         if (!m_visible) m_ctx->Erase(dim, Standard_False);
@@ -162,6 +164,7 @@ void ConstraintOverlayManager::updateSymbolFor(const SketchConstraint& c) {
             if (!rp1.isNull() || !rp2.isNull())
                 dimAIS->setRefPositions(rp1, rp2);
         }
+        dimAIS->setDimLineOffset(c.dimLineOffsetX, c.dimLineOffsetY);
         m_ctx->Redisplay(dimAIS, Standard_False);
     } else {
         createSymbolFor(c);

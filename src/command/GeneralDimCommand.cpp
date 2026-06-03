@@ -284,7 +284,25 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
     QString  uuid   = map.value("geomUuid").toString();
     int      handle = map.value("handle", static_cast<int>(GeomHandle::WholeGeom)).toInt();
 
-    if (uuid.isEmpty()) return;
+    // 若 uuid 為空（點選空白處），在該位置自動建立 SketchPoint 作為端點
+    if (uuid.isEmpty()) {
+        QVector2D planePt = map.value("point").value<QVector2D>();
+        Sketch* sk = activeSketch();
+        if (!sk || (planePt.x() == 0.0f && planePt.y() == 0.0f
+                    && !map.contains("point")))
+            return;
+
+        uuid = sk->addPoint(planePt, cad::SketchPoint::Origin::Explicit);
+        if (uuid.isEmpty()) return;
+        handle = static_cast<int>(GeomHandle::WholeGeom);
+
+        auto* cmdMgr = core::CommandLineManager::instance();
+        if (cmdMgr)
+            cmdMgr->printMessage(
+                QString("  [GDIM] 自由點 @ (%1, %2)")
+                .arg(static_cast<double>(planePt.x()), 0, 'f', 2)
+                .arg(static_cast<double>(planePt.y()), 0, 'f', 2));
+    }
 
     GeomRef ref(uuid, static_cast<GeomHandle>(handle));
     m_refs.append(ref);

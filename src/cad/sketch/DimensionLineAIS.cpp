@@ -245,10 +245,76 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
     }
 }
 
+// 明確指定尺寸線端點（d1、d2）的繪製版本，延伸線從 p1→d1、p2→d2
+static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
+                                const gp_Pnt& p1, const gp_Pnt& p2,
+                                const gp_Pnt& d1, const gp_Pnt& d2,
+                                const Quantity_Color& col,
+                                const QString& label)
+{
+    gp_Vec along(d1, d2);
+    if (along.Magnitude() < Precision::Confusion()) return;
+    along.Normalize();
+
+    Handle(Graphic3d_Group) grp = prs->NewGroup();
+    Handle(Graphic3d_AspectLine3d) asp =
+        new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
+    grp->SetPrimitivesAspect(asp);
+
+    Handle(Graphic3d_ArrayOfPolylines) line =
+        new Graphic3d_ArrayOfPolylines(6, 3);
+    line->AddBound(2); line->AddVertex(p1); line->AddVertex(d1);
+    line->AddBound(2); line->AddVertex(p2); line->AddVertex(d2);
+    line->AddBound(2); line->AddVertex(d1); line->AddVertex(d2);
+    grp->AddPrimitiveArray(line);
+
+    addArrow(prs, d1, along,       col);
+    addArrow(prs, d2, along * -1., col);
+
+    if (!label.isEmpty()) {
+        gp_Pnt mid(
+            (d1.X() + d2.X()) * 0.5,
+            (d1.Y() + d2.Y()) * 0.5 + 1.5,
+            (d1.Z() + d2.Z()) * 0.5);
+        Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
+        ta->SetColor(col);
+        ta->SetHeight(12.0);
+        ta->Aspect()->SetFont("Courier");
+        TCollection_ExtendedString txt(label.toUtf8().constData(), Standard_True);
+        Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
+    }
+}
+
+// 使用者拖曳偏移向量版本（世界座標偏移 gp_Vec）
+static void addDimLineWithOffset(const Handle(Prs3d_Presentation)& prs,
+                                  const gp_Pnt& p1, const gp_Pnt& p2,
+                                  const gp_Vec& offsetVec,
+                                  const Quantity_Color& col,
+                                  const QString& label)
+{
+    gp_Pnt d1 = p1.Translated(offsetVec);
+    gp_Pnt d2 = p2.Translated(offsetVec);
+    addDimLineExplicit(prs, p1, p2, d1, d2, col, label);
+}
+
 void AIS_DimensionLine::drawLinearDimension(const Handle(Prs3d_Presentation)& prs) {
     gp_Pnt p1, p2;
     if (!getRefPoints(p1, p2)) return;
-    addDimLine(prs, p1, p2, m_offsetDist,
+    // 若使用者已拖曳設定偏移，用 XY 偏移向量；否則用預設垂直偏移
+    double offDist = m_offsetDist;
+    if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+        // 將草圖平面偏移轉為世界座標偏移向量
+        gp_Pnt op(m_dimOffsetX, m_dimOffsetY, 0.0);
+        op.Transform(m_sketchToWorld);
+        gp_Pnt orig(0.0, 0.0, 0.0);
+        orig.Transform(m_sketchToWorld);
+        gp_Vec offsetVec(orig, op);
+        addDimLineWithOffset(prs, p1, p2, offsetVec,
+                             dimColor(m_constraint.driving, m_status),
+                             labelText());
+        return;
+    }
+    addDimLine(prs, p1, p2, offDist,
                dimColor(m_constraint.driving, m_status),
                labelText());
 }
@@ -256,19 +322,32 @@ void AIS_DimensionLine::drawLinearDimension(const Handle(Prs3d_Presentation)& pr
 void AIS_DimensionLine::drawHorizontalDim(const Handle(Prs3d_Presentation)& prs) {
     gp_Pnt p1, p2;
     if (!getRefPoints(p1, p2)) return;
-    p2 = gp_Pnt(p1.X() + m_constraint.value, p1.Y(), p1.Z());
-    addDimLine(prs, p1, p2, m_offsetDist,
-               dimColor(m_constraint.driving, m_status),
-               labelText());
+    // 水平距離：尺寸線偏移方向為草圖 Y 軸（世界座標後為 perp 方向）
+    // 將草圖 (0, offsetY, 0) 轉世界座標偏移向量
+    double rawOffset = (m_dimOffsetY != 0.0) ? m_dimOffsetY : m_offsetDist;
+    gp_Pnt skOrig(0.0, 0.0, 0.0); skOrig.Transform(m_sketchToWorld);
+    gp_Pnt skOff (0.0, rawOffset, 0.0); skOff.Transform(m_sketchToWorld);
+    gp_Vec offVec(skOrig, skOff);
+    gp_Pnt d1 = p1.Translated(offVec);
+    gp_Pnt d2 = p2.Translated(offVec);
+    addDimLineExplicit(prs, p1, p2, d1, d2,
+                       dimColor(m_constraint.driving, m_status),
+                       labelText());
 }
 
 void AIS_DimensionLine::drawVerticalDim(const Handle(Prs3d_Presentation)& prs) {
     gp_Pnt p1, p2;
     if (!getRefPoints(p1, p2)) return;
-    p2 = gp_Pnt(p1.X(), p1.Y() + m_constraint.value, p1.Z());
-    addDimLine(prs, p1, p2, m_offsetDist,
-               dimColor(m_constraint.driving, m_status),
-               labelText());
+    // 垂直距離：尺寸線偏移方向為草圖 X 軸
+    double rawOffset = (m_dimOffsetX != 0.0) ? m_dimOffsetX : m_offsetDist;
+    gp_Pnt skOrig(0.0, 0.0, 0.0); skOrig.Transform(m_sketchToWorld);
+    gp_Pnt skOff (rawOffset, 0.0, 0.0); skOff.Transform(m_sketchToWorld);
+    gp_Vec offVec(skOrig, skOff);
+    gp_Pnt d1 = p1.Translated(offVec);
+    gp_Pnt d2 = p2.Translated(offVec);
+    addDimLineExplicit(prs, p1, p2, d1, d2,
+                       dimColor(m_constraint.driving, m_status),
+                       labelText());
 }
 
 void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& prs) {
