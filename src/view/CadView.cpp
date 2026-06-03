@@ -1274,6 +1274,17 @@ void CadView::handlePointInput(const QPoint& screenPos) {
                 planePt = snap->planePoint;
         }
     }
+    // Snap 未偵測到幾何時，回退到 OCC DetectedInteractive
+    if (geomUuid.isEmpty() && !d->context.IsNull() && d->context->HasDetected()) {
+        Handle(AIS_InteractiveObject) det = d->context->DetectedInteractive();
+        if (!det.IsNull()) {
+            QString detUuid = d->aisToGeomUuid.value(det.get());
+            if (!detUuid.isEmpty()) {
+                geomUuid   = detUuid;
+                geomHandle = static_cast<int>(GeomHandle::WholeGeom);
+            }
+        }
+    }
 
     // 同時發布到 EventBus
     auto* bus = core::Application::instance()->eventBus();
@@ -1283,6 +1294,15 @@ void CadView::handlePointInput(const QPoint& screenPos) {
         data["geomUuid"]   = geomUuid;
         data["geomHandle"] = geomHandle;
         bus->publish(core::Events::POINT_ACQUIRED, data);
+
+        // GetGeom モード：GEOM_PICKED も発行して命令が幾何を受け取れるようにする
+        if (d->mode == InteractionMode::GetGeom) {
+            QVariantMap geomData;
+            geomData["geomUuid"]   = geomUuid;
+            geomData["handle"]     = geomHandle;
+            geomData["point"]      = QVariant::fromValue(planePt);
+            bus->publish(core::Events::GEOM_PICKED, geomData);
+        }
     }
 
     qDebug() << "[CadView] Point acquired:" << planePt.x() << "," << planePt.y()
@@ -1497,13 +1517,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         if (m_snapManager && m_snapManager->onMousePress(x, y))
             return;
 
-        QVector2D planePt = screenToPlane(event->pos());
-        EventBus* bus = Application::instance()->eventBus();
-        QVariantMap data;
-        data["point"]     = QVariant::fromValue(planePt);
-        data["screenPos"] = event->pos();
-        bus->publish(Events::POINT_ACQUIRED, data);
-        Q_EMIT pointAcquired(planePt);
+        handlePointInput(event->pos());
         return;
     }
 
