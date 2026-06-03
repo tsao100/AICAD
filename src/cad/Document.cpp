@@ -747,6 +747,7 @@ void Document::rebuildFeature(Feature* feature) {
     // ② rebuild：清空並重建 m_aisShapes，emit rebuilt()
     //    → CadView::onSketchRebuilt 會在這裡更新 aisToFeatureId mapping
     feature->rebuild();
+    feature->clearDirty();  // ← 允許下次 markDirty 再次觸發 rebuildRequested
 
     // ③ display 新的 AIS shapes
     if (sketch && !m_aisContext.IsNull()) {

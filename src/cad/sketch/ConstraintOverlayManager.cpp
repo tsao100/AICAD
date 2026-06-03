@@ -29,8 +29,11 @@ void ConstraintOverlayManager::attachMaster(Sketch* sketch, const gp_Trsf& toWor
 
     if (!sketch) return;
 
-    connect(sketch, &Sketch::shapeChanged,
+    connect(sketch, &Sketch::rebuilt,
             this, &ConstraintOverlayManager::onSourceRebuilt,
+            Qt::UniqueConnection);
+    connect(sketch, &Sketch::constraintSolved,
+            this, [this](SolveResult){ rebuildAll(); },
             Qt::UniqueConnection);
 
     rebuildAll();
@@ -122,6 +125,13 @@ void ConstraintOverlayManager::createSymbolFor(const SketchConstraint& c) {
         // 尺寸線
         Handle(AIS_DimensionLine) dim =
             new AIS_DimensionLine(c, geoms, m_toWorld, ss);
+        // 對有兩個 refs 的尺寸約束（如 FixedDistance），用 resolvePosition 取精確端點
+        if (c.refs.size() >= 2 && m_sketch) {
+            QVector2D rp1 = c.refs[0].resolvePosition(m_sketch);
+            QVector2D rp2 = c.refs[1].resolvePosition(m_sketch);
+            if (!rp1.isNull() || !rp2.isNull())
+                dim->setRefPositions(rp1, rp2);
+        }
         m_dimLines[c.uuid] = dim;
         m_ctx->Display(dim, Standard_False);
         if (!m_visible) m_ctx->Erase(dim, Standard_False);
@@ -143,8 +153,16 @@ void ConstraintOverlayManager::updateSymbolFor(const SketchConstraint& c) {
         m_geomSymbols[c.uuid]->Update(c, geoms, ss);
         m_ctx->Redisplay(m_geomSymbols[c.uuid], Standard_False);
     } else if (m_dimLines.contains(c.uuid)) {
-        m_dimLines[c.uuid]->Update(c, geoms, ss);
-        m_ctx->Redisplay(m_dimLines[c.uuid], Standard_False);
+        Handle(AIS_DimensionLine) dimAIS = m_dimLines[c.uuid];
+        dimAIS->Update(c, geoms, ss);
+        // 更新時也重新設定端點位置
+        if (c.refs.size() >= 2 && m_sketch) {
+            QVector2D rp1 = c.refs[0].resolvePosition(m_sketch);
+            QVector2D rp2 = c.refs[1].resolvePosition(m_sketch);
+            if (!rp1.isNull() || !rp2.isNull())
+                dimAIS->setRefPositions(rp1, rp2);
+        }
+        m_ctx->Redisplay(dimAIS, Standard_False);
     } else {
         createSymbolFor(c);
     }

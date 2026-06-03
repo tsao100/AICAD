@@ -40,6 +40,7 @@ void AIS_DimensionLine::Update(
     m_constraint = c;
     m_geoms      = geoms;
     m_status     = status;
+    m_hasRefPos  = false;  // 清除舊的端點快取，待呼叫端重新設定
 }
 
 QString AIS_DimensionLine::labelText() const {
@@ -66,7 +67,23 @@ QString AIS_DimensionLine::labelText() const {
 // 輔助：從約束的幾何參考取得兩個世界座標點
 // ─────────────────────────────────────────────────────────────────────────────
 
+void AIS_DimensionLine::setRefPositions(const QVector2D& p1, const QVector2D& p2)
+{
+    m_hasRefPos = true;
+    m_refPos1   = p1;
+    m_refPos2   = p2;
+}
+
 bool AIS_DimensionLine::getRefPoints(gp_Pnt& p1, gp_Pnt& p2) const {
+    // 若已明確設定端點位置（例如 FixedDistance 端點 handle），優先使用
+    if (m_hasRefPos) {
+        gp_Pnt pt1(m_refPos1.x(), m_refPos1.y(), 0.0);
+        gp_Pnt pt2(m_refPos2.x(), m_refPos2.y(), 0.0);
+        pt1.Transform(m_sketchToWorld);
+        pt2.Transform(m_sketchToWorld);
+        p1 = pt1; p2 = pt2;
+        return true;
+    }
     // 從 m_geoms 取幾何的中心點作為端點
     if (m_geoms.isEmpty()) return false;
 

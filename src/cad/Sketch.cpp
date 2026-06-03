@@ -1057,6 +1057,15 @@ SolveResult Sketch::solveConstraints() {
     Q_EMIT constraintSolved(result);
     if (result.status != SolveStatus::Conflict &&
         result.status != SolveStatus::SolverError) {
+        // Solver 直接更新了 SketchLine.start/end，但 SketchPoint.pos 尚未同步。
+        // 必須先將 line->start/end 寫回對應 SketchPoint，否則後續
+        // syncGeometryFromPoints 會用舊 SketchPoint.pos 覆蓋 solver 結果。
+        for (auto* g : geoms) {
+            if (auto* line = dynamic_cast<SketchLine*>(g)) {
+                if (auto* ps = point(line->startUuid)) ps->pos = line->start;
+                if (auto* pe = point(line->endUuid))   pe->pos = line->end;
+            }
+        }
         // ✅ Step 12: Solver 回寫 SketchPoint.pos 後，同步曲線座標
         syncGeometryFromPoints();
         markDirty();

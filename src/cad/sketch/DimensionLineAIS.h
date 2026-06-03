@@ -8,6 +8,7 @@
 #include <gp_Trsf.hxx>
 #include <QString>
 #include <QList>
+#include <QVector2D>
 
 namespace aicad::cad {
 
@@ -42,6 +43,9 @@ public:
     QString labelText() const;
 
     const QString& constraintUuid() const { return m_constraint.uuid; }
+
+    /// 明確設定兩個參考點（供 FixedDistance 端點 handle 使用）
+    void    setRefPositions(const QVector2D& p1, const QVector2D& p2);
 
     // Phase 3B：尺寸線拖曳支援
     void    setDimLineOffset(double offsetX, double offsetY);
@@ -80,6 +84,11 @@ private:
     DistanceMode             m_distMode   = DistanceMode::PointToPoint;
     double                   m_dimOffsetX = 0.0;   ///< 草圖平面偏移 X
     double                   m_dimOffsetY = 0.0;   ///< 草圖平面偏移 Y
+
+    // 明確設定的參考點（供 FixedDistance 端點 handle 使用）
+    bool                     m_hasRefPos  = false;
+    QVector2D                m_refPos1;
+    QVector2D                m_refPos2;
 };
 
 } // namespace aicad::cad
