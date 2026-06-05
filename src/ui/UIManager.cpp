@@ -1601,6 +1601,12 @@ void UIManager::connectCommandLineEvents() {
                            tr("輸入指令或 LISP..."));
                    });
 
+    // ── 命令一般訊息（Info / Success）──────────────────────────────
+    bus->subscribe(core::Events::COMMAND_LOG, this,
+                   [this](const QVariant& v) {
+                       d->commandLine->appendHistory(v.toString(), /*isPrompt=*/false);
+                   });
+
     // ── 選項可用（命令進行中）──────────────────────────────────────
     bus->subscribe(core::Events::OPTIONS_AVAILABLE, this,
                    [this](const QVariant& v) {
@@ -1931,14 +1937,8 @@ void UIManager::setupSketchPanel()
                     setStatusMessage(d->pickSession->promptText());
                 return;
             }
-            // 新路徑：透過 EventBus 發佈，供 GeneralDimCommand 訂閱
-            QVariantMap payload;
-            payload["geomUuid"]  = geomUuid;
-            payload["handle"]    = geomHandle;
-            payload["planePtX"]  = static_cast<double>(planePt.x());
-            payload["planePtY"]  = static_cast<double>(planePt.y());
-            auto* bus = core::Application::instance()->eventBus();
-            if (bus) bus->publish(core::Events::GEOM_PICKED, payload);
+            // 新路徑：GEOM_PICKED 已由 CadView::handlePointInput 在 GetGeom 模式下
+            // 直接發出，不需要在此重複發佈，否則每次點擊會觸發兩次 onGeomPicked。
         });
 
         // ✅ Step 5/GAP 3: modeChanged — GetGeom 時啟用 SketchPointAIS 選取，離開時停用

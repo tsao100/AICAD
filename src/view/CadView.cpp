@@ -6,6 +6,7 @@
  */
 
 #include "CadView.h"
+#include "DimPreviewOverlay.h"
 #include "RubberBand.h"
 #include "ViewGrid.h"
 #include "cad/Feature.h"
@@ -30,6 +31,10 @@
 #include <QKeyEvent>
 #include <QToolTip>
 #include <QMenu>
+#include <QPainter>
+#include <QPen>
+#include <QFont>
+#include <QFontMetrics>
 
 #include <Aspect_DisplayConnection.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -123,7 +128,8 @@ public:
     bool isDisplayingAllFeatures = false;
 
     QList<OverlayEntry> overlayObjects;
-    QVector2D            dimLineAnchor2D;  // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
+    QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
+    QVector2D            dimPreviewMousePt; // GDIM: 目前滑鼠草圖座標（overlay 更新用）
 
     Private()
         : document(nullptr)
@@ -186,6 +192,13 @@ CadView::CadView(QWidget* parent)
 
     connect(m_finishSketchButton, &QPushButton::clicked,
             this, &CadView::onFinishSketchClicked);
+
+    // GDIM: 建立透明 overlay widget（必須在 WA_PaintOnScreen 之外的 child 才能用 QPainter）
+    m_dimOverlay = new DimPreviewOverlay(this);
+    m_dimOverlay->hide();
+    m_dimOverlay->setPlaneToPxFn([this](const QVector2D& pt) {
+        return planeToScreen(pt);
+    });
 
     // ✅ Do NOT call initializeViewer() here.
     // Defer to showEvent so NSView is fully realized.
@@ -708,6 +721,17 @@ void CadView::setMode(InteractionMode mode) {
         return;
     }
 
+    // GetGeom 模式：關閉 OSnap，讓 OCCT DetectedInteractive 決定選取幾何
+    // 避免 OSnap 攔截點擊（snapConfirmed 只發 POINT_ACQUIRED，無 geomUuid）
+    if (m_snapManager) {
+        const bool wasGetGeom = (d->mode == InteractionMode::GetGeom);
+        const bool isGetGeom  = (mode    == InteractionMode::GetGeom);
+        if (isGetGeom && !wasGetGeom)
+            m_snapManager->setSnapEnabled(false);
+        else if (wasGetGeom && !isGetGeom)
+            m_snapManager->setSnapEnabled(true);
+    }
+
     d->mode = mode;
 
     if (mode == InteractionMode::Sketching) {
@@ -730,6 +754,60 @@ void CadView::beginPlaceDimLine(const QVector2D& anchorPos2D)
 {
     d->dimLineAnchor2D = anchorPos2D;
     setMode(InteractionMode::PlaceDimLine);
+}
+
+// ── GDIM helpers ──────────────────────────────────────────────────────────────
+
+QPoint CadView::planeToScreen(const QVector2D& planePt) const
+{
+    if (d->view.IsNull()) return {};
+
+    // 取得目前活躍草圖平面
+    cad::Plane* plane = nullptr;
+    auto* sk = core::Application::instance()
+               ? core::Application::instance()->activeSketch()
+               : nullptr;
+    if (sk && sk->plane())
+        plane = sk->plane();
+
+    if (!plane) {
+        // 後備：依 viewType 取標準平面
+        cad::PlaneManager* mgr = cad::PlaneManager::instance();
+        switch (d->viewType) {
+        case ViewType::Front: case ViewType::Back: plane = mgr->xzPlane(); break;
+        case ViewType::Right: case ViewType::Left: plane = mgr->yzPlane(); break;
+        default:                                   plane = mgr->xyPlane(); break;
+        }
+    }
+    if (!plane) return {};
+
+    QVector3D world3 = plane->toWorld(planePt.x(), planePt.y());
+    Standard_Integer sx, sy;
+    d->view->Convert(static_cast<Standard_Real>(world3.x()),
+                     static_cast<Standard_Real>(world3.y()),
+                     static_cast<Standard_Real>(world3.z()), sx, sy);
+    return QPoint(sx, sy);
+}
+
+void CadView::setDimPreview(const DimPreviewInfo& info)
+{
+    if (!m_dimOverlay) return;
+    auto* sk = core::Application::instance()
+               ? core::Application::instance()->activeSketch()
+               : nullptr;
+    m_dimOverlay->setSketch(sk);
+    m_dimOverlay->setGeometry(0, 0, width(), height());
+    m_dimOverlay->raise();
+    m_dimOverlay->show();
+    m_dimOverlay->setPreview(info);
+}
+
+void CadView::clearDimPreview()
+{
+    if (m_dimOverlay) {
+        m_dimOverlay->clearPreview();
+        m_dimOverlay->hide();
+    }
 }
 
 Handle(AIS_InteractiveContext) CadView::context() const {
@@ -1298,9 +1376,9 @@ void CadView::handlePointInput(const QPoint& screenPos) {
         // GetGeom モード：GEOM_PICKED も発行して命令が幾何を受け取れるようにする
         if (d->mode == InteractionMode::GetGeom) {
             QVariantMap geomData;
-            geomData["geomUuid"]   = geomUuid;
-            geomData["handle"]     = geomHandle;
-            geomData["point"]      = QVariant::fromValue(planePt);
+            geomData["geomUuid"] = geomUuid;
+            geomData["handle"]   = geomHandle;   // ← "handle" 與 onGeomPicked 一致
+            geomData["point"]    = QVariant::fromValue(planePt);
             bus->publish(core::Events::GEOM_PICKED, geomData);
         }
     }
@@ -1351,6 +1429,7 @@ void CadView::paintEvent(QPaintEvent* event) {
         d->view->InvalidateImmediate();
         d->view->Redraw();
     }
+    // 尺寸線預覽由 m_dimOverlay（child widget）負責，此處不需 QPainter
 }
 
 void CadView::resizeEvent(QResizeEvent* event) {
@@ -1364,6 +1443,10 @@ void CadView::resizeEvent(QResizeEvent* event) {
     if (m_finishSketchButton) {
         m_finishSketchButton->setGeometry(width() - 120, 10, 110, 30);
     }
+
+    // GDIM overlay 跟 CadView 同大小
+    if (m_dimOverlay)
+        m_dimOverlay->setGeometry(0, 0, width(), height());
 }
 
 void CadView::mousePressEvent(QMouseEvent* event) {
@@ -1518,7 +1601,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             return;
 
         handlePointInput(event->pos());
-        return;
+        return;   // ← 已處理，不進入下面第二個 if 區塊
     }
 
     if (!d->context.IsNull() && !d->view.IsNull()) {
@@ -1534,9 +1617,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             switch (d->mode) {
             case InteractionMode::Sketching:
             case InteractionMode::GetPoint:
-            case InteractionMode::GetGeom:   // ✅ Task E: 與 GetPoint 共用 handlePointInput
-                handlePointInput(event->pos());
-                break;
+            case InteractionMode::GetGeom:
+                // ★ 注意：這個 switch 只有在上面第一個 if 沒有命中時才到達
+                //   （即 !hasCmd 路徑已 return，或 mode 不在那個 if 的條件中）
+                //   GetGeom 在 hasCmd==true 時已由上面 handlePointInput 處理並 return，
+                //   不會再到這裡。此處保留供 hasCmd==false 但不走 SelectDetected 的情況。
+                // → 已由第一個 if-block 的 hasCmd 路徑處理，此處不應再執行
+                // （實際上因為上面已 return，這個 case 在 GetGeom+hasCmd 時不會被執行）
+                break;   // ← 改為 break，移除重複的 handlePointInput 呼叫
             case InteractionMode::Selecting:
                 d->context->SelectDetected(AIS_SelectionScheme_Replace);
                 handleObjectSelection(event->pos());
@@ -1677,11 +1765,51 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         }
     }
 
-    // ✅ Task E: PlaceDimLine 模式 — 滑鼠移動時發出偏移預覽
+    // ✅ Task E: PlaceDimLine 模式 — 滑鼠移動時發出偏移預覽 & 更新 QPainter overlay
     if (d->mode == InteractionMode::PlaceDimLine) {
         QVector2D planePt = screenToPlane(event->pos());
+        d->dimPreviewMousePt = planePt;
+        if (m_dimOverlay) m_dimOverlay->setMousePlanePt(planePt);
         QVector2D offset  = planePt - d->dimLineAnchor2D;
         Q_EMIT dimLinePosPreview(offset.x(), offset.y());
+        auto* bus = core::Application::instance()->eventBus();
+        if (bus) {
+            QVariantMap m;
+            m["offsetX"] = static_cast<double>(offset.x());
+            m["offsetY"] = static_cast<double>(offset.y());
+            bus->publish(core::Events::DIM_LINE_PREVIEW, m);
+        }
+    }
+
+    // GDIM: GetGeom 模式 → 發 GEOM_HOVER，供命令 hover 時更新預覽
+    if (d->mode == InteractionMode::GetGeom) {
+        QVector2D planePt = screenToPlane(event->pos());
+        d->dimPreviewMousePt = planePt;
+        if (m_dimOverlay) m_dimOverlay->setMousePlanePt(planePt);
+        auto* bus = core::Application::instance()->eventBus();
+        if (bus) {
+            QString hoverUuid;
+            int     hoverHandle = -1;
+            if (m_snapManager && m_snapManager->isSnapActive()) {
+                auto snap = m_snapManager->currentSnap();
+                if (snap.has_value()) {
+                    hoverUuid   = snap->geomUuid;
+                    hoverHandle = snap->geomHandle;
+                }
+            }
+            if (hoverUuid.isEmpty() && !d->context.IsNull() && d->context->HasDetected()) {
+                Handle(AIS_InteractiveObject) det = d->context->DetectedInteractive();
+                if (!det.IsNull()) {
+                    hoverUuid   = d->aisToGeomUuid.value(det.get());
+                    hoverHandle = static_cast<int>(cad::GeomHandle::WholeGeom);
+                }
+            }
+            QVariantMap m;
+            m["geomUuid"] = hoverUuid;
+            m["handle"]   = hoverHandle;
+            m["point"]    = QVariant::fromValue(planePt);
+            bus->publish(core::Events::GEOM_HOVER, m);
+        }
     }
 
     // 右鍵拖曳旋轉

@@ -842,10 +842,11 @@ void CommandLineWidget::appendHistory(const QString& text, bool isPrompt) {
 
     if (m_historyView) {
         if (isPrompt)
-            m_historyView->append("<span style='color:gray;'>" +
+            m_historyView->append("<span style='color:#888888;'>" +
                                   text.toHtmlEscaped() + "</span>");
         else
-            m_historyView->append(text.toHtmlEscaped());
+            m_historyView->append("<span style='color:#cccccc;'>" +
+                                  text.toHtmlEscaped() + "</span>");
         m_historyView->verticalScrollBar()->setValue(
             m_historyView->verticalScrollBar()->maximum());
     }

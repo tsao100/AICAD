@@ -32,7 +32,7 @@ public:
 
     /// 初始提示文字（命令啟動時顯示）
     static QString initialPrompt() {
-        return "[GDIM] 選取幾何元素（線段 / 圓 / 弧 / 點）";
+        return "GDIM 選取幾何元素（線段 / 圓 / 弧 / 點）";
     }
 
     /// 判斷 ref 是否為點狀（Point、Line.Start/End、Arc.Start/End/Center）

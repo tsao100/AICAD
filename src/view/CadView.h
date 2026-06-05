@@ -18,6 +18,7 @@
 #include <V3d_Viewer.hxx>
 
 #include "osnap/OSnapManager.h"
+#include "view/DimPreviewOverlay.h"
 
 namespace aicad {
 namespace osnap {
@@ -140,6 +141,19 @@ public:
 
     /// ✅ Task E: 啟動 PlaceDimLine 模式，設定用於計算偏移的錨點（兩端點中心，草圖平面座標）
     void beginPlaceDimLine(const QVector2D& anchorPos2D);
+
+    /// GDIM: 草圖平面座標 → 螢幕像素座標
+    QPoint planeToScreen(const QVector2D& planePt) const;
+
+    /**
+     * @brief GDIM 尺寸線即時預覽
+     *
+     * 使用透明 child overlay widget（DimPreviewOverlay）繪製，
+     * 避免 WA_PaintOnScreen 導致 QPainter 失效的問題。
+     */
+    using DimPreviewInfo = DimPreviewOverlay::PreviewInfo;
+    void setDimPreview(const DimPreviewInfo& info);
+    void clearDimPreview();
 
     /**
      * @brief 取得當前互動模式
@@ -447,7 +461,8 @@ private:
     QString m_selectionFilter;
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面
 
-    QPushButton* m_finishSketchButton;
+    QPushButton*        m_finishSketchButton;
+    DimPreviewOverlay*  m_dimOverlay = nullptr;   ///< GDIM 尺寸線預覽 overlay
     bool m_viewReadyPublished = false;
 
     void showFinishSketchButton();

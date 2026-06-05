@@ -2,6 +2,7 @@
 #include "Command.h"
 #include "cad/sketch/SketchConstraint.h"
 #include "cad/sketch/GeneralDimClassifier.h"
+#include "view/CadView.h"    // DimPreviewInfo
 #include <QList>
 #include <QString>
 
@@ -43,6 +44,7 @@ private:
     bool                 m_hasPending    = false; ///< execute() 帶入了預設值
 
     void subscribeGeomPicked   ();
+    void subscribeGeomHover    ();   ///< 新增：GetGeom 模式 hover 預覽
     void subscribeStringInput  ();
     void subscribeDimConfirmed ();
     void subscribePreview      ();
@@ -51,6 +53,7 @@ private:
     void unsubscribeAll        ();
 
     void onGeomPicked   (const QVariant& payload);
+    void onGeomHover    (const QVariant& payload);   ///< 新增
     void onStringInput  (const QVariant& payload);
     void onDimConfirmed (const QVariant& payload);
     void onCancelled    (const QVariant&);
@@ -61,6 +64,10 @@ private:
     void transitionToWaitValue   ();
     void commitDimension         ();
     void cleanup                 ();
+
+    /// 依目前 m_refs + 可選的 extraRef 組出預覽，推送到 CadView
+    void updateDimPreview(const cad::GeomRef* extraRef = nullptr);
+    void clearDimPreview ();
 
     double        measureCurrentValue () const;  ///< 從幾何量測現有尺寸
     double        measureCurrentValue2() const;  ///< CoordinateDim Y 分量

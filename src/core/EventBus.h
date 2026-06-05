@@ -188,6 +188,7 @@ constexpr const char* SKETCH_INSTANCE_CREATED       = "sketchinstance.created";
 
 // ── General Dimension 互動事件 ──────────────────────────────────────────────
 constexpr const char* GEOM_PICKED        = "input.geom_picked";
+constexpr const char* GEOM_HOVER         = "input.geom_hover";        ///< GetGeom 模式 mouseMoveEvent hover（geomUuid / handle / point）
 constexpr const char* DIM_LINE_CONFIRMED = "input.dim_line_confirmed";
 constexpr const char* DIM_LINE_PREVIEW   = "input.dim_line_preview";  ///< 拖曳預覽（非 pickSession 路徑）
 }
