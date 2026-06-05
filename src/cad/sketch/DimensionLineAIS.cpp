@@ -4,6 +4,7 @@
 #include <Graphic3d_ArrayOfPolylines.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
+#include <Graphic3d_Text.hxx>
 #include <Prs3d_Text.hxx>
 #include <Prs3d_TextAspect.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -208,10 +209,11 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
     gp_Pnt d1 = p1.Translated(perp * offset);
     gp_Pnt d2 = p2.Translated(perp * offset);
 
-    // 主尺寸線
+    // 主尺寸線（綠色）
+    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
     Handle(Graphic3d_Group) grp = prs->NewGroup();
     Handle(Graphic3d_AspectLine3d) asp =
-        new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
+        new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
     grp->SetPrimitivesAspect(asp);
 
     Handle(Graphic3d_ArrayOfPolylines) line =
@@ -224,22 +226,23 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
     line->AddBound(2); line->AddVertex(d1); line->AddVertex(d2);
     grp->AddPrimitiveArray(line);
 
-    // 箭頭
-    addArrow(prs, d1, along,       col);
-    addArrow(prs, d2, along * -1., col);
+    // 箭頭（綠色）
+    addArrow(prs, d1, along,       lineCol);
+    addArrow(prs, d2, along * -1., lineCol);
 
-    // 標籤文字
+    // 標籤文字（紅色，字高 36，居中，平行尺寸線）
     if (!label.isEmpty()) {
         gp_Pnt mid(
             (d1.X() + d2.X()) * 0.5,
-            (d1.Y() + d2.Y()) * 0.5 + 1.5,
+            (d1.Y() + d2.Y()) * 0.5,
             (d1.Z() + d2.Z()) * 0.5);
 
-        // Use Prs3d_TextAspect — matches the API used by AIS_ExtrudeManipulator
         Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
-        ta->SetColor(col);
-        ta->SetHeight(12.0);
+        ta->SetColor(Quantity_Color(Quantity_NOC_RED));
+        ta->SetHeight(36.0);
         ta->Aspect()->SetFont("Courier");
+        ta->SetHorizontalJustification(Graphic3d_HTA_CENTER);
+        ta->SetVerticalJustification(Graphic3d_VTA_CENTER);
         TCollection_ExtendedString txt(label.toUtf8().constData(), Standard_True);
         Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
     }
@@ -256,9 +259,10 @@ static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
     if (along.Magnitude() < Precision::Confusion()) return;
     along.Normalize();
 
+    Quantity_Color lineColEx(0.0, 0.8, 0.0, Quantity_TOC_RGB);
     Handle(Graphic3d_Group) grp = prs->NewGroup();
     Handle(Graphic3d_AspectLine3d) asp =
-        new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
+        new Graphic3d_AspectLine3d(lineColEx, Aspect_TOL_SOLID, 1.5f);
     grp->SetPrimitivesAspect(asp);
 
     Handle(Graphic3d_ArrayOfPolylines) line =
@@ -268,18 +272,20 @@ static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
     line->AddBound(2); line->AddVertex(d1); line->AddVertex(d2);
     grp->AddPrimitiveArray(line);
 
-    addArrow(prs, d1, along,       col);
-    addArrow(prs, d2, along * -1., col);
+    addArrow(prs, d1, along,       lineColEx);
+    addArrow(prs, d2, along * -1., lineColEx);
 
     if (!label.isEmpty()) {
         gp_Pnt mid(
             (d1.X() + d2.X()) * 0.5,
-            (d1.Y() + d2.Y()) * 0.5 + 1.5,
+            (d1.Y() + d2.Y()) * 0.5,
             (d1.Z() + d2.Z()) * 0.5);
         Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
-        ta->SetColor(col);
-        ta->SetHeight(12.0);
+        ta->SetColor(Quantity_Color(Quantity_NOC_RED));
+        ta->SetHeight(36.0);
         ta->Aspect()->SetFont("Courier");
+        ta->SetHorizontalJustification(Graphic3d_HTA_CENTER);
+        ta->SetVerticalJustification(Graphic3d_VTA_CENTER);
         TCollection_ExtendedString txt(label.toUtf8().constData(), Standard_True);
         Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
     }
@@ -412,12 +418,14 @@ void AIS_DimensionLine::drawDiameterDimension(const Handle(Prs3d_Presentation)& 
     addArrow(prs, p1, along * -1.0, col);
     addArrow(prs, p2, along,        col);
 
-    // 標籤（含 Ø 前綴）
-    gp_Pnt mid((p1.X()+p2.X())*0.5, (p1.Y()+p2.Y())*0.5 + 1.5, 0.0);
+    // 標籤（含 Ø 前綴，紅色，字高 36，居中）
+    gp_Pnt mid((p1.X()+p2.X())*0.5, (p1.Y()+p2.Y())*0.5, 0.0);
     Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
-    ta->SetColor(col);
-    ta->SetHeight(12.0);
+    ta->SetColor(Quantity_Color(Quantity_NOC_RED));
+    ta->SetHeight(36.0);
     ta->Aspect()->SetFont("Courier");
+    ta->SetHorizontalJustification(Graphic3d_HTA_CENTER);
+    ta->SetVerticalJustification(Graphic3d_VTA_CENTER);
     TCollection_ExtendedString txt(labelText().toUtf8().constData(), Standard_True);
     Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
 }

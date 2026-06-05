@@ -6,6 +6,7 @@
 #include <QPen>
 #include <QBrush>
 #include <QPaintEvent>
+#include <QFontMetrics>
 #include <cmath>
 
 namespace aicad::view {
@@ -117,8 +118,8 @@ void DimPreviewOverlay::drawFixedLength(QPainter& p)
     QVector2D dA = A + perp * off;
     QVector2D dB = B + perp * off;
 
-    const QColor dimC(0, 210, 230, 210);
-    const QColor txtC(255, 255, 60, 230);
+    const QColor dimC(0, 200, 0, 220);   // 綠色尺寸線
+    const QColor txtC(220, 0, 0, 240);   // 紅色數值
     p.setPen(QPen(dimC, 0.9, Qt::DashLine));
     p.drawLine(toScr(A), toScr(dA));
     p.drawLine(toScr(B), toScr(dB));
@@ -129,8 +130,17 @@ void DimPreviewOverlay::drawFixedLength(QPainter& p)
 
     QString label = QString::number(m_info.value, 'f', 2);
     p.setPen(txtC);
-    QFont f = p.font(); f.setPointSize(9); p.setFont(f);
-    p.drawText((toScr(dA) + toScr(dB)) * 0.5 + QPointF(4, -4), label);
+    QFont f = p.font(); f.setPointSizeF(13.0); f.setBold(true); p.setFont(f);
+    QPointF lMid = (toScr(dA) + toScr(dB)) * 0.5;
+    p.save();
+    p.translate(lMid);
+    QPointF dVec = toScr(dB) - toScr(dA);
+    double ang = std::atan2(dVec.y(), dVec.x()) * 180.0 / M_PI;
+    if (ang > 90 || ang < -90) ang += 180;
+    p.rotate(ang);
+    QFontMetrics fm(f); QRectF br = fm.boundingRect(label); br.moveCenter(QPointF(0,0));
+    p.drawText(br, Qt::AlignCenter, label);
+    p.restore();
 }
 
 void DimPreviewOverlay::drawFixedDiameter(QPainter& p)
@@ -153,14 +163,14 @@ void DimPreviewOverlay::drawFixedDiameter(QPainter& p)
     QVector2D tip = center + dir * r;
     QVector2D opp = center - dir * r;  // 直徑另一端
 
-    const QColor dimC(0, 210, 230, 210);
-    const QColor txtC(255, 255, 60, 230);
+    const QColor dimC(0, 200, 0, 220);   // 綠色尺寸線
+    const QColor txtC(220, 0, 0, 240);   // 紅色數值
     p.setPen(QPen(dimC, 1.4));
     p.drawLine(toScr(opp), toScr(tip));
     drawArrow(p, toScr(tip), toScr(tip) - toScr(opp));
     drawArrow(p, toScr(opp), toScr(opp) - toScr(tip));
     p.setPen(txtC);
-    QFont f = p.font(); f.setPointSize(9); p.setFont(f);
+    QFont f = p.font(); f.setPointSizeF(13.0); f.setBold(true); p.setFont(f);
     p.drawText((toScr(center) + toScr(tip)) * 0.5 + QPointF(4, -4),
                "⌀" + QString::number(m_info.value, 'f', 2));
 }
@@ -184,13 +194,13 @@ void DimPreviewOverlay::drawFixedRadius(QPainter& p)
     dir.normalize();
     QVector2D tip = center + dir * r;
 
-    const QColor dimC(0, 210, 230, 210);
-    const QColor txtC(255, 255, 60, 230);
+    const QColor dimC(0, 200, 0, 220);   // 綠色尺寸線
+    const QColor txtC(220, 0, 0, 240);   // 紅色數值
     p.setPen(QPen(dimC, 1.4));
     p.drawLine(toScr(center), toScr(tip));
     drawArrow(p, toScr(tip), toScr(tip) - toScr(center));
     p.setPen(txtC);
-    QFont f = p.font(); f.setPointSize(9); p.setFont(f);
+    QFont f = p.font(); f.setPointSizeF(13.0); f.setBold(true); p.setFont(f);
     p.drawText((toScr(center) + toScr(tip)) * 0.5 + QPointF(4, -4),
                "R" + QString::number(m_info.value, 'f', 2));
 }
@@ -236,8 +246,8 @@ void DimPreviewOverlay::drawDistance(QPainter& p)
     QVector2D dA = A + dimDir * off;
     QVector2D dB = B + dimDir * off;
 
-    const QColor dimC(0, 210, 230, 210);
-    const QColor txtC(255, 255, 60, 230);
+    const QColor dimC(0, 200, 0, 220);   // 綠色尺寸線
+    const QColor txtC(220, 0, 0, 240);   // 紅色數值
     p.setPen(QPen(dimC, 0.9, Qt::DashLine));
     p.drawLine(toScr(A), toScr(dA));
     p.drawLine(toScr(B), toScr(dB));
@@ -247,9 +257,20 @@ void DimPreviewOverlay::drawDistance(QPainter& p)
     drawArrow(p, toScr(dB), toScr(dB) - toScr(dA));
 
     p.setPen(txtC);
-    QFont f = p.font(); f.setPointSize(9); p.setFont(f);
-    p.drawText((toScr(dA) + toScr(dB)) * 0.5 + QPointF(4, -4),
-               QString::number(m_info.value, 'f', 2));
+    QFont f2 = p.font(); f2.setPointSizeF(13.0); f2.setBold(true); p.setFont(f2);
+    {
+        QString dlabel = QString::number(m_info.value, 'f', 2);
+        QPointF dMid = (toScr(dA) + toScr(dB)) * 0.5;
+        p.save();
+        p.translate(dMid);
+        QPointF dVec2 = toScr(dB) - toScr(dA);
+        double ang2 = std::atan2(dVec2.y(), dVec2.x()) * 180.0 / M_PI;
+        if (ang2 > 90 || ang2 < -90) ang2 += 180;
+        p.rotate(ang2);
+        QFontMetrics fm2(f2); QRectF br2 = fm2.boundingRect(dlabel); br2.moveCenter(QPointF(0,0));
+        p.drawText(br2, Qt::AlignCenter, dlabel);
+        p.restore();
+    }
 }
 
 void DimPreviewOverlay::drawAngle(QPainter& p)
@@ -279,8 +300,8 @@ void DimPreviewOverlay::drawAngle(QPainter& p)
     while (da > float(M_PI) * 2) da -= float(M_PI) * 2;
     if (da > float(M_PI))  { std::swap(a0, a1); da = float(M_PI)*2 - da; }
 
-    const QColor dimC(0, 210, 230, 210);
-    const QColor txtC(255, 255, 60, 230);
+    const QColor dimC(0, 200, 0, 220);   // 綠色尺寸線
+    const QColor txtC(220, 0, 0, 240);   // 紅色數值
     p.setPen(QPen(dimC, 1.4));
     QVector<QPointF> pts;
     for (int i = 0; i <= 32; ++i) {
@@ -296,7 +317,7 @@ void DimPreviewOverlay::drawAngle(QPainter& p)
     float amid = a0 + da * 0.5f;
     QPointF labelPt = toScr(vertex + QVector2D(std::cos(amid)*rr, std::sin(amid)*rr));
     p.setPen(txtC);
-    QFont f = p.font(); f.setPointSize(9); p.setFont(f);
+    QFont f = p.font(); f.setPointSizeF(13.0); f.setBold(true); p.setFont(f);
     p.drawText(labelPt + QPointF(4, -4),
                QString::number(m_info.value, 'f', 1) + "°");
 }
@@ -305,13 +326,13 @@ void DimPreviewOverlay::drawCoordinate(QPainter& p)
 {
     if (m_info.refs.isEmpty()) return;
     QVector2D pt = getPos(0);
-    const QColor dimC(0, 210, 230, 210);
-    const QColor txtC(255, 255, 60, 230);
+    const QColor dimC(0, 200, 0, 220);   // 綠色尺寸線
+    const QColor txtC(220, 0, 0, 240);   // 紅色數值
     p.setPen(QPen(dimC, 0.9, Qt::DashLine));
     p.drawLine(toScr(QVector2D(0,0)), toScr(QVector2D(pt.x(),0)));
     p.drawLine(toScr(QVector2D(pt.x(),0)), toScr(pt));
     p.setPen(txtC);
-    QFont f = p.font(); f.setPointSize(9); p.setFont(f);
+    QFont f = p.font(); f.setPointSizeF(13.0); f.setBold(true); p.setFont(f);
     p.drawText(toScr(pt) + QPointF(4, -14),
                QString("X=%1").arg(pt.x(), 0, 'f', 2));
     p.drawText(toScr(pt) + QPointF(4, -2),

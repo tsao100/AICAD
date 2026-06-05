@@ -406,18 +406,10 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
 
     // ── 點選空白處：建立自由點 ───────────────────────────────────────────────
     if (uuid.isEmpty()) {
-        QVector2D planePt = map.value("point").value<QVector2D>();
-        if (!sk || !map.contains("point")) return;
-        uuid = sk->addPoint(planePt, cad::SketchPoint::Origin::Explicit);
-        if (uuid.isEmpty()) return;
-        handle = static_cast<int>(GeomHandle::WholeGeom);
-        qDebug() << "[GDIM] addPoint uuid=" << uuid
-                 << "pos=(" << planePt.x() << "," << planePt.y() << ")";
+        // 不允許自由點：必須選到 SketchPoint 或幾何元素
         if (cmdMgr)
-            cmdMgr->printMessage(
-                QString("  選取: 自由點 @ (%1, %2)")
-                .arg(static_cast<double>(planePt.x()), 0, 'f', 2)
-                .arg(static_cast<double>(planePt.y()), 0, 'f', 2));
+            cmdMgr->printError("請選取草圖上的點或幾何元素（不允許點選空白處）");
+        return;
     }
 
     // ── 解析幾何資訊 ─────────────────────────────────────────────────────────
