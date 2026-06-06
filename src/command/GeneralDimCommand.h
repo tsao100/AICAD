@@ -32,6 +32,7 @@ private:
 
     State                m_state         = State::Idle;
     QList<cad::GeomRef>  m_refs;
+    cad::GeomRef         m_originalLineRef;  ///< FixedLength 切換 H/V 時保存的原始單 ref
     cad::ConstraintType  m_type          = cad::ConstraintType::FixedDistance;
     cad::DistanceMode    m_distMode      = cad::DistanceMode::PointToPoint;
     double               m_measuredValue = 0.0;

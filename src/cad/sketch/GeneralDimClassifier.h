@@ -28,7 +28,9 @@ public:
      * refs.size()==1 → classifySingle
      * refs.size()==2 → classifyPair
      */
-    static Result classify(const QList<GeomRef>& refs, const Sketch* sketch);
+    /// allowHorizVert: true 時才允許自動選 FixedHorizDist/FixedVertDist（需按 Shift）
+    static Result classify(const QList<GeomRef>& refs, const Sketch* sketch,
+                           bool allowHorizVert = false);
 
     /// 初始提示文字（命令啟動時顯示）
     static QString initialPrompt() {
@@ -41,7 +43,8 @@ public:
 private:
     static Result classifySingle(const GeomRef& r, const Sketch* sketch);
     static Result classifyPair  (const GeomRef& a, const GeomRef& b,
-                                  const Sketch* sketch);
+                                  const Sketch* sketch,
+                                  bool allowHorizVert = false);
 };
 
 } // namespace aicad::cad

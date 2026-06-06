@@ -169,12 +169,116 @@ void GeneralDimCommand::subscribeDimConfirmed() {
 void GeneralDimCommand::subscribePreview() {
     auto* bus = core::Application::instance()->eventBus();
     if (!bus) return;
-    // 僅追蹤最後預覽偏移，供 commitDimension 使用（不操作 AIS overlay）
     bus->subscribe(core::Events::DIM_LINE_PREVIEW, this,
         [this](const QVariant& v) {
             QVariantMap m = v.toMap();
             m_dimOffsetX = m.value("offsetX").toDouble();
             m_dimOffsetY = m.value("offsetY").toDouble();
+
+            // ── 依滑鼠偏移方向動態決定 F / H / V ─────────────────────────
+            using CT = cad::ConstraintType;
+            using GH = cad::GeomHandle;
+
+            const bool isFHV =
+                m_type == CT::FixedDistance  ||
+                m_type == CT::FixedHorizDist ||
+                m_type == CT::FixedVertDist  ||
+                m_type == CT::FixedLength;
+            if (!isFHV) return;
+
+            auto* sk = activeSketch();
+            if (!sk) return;
+
+            // ── 取兩端點（不管 m_refs 現在有幾個）──────────────────────
+            // m_originalLineRef 儲存 FixedLength 的原始單 ref，
+            // 切換 H/V 時 m_refs 會被替換成 Start+End 兩個 refs。
+            // 先確保 m_originalLineRef 有效
+            const bool wasFixedLength =
+                !m_originalLineRef.geomUuid.isEmpty();
+            const bool isCurrentlyExpanded =
+                wasFixedLength && m_refs.size() == 2;
+
+            // 取線段兩端點（用於計算 AB 方向和 offset）
+            QVector2D pa, pb;
+            QString   lineUuid;
+            if (wasFixedLength) {
+                lineUuid = m_originalLineRef.geomUuid;
+            } else if (!m_refs.isEmpty()) {
+                lineUuid = m_refs[0].geomUuid;
+            }
+
+            if (!lineUuid.isEmpty()) {
+                auto* geom = sk->findGeometry(lineUuid);
+                if (auto* ln = dynamic_cast<const cad::SketchLine*>(geom)) {
+                    pa = ln->start;
+                    pb = ln->end;
+                } else if (m_refs.size() >= 2) {
+                    pa = m_refs[0].resolvePosition(sk);
+                    pb = m_refs[1].resolvePosition(sk);
+                } else return;
+            } else if (m_refs.size() >= 2) {
+                pa = m_refs[0].resolvePosition(sk);
+                pb = m_refs[1].resolvePosition(sk);
+            } else return;
+
+            QVector2D ab    = pb - pa;
+            float     abLen = ab.length();
+            if (abLen < 1e-4f) return;
+
+            QVector2D offset(static_cast<float>(m_dimOffsetX),
+                             static_cast<float>(m_dimOffsetY));
+            if (offset.length() < 1e-3f) return;
+
+            // AB 法向量
+            QVector2D perpAB(-ab.y() / abLen, ab.x() / abLen);
+
+            // ── 判斷 F / H / V ────────────────────────────────────────────
+            // offset 和 AB 法向夾角 < 30° → F；否則依 |x| vs |y| → H/V
+            float cosToPerp = std::abs(
+                QVector2D::dotProduct(offset.normalized(), perpAB));
+
+            CT newType;
+            if (cosToPerp >= 0.866f) {
+                // 靠近 AB 法向 → FixedLength（單線）或 FixedDistance（兩點）
+                newType = wasFixedLength ? CT::FixedLength : CT::FixedDistance;
+            } else {
+                newType = (std::abs(offset.y()) >= std::abs(offset.x()))
+                          ? CT::FixedHorizDist
+                          : CT::FixedVertDist;
+            }
+
+            if (newType == m_type) return;  // 無變化，不更新
+
+            // ── 切換 m_refs ───────────────────────────────────────────────
+            if (wasFixedLength && newType != CT::FixedLength) {
+                // FixedLength → H/V：展開成 Start + End 兩個 refs
+                if (!isCurrentlyExpanded) {
+                    auto* geom = sk->findGeometry(m_originalLineRef.geomUuid);
+                    if (auto* ln = dynamic_cast<const cad::SketchLine*>(geom)) {
+                        // 找到線段端點的 UUID
+                        QString startUuid = ln->startUuid;
+                        QString endUuid   = ln->endUuid;
+                        if (!startUuid.isEmpty() && !endUuid.isEmpty()) {
+                            m_refs.clear();
+                            m_refs.append(cad::GeomRef(startUuid, GH::WholeGeom));
+                            m_refs.append(cad::GeomRef(endUuid,   GH::WholeGeom));
+                        } else {
+                            // fallback：用 geomUuid + Start/End handle
+                            m_refs.clear();
+                            m_refs.append(cad::GeomRef(m_originalLineRef.geomUuid, GH::Start));
+                            m_refs.append(cad::GeomRef(m_originalLineRef.geomUuid, GH::End));
+                        }
+                    }
+                }
+            } else if (wasFixedLength && newType == CT::FixedLength) {
+                // H/V → FixedLength：還原成單個 WholeGeom ref
+                m_refs.clear();
+                m_refs.append(m_originalLineRef);
+            }
+
+            m_type = newType;
+            m_measuredValue = measureCurrentValue();
+            updateDimPreview(nullptr);
         });
 }
 
@@ -304,16 +408,27 @@ void GeneralDimCommand::updateDimPreview(const cad::GeomRef* extraRef)
 
     if (tempRefs.isEmpty()) { cadView->clearDimPreview(); return; }
 
-    auto result = GeneralDimClassifier::classify(tempRefs, sk);
-    if (!result.valid) { cadView->clearDimPreview(); return; }
+    // WaitDimPlace 狀態：m_type/m_distMode 已由 subscribePreview 動態設好（F/H/V），
+    // 直接使用，不重新 classify（classify 會覆蓋掉使用者的選擇）
+    ConstraintType useType;
+    DistanceMode   useMode;
+    if (m_state == State::WaitDimPlace) {
+        useType = m_type;
+        useMode = m_distMode;
+    } else {
+        auto result = GeneralDimClassifier::classify(tempRefs, sk);
+        if (!result.valid) { cadView->clearDimPreview(); return; }
+        useType = result.type;
+        useMode = result.distMode;
+    }
 
-    // 暫時切換 m_refs/m_type/m_distMode 量測值
+    // 用 useType/useMode 量測數值
     QList<GeomRef> savedRefs = m_refs;
     ConstraintType savedType = m_type;
     DistanceMode   savedMode = m_distMode;
     m_refs     = tempRefs;
-    m_type     = result.type;
-    m_distMode = result.distMode;
+    m_type     = useType;
+    m_distMode = useMode;
     double val = measureCurrentValue();
     m_refs     = savedRefs;
     m_type     = savedType;
@@ -321,8 +436,8 @@ void GeneralDimCommand::updateDimPreview(const cad::GeomRef* extraRef)
 
     view::CadView::DimPreviewInfo info;
     info.refs     = tempRefs;
-    info.type     = result.type;
-    info.distMode = result.distMode;
+    info.type     = useType;
+    info.distMode = useMode;
     info.value    = val;
     info.valid    = true;
     cadView->setDimPreview(info);
@@ -585,6 +700,13 @@ void GeneralDimCommand::transitionToWaitArcType()
 void GeneralDimCommand::transitionToWaitDimPlace()
 {
     m_state = State::WaitDimPlace;
+
+    // FixedLength：儲存原始單 ref，供 subscribePreview 切換 H/V 時展開用
+    if (m_type == cad::ConstraintType::FixedLength && m_refs.size() == 1)
+        m_originalLineRef = m_refs[0];
+    else
+        m_originalLineRef = cad::GeomRef{};  // 清除
+
     m_measuredValue  = measureCurrentValue();
     m_measuredValue2 = measureCurrentValue2();
 
@@ -696,6 +818,7 @@ void GeneralDimCommand::cleanup()
     unsubscribeAll();
     m_state          = State::Idle;
     m_refs.clear();
+    m_originalLineRef = cad::GeomRef{};
     m_pendingValue   = 0.0;
     m_pendingExpr.clear();
     m_dimOffsetX     = 0.0;

@@ -38,7 +38,8 @@ bool GeneralDimClassifier::isPointLike(const GeomRef& r, const Sketch* sketch)
 // ─────────────────────────────────────────────────────────────────────────────
 
 GeneralDimClassifier::Result
-GeneralDimClassifier::classify(const QList<GeomRef>& refs, const Sketch* sketch)
+GeneralDimClassifier::classify(const QList<GeomRef>& refs, const Sketch* sketch,
+                               bool allowHorizVert)
 {
     if (refs.isEmpty()) {
         Result r; r.needMore = true;
@@ -47,7 +48,7 @@ GeneralDimClassifier::classify(const QList<GeomRef>& refs, const Sketch* sketch)
     }
     if (refs.size() == 1)
         return classifySingle(refs[0], sketch);
-    return classifyPair(refs[0], refs[1], sketch);
+    return classifyPair(refs[0], refs[1], sketch, allowHorizVert);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,7 +128,8 @@ GeneralDimClassifier::classifySingle(const GeomRef& r, const Sketch* sketch)
 
 GeneralDimClassifier::Result
 GeneralDimClassifier::classifyPair(const GeomRef& a, const GeomRef& b,
-                                    const Sketch* sketch)
+                                    const Sketch* sketch,
+                                    bool allowHorizVert)
 {
     Result res;
     if (!sketch) return res;
@@ -148,16 +150,10 @@ GeneralDimClassifier::classifyPair(const GeomRef& a, const GeomRef& b,
         double dx = std::abs(static_cast<double>(pb.x() - pa.x()));
         double dy = std::abs(static_cast<double>(pb.y() - pa.y()));
 
-        if (dx > dy * 2.0) {
-            res.type     = ConstraintType::FixedHorizDist;
-            res.distMode = DistanceMode::PointToPoint;
-        } else if (dy > dx * 2.0) {
-            res.type     = ConstraintType::FixedVertDist;
-            res.distMode = DistanceMode::PointToPoint;
-        } else {
-            res.type     = ConstraintType::FixedDistance;
-            res.distMode = DistanceMode::PointToPoint;
-        }
+        // 初始分類一律為 FixedDistance；
+        // H/V 切換由 WaitDimPlace 的 DIM_LINE_PREVIEW handler 依滑鼠位置決定
+        res.type     = ConstraintType::FixedDistance;
+        res.distMode = DistanceMode::PointToPoint;
         res.valid = true;
         return res;
     }

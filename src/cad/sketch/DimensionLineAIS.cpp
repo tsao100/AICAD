@@ -5,6 +5,7 @@
 #include <Graphic3d_Group.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_Text.hxx>
+#include <Graphic3d_AspectText3d.hxx>
 #include <Prs3d_Text.hxx>
 #include <Prs3d_TextAspect.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -164,6 +165,13 @@ void AIS_DimensionLine::Compute(
 // 尺寸線繪製輔助 lambda
 // ─────────────────────────────────────────────────────────────────────────────
 
+static Handle(Graphic3d_AspectText3d) makeTextAspect(const Quantity_Color& col)
+{
+    Handle(Graphic3d_AspectText3d) asp = new Graphic3d_AspectText3d();
+    asp->SetColor(col);
+    return asp;
+}
+
 static void addArrow(const Handle(Prs3d_Presentation)& prs,
                      const gp_Pnt& tip, const gp_Vec& dir,
                      const Quantity_Color& col)
@@ -230,21 +238,33 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
     addArrow(prs, d1, along,       lineCol);
     addArrow(prs, d2, along * -1., lineCol);
 
-    // 標籤文字（紅色，字高 36，居中，平行尺寸線）
+    // 標籤文字（紅色，字高 36，平行尺寸線，居中）
     if (!label.isEmpty()) {
         gp_Pnt mid(
             (d1.X() + d2.X()) * 0.5,
             (d1.Y() + d2.Y()) * 0.5,
             (d1.Z() + d2.Z()) * 0.5);
 
-        Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
-        ta->SetColor(Quantity_Color(Quantity_NOC_RED));
-        ta->SetHeight(36.0);
-        ta->Aspect()->SetFont("Courier");
-        ta->SetHorizontalJustification(Graphic3d_HTA_CENTER);
-        ta->SetVerticalJustification(Graphic3d_VTA_CENTER);
-        TCollection_ExtendedString txt(label.toUtf8().constData(), Standard_True);
-        Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
+        // 使用 Graphic3d_Text 支援旋轉（平行尺寸線方向）
+        Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
+        gtext->SetText(TCollection_ExtendedString(label.toUtf8().constData(), Standard_True));
+        gtext->SetPosition(mid);
+        // 設定文字朝向：X 軸對齊尺寸線方向（along），Z 軸為螢幕外
+        gp_Vec d1d2(d1, d2);
+        if (d1d2.Magnitude() > Precision::Confusion()) {
+            d1d2.Normalize();
+            gp_Vec zAxis(0, 0, 1);
+            gp_Vec yAxis = zAxis.Crossed(d1d2);
+            if (yAxis.Magnitude() > Precision::Confusion()) {
+                yAxis.Normalize();
+                gtext->SetOrientation(gp_Ax2(mid, gp_Dir(zAxis), gp_Dir(d1d2)));
+            }
+        }
+        gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
+        gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
+        Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
+        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        txtGrp->AddText(gtext);
     }
 }
 
@@ -280,14 +300,20 @@ static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
             (d1.X() + d2.X()) * 0.5,
             (d1.Y() + d2.Y()) * 0.5,
             (d1.Z() + d2.Z()) * 0.5);
-        Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
-        ta->SetColor(Quantity_Color(Quantity_NOC_RED));
-        ta->SetHeight(36.0);
-        ta->Aspect()->SetFont("Courier");
-        ta->SetHorizontalJustification(Graphic3d_HTA_CENTER);
-        ta->SetVerticalJustification(Graphic3d_VTA_CENTER);
-        TCollection_ExtendedString txt(label.toUtf8().constData(), Standard_True);
-        Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
+        Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
+        gtext->SetText(TCollection_ExtendedString(label.toUtf8().constData(), Standard_True));
+        gtext->SetPosition(mid);
+        gp_Vec d1d2(d1, d2);
+        if (d1d2.Magnitude() > Precision::Confusion()) {
+            d1d2.Normalize();
+            gp_Vec zAxis(0, 0, 1);
+            gtext->SetOrientation(gp_Ax2(mid, gp_Dir(zAxis), gp_Dir(d1d2)));
+        }
+        gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
+        gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
+        Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
+        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        txtGrp->AddText(gtext);
     }
 }
 
@@ -298,8 +324,22 @@ static void addDimLineWithOffset(const Handle(Prs3d_Presentation)& prs,
                                   const Quantity_Color& col,
                                   const QString& label)
 {
-    gp_Pnt d1 = p1.Translated(offsetVec);
-    gp_Pnt d2 = p2.Translated(offsetVec);
+    // 延伸線必須垂直於 p1p2 連線：將 offsetVec 投影到 p1p2 的法向量上
+    gp_Vec along(p1, p2);
+    if (along.Magnitude() < Precision::Confusion()) {
+        gp_Pnt d1 = p1.Translated(offsetVec);
+        gp_Pnt d2 = p2.Translated(offsetVec);
+        addDimLineExplicit(prs, p1, p2, d1, d2, col, label);
+        return;
+    }
+    along.Normalize();
+    gp_Vec up(0, 0, 1);
+    gp_Vec perp = along.Crossed(up);
+    perp.Normalize();
+    double projDist = offsetVec.Dot(perp);
+    if (std::abs(projDist) < Precision::Confusion()) projDist = 8.0;
+    gp_Pnt d1 = p1.Translated(perp * projDist);
+    gp_Pnt d2 = p2.Translated(perp * projDist);
     addDimLineExplicit(prs, p1, p2, d1, d2, col, label);
 }
 
@@ -328,14 +368,31 @@ void AIS_DimensionLine::drawLinearDimension(const Handle(Prs3d_Presentation)& pr
 void AIS_DimensionLine::drawHorizontalDim(const Handle(Prs3d_Presentation)& prs) {
     gp_Pnt p1, p2;
     if (!getRefPoints(p1, p2)) return;
-    // 水平距離：尺寸線偏移方向為草圖 Y 軸（世界座標後為 perp 方向）
-    // 將草圖 (0, offsetY, 0) 轉世界座標偏移向量
+
+    // 水平距離：尺寸線平行草圖 X 軸（草圖 Y 固定）
+    // m_dimOffsetY：尺寸線草圖 Y 相對 AB 中點 Y 的偏移（與 overlay 同基準）
     double rawOffset = (m_dimOffsetY != 0.0) ? m_dimOffsetY : m_offsetDist;
-    gp_Pnt skOrig(0.0, 0.0, 0.0); skOrig.Transform(m_sketchToWorld);
-    gp_Pnt skOff (0.0, rawOffset, 0.0); skOff.Transform(m_sketchToWorld);
-    gp_Vec offVec(skOrig, skOff);
-    gp_Pnt d1 = p1.Translated(offVec);
-    gp_Pnt d2 = p2.Translated(offVec);
+
+    // 草圖座標系基向量（世界座標）
+    gp_Pnt skO(0.0, 0.0, 0.0); skO.Transform(m_sketchToWorld);
+    gp_Pnt skX(1.0, 0.0, 0.0); skX.Transform(m_sketchToWorld);
+    gp_Pnt skY(0.0, 1.0, 0.0); skY.Transform(m_sketchToWorld);
+    gp_Vec xAxis(skO, skX);
+    gp_Vec yAxis(skO, skY);
+
+    // 反求 p1/p2 的草圖座標
+    gp_Vec v1(skO, p1), v2(skO, p2);
+    double p1x = v1.Dot(xAxis), p1y = v1.Dot(yAxis);
+    double p2x = v2.Dot(xAxis), p2y = v2.Dot(yAxis);
+
+    // 尺寸線 Y = AB 中點 Y + rawOffset（與 CadView/overlay 的 offset 基準一致）
+    double abMidY = (p1y + p2y) * 0.5;
+    double dimY   = abMidY + rawOffset;
+
+    gp_Pnt d1(skO.XYZ() + xAxis.XYZ() * p1x + yAxis.XYZ() * dimY);
+    gp_Pnt d2(skO.XYZ() + xAxis.XYZ() * p2x + yAxis.XYZ() * dimY);
+    // 延伸線：p1→d1 長 |p1y - dimY|，p2→d2 長 |p2y - dimY|（兩條不等長）
+
     addDimLineExplicit(prs, p1, p2, d1, d2,
                        dimColor(m_constraint.driving, m_status),
                        labelText());
@@ -344,13 +401,28 @@ void AIS_DimensionLine::drawHorizontalDim(const Handle(Prs3d_Presentation)& prs)
 void AIS_DimensionLine::drawVerticalDim(const Handle(Prs3d_Presentation)& prs) {
     gp_Pnt p1, p2;
     if (!getRefPoints(p1, p2)) return;
-    // 垂直距離：尺寸線偏移方向為草圖 X 軸
+
+    // 垂直距離：尺寸線平行草圖 Y 軸（草圖 X 固定）
     double rawOffset = (m_dimOffsetX != 0.0) ? m_dimOffsetX : m_offsetDist;
-    gp_Pnt skOrig(0.0, 0.0, 0.0); skOrig.Transform(m_sketchToWorld);
-    gp_Pnt skOff (rawOffset, 0.0, 0.0); skOff.Transform(m_sketchToWorld);
-    gp_Vec offVec(skOrig, skOff);
-    gp_Pnt d1 = p1.Translated(offVec);
-    gp_Pnt d2 = p2.Translated(offVec);
+
+    gp_Pnt skO(0.0, 0.0, 0.0); skO.Transform(m_sketchToWorld);
+    gp_Pnt skX(1.0, 0.0, 0.0); skX.Transform(m_sketchToWorld);
+    gp_Pnt skY(0.0, 1.0, 0.0); skY.Transform(m_sketchToWorld);
+    gp_Vec xAxis(skO, skX);
+    gp_Vec yAxis(skO, skY);
+
+    gp_Vec v1(skO, p1), v2(skO, p2);
+    double p1x = v1.Dot(xAxis), p1y = v1.Dot(yAxis);
+    double p2x = v2.Dot(xAxis), p2y = v2.Dot(yAxis);
+
+    // 尺寸線 X = AB 中點 X + rawOffset（與 CadView/overlay 的 offset 基準一致）
+    double abMidX = (p1x + p2x) * 0.5;
+    double dimX   = abMidX + rawOffset;
+
+    gp_Pnt d1(skO.XYZ() + xAxis.XYZ() * dimX + yAxis.XYZ() * p1y);
+    gp_Pnt d2(skO.XYZ() + xAxis.XYZ() * dimX + yAxis.XYZ() * p2y);
+    // 延伸線：p1→d1 長 |p1x - dimX|，p2→d2 長 |p2x - dimX|（兩條不等長）
+
     addDimLineExplicit(prs, p1, p2, d1, d2,
                        dimColor(m_constraint.driving, m_status),
                        labelText());

@@ -193,12 +193,9 @@ CadView::CadView(QWidget* parent)
     connect(m_finishSketchButton, &QPushButton::clicked,
             this, &CadView::onFinishSketchClicked);
 
-    // GDIM: 建立透明 overlay widget（必須在 WA_PaintOnScreen 之外的 child 才能用 QPainter）
+    // GDIM: 尺寸預覽用 OCCT Presentation（仿 RubberBand），不使用 Qt widget overlay
     m_dimOverlay = new DimPreviewOverlay(this);
-    m_dimOverlay->hide();
-    m_dimOverlay->setPlaneToPxFn([this](const QVector2D& pt) {
-        return planeToScreen(pt);
-    });
+    // context 在 initializeViewer() 後才有效，在 showEvent 中呼叫 setContext
 
     // ✅ Do NOT call initializeViewer() here.
     // Defer to showEvent so NSView is fully realized.
@@ -329,6 +326,9 @@ void CadView::initializeViewer() {
 
     // 建立輔助物件
     d->rubberBand = new RubberBand(d->context, this);
+    // GDIM 預覽 overlay 使用 OCCT context
+    if (m_dimOverlay)
+        m_dimOverlay->setContext(d->context);
     d->grid = new ViewGrid(d->viewer, this);
 
     // 設定初始視角
@@ -796,18 +796,13 @@ void CadView::setDimPreview(const DimPreviewInfo& info)
                ? core::Application::instance()->activeSketch()
                : nullptr;
     m_dimOverlay->setSketch(sk);
-    m_dimOverlay->setGeometry(0, 0, width(), height());
-    m_dimOverlay->raise();
-    m_dimOverlay->show();
     m_dimOverlay->setPreview(info);
 }
 
 void CadView::clearDimPreview()
 {
-    if (m_dimOverlay) {
+    if (m_dimOverlay)
         m_dimOverlay->clearPreview();
-        m_dimOverlay->hide();
-    }
 }
 
 Handle(AIS_InteractiveContext) CadView::context() const {
@@ -1444,9 +1439,7 @@ void CadView::resizeEvent(QResizeEvent* event) {
         m_finishSketchButton->setGeometry(width() - 120, 10, 110, 30);
     }
 
-    // GDIM overlay 跟 CadView 同大小
-    if (m_dimOverlay)
-        m_dimOverlay->setGeometry(0, 0, width(), height());
+    // GDIM overlay 是 OCCT Presentation，resize 無需更新 widget geometry
 }
 
 void CadView::mousePressEvent(QMouseEvent* event) {
@@ -1769,7 +1762,8 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     if (d->mode == InteractionMode::PlaceDimLine) {
         QVector2D planePt = screenToPlane(event->pos());
         d->dimPreviewMousePt = planePt;
-        if (m_dimOverlay) m_dimOverlay->setMousePlanePt(planePt);
+        if (m_dimOverlay)
+            m_dimOverlay->setMousePlanePt(planePt);
         QVector2D offset  = planePt - d->dimLineAnchor2D;
         Q_EMIT dimLinePosPreview(offset.x(), offset.y());
         auto* bus = core::Application::instance()->eventBus();
@@ -1785,7 +1779,8 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     if (d->mode == InteractionMode::GetGeom) {
         QVector2D planePt = screenToPlane(event->pos());
         d->dimPreviewMousePt = planePt;
-        if (m_dimOverlay) m_dimOverlay->setMousePlanePt(planePt);
+        if (m_dimOverlay)
+            m_dimOverlay->setMousePlanePt(planePt);
         auto* bus = core::Application::instance()->eventBus();
         if (bus) {
             QString hoverUuid;
