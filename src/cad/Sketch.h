@@ -355,6 +355,8 @@ public:
     SketchConstraint* findConstraint(const QString& uuid);
     QList<SketchConstraint*> constraintsOf(const QString& geomUuid);
     void removeConstraintsOf(const QString& geomUuid);
+    /// 僅更新尺寸線偏移，不重新求解（拖曳尺寸線時輕量更新）
+    bool updateConstraintDimOffset(const QString& uuid, double offsetX, double offsetY);
     SolveResult solveConstraints();
     SolveResult solveWithStore(const aicad::core::ParameterStore* store);
     int degreesOfFreedom() const;

@@ -2027,6 +2027,24 @@ void UIManager::setupSketchPanel()
                 sk->parameterStore(), sk->name(), {});
     });
 
+    // ── 拖曳現有尺寸線（即時更新偏移）─────────────────────────────────────────
+    connect(d->cadView, &view::CadView::dimLineDragging,
+            this, [this](const QString& uuid, double ox, double oy) {
+        if (d->sketchPanel && d->sketchPanel->overlay())
+            d->sketchPanel->overlay()->updateDimLine(uuid, ox, oy);
+    });
+
+    // ── 拖曳現有尺寸線（放開確認，寫回 Sketch）────────────────────────────────
+    connect(d->cadView, &view::CadView::dimLineDragFinished,
+            this, [this](const QString& uuid, double ox, double oy) {
+        // 1. 先更新 overlay 顯示
+        if (d->sketchPanel && d->sketchPanel->overlay())
+            d->sketchPanel->overlay()->updateDimLine(uuid, ox, oy);
+        // 2. 寫回 Sketch constraint，持久化偏移
+        if (Sketch* sk = currentActiveSketch())
+            sk->updateConstraintDimOffset(uuid, ox, oy);
+    });
+
     // 尺寸線點擊（SketchPanel 的 slot 已處理，此處轉發給 ParameterPanel）
     connect(d->sketchPanel,
             &SketchPanel::dimensionConstraintClicked,

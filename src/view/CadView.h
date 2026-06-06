@@ -66,6 +66,7 @@ enum class InteractionMode {
     GetPoint,       ///< 取得點輸入
     GetGeom,        ///< ✅ Task E: 點擊回報 geomUuid+handle（幾何約束互動選取）
     PlaceDimLine,   ///< ✅ Task E: 移動預覽尺寸線位置，點擊確認
+    DimLineDrag,    ///< 拖曳已存在的尺寸線（移動尺寸線及數值位置）
     Navigation
 };
 
@@ -328,6 +329,13 @@ Q_SIGNALS:
 
     /// ✅ Task E: PlaceDimLine 模式 — 滑鼠點擊確認偏移
     void dimLinePosConfirmed(double offsetX, double offsetY);
+
+    /// 拖曳現有尺寸線 — 開始（攜帶約束 UUID）
+    void dimLineDragStarted(const QString& constraintUuid);
+    /// 拖曳現有尺寸線 — 即時更新偏移
+    void dimLineDragging(const QString& constraintUuid, double offsetX, double offsetY);
+    /// 拖曳現有尺寸線 — 放開確認
+    void dimLineDragFinished(const QString& constraintUuid, double offsetX, double offsetY);
 
     /**
      * @brief 取得點被取消時發出

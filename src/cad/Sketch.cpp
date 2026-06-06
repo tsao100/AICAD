@@ -1035,6 +1035,16 @@ SketchConstraint* Sketch::findConstraint(const QString& uuid)
     return nullptr;
 }
 
+bool Sketch::updateConstraintDimOffset(const QString& uuid, double offsetX, double offsetY)
+{
+    SketchConstraint* c = findConstraint(uuid);
+    if (!c) return false;
+    c->dimLineOffsetX = offsetX;
+    c->dimLineOffsetY = offsetY;
+    // 不重新 solve，不觸發 rebuild — overlay 由呼叫端 (UIManager) 已即時更新
+    return true;
+}
+
 void Sketch::removeConstraintsOf(const QString& geomUuid) {
     m_constraints.erase(
         std::remove_if(m_constraints.begin(), m_constraints.end(),

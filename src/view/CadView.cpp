@@ -25,6 +25,9 @@
 #include "command/CommandManager.h"
 #include "geometry/GeometryBuilder.h"
 
+#include "cad/sketch/DimensionLineAIS.h"
+#include "cad/sketch/SketchConstraint.h"
+
 #include <QDebug>
 #include <QTimer>
 #include <QMouseEvent>
@@ -130,6 +133,12 @@ public:
     QList<OverlayEntry> overlayObjects;
     QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
     QVector2D            dimPreviewMousePt; // GDIM: 目前滑鼠草圖座標（overlay 更新用）
+
+    // ── 尺寸線拖曳狀態 ──────────────────────────────────────────────────────
+    QString              dragDimUuid;        ///< 正在拖曳的約束 UUID（空 = 無拖曳）
+    QVector2D            dragDimStartMouse;  ///< 拖曳起始的草圖平面座標
+    double               dragDimBaseOffsetX = 0.0;  ///< 拖曳前的舊偏移 X
+    double               dragDimBaseOffsetY = 0.0;  ///< 拖曳前的舊偏移 Y
 
     Private()
         : document(nullptr)
@@ -1501,6 +1510,33 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
+    // ── 尺寸線拖曳偵測（Sketching 模式，無 active command，左鍵）─────────────
+    // 必須在 region 選取和 Sketching 畫線之前先判斷
+    if (event->button() == Qt::LeftButton &&
+        (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::Idle))
+    {
+        auto* cmdMgr2 = Application::instance()->commandManager();
+        if (!cmdMgr2 || !cmdMgr2->hasActiveCommand()) {
+            if (d->context->HasDetected()) {
+                Handle(AIS_InteractiveObject) det = d->context->DetectedInteractive();
+                Handle(aicad::cad::AIS_DimensionLine) dimAIS =
+                    Handle(aicad::cad::AIS_DimensionLine)::DownCast(det);
+                if (!dimAIS.IsNull()) {
+                    // 點擊到尺寸線 → 開始拖曳
+                    d->dragDimUuid       = dimAIS->constraintUuid();
+                    d->dragDimStartMouse = screenToPlane(event->pos());
+                    d->dragDimBaseOffsetX = dimAIS->dimOffsetX();
+                    d->dragDimBaseOffsetY = dimAIS->dimOffsetY();
+                    setMode(InteractionMode::DimLineDrag);
+                    setCursor(Qt::SizeAllCursor);
+                    Q_EMIT dimLineDragStarted(d->dragDimUuid);
+                    event->accept();
+                    return;
+                }
+            }
+        }
+    }
+
     // 在現有的左鍵 Sketching 處理之前插入（緊接在 snap 判斷之前）：
 
     if (event->button() == Qt::LeftButton &&
@@ -1744,18 +1780,39 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
     // 更新懸停偵測
     if (!d->context.IsNull() && !d->view.IsNull() && !gripActive) {
-        //d->context->MoveTo(xp, yp, d->view, Standard_True);
-
+        //d->context->MoveTo(xp, yp, d->view, Standard_True);\n
         if (d->context->HasDetected()) {
             Handle(AIS_InteractiveObject) detected = d->context->DetectedInteractive();
             if (!detected.IsNull() && detected == d->viewCube) {
                 setCursor(Qt::PointingHandCursor);
+            } else if (!detected.IsNull()) {
+                // 懸停到尺寸線時顯示移動游標
+                Handle(aicad::cad::AIS_DimensionLine) dimDet =
+                    Handle(aicad::cad::AIS_DimensionLine)::DownCast(detected);
+                auto* cmdMgr3 = Application::instance()->commandManager();
+                bool noCmd = !cmdMgr3 || !cmdMgr3->hasActiveCommand();
+                if (!dimDet.IsNull() && noCmd &&
+                    (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::Idle))
+                    setCursor(Qt::SizeAllCursor);
+                else
+                    unsetCursor();
             } else {
                 unsetCursor();
             }
         } else {
             unsetCursor();
         }
+    }
+
+    // ── 尺寸線拖曳：移動中即時發送偏移 ──────────────────────────────────────
+    if (d->mode == InteractionMode::DimLineDrag && !d->dragDimUuid.isEmpty()) {
+        QVector2D planePt = screenToPlane(event->pos());
+        QVector2D delta   = planePt - d->dragDimStartMouse;
+        double newOffX = d->dragDimBaseOffsetX + delta.x();
+        double newOffY = d->dragDimBaseOffsetY + delta.y();
+        Q_EMIT dimLineDragging(d->dragDimUuid, newOffX, newOffY);
+        event->accept();
+        return;
     }
 
     // ✅ Task E: PlaceDimLine 模式 — 滑鼠移動時發出偏移預覽 & 更新 QPainter overlay
@@ -1880,6 +1937,23 @@ void CadView::startViewCubeAnimation()
 }
 
 void CadView::mouseReleaseEvent(QMouseEvent* event) {
+    // ── 尺寸線拖曳結束 ────────────────────────────────────────────────────────
+    if (event->button() == Qt::LeftButton &&
+        d->mode == InteractionMode::DimLineDrag &&
+        !d->dragDimUuid.isEmpty())
+    {
+        QVector2D planePt = screenToPlane(event->pos());
+        QVector2D delta   = planePt - d->dragDimStartMouse;
+        double newOffX = d->dragDimBaseOffsetX + delta.x();
+        double newOffY = d->dragDimBaseOffsetY + delta.y();
+        Q_EMIT dimLineDragFinished(d->dragDimUuid, newOffX, newOffY);
+        d->dragDimUuid.clear();
+        unsetCursor();
+        setMode(InteractionMode::Sketching);
+        event->accept();
+        return;
+    }
+
     // ✅ FIX: 中間鍵放開 → 結束 pan
     if (event->button() == Qt::MiddleButton) {
         d->middleButtonPressed = false;
