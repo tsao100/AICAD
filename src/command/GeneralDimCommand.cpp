@@ -171,6 +171,10 @@ void GeneralDimCommand::subscribePreview() {
     if (!bus) return;
     bus->subscribe(core::Events::DIM_LINE_PREVIEW, this,
         [this](const QVariant& v) {
+            // ★ 用 QueuedConnection 排隊，確保與 onDimConfirmed 執行順序一致：
+            //   若點擊當下 CONFIRMED 先排隊，PREVIEW 就不會覆蓋已確認的 offset
+            QMetaObject::invokeMethod(this, [this, v] {
+            if (m_state != State::WaitDimPlace) return;
             QVariantMap m = v.toMap();
             m_dimOffsetX = m.value("offsetX").toDouble();
             m_dimOffsetY = m.value("offsetY").toDouble();
@@ -279,6 +283,7 @@ void GeneralDimCommand::subscribePreview() {
             m_type = newType;
             m_measuredValue = measureCurrentValue();
             updateDimPreview(nullptr);
+            }, Qt::QueuedConnection);
         });
 }
 
@@ -654,6 +659,11 @@ void GeneralDimCommand::onDimConfirmed(const QVariant& payload)
 {
     if (m_state != State::WaitDimPlace) return;
 
+    // ★ 立即取消 DIM_LINE_PREVIEW 訂閱，防止後續非同步的 preview 事件
+    //   覆蓋點擊當下已確認的 offset 值
+    auto* bus = core::Application::instance()->eventBus();
+    if (bus) bus->unsubscribe(core::Events::DIM_LINE_PREVIEW, this);
+
     QVariantMap map = payload.toMap();
     m_dimOffsetX = map.value("offsetX").toDouble();
     m_dimOffsetY = map.value("offsetY").toDouble();
@@ -718,8 +728,9 @@ void GeneralDimCommand::transitionToWaitDimPlace()
         // 先更新預覽資訊（確保 paintDimPreview 有正確的 refs/type/value）
         updateDimPreview(nullptr);
         // 再切換 mode → CadView 的 mouseMoveEvent 會持續觸發 repaint
+        m_dimAnchor2D = refMidpoint2D();  // ★ 記錄 anchor，commit 時修正 H/V offset 基準
         cadView->setMode(view::InteractionMode::PlaceDimLine);
-        cadView->beginPlaceDimLine(refMidpoint2D());
+        cadView->beginPlaceDimLine(m_dimAnchor2D);
     }
 
     auto* cmdMgr = core::CommandLineManager::instance();
@@ -777,8 +788,31 @@ void GeneralDimCommand::commitDimension()
     c.paramExpr      = m_pendingExpr;
     c.driving        = m_driving;
     c.distMode       = m_distMode;
-    c.dimLineOffsetX = m_dimOffsetX;
-    c.dimLineOffsetY = m_dimOffsetY;
+
+    // ★ H/V 情境：offset 是相對 anchor（起點）的偏移，
+    //   但 drawHorizontalDim/drawVerticalDim 期望的是相對 abMid 的偏移。
+    //   absMouse = anchor + offset，需要轉換：offsetFromMid = absMouse - abMid
+    double finalOffsetX = m_dimOffsetX;
+    double finalOffsetY = m_dimOffsetY;
+    if (m_type == ConstraintType::FixedHorizDist ||
+        m_type == ConstraintType::FixedVertDist) {
+        // 計算 refs 的 abMid（兩端點平均）
+        QVector2D abMid;
+        if (m_refs.size() >= 2) {
+            QVector2D p0 = m_refs[0].resolvePosition(sk);
+            QVector2D p1 = m_refs[1].resolvePosition(sk);
+            abMid = (p0 + p1) * 0.5f;
+        } else if (!m_refs.isEmpty()) {
+            abMid = m_refs[0].resolvePosition(sk);
+        }
+        // absMouse = anchor + offset；offsetFromMid = absMouse - abMid
+        QVector2D absMouse(static_cast<float>(m_dimAnchor2D.x() + m_dimOffsetX),
+                           static_cast<float>(m_dimAnchor2D.y() + m_dimOffsetY));
+        finalOffsetX = static_cast<double>(absMouse.x() - abMid.x());
+        finalOffsetY = static_cast<double>(absMouse.y() - abMid.y());
+    }
+    c.dimLineOffsetX = finalOffsetX;
+    c.dimLineOffsetY = finalOffsetY;
 
     auto* cmdMgr = core::CommandLineManager::instance();
 
@@ -823,6 +857,7 @@ void GeneralDimCommand::cleanup()
     m_pendingExpr.clear();
     m_dimOffsetX     = 0.0;
     m_dimOffsetY     = 0.0;
+    m_dimAnchor2D    = QVector2D{};
     m_hasPending     = false;
 
     auto* app     = core::Application::instance();

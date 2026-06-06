@@ -461,6 +461,19 @@ void AIS_DimensionLine::drawLengthDimension(const Handle(Prs3d_Presentation)& pr
     gp_Pnt p2(g->points[1].x(), g->points[1].y(), 0.0);
     p1.Transform(m_sketchToWorld);
     p2.Transform(m_sketchToWorld);
+
+    // ★ 與 drawLinearDimension 相同：優先使用使用者點擊確認的偏移（m_dimOffsetX/Y）
+    if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+        gp_Pnt op(m_dimOffsetX, m_dimOffsetY, 0.0);
+        op.Transform(m_sketchToWorld);
+        gp_Pnt orig(0.0, 0.0, 0.0);
+        orig.Transform(m_sketchToWorld);
+        gp_Vec offsetVec(orig, op);
+        addDimLineWithOffset(prs, p1, p2, offsetVec,
+                             dimColor(m_constraint.driving, m_status),
+                             labelText());
+        return;
+    }
     addDimLine(prs, p1, p2, m_offsetDist,
                dimColor(m_constraint.driving, m_status),
                labelText());

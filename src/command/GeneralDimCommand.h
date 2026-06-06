@@ -5,6 +5,7 @@
 #include "view/CadView.h"    // DimPreviewInfo
 #include <QList>
 #include <QString>
+#include <QVector2D>
 
 namespace aicad::command {
 
@@ -42,6 +43,7 @@ private:
     bool                 m_driving       = true;
     double               m_dimOffsetX    = 0.0;
     double               m_dimOffsetY    = 0.0;
+    QVector2D            m_dimAnchor2D;           ///< beginPlaceDimLine 時的錨點（草圖座標），用於 commit 時修正 H/V offset
     bool                 m_hasPending    = false; ///< execute() 帶入了預設值
 
     void subscribeGeomPicked   ();
