@@ -109,6 +109,22 @@ double GeneralDimCommand::measureCurrentValue() const {
         QVector2D p = m_refs[0].resolvePosition(sk);
         return static_cast<double>(p.x());  // value = x
     }
+    case ConstraintType::FixedAngleDim:
+    case ConstraintType::FixedAngle: {
+        // 兩線夾角：refs[0]=lineA, refs[1]=lineB，以弧度儲存
+        if (m_refs.size() < 2) return 0.0;
+        auto* geomA = sk->findGeometry(m_refs[0].geomUuid);
+        auto* geomB = sk->findGeometry(m_refs[1].geomUuid);
+        auto* lineA = dynamic_cast<const cad::SketchLine*>(geomA);
+        auto* lineB = dynamic_cast<const cad::SketchLine*>(geomB);
+        if (!lineA || !lineB) return 0.0;
+        QVector2D dirA = (lineA->end - lineA->start).normalized();
+        QVector2D dirB = (lineB->end - lineB->start).normalized();
+        double dot   = static_cast<double>(QVector2D::dotProduct(dirA, dirB));
+        double cross = static_cast<double>(dirA.x() * dirB.y() - dirA.y() * dirB.x());
+        double ang   = std::atan2(std::abs(cross), dot);  // 0..π/2，銳角
+        return ang;  // 弧度
+    }
     default:
         return 0.0;
     }

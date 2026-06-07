@@ -17,9 +17,12 @@ enum class SketchGeometryType;
 struct GeomVarLayout {
     int offset;   ///< 在變數向量的起始位置
     int dof;      ///< DOF 數量
+    /// SketchLine 端點共用 SketchPoint 的 offset（非 -1 時覆蓋 Start/End）
+    int startOffset = -1;  ///< Start handle 對應的 vars index（SketchPoint.x）
+    int endOffset   = -1;  ///< End   handle 對應的 vars index（SketchPoint.x）
 
     // 語意 accessor（依 GeomHandle 取 index）
-    // Line:    offset+0=x1, +1=y1, +2=x2, +3=y2
+    // Line:    offset+0=x1, +1=y1, +2=x2, +3=y2（或共用 SketchPoint DOF）
     // Circle:  offset+0=cx, +1=cy, +2=r
     // Arc:     offset+0=cx, +1=cy, +2=r, +3=startAngle, +4=endAngle
     // Ellipse: offset+0=cx, +1=cy, +2=majorR, +3=minorR, +4=angle
@@ -228,6 +231,16 @@ public:
 
 /// F(x) = r * |endAngle - startAngle| - value = 0  (弧長，refs[0]=弧)
 class FixedArcLengthEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// FixedAngleDim：兩線夾角約束（refs[0]=lineA, refs[1]=lineB）
+/// F(x) = atan2(cross, dot) - value = 0
+class FixedAngleDimEquation : public ConstraintEquation {
 public:
     using ConstraintEquation::ConstraintEquation;
     int  equationCount() const override { return 1; }

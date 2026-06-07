@@ -1065,18 +1065,27 @@ SolveResult Sketch::solveConstraints() {
     auto geoms = normalGeometries();
     auto result = m_solver.solve(geoms, m_constraints, normal);
     Q_EMIT constraintSolved(result);
-    if (result.status != SolveStatus::Conflict &&
-        result.status != SolveStatus::SolverError) {
-        // Solver 直接更新了 SketchLine.start/end，但 SketchPoint.pos 尚未同步。
-        // 必須先將 line->start/end 寫回對應 SketchPoint，否則後續
-        // syncGeometryFromPoints 會用舊 SketchPoint.pos 覆蓋 solver 結果。
+    if (result.status != SolveStatus::SolverError) {
+        // unpackVariables 已同時更新：
+        //   - SketchLine.start/end（由 line 自身的 DOF 決定）
+        //   - SketchPoint.pos（由 SketchPoint 自身的 DOF 決定）
+        //
+        // 若某條約束直接操作 SketchLine DOF（refs = lineUuid+Start/End），
+        // Solver 更新了 SketchLine 但沒有更新對應的 SketchPoint。
+        // 反之，若約束操作 SketchPoint UUID，Solver 更新了 SketchPoint
+        // 但 SketchLine 需要跟著同步。
+        //
+        // 策略：先讓 line.start/end → SketchPoint（確保 Solver 對 line DOF
+        // 的修改能傳播到 SketchPoint），再由 syncGeometryFromPoints 統一
+        // 以 SketchPoint 為單一來源同步回所有曲線。
         for (auto* g : geoms) {
             if (auto* line = dynamic_cast<SketchLine*>(g)) {
                 if (auto* ps = point(line->startUuid)) ps->pos = line->start;
                 if (auto* pe = point(line->endUuid))   pe->pos = line->end;
             }
+            // Arc/Circle 的 SketchPoint 由 unpackVariables 直接更新，不需覆蓋
         }
-        // ✅ Step 12: Solver 回寫 SketchPoint.pos 後，同步曲線座標
+        // 以 SketchPoint 為單一來源，同步所有曲線座標
         syncGeometryFromPoints();
         markDirty();
         Q_EMIT geometryChanged();

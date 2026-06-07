@@ -15,13 +15,16 @@ namespace aicad::cad {
 // ════════════════════════════════════════════════════════════════════════════
 
 int GeomVarLayout::indexFor(GeomHandle h) const {
-    // Line layout:    [x1, y1, x2, y2]
+    // Line layout:    [x1, y1, x2, y2]（或共用 SketchPoint DOF）
     // Circle layout:  [cx, cy, r]
     // Arc layout:     [cx, cy, r, startAngle, endAngle]
     // Ellipse layout: [cx, cy, majorR, minorR, angle]
     switch (h) {
-    case GeomHandle::Start:        return offset + 0;  // x1 / cx
-    case GeomHandle::End:          return offset + 2;  // x2（Line only）
+    case GeomHandle::Start:
+        // 若有共用 SketchPoint，用 startOffset；否則用傳統 offset+0
+        return (startOffset >= 0) ? startOffset : offset + 0;
+    case GeomHandle::End:
+        return (endOffset >= 0) ? endOffset : offset + 2;
     case GeomHandle::Center:       return offset + 0;  // cx
     case GeomHandle::RadiusValue:  return offset + 2;  // r
     case GeomHandle::ArcStartAngle:return offset + 3;
@@ -74,16 +77,20 @@ void HorizontalEquation::evaluate(const QVector<double>& v, QVector<double>& out
     const auto& uuid = constraint().refs[0].geomUuid;
     auto it = layout().find(uuid);
     if (it == layout().end()) { out[0]=0; return; }
-    // y1 at offset+1, y2 at offset+3
-    out[0] = v[it->offset + 1] - v[it->offset + 3];
+    // y1 = Start y, y2 = End y  (用 indexFor 支援共用 SketchPoint DOF)
+    int iy1 = it->indexFor(GeomHandle::Start) + 1;
+    int iy2 = it->indexFor(GeomHandle::End)   + 1;
+    out[0] = v[iy1] - v[iy2];
 }
 void HorizontalEquation::jacobian(const QVector<double>&, int r0,
                                   QVector<QVector<double>>& J) const {
     const auto& uuid = constraint().refs[0].geomUuid;
     auto it = layout().find(uuid);
     if (it == layout().end()) return;
-    J[r0][it->offset + 1] =  1.0;
-    J[r0][it->offset + 3] = -1.0;
+    int iy1 = it->indexFor(GeomHandle::Start) + 1;
+    int iy2 = it->indexFor(GeomHandle::End)   + 1;
+    J[r0][iy1] =  1.0;
+    J[r0][iy2] = -1.0;
 }
 
 // ── Vertical：F = [x1 - x2] ──────────────────────────────────────────────
@@ -91,15 +98,19 @@ void VerticalEquation::evaluate(const QVector<double>& v, QVector<double>& out) 
     const auto& uuid = constraint().refs[0].geomUuid;
     auto it = layout().find(uuid);
     if (it == layout().end()) { out[0]=0; return; }
-    out[0] = v[it->offset + 0] - v[it->offset + 2];
+    int ix1 = it->indexFor(GeomHandle::Start);
+    int ix2 = it->indexFor(GeomHandle::End);
+    out[0] = v[ix1] - v[ix2];
 }
 void VerticalEquation::jacobian(const QVector<double>&, int r0,
                                 QVector<QVector<double>>& J) const {
     const auto& uuid = constraint().refs[0].geomUuid;
     auto it = layout().find(uuid);
     if (it == layout().end()) return;
-    J[r0][it->offset + 0] =  1.0;
-    J[r0][it->offset + 2] = -1.0;
+    int ix1 = it->indexFor(GeomHandle::Start);
+    int ix2 = it->indexFor(GeomHandle::End);
+    J[r0][ix1] =  1.0;
+    J[r0][ix2] = -1.0;
 }
 
 // ── Parallel：F = [dx_a * dy_b - dy_a * dx_b] ───────────────────────────
@@ -107,25 +118,27 @@ void ParallelEquation::evaluate(const QVector<double>& v, QVector<double>& out) 
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()){out[0]=0;return;}
-    double dxA = v[itA->offset+2]-v[itA->offset+0];
-    double dyA = v[itA->offset+3]-v[itA->offset+1];
-    double dxB = v[itB->offset+2]-v[itB->offset+0];
-    double dyB = v[itB->offset+3]-v[itB->offset+1];
-    out[0] = dxA*dyB - dyA*dxB;   // 叉積 = 0
+    int ax1=itA->indexFor(GeomHandle::Start), ay1=ax1+1;
+    int ax2=itA->indexFor(GeomHandle::End),   ay2=ax2+1;
+    int bx1=itB->indexFor(GeomHandle::Start), by1=bx1+1;
+    int bx2=itB->indexFor(GeomHandle::End),   by2=bx2+1;
+    double dxA=v[ax2]-v[ax1], dyA=v[ay2]-v[ay1];
+    double dxB=v[bx2]-v[bx1], dyB=v[by2]-v[by1];
+    out[0] = dxA*dyB - dyA*dxB;
 }
 void ParallelEquation::jacobian(const QVector<double>& v, int r0,
                                 QVector<QVector<double>>& J) const {
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()) return;
-    double dxA=v[itA->offset+2]-v[itA->offset+0], dyA=v[itA->offset+3]-v[itA->offset+1];
-    double dxB=v[itB->offset+2]-v[itB->offset+0], dyB=v[itB->offset+3]-v[itB->offset+1];
-    // ∂/∂x1A = -dyB, ∂/∂y1A = dxB, ∂/∂x2A = dyB, ∂/∂y2A = -dxB
-    J[r0][itA->offset+0] = -dyB;  J[r0][itA->offset+1] = dxB;
-    J[r0][itA->offset+2] =  dyB;  J[r0][itA->offset+3] = -dxB;
-    // ∂/∂x1B = dyA, ∂/∂y1B = -dxA, ...
-    J[r0][itB->offset+0] =  dyA;  J[r0][itB->offset+1] = -dxA;
-    J[r0][itB->offset+2] = -dyA;  J[r0][itB->offset+3] =  dxA;
+    int ax1=itA->indexFor(GeomHandle::Start), ay1=ax1+1;
+    int ax2=itA->indexFor(GeomHandle::End),   ay2=ax2+1;
+    int bx1=itB->indexFor(GeomHandle::Start), by1=bx1+1;
+    int bx2=itB->indexFor(GeomHandle::End),   by2=bx2+1;
+    double dxA=v[ax2]-v[ax1], dyA=v[ay2]-v[ay1];
+    double dxB=v[bx2]-v[bx1], dyB=v[by2]-v[by1];
+    J[r0][ax1]=-dyB; J[r0][ay1]=dxB;  J[r0][ax2]=dyB;  J[r0][ay2]=-dxB;
+    J[r0][bx1]= dyA; J[r0][by1]=-dxA; J[r0][bx2]=-dyA; J[r0][by2]=dxA;
 }
 
 // ── Perpendicular：F = [dxA*dxB + dyA*dyB] ──────────────────────────────
@@ -133,21 +146,27 @@ void PerpendicularEquation::evaluate(const QVector<double>& v, QVector<double>& 
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()){out[0]=0;return;}
-    double dxA=v[itA->offset+2]-v[itA->offset+0], dyA=v[itA->offset+3]-v[itA->offset+1];
-    double dxB=v[itB->offset+2]-v[itB->offset+0], dyB=v[itB->offset+3]-v[itB->offset+1];
-    out[0] = dxA*dxB + dyA*dyB;   // 點積 = 0
+    int ax1=itA->indexFor(GeomHandle::Start), ay1=ax1+1;
+    int ax2=itA->indexFor(GeomHandle::End),   ay2=ax2+1;
+    int bx1=itB->indexFor(GeomHandle::Start), by1=bx1+1;
+    int bx2=itB->indexFor(GeomHandle::End),   by2=bx2+1;
+    double dxA=v[ax2]-v[ax1], dyA=v[ay2]-v[ay1];
+    double dxB=v[bx2]-v[bx1], dyB=v[by2]-v[by1];
+    out[0] = dxA*dxB + dyA*dyB;
 }
 void PerpendicularEquation::jacobian(const QVector<double>& v, int r0,
                                      QVector<QVector<double>>& J) const {
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()) return;
-    double dxA=v[itA->offset+2]-v[itA->offset+0], dyA=v[itA->offset+3]-v[itA->offset+1];
-    double dxB=v[itB->offset+2]-v[itB->offset+0], dyB=v[itB->offset+3]-v[itB->offset+1];
-    J[r0][itA->offset+0]=-dxB; J[r0][itA->offset+1]=-dyB;
-    J[r0][itA->offset+2]= dxB; J[r0][itA->offset+3]= dyB;
-    J[r0][itB->offset+0]=-dxA; J[r0][itB->offset+1]=-dyA;
-    J[r0][itB->offset+2]= dxA; J[r0][itB->offset+3]= dyA;
+    int ax1=itA->indexFor(GeomHandle::Start), ay1=ax1+1;
+    int ax2=itA->indexFor(GeomHandle::End),   ay2=ax2+1;
+    int bx1=itB->indexFor(GeomHandle::Start), by1=bx1+1;
+    int bx2=itB->indexFor(GeomHandle::End),   by2=bx2+1;
+    double dxA=v[ax2]-v[ax1], dyA=v[ay2]-v[ay1];
+    double dxB=v[bx2]-v[bx1], dyB=v[by2]-v[by1];
+    J[r0][ax1]=-dxB; J[r0][ay1]=-dyB; J[r0][ax2]=dxB; J[r0][ay2]=dyB;
+    J[r0][bx1]=-dxA; J[r0][by1]=-dyA; J[r0][bx2]=dxA; J[r0][by2]=dyA;
 }
 
 // ── Tangent（線與圓）：dist(center, line) = r ────────────────────────────
@@ -156,9 +175,14 @@ void TangentEquation::evaluate(const QVector<double>& v, QVector<double>& out) c
     auto itL = layout().find(constraint().refs[0].geomUuid);
     auto itC = layout().find(constraint().refs[1].geomUuid);
     if (itL==layout().end()||itC==layout().end()){out[0]=0;return;}
-    double x1=v[itL->offset],y1=v[itL->offset+1],x2=v[itL->offset+2],y2=v[itL->offset+3];
-    double cx=v[itC->offset],cy=v[itC->offset+1],r=v[itC->offset+2];
-    // 點到直線距離公式
+    int lx1=itL->indexFor(GeomHandle::Start), ly1=lx1+1;
+    int lx2=itL->indexFor(GeomHandle::End),   ly2=lx2+1;
+    // circle: cx=offset+0, cy=offset+1, r=offset+2（Circle 圓心仍用 offset）
+    int cx_i = itC->indexFor(GeomHandle::Center);
+    int cy_i = cx_i+1;
+    int r_i  = itC->indexFor(GeomHandle::RadiusValue);
+    double x1=v[lx1],y1=v[ly1],x2=v[lx2],y2=v[ly2];
+    double cx=v[cx_i],cy=v[cy_i],r=v[r_i];
     double dx=x2-x1, dy=y2-y1, len=qSqrt(dx*dx+dy*dy);
     if (len < 1e-10){out[0]=0;return;}
     double dist = qAbs((cy-y1)*dx-(cx-x1)*dy) / len;
@@ -220,7 +244,9 @@ void EqualLengthEquation::evaluate(const QVector<double>& v, QVector<double>& ou
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()){out[0]=0;return;}
     auto len=[&](const GeomVarLayout& l){
-        double dx=v[l.offset+2]-v[l.offset],dy=v[l.offset+3]-v[l.offset+1];
+        int x1=l.indexFor(GeomHandle::Start), y1=x1+1;
+        int x2=l.indexFor(GeomHandle::End),   y2=x2+1;
+        double dx=v[x2]-v[x1], dy=v[y2]-v[y1];
         return qSqrt(dx*dx+dy*dy);
     };
     out[0] = len(*itA) - len(*itB);
@@ -241,13 +267,13 @@ void EqualLengthEquation::jacobian(const QVector<double>& v, int r0,
 void FixedRadiusEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
     if (it==layout().end()){out[0]=0;return;}
-    out[0] = v[it->offset+2] - constraint().value;
+    out[0] = v[it->indexFor(GeomHandle::RadiusValue)] - constraint().value;
 }
 void FixedRadiusEquation::jacobian(const QVector<double>&, int r0,
                                    QVector<QVector<double>>& J) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
     if (it==layout().end()) return;
-    J[r0][it->offset+2] = 1.0;
+    J[r0][it->indexFor(GeomHandle::RadiusValue)] = 1.0;
 }
 
 // ── PointOnCurve（點在線段上）：叉積 = 0 + 點在線段範圍內 ──────────────
@@ -255,9 +281,10 @@ void PointOnCurveEquation::evaluate(const QVector<double>& v, QVector<double>& o
     int ip = varIdx(constraint().refs[0]);
     auto itL = layout().find(constraint().refs[1].geomUuid);
     if (ip<0||itL==layout().end()){out[0]=0;return;}
+    int lx1=itL->indexFor(GeomHandle::Start), ly1=lx1+1;
+    int lx2=itL->indexFor(GeomHandle::End),   ly2=lx2+1;
     double px=v[ip],py=v[ip+1];
-    double x1=v[itL->offset],y1=v[itL->offset+1],x2=v[itL->offset+2],y2=v[itL->offset+3];
-    // 叉積 (P-P1)×(P2-P1) = 0
+    double x1=v[lx1],y1=v[ly1],x2=v[lx2],y2=v[ly2];
     out[0] = (px-x1)*(y2-y1) - (py-y1)*(x2-x1);
 }
 void PointOnCurveEquation::jacobian(const QVector<double>& v, int r0,
@@ -265,12 +292,14 @@ void PointOnCurveEquation::jacobian(const QVector<double>& v, int r0,
     int ip = varIdx(constraint().refs[0]);
     auto itL = layout().find(constraint().refs[1].geomUuid);
     if (ip<0||itL==layout().end()) return;
-    double x1=v[itL->offset],y1=v[itL->offset+1],x2=v[itL->offset+2],y2=v[itL->offset+3];
+    int lx1=itL->indexFor(GeomHandle::Start), ly1=lx1+1;
+    int lx2=itL->indexFor(GeomHandle::End),   ly2=lx2+1;
+    double x1=v[lx1],y1=v[ly1],x2=v[lx2],y2=v[ly2];
     double px=v[ip],py=v[ip+1];
     double dy=y2-y1, dx=x2-x1;
     J[r0][ip]   =  dy;  J[r0][ip+1] = -dx;
-    J[r0][itL->offset]   = -(py-y1); J[r0][itL->offset+1] =  (px-x1);
-    J[r0][itL->offset+2] =  (py-y1); J[r0][itL->offset+3] = -(px-x1);
+    J[r0][lx1]  = -(py-y1); J[r0][ly1]  =  (px-x1);
+    J[r0][lx2]  =  (py-y1); J[r0][ly2]  = -(px-x1);
 }
 
 // ── EqualRadius：F = [r_a - r_b] ─────────────────────────────────────────
@@ -278,15 +307,15 @@ void EqualRadiusEquation::evaluate(const QVector<double>& v, QVector<double>& ou
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()){out[0]=0;return;}
-    out[0] = v[itA->offset+2] - v[itB->offset+2];
+    out[0] = v[itA->indexFor(GeomHandle::RadiusValue)] - v[itB->indexFor(GeomHandle::RadiusValue)];
 }
 void EqualRadiusEquation::jacobian(const QVector<double>&, int r0,
                                    QVector<QVector<double>>& J) const {
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()) return;
-    J[r0][itA->offset+2] =  1.0;
-    J[r0][itB->offset+2] = -1.0;
+    J[r0][itA->indexFor(GeomHandle::RadiusValue)] =  1.0;
+    J[r0][itB->indexFor(GeomHandle::RadiusValue)] = -1.0;
 }
 
 // ── FixedX：F = [x - value] ──────────────────────────────────────────────
@@ -334,40 +363,35 @@ void FixedEquation::jacobian(const QVector<double>&, int r0,
 void FixedLengthEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
     if (it == layout().end()) { out[0] = 0; return; }
-    // Line layout: offset+0=x1, +1=y1, +2=x2, +3=y2
-    double x1 = v[it->offset+0], y1 = v[it->offset+1];
-    double x2 = v[it->offset+2], y2 = v[it->offset+3];
-    double dx = x2 - x1, dy = y2 - y1;
-    double len = std::sqrt(dx*dx + dy*dy);
-    out[0] = len - constraint().value;
+    int x1i=it->indexFor(GeomHandle::Start), y1i=x1i+1;
+    int x2i=it->indexFor(GeomHandle::End),   y2i=x2i+1;
+    double dx=v[x2i]-v[x1i], dy=v[y2i]-v[y1i];
+    out[0] = std::sqrt(dx*dx+dy*dy) - constraint().value;
 }
 void FixedLengthEquation::jacobian(const QVector<double>& v, int r0,
                                    QVector<QVector<double>>& J) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
     if (it == layout().end()) return;
-    double x1 = v[it->offset+0], y1 = v[it->offset+1];
-    double x2 = v[it->offset+2], y2 = v[it->offset+3];
-    double dx = x2 - x1, dy = y2 - y1;
-    double len = std::sqrt(dx*dx + dy*dy);
+    int x1i=it->indexFor(GeomHandle::Start), y1i=x1i+1;
+    int x2i=it->indexFor(GeomHandle::End),   y2i=x2i+1;
+    double dx=v[x2i]-v[x1i], dy=v[y2i]-v[y1i];
+    double len=std::sqrt(dx*dx+dy*dy);
     if (len < 1e-12) return;
-    J[r0][it->offset+0] = -dx/len;
-    J[r0][it->offset+1] = -dy/len;
-    J[r0][it->offset+2] =  dx/len;
-    J[r0][it->offset+3] =  dy/len;
+    J[r0][x1i]=-dx/len; J[r0][y1i]=-dy/len;
+    J[r0][x2i]= dx/len; J[r0][y2i]= dy/len;
 }
 
 // ── FixedDiameterEquation：F = r - value/2 ───────────────────────────────
 void FixedDiameterEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
     if (it == layout().end()) { out[0] = 0; return; }
-    // Circle/Arc layout: offset+0=cx, +1=cy, +2=r
-    out[0] = v[it->offset+2] - constraint().value / 2.0;
+    out[0] = v[it->indexFor(GeomHandle::RadiusValue)] - constraint().value / 2.0;
 }
 void FixedDiameterEquation::jacobian(const QVector<double>&, int r0,
                                      QVector<QVector<double>>& J) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
     if (it == layout().end()) return;
-    J[r0][it->offset+2] = 1.0;
+    J[r0][it->indexFor(GeomHandle::RadiusValue)] = 1.0;
 }
 
 // ── FixedHorizDistEquation：F = (x2 - x1) - value ────────────────────────
@@ -427,6 +451,88 @@ void FixedArcLengthEquation::jacobian(const QVector<double>& v, int r0,
     J[r0][it->offset+4] =  r * sign;            // ∂F/∂t1
 }
 
+// ── FixedAngleDimEquation：兩線夾角 ─────────────────────────────────────
+// refs[0]=lineA（WholeGeom），refs[1]=lineB（WholeGeom）
+// Line layout: [x1, y1, x2, y2]
+// dirA = (x2A-x1A, y2A-y1A), dirB = (x2B-x1B, y2B-y1B)
+// F = atan2(|cross(dirA,dirB)|, dot(dirA,dirB)) - value
+//
+// 為避免 atan2 不連續，使用等效形式：
+//   cross² + dot² = |dirA|²|dirB|²（不含歸一化）
+//   F = cross * sign(cross) - |dirA||dirB| * sin(value)   （若 value 為銳角）
+// 更穩健的實作：直接用 dot - |dirA||dirB|*cos(value) = 0
+// 因為 F(x)=0 在 Newton 中可交替使用 sin/cos 形式
+// 此處用：F = dot(dirA_n, dirB_n) - cos(value) = 0（歸一化方向）
+void FixedAngleDimEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    const auto& refs = constraint().refs;
+    if (refs.size() < 2) { out[0] = 0; return; }
+
+    auto itA = layout().find(refs[0].geomUuid);
+    auto itB = layout().find(refs[1].geomUuid);
+    if (itA == layout().end() || itB == layout().end()) { out[0] = 0; return; }
+
+    int oA = itA->offset, oB = itB->offset;
+    // dirA = (x2A-x1A, y2A-y1A)
+    double dxA = v[oA+2] - v[oA+0];
+    double dyA = v[oA+3] - v[oA+1];
+    double dxB = v[oB+2] - v[oB+0];
+    double dyB = v[oB+3] - v[oB+1];
+
+    double lenA = std::sqrt(dxA*dxA + dyA*dyA);
+    double lenB = std::sqrt(dxB*dxB + dyB*dyB);
+    if (lenA < 1e-12 || lenB < 1e-12) { out[0] = 0; return; }
+
+    double dot  = (dxA*dxB + dyA*dyB) / (lenA * lenB);
+    // F = dot(dirA_n, dirB_n) - cos(value) = 0
+    out[0] = dot - std::cos(constraint().value);
+}
+
+void FixedAngleDimEquation::jacobian(const QVector<double>& v, int r0,
+                                      QVector<QVector<double>>& J) const {
+    const auto& refs = constraint().refs;
+    if (refs.size() < 2) return;
+
+    auto itA = layout().find(refs[0].geomUuid);
+    auto itB = layout().find(refs[1].geomUuid);
+    if (itA == layout().end() || itB == layout().end()) return;
+
+    int oA = itA->offset, oB = itB->offset;
+    double dxA = v[oA+2] - v[oA+0], dyA = v[oA+3] - v[oA+1];
+    double dxB = v[oB+2] - v[oB+0], dyB = v[oB+3] - v[oB+1];
+
+    double lenA2 = dxA*dxA + dyA*dyA;
+    double lenB2 = dxB*dxB + dyB*dyB;
+    double lenA  = std::sqrt(lenA2);
+    double lenB  = std::sqrt(lenB2);
+    if (lenA < 1e-12 || lenB < 1e-12) return;
+
+    double lenAB = lenA * lenB;
+    double dot   = dxA*dxB + dyA*dyB;
+
+    // ∂dot_n/∂(x1A) = ∂/∂x1A [ (dxA*dxB+dyA*dyB)/(lenA*lenB) ]
+    // = (-dxB*lenAB - dot*lenB*(-dxA/lenA)) / lenAB²
+    // = (-dxB + dot*dxA/lenA²) / lenAB
+    auto ddn_dx1A = (-dxB + dot*dxA/lenA2) / lenAB;
+    auto ddn_dy1A = (-dyB + dot*dyA/lenA2) / lenAB;
+    auto ddn_dx2A = ( dxB - dot*dxA/lenA2) / lenAB;
+    auto ddn_dy2A = ( dyB - dot*dyA/lenA2) / lenAB;
+
+    auto ddn_dx1B = (-dxA + dot*dxB/lenB2) / lenAB;
+    auto ddn_dy1B = (-dyA + dot*dyB/lenB2) / lenAB;
+    auto ddn_dx2B = ( dxA - dot*dxB/lenB2) / lenAB;
+    auto ddn_dy2B = ( dyA - dot*dyB/lenB2) / lenAB;
+
+    J[r0][oA+0] = ddn_dx1A;
+    J[r0][oA+1] = ddn_dy1A;
+    J[r0][oA+2] = ddn_dx2A;
+    J[r0][oA+3] = ddn_dy2A;
+
+    J[r0][oB+0] = ddn_dx1B;
+    J[r0][oB+1] = ddn_dy1B;
+    J[r0][oB+2] = ddn_dx2B;
+    J[r0][oB+3] = ddn_dy2B;
+}
+
 // ── CoordinateDimEquation：F1 = px - value ; F2 = py - value2 ────────────
 void CoordinateDimEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     int ix = varIdx(constraint().refs[0]);
@@ -456,25 +562,60 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
                                      QVector<double>& vars) const {
     vars.clear();
     layout.clear();
+
+    // ── Pass 1：先把所有 SketchPoint 打包（建立 UUID→offset 對應）────────────
     for (const SketchGeometry* g : geoms) {
+        if (g->type != SketchGeometryType::Point) continue;
+        const auto* pt = static_cast<const SketchPoint*>(g);
+        GeomVarLayout vl;
+        vl.offset = vars.size();
+        vl.dof    = 2;
+        vars << pt->pos.x() << pt->pos.y();
+        layout[g->uuid] = vl;
+    }
+
+    // ── Pass 2：打包非 SketchPoint 幾何，SketchLine 端點共用 SketchPoint DOF ─
+    for (const SketchGeometry* g : geoms) {
+        if (g->type == SketchGeometryType::Point) continue;  // 已處理
         GeomVarLayout vl;
         vl.offset = vars.size();
         switch (g->type) {
         case SketchGeometryType::Line: {
             const auto* l = static_cast<const SketchLine*>(g);
-            vars << l->start.x() << l->start.y() << l->end.x() << l->end.y();
-            vl.dof = 4;
+            // 嘗試共用端點的 SketchPoint DOF
+            auto itS = layout.find(l->startUuid);
+            auto itE = layout.find(l->endUuid);
+            if (itS != layout.end() && itE != layout.end()) {
+                // 兩端點 SketchPoint 都在 layout → 共用其 DOF，Line 本身不加新變量
+                vl.offset      = -1;   // 無獨立 offset（端點透過 startOffset/endOffset 存取）
+                vl.dof         = 0;    // Line 不貢獻新 DOF
+                vl.startOffset = itS->offset;       // SketchPoint start.x
+                vl.endOffset   = itE->offset;       // SketchPoint end.x
+            } else {
+                // Fallback：SketchPoint 缺失，用舊方式打包 4 DOF
+                vars << l->start.x() << l->start.y() << l->end.x() << l->end.y();
+                vl.dof = 4;
+            }
             break;
         }
         case SketchGeometryType::Circle: {
             const auto* c = static_cast<const SketchCircle*>(g);
-            vars << c->center.x() << c->center.y() << c->radius;
-            vl.dof = 3;
+            // 圓心若有 SketchPoint，共用其 DOF；radius 單獨打包
+            auto itC = layout.find(c->centerUuid);
+            if (itC != layout.end()) {
+                // center 共用 SketchPoint；radius 獨立
+                vl.offset = vars.size();
+                vars << c->radius;
+                vl.dof         = 1;   // 只有 radius 是新 DOF
+                vl.startOffset = itC->offset;  // 重用 startOffset 存放 cx index
+            } else {
+                vars << c->center.x() << c->center.y() << c->radius;
+                vl.dof = 3;
+            }
             break;
         }
         case SketchGeometryType::Arc: {
             const auto* a = static_cast<const SketchArc*>(g);
-            // 從 OCCT curve 取圓心、半徑、角度
             if (!a->curve.IsNull()) {
                 auto baseCircle = Handle(Geom_Circle)::DownCast(a->curve->BasisCurve());
                 if (!baseCircle.IsNull()) {
@@ -498,15 +639,7 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
             vl.dof = 5;
             break;
         }
-        case SketchGeometryType::Point: {
-            // ✅ Task B.1: SketchPoint 進入 Solver 變數佈局
-            const auto* pt = static_cast<const SketchPoint*>(g);
-            vars << pt->pos.x() << pt->pos.y();
-            vl.dof = 2;
-            break;
-        }
         default:
-            // Polyline / Spline：逐點打包
             for (const QVector2D& pt : g->points)
                 vars << pt.x() << pt.y();
             vl.dof = g->points.size() * 2;
@@ -524,35 +657,49 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
     for (SketchGeometry* g : geoms) {
         auto it = layout.find(g->uuid);
         if (it == layout.end()) continue;
-        int off = it->offset;
+        const GeomVarLayout& vl = *it;
+        int off = vl.offset;
         switch (g->type) {
         case SketchGeometryType::Line: {
             auto* l = static_cast<SketchLine*>(g);
-            l->start = QVector2D(vars[off+0], vars[off+1]);
-            l->end   = QVector2D(vars[off+2], vars[off+3]);
+            if (vl.startOffset >= 0 && vl.endOffset >= 0) {
+                // 共用 SketchPoint DOF：從 SketchPoint 的 vars index 讀取
+                l->start = QVector2D(vars[vl.startOffset],   vars[vl.startOffset+1]);
+                l->end   = QVector2D(vars[vl.endOffset],     vars[vl.endOffset+1]);
+            } else if (off >= 0) {
+                // Fallback：舊方式（4 個獨立 DOF）
+                l->start = QVector2D(vars[off+0], vars[off+1]);
+                l->end   = QVector2D(vars[off+2], vars[off+3]);
+            }
             l->points[0] = l->start;
             l->points[1] = l->end;
             break;
         }
         case SketchGeometryType::Circle: {
             auto* c = static_cast<SketchCircle*>(g);
-            c->center = QVector2D(vars[off+0], vars[off+1]);  // 直接賦值，不再 const_cast
-            c->radius = vars[off+2];
+            if (vl.startOffset >= 0 && vl.dof == 1 && off >= 0) {
+                // 圓心共用 SketchPoint DOF，radius 獨立
+                c->center = QVector2D(vars[vl.startOffset], vars[vl.startOffset+1]);
+                c->radius = vars[off];
+            } else if (off >= 0) {
+                c->center = QVector2D(vars[off+0], vars[off+1]);
+                c->radius = vars[off+2];
+            }
             break;
         }
         case SketchGeometryType::Arc: {
-            // Arc 由 OCCT curve 決定，這裡重建
             auto* a = static_cast<SketchArc*>(g);
+            if (off < 0) break;
             double cx=vars[off],cy=vars[off+1],r=vars[off+2];
             double t0=vars[off+3], t1=vars[off+4];
-            // ✅ 修正：使用草圖平面法向量，不再寫死 Z 軸
             gp_Ax2 ax2(gp_Pnt(cx, cy, 0), planeNormal);
             Handle(Geom_Circle) circ = new Geom_Circle(ax2, r);
             a->curve = new Geom_TrimmedCurve(circ, t0, t1);
             break;
-         }
+        }
         case SketchGeometryType::Ellipse: {
             auto* e = static_cast<SketchEllipse*>(g);
+            if (off < 0) break;
             e->center = QVector2D(vars[off+0], vars[off+1]);
             e->majorRadius = vars[off+2];
             e->minorRadius = vars[off+3];
@@ -560,14 +707,15 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
             break;
         }
         case SketchGeometryType::Point: {
-            // ✅ Task B.2: SketchPoint 從 Solver 回寫
             auto* pt = static_cast<SketchPoint*>(g);
-            pt->pos = QVector2D(vars[off+0], vars[off+1]);
+            if (off >= 0)
+                pt->pos = QVector2D(vars[off+0], vars[off+1]);
             break;
         }
         default:
-            for (int i=0; i<g->points.size(); ++i)
-                g->points[i] = QVector2D(vars[off+i*2], vars[off+i*2+1]);
+            if (off >= 0)
+                for (int i=0; i<g->points.size(); ++i)
+                    g->points[i] = QVector2D(vars[off+i*2], vars[off+i*2+1]);
             break;
         }
     }
@@ -613,15 +761,37 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
             eq = new FixedArcLengthEquation(c, &layout); break;
         case ConstraintType::CoordinateDim:
             eq = new CoordinateDimEquation(c, &layout); break;
+        case ConstraintType::FixedAngleDim:
+        case ConstraintType::FixedAngle:
+            eq = new FixedAngleDimEquation(c, &layout); break;
         case ConstraintType::Fixed: {
             // Fixed：從 layout 取出 offset+dof，記錄 snapshot
             auto it = layout.find(c.refs[0].geomUuid);
-            if (it != layout.end()) {
+            if (it != layout.end() && it->dof > 0 && it->offset >= 0) {
                 auto* feq = new FixedEquation(c, &layout);
                 QVector<double> snap;
                 for (int i = 0; i < it->dof; ++i) snap << vars[it->offset+i];
                 feq->setSnapshot(snap, it->offset, it->dof);
                 eqs.append(feq);
+            } else if (it != layout.end() && it->dof == 0) {
+                // SketchLine 共用 SketchPoint DOF：分別 fix start/end SketchPoint
+                // 用兩個 FixedEquation 各鎖定一個端點
+                if (it->startOffset >= 0) {
+                    SketchConstraint cs; cs.type = ConstraintType::Fixed;
+                    cs.refs = { c.refs[0] };
+                    auto* feqS = new FixedEquation(cs, &layout);
+                    QVector<double> snapS = { vars[it->startOffset], vars[it->startOffset+1] };
+                    feqS->setSnapshot(snapS, it->startOffset, 2);
+                    eqs.append(feqS);
+                }
+                if (it->endOffset >= 0) {
+                    SketchConstraint ce; ce.type = ConstraintType::Fixed;
+                    ce.refs = { c.refs[0] };
+                    auto* feqE = new FixedEquation(ce, &layout);
+                    QVector<double> snapE = { vars[it->endOffset], vars[it->endOffset+1] };
+                    feqE->setSnapshot(snapE, it->endOffset, 2);
+                    eqs.append(feqE);
+                }
             }
             continue;   // 跳過下面的 if(eq) eqs.append(eq)
         }
@@ -722,8 +892,10 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
     result.dof = dof;
 
     if (eqs.isEmpty()) {
+        // 沒有方程式：幾何不需要移動，但仍要寫回 vars（可能已被 pack 初始化）
         result.status = (dof==0) ? SolveStatus::FullyConstrained
                                    : SolveStatus::UnderConstrained;
+        // 不 unpack：vars 未被修改，與 geoms 一致，無需寫回
         qDeleteAll(eqs);
         return result;
     }
@@ -738,15 +910,23 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
 
     result.residual = residual;
 
+    // ★ 修正：不論收斂與否，只要殘差有改善（< 初始值），都寫回幾何
+    // 這確保即使欠定系統或部分收斂，幾何也能反映 Solver 的最佳努力結果
     if (converged) {
         unpackVariables(vars, layout, geoms, planeNormal);
         result.status = (dof == 0) ? SolveStatus::FullyConstrained
                                    : SolveStatus::UnderConstrained;
+        qDebug() << "[Solver] converged in" << result.iterations
+                 << "iters, residual=" << residual << "dof=" << dof;
     } else if (residual > 1.0) {
         result.status = SolveStatus::Conflict;
+        unpackVariables(vars, layout, geoms, planeNormal);
+        qWarning() << "[Solver] CONFLICT: residual=" << residual
+                   << "after" << result.iterations << "iters";
     } else {
         result.status = SolveStatus::UnderConstrained;
         unpackVariables(vars, layout, geoms, planeNormal);
+        qDebug() << "[Solver] under-constrained, residual=" << residual;
     }
 
     qDeleteAll(eqs);
@@ -756,14 +936,34 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
 int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
                                  const QList<SketchConstraint>& constraints)
 {
+    // 收集所有被 SketchLine/Arc/Circle 引用的 SketchPoint UUID
+    // 這些 SketchPoint 的 DOF 已被曲線「共用」，不再重複計算
+    QSet<QString> sharedPointUuids;
+    for (const SketchGeometry* g : geoms) {
+        if (g->type == SketchGeometryType::Line) {
+            const auto* l = static_cast<const SketchLine*>(g);
+            if (!l->startUuid.isEmpty()) sharedPointUuids.insert(l->startUuid);
+            if (!l->endUuid.isEmpty())   sharedPointUuids.insert(l->endUuid);
+        } else if (g->type == SketchGeometryType::Circle) {
+            const auto* c = static_cast<const SketchCircle*>(g);
+            if (!c->centerUuid.isEmpty()) sharedPointUuids.insert(c->centerUuid);
+        }
+    }
+
     int totalDOF = 0;
     for (const SketchGeometry* g : geoms) {
         switch (g->type) {
-        case SketchGeometryType::Line:    totalDOF += 4; break;
-        case SketchGeometryType::Circle:  totalDOF += 3; break;
-        case SketchGeometryType::Arc:     totalDOF += 5; break;
+        case SketchGeometryType::Line:    totalDOF += 4; break; // 端點 DOF 由共用 SketchPoint 計
+        case SketchGeometryType::Circle:  totalDOF += 1; break; // 只有 radius（圓心由 SketchPoint 計）
+        case SketchGeometryType::Arc:     totalDOF += 5; break; // arc 目前不共用 SketchPoint
         case SketchGeometryType::Ellipse: totalDOF += 5; break;
-        case SketchGeometryType::Point:   totalDOF += 2; break;  // ✅ Task B.3
+        case SketchGeometryType::Point: {
+            // 若此 SketchPoint 已被曲線共用，其 DOF 已含在曲線的計算中
+            if (!sharedPointUuids.contains(g->uuid))
+                totalDOF += 2;   // 獨立點：+2 DOF
+            // 否則：由 SketchLine 的 4 DOF 涵蓋（startOffset/endOffset 共用）
+            break;
+        }
         default: totalDOF += g->points.size() * 2; break;
         }
     }
