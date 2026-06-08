@@ -462,6 +462,11 @@ void HorizontalAlignmentEdit::solve()
     //  it from scratch), so the whole pass was dead code.  It has been
     //  removed; AlignmentSolver::solve(m_elems) is the sole authoritative
     //  solver for both Fixed and Floating elements.
+    //
+    //  LC/CA groups: the solver writes back the solved Clothoid length Ls
+    //  into elems[i].length via const_cast so that toJson() persists it.
+    //  We pass m_elems directly; the solver's const_cast writes to the
+    //  same QVector we own.
     AlignmentSolver solver;
     m_result = solver.solve(m_elems);
     emit changed();
@@ -493,6 +498,18 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
         elem["spiralType2"]  = static_cast<int>(e.spiralType2);
         elem["tangentIdxBefore"]  = e.tangentIdxBefore;
         elem["tangentIdxAfter"]   = e.tangentIdxAfter;
+        // LC/CA group markers: a SpiralIn with tangentIdxAfter==-1 adjacent to
+        // a Fixed Arc is an LC group.  A SpiralOut with tangentIdxBefore==-1
+        // adjacent to a Fixed Arc is a CA group.  Store explicit flags to
+        // avoid fragile structural inference across save/load.
+        const bool isLC = (e.type == EditableElementType::SpiralIn
+                           && e.mode == ConstraintMode::Floating
+                           && e.tangentIdxAfter == -1);
+        const bool isCA = (e.type == EditableElementType::SpiralOut
+                           && e.mode == ConstraintMode::Floating
+                           && e.tangentIdxBefore == -1);
+        if (isLC) elem["groupLC"] = true;
+        if (isCA) elem["groupCA"] = true;
         arr.append(elem);
     }
     obj["elements"] = arr;
@@ -820,6 +837,157 @@ bool AlignmentDocument::fromJson(const QJsonObject& obj)
 void AlignmentDocument::syncToOCAF(aicad::cad::Document* /*doc*/)
 {
     // TODO Step 5: 呼叫 AlignmentRenderer 同步 AIS 物件至 OCAF Document
+}
+
+// ============================================================================
+//  addLC  ─ Fixed Tangent → Clothoid(未知長度) → Fixed CircularArc
+//
+//  The SpiralIn element is inserted immediately BEFORE the Fixed Arc in the
+//  element list so that Pass 2c in solve() can find it via  arcI = i + 1.
+//  All tangentIdxBefore / tangentIdxAfter values stored in existing elements
+//  that referenced indices >= arcIdx are bumped by 1 to remain valid.
+// ============================================================================
+
+int HorizontalAlignmentEdit::addLC(int tangentIdx, int arcIdx,
+                                    SpiralType spiralType)
+{
+    if (tangentIdx < 0 || tangentIdx >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addLC: tangentIdx out of range:" << tangentIdx;
+        return -1;
+    }
+    if (arcIdx < 0 || arcIdx >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addLC: arcIdx out of range:" << arcIdx;
+        return -1;
+    }
+    if (m_elems[tangentIdx].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addLC: element at tangentIdx is not a Tangent";
+        return -1;
+    }
+    if (m_elems[arcIdx].type != EditableElementType::CircularArc) {
+        qWarning() << "[HorizontalAlignmentEdit] addLC: element at arcIdx is not a CircularArc";
+        return -1;
+    }
+    if (m_elems[arcIdx].mode != ConstraintMode::Fixed) {
+        qWarning() << "[HorizontalAlignmentEdit] addLC: arc must be Fixed (arcIdx=" << arcIdx << ")";
+        return -1;
+    }
+    if (m_elems[tangentIdx].mode != ConstraintMode::Fixed) {
+        qWarning() << "[HorizontalAlignmentEdit] addLC: tangent must be Fixed (tangentIdx=" << tangentIdx << ")";
+        return -1;
+    }
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    // Build the SpiralIn element (mode=Floating; Ls=0, solver will compute it)
+    EditableElement spiralIn;
+    spiralIn.type             = EditableElementType::SpiralIn;
+    spiralIn.mode             = ConstraintMode::Floating;
+    spiralIn.radius           = std::abs(m_elems[arcIdx].radius);
+    spiralIn.length           = 0.0;   // unknown — solver sets it after solve()
+    spiralIn.tangentIdxBefore = tangentIdx;
+    spiralIn.tangentIdxAfter  = -1;    // not used for LC (no exit tangent)
+    spiralIn.spiralType1      = spiralType;
+    spiralIn.spiralType2      = spiralType;
+
+    // Insert before arcIdx so that pass 2c finds: elems[spiralInIdx+1] == Fixed Arc
+    m_elems.insert(arcIdx, spiralIn);
+    const int spiralInIdx = arcIdx;   // inserted at this position
+    // arcIdx is now arcIdx+1 in the list (shifted by insertion)
+
+    // Fix up all stored indices that pointed to positions >= arcIdx
+    // (the inserted spiral shifted everything at arcIdx and beyond by +1)
+    const int insertedAt = arcIdx;
+    for (int i = 0; i < m_elems.size(); ++i) {
+        if (i == spiralInIdx) continue;  // the newly inserted element itself
+        auto& e = m_elems[i];
+        if (e.tangentIdxBefore >= insertedAt) ++e.tangentIdxBefore;
+        if (e.tangentIdxAfter  >= insertedAt) ++e.tangentIdxAfter;
+    }
+    // Also fix spiralIn's own tangentIdxBefore if tangentIdx >= insertedAt
+    // (tangentIdx was passed in before insertion, so if tangentIdx >= arcIdx it shifted)
+    if (tangentIdx >= insertedAt) {
+        m_elems[spiralInIdx].tangentIdxBefore = tangentIdx + 1;
+    }
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add LC (Line-Clothoid)");
+    }
+    return spiralInIdx;
+}
+
+// ============================================================================
+//  addCA  ─ Fixed CircularArc → Clothoid(未知長度) → Fixed Tangent
+//
+//  The SpiralOut element is inserted immediately AFTER the Fixed Arc so that
+//  Pass 2d in solve() finds it via  arcI = i - 1.
+// ============================================================================
+
+int HorizontalAlignmentEdit::addCA(int arcIdx, int tangentIdx,
+                                    SpiralType spiralType)
+{
+    if (arcIdx < 0 || arcIdx >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addCA: arcIdx out of range:" << arcIdx;
+        return -1;
+    }
+    if (tangentIdx < 0 || tangentIdx >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addCA: tangentIdx out of range:" << tangentIdx;
+        return -1;
+    }
+    if (m_elems[arcIdx].type != EditableElementType::CircularArc) {
+        qWarning() << "[HorizontalAlignmentEdit] addCA: element at arcIdx is not a CircularArc";
+        return -1;
+    }
+    if (m_elems[arcIdx].mode != ConstraintMode::Fixed) {
+        qWarning() << "[HorizontalAlignmentEdit] addCA: arc must be Fixed (arcIdx=" << arcIdx << ")";
+        return -1;
+    }
+    if (m_elems[tangentIdx].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addCA: element at tangentIdx is not a Tangent";
+        return -1;
+    }
+    if (m_elems[tangentIdx].mode != ConstraintMode::Fixed) {
+        qWarning() << "[HorizontalAlignmentEdit] addCA: tangent must be Fixed (tangentIdx=" << tangentIdx << ")";
+        return -1;
+    }
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    // Build the SpiralOut element
+    EditableElement spiralOut;
+    spiralOut.type             = EditableElementType::SpiralOut;
+    spiralOut.mode             = ConstraintMode::Floating;
+    spiralOut.radius           = std::abs(m_elems[arcIdx].radius);
+    spiralOut.length           = 0.0;   // unknown — solver sets it
+    spiralOut.tangentIdxBefore = -1;    // not used for CA
+    spiralOut.tangentIdxAfter  = tangentIdx;
+    spiralOut.spiralType1      = spiralType;
+    spiralOut.spiralType2      = spiralType;
+
+    // Insert immediately AFTER arcIdx so pass 2d finds: elems[spiralOutIdx-1] == Fixed Arc
+    const int insertPos    = arcIdx + 1;
+    m_elems.insert(insertPos, spiralOut);
+    const int spiralOutIdx = insertPos;
+
+    // Fix up stored indices shifted by the insertion
+    for (int i = 0; i < m_elems.size(); ++i) {
+        if (i == spiralOutIdx) continue;
+        auto& e = m_elems[i];
+        if (e.tangentIdxBefore >= insertPos) ++e.tangentIdxBefore;
+        if (e.tangentIdxAfter  >= insertPos) ++e.tangentIdxAfter;
+    }
+    // Fix spiralOut's own tangentIdxAfter if tangentIdx >= insertPos
+    if (tangentIdx >= insertPos) {
+        m_elems[spiralOutIdx].tangentIdxAfter = tangentIdx + 1;
+    }
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add CA (Clothoid-Arc)");
+    }
+    return spiralOutIdx;
 }
 
 } // namespace railway
