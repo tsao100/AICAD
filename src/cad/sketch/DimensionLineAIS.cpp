@@ -575,20 +575,139 @@ void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ComputeSelection — 點擊尺寸線可選取以觸發編輯
+// labelPosition3D — 計算數值標籤的世界座標中心
+// 與各 draw*Dimension 中 mid 的計算邏輯保持一致
+// ─────────────────────────────────────────────────────────────────────────────
+
+gp_Pnt AIS_DimensionLine::labelPosition3D() const
+{
+    // 特殊情況：半徑 / 直徑的標籤位置
+    if (m_constraint.type == ConstraintType::FixedRadius) {
+        if (!m_geoms.isEmpty()) {
+            auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0]);
+            if (circ) {
+                double r = m_constraint.value;
+                gp_Vec2d sk_dir(1.0, 0.0);
+                if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+                    gp_Vec2d off(m_dimOffsetX, m_dimOffsetY);
+                    if (off.Magnitude() > Precision::Confusion())
+                        sk_dir = off.Normalized();
+                }
+                // 標籤在圓心到邊的中點
+                gp_Pnt sk_mid(circ->center.x() + sk_dir.X() * r * 0.5,
+                              circ->center.y() + sk_dir.Y() * r * 0.5, 0.0);
+                sk_mid.Transform(m_sketchToWorld);
+                return sk_mid;
+            }
+        }
+    }
+
+    if (m_constraint.type == ConstraintType::FixedDiameter) {
+        if (!m_geoms.isEmpty()) {
+            auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0]);
+            if (circ) {
+                // 標籤在 dimMid（= center + offset）轉世界
+                gp_Pnt sk_mid(circ->center.x() + m_dimOffsetX,
+                              circ->center.y() + m_dimOffsetY, 0.0);
+                sk_mid.Transform(m_sketchToWorld);
+                return sk_mid;
+            }
+        }
+    }
+
+    // 通用：算出尺寸線兩端點 d1/d2，標籤在中點
+    gp_Pnt p1, p2;
+    if (!getRefPoints(p1, p2)) return gp_Pnt(0, 0, 0);
+
+    const ConstraintType ct = m_constraint.type;
+    if (ct == ConstraintType::FixedX || ct == ConstraintType::FixedHorizDist) {
+        // 水平尺寸線：d1/d2 的 Y = abMidY + rawOffset
+        double rawOffset = (m_dimOffsetY != 0.0) ? m_dimOffsetY : m_offsetDist;
+        gp_Pnt skO(0, 0, 0); skO.Transform(m_sketchToWorld);
+        gp_Pnt skX(1, 0, 0); skX.Transform(m_sketchToWorld);
+        gp_Pnt skY(0, 1, 0); skY.Transform(m_sketchToWorld);
+        gp_Vec xAxis(skO, skX), yAxis(skO, skY);
+        gp_Vec v1(skO, p1), v2(skO, p2);
+        double p1x = v1.Dot(xAxis), p2x = v2.Dot(xAxis);
+        double p1y = v1.Dot(yAxis), p2y = v2.Dot(yAxis);
+        double dimY = (p1y + p2y) * 0.5 + rawOffset;
+        gp_Pnt d1(skO.XYZ() + xAxis.XYZ() * p1x + yAxis.XYZ() * dimY);
+        gp_Pnt d2(skO.XYZ() + xAxis.XYZ() * p2x + yAxis.XYZ() * dimY);
+        return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
+    }
+
+    if (ct == ConstraintType::FixedY || ct == ConstraintType::FixedVertDist) {
+        // 垂直尺寸線：d1/d2 的 X = abMidX + rawOffset
+        double rawOffset = (m_dimOffsetX != 0.0) ? m_dimOffsetX : m_offsetDist;
+        gp_Pnt skO(0, 0, 0); skO.Transform(m_sketchToWorld);
+        gp_Pnt skX(1, 0, 0); skX.Transform(m_sketchToWorld);
+        gp_Pnt skY(0, 1, 0); skY.Transform(m_sketchToWorld);
+        gp_Vec xAxis(skO, skX), yAxis(skO, skY);
+        gp_Vec v1(skO, p1), v2(skO, p2);
+        double p1x = v1.Dot(xAxis), p2x = v2.Dot(xAxis);
+        double p1y = v1.Dot(yAxis), p2y = v2.Dot(yAxis);
+        double dimX = (p1x + p2x) * 0.5 + rawOffset;
+        gp_Pnt d1(skO.XYZ() + xAxis.XYZ() * dimX + yAxis.XYZ() * p1y);
+        gp_Pnt d2(skO.XYZ() + xAxis.XYZ() * dimX + yAxis.XYZ() * p2y);
+        return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
+    }
+
+    // 線性（FixedDistance、FixedLength、FixedAngleDim、FixedArcLength）：
+    // 尺寸線中點 = mid(p1,p2) + perp * offset
+    if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+        gp_Pnt op(m_dimOffsetX, m_dimOffsetY, 0.0);
+        op.Transform(m_sketchToWorld);
+        gp_Pnt orig(0.0, 0.0, 0.0);
+        orig.Transform(m_sketchToWorld);
+        gp_Vec offsetVec(orig, op);
+
+        gp_Vec along(p1, p2);
+        if (along.Magnitude() > Precision::Confusion()) {
+            along.Normalize();
+            gp_Vec perp = along.Crossed(gp_Vec(0, 0, 1));
+            if (perp.Magnitude() > Precision::Confusion()) perp.Normalize();
+            double projDist = offsetVec.Dot(perp);
+            if (std::abs(projDist) < Precision::Confusion()) projDist = 8.0;
+            gp_Pnt d1 = p1.Translated(perp * projDist);
+            gp_Pnt d2 = p2.Translated(perp * projDist);
+            return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
+        }
+    }
+
+    // fallback：預設 perp 偏移
+    gp_Vec along(p1, p2);
+    if (along.Magnitude() < Precision::Confusion())
+        return gp_Pnt((p1.X()+p2.X())*0.5, (p1.Y()+p2.Y())*0.5, (p1.Z()+p2.Z())*0.5);
+    along.Normalize();
+    gp_Vec perp = along.Crossed(gp_Vec(0, 0, 1));
+    if (perp.Magnitude() < Precision::Confusion()) perp = gp_Vec(0, 1, 0);
+    perp.Normalize();
+    gp_Pnt d1 = p1.Translated(perp * m_offsetDist);
+    gp_Pnt d2 = p2.Translated(perp * m_offsetDist);
+    return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComputeSelection — 只對數值標籤建立 sensitive region
+// 尺寸線本體、延伸線不可 hover / 選取，避免覆蓋幾何元素
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AIS_DimensionLine::ComputeSelection(
         const Handle(SelectMgr_Selection)& sel,
         const Standard_Integer /*mode*/)
 {
-    gp_Pnt p1, p2;
-    if (!getRefPoints(p1, p2)) return;
+    // 計算標籤中心世界座標
+    gp_Pnt labelPt = labelPosition3D();
 
+    // 建立以標籤為中心的小方框（±labelHalfSize mm），僅此區域可 hover / 選取
+    constexpr double labelHalfSize = 8.0;  // mm，可視字高調整
     Bnd_Box box;
-    box.Add(p1);
-    box.Add(p2);
-    box.Enlarge(m_offsetDist + 5.0);
+    box.Add(gp_Pnt(labelPt.X() - labelHalfSize,
+                   labelPt.Y() - labelHalfSize,
+                   labelPt.Z() - labelHalfSize));
+    box.Add(gp_Pnt(labelPt.X() + labelHalfSize,
+                   labelPt.Y() + labelHalfSize,
+                   labelPt.Z() + labelHalfSize));
 
     Handle(SelectMgr_EntityOwner) owner =
         new SelectMgr_EntityOwner(this, 5);
@@ -610,15 +729,7 @@ void AIS_DimensionLine::setDimLineOffset(double offsetX, double offsetY)
 
 gp_Pnt AIS_DimensionLine::dimLineAnchorPoint3D() const
 {
-    gp_Pnt p1, p2;
-    if (!getRefPoints(p1, p2)) return gp_Pnt(0,0,0);
-    // 尺寸線中點 + 偏移
-    gp_Pnt mid(
-        (p1.X() + p2.X()) * 0.5 + m_dimOffsetX,
-        (p1.Y() + p2.Y()) * 0.5 + m_dimOffsetY,
-        (p1.Z() + p2.Z()) * 0.5
-    );
-    return mid;
+    return labelPosition3D();
 }
 
 } // namespace aicad::cad

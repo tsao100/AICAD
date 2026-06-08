@@ -53,6 +53,9 @@ public:
     double  dimOffsetY() const { return m_dimOffsetY; }
     gp_Pnt  dimLineAnchorPoint3D() const;
 
+    /// 計算數值標籤的世界座標中心（供 ComputeSelection 及拖曳錨點使用）
+    gp_Pnt  labelPosition3D() const;
+
 private:
     void Compute(const Handle(PrsMgr_PresentationManager)&,
                  const Handle(Prs3d_Presentation)& prs,
