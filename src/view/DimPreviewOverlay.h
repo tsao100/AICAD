@@ -73,6 +73,11 @@ private:
     cad::Sketch*  m_sketch = nullptr;
     PreviewInfo   m_info;
     QVector2D     m_mouse;   // 草圖平面座標，決定尺寸線偏移方向與距離
+    // 暫存 FixedDiameter/Radius 計算結果，供 dA/dB 段使用
+    QVector2D     m_dimDir;
+    QVector2D     m_dimPerp;
+    float         m_dimR      = 0.f;
+    QVector2D     m_dimCenter;
 };
 
 } // namespace view

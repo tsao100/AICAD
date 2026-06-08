@@ -1089,9 +1089,16 @@ SolveResult Sketch::solveConstraints() {
         syncGeometryFromPoints();
         markDirty();
         Q_EMIT geometryChanged();
+
+        // ★ Solver 可能改變了幾何尺寸（如圓的 radius），需重建 AIS shapes
+        //   rebuildShapesOnly() 會 erase 舊 shapes、rebuild、redisplay
+        if (!m_aisContext.IsNull())
+            rebuildShapesOnly();
     }
 
     // ✅ Step 13: 將全域 SolveStatus 傳遞給所有 SketchPointAIS，即時更新顏色
+    //   注意：rebuildShapesOnly() 已呼叫過 UpdateCurrentViewer；
+    //   若 m_aisContext 有效，這裡只需更新 PointAIS 顏色（rebuildShapesOnly 會重新 Display）
     if (!m_aisContext.IsNull()) {
         for (const auto& obj : m_aisShapes) {
             if (auto ptAis = Handle(SketchPointAIS)::DownCast(obj)) {

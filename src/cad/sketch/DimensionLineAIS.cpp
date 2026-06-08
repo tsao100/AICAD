@@ -14,6 +14,8 @@
 #include <Bnd_Box.hxx>
 #include <Quantity_Color.hxx>
 #include <TCollection_ExtendedString.hxx>
+#include <gp_Pnt2d.hxx>
+#include <gp_Vec2d.hxx>
 #include <QDebug>
 #include <cmath>
 
@@ -429,11 +431,28 @@ void AIS_DimensionLine::drawVerticalDim(const Handle(Prs3d_Presentation)& prs) {
 }
 
 void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& prs) {
-    gp_Pnt p1, p2;
-    if (!getRefPoints(p1, p2)) return;
-    // 半徑：從圓心到邊上的一條線
-    gp_Pnt edge(p1.X() + m_constraint.value, p1.Y(), p1.Z());
-    addDimLine(prs, p1, edge, 0.0,
+    // 半徑：從圓心到圓周（方向由 m_dimOffsetX/Y 決定）
+    if (m_geoms.isEmpty()) return;
+    auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0]);
+    if (!circ) return;
+
+    double r = m_constraint.value;
+
+    // 方向（草圖平面內），優先用 offset，否則草圖 X 軸
+    gp_Vec sk_dir(1.0, 0.0, 0.0);
+    if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+        gp_Vec off(m_dimOffsetX, m_dimOffsetY, 0.0);
+        if (off.Magnitude() > Precision::Confusion())
+            sk_dir = off.Normalized();
+    }
+
+    gp_Pnt sk_ctr(circ->center.x(), circ->center.y(), 0.0);
+    gp_Pnt sk_edge(sk_ctr.X() + sk_dir.X() * r,
+                   sk_ctr.Y() + sk_dir.Y() * r, 0.0);
+    sk_ctr.Transform(m_sketchToWorld);
+    sk_edge.Transform(m_sketchToWorld);
+
+    addDimLine(prs, sk_ctr, sk_edge, 0.0,
                dimColor(m_constraint.driving, m_status),
                "R " + labelText());
 }
@@ -480,39 +499,46 @@ void AIS_DimensionLine::drawLengthDimension(const Handle(Prs3d_Presentation)& pr
 }
 
 void AIS_DimensionLine::drawDiameterDimension(const Handle(Prs3d_Presentation)& prs) {
-    // 直徑：尺寸線穿越圓心，兩端點落在圓周對稱位置
-    gp_Pnt ctr, dummy;
-    if (!getRefPoints(ctr, dummy)) return;
+    // m_dimOffsetX/Y = commit 時 (mouse - circCenter)（草圖座標）
+    // 幾何（與 rubberband DimPreviewOverlay 完全一致）：
+    //   dir    = normalize(offset)         ← 延伸線方向（圓心→滑鼠）
+    //   perp   = (-dir.y, dir.x)           ← 尺寸線方向（垂直延伸線）
+    //   A/B    = center ± perp*r           ← 延伸線起點（圓周上，沿 perp）
+    //   dimMid = center + offset           ← 尺寸線中點（= commit 時滑鼠）
+    //   dA/dB  = dimMid ± perp*r          ← 尺寸線端點
+    //   Style  = addDimLineExplicit（與 FixedDistance 相同）
+    if (m_geoms.isEmpty()) return;
+    auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0]);
+    if (!circ) return;
+
     double r = m_constraint.value / 2.0;
-    gp_Pnt p1(ctr.X() - r, ctr.Y(), ctr.Z());
-    gp_Pnt p2(ctr.X() + r, ctr.Y(), ctr.Z());
+
+    // ── 草圖座標計算 ─────────────────────────────────────────────────────────
+    gp_Vec2d sk_off(m_dimOffsetX, m_dimOffsetY);
+    gp_Vec2d sk_dir(1.0, 0.0);
+    if (sk_off.Magnitude() > Precision::Confusion())
+        sk_dir = sk_off.Normalized();
+    gp_Vec2d sk_perp(-sk_dir.Y(), sk_dir.X());
+
+    gp_Pnt2d sk_ctr2(circ->center.x(), circ->center.y());
+    gp_Pnt2d sk_A  (sk_ctr2.X() - sk_perp.X() * r, sk_ctr2.Y() - sk_perp.Y() * r);
+    gp_Pnt2d sk_B  (sk_ctr2.X() + sk_perp.X() * r, sk_ctr2.Y() + sk_perp.Y() * r);
+    gp_Pnt2d sk_mid(sk_ctr2.X() + sk_off.X(),       sk_ctr2.Y() + sk_off.Y());
+    gp_Pnt2d sk_dA (sk_mid.X() - sk_perp.X() * r,   sk_mid.Y() - sk_perp.Y() * r);
+    gp_Pnt2d sk_dB (sk_mid.X() + sk_perp.X() * r,   sk_mid.Y() + sk_perp.Y() * r);
+
+    // ── 轉世界座標 ───────────────────────────────────────────────────────────
+    auto toW = [&](const gp_Pnt2d& p) {
+        gp_Pnt w(p.X(), p.Y(), 0.0);
+        w.Transform(m_sketchToWorld);
+        return w;
+    };
+    gp_Pnt wA  = toW(sk_A);  gp_Pnt wB  = toW(sk_B);
+    gp_Pnt wdA = toW(sk_dA); gp_Pnt wdB = toW(sk_dB);
+
+    // ── 用 addDimLineExplicit 繪製（與 FixedDistance 完全相同的 style）────────
     Quantity_Color col = dimColor(m_constraint.driving, m_status);
-
-    Handle(Graphic3d_Group) grp = prs->NewGroup();
-    Handle(Graphic3d_AspectLine3d) asp =
-        new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
-    grp->SetPrimitivesAspect(asp);
-
-    Handle(Graphic3d_ArrayOfPolylines) line =
-        new Graphic3d_ArrayOfPolylines(2, 1);
-    line->AddBound(2); line->AddVertex(p1); line->AddVertex(p2);
-    grp->AddPrimitiveArray(line);
-
-    gp_Vec along(p2.X()-p1.X(), p2.Y()-p1.Y(), 0.0);
-    along.Normalize();
-    addArrow(prs, p1, along * -1.0, col);
-    addArrow(prs, p2, along,        col);
-
-    // 標籤（含 Ø 前綴，紅色，字高 36，居中）
-    gp_Pnt mid((p1.X()+p2.X())*0.5, (p1.Y()+p2.Y())*0.5, 0.0);
-    Handle(Prs3d_TextAspect) ta = new Prs3d_TextAspect();
-    ta->SetColor(Quantity_Color(Quantity_NOC_RED));
-    ta->SetHeight(36.0);
-    ta->Aspect()->SetFont("Courier");
-    ta->SetHorizontalJustification(Graphic3d_HTA_CENTER);
-    ta->SetVerticalJustification(Graphic3d_VTA_CENTER);
-    TCollection_ExtendedString txt(labelText().toUtf8().constData(), Standard_True);
-    Prs3d_Text::Draw(prs->NewGroup(), ta, txt, mid);
+    addDimLineExplicit(prs, wA, wB, wdA, wdB, col, labelText());
 }
 
 void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)& prs) {

@@ -161,7 +161,7 @@ void DimPreviewOverlay::rebuild()
         A = ln->start;
         B = ln->end;
     } else if (m_info.type == CT::FixedDiameter || m_info.type == CT::FixedRadius) {
-        // 圓/弧：用 mouse 方向決定尺寸線端點
+        // 圓/弧幾何
         if (m_info.refs.isEmpty()) return;
         auto* geom = m_sketch->findGeometry(m_info.refs[0].geomUuid);
         QVector2D center; float r = 0;
@@ -173,11 +173,21 @@ void DimPreviewOverlay::rebuild()
             center = cr.resolvePosition(m_sketch);
             r = (sr.resolvePosition(m_sketch) - center).length();
         }
+        // dir  = 圓心→滑鼠（延伸線方向）
+        // perp = dir 逆時針 90°（尺寸線方向）
         QVector2D dir = m_mouse - center;
         if (dir.length() < 1e-3f) dir = QVector2D(1, 0);
         dir.normalize();
-        B = center + dir * r;
-        A = (m_info.type == CT::FixedDiameter) ? center - dir * r : center;
+        QVector2D perp(-dir.y(), dir.x());
+        // A/B = 圓周上沿 perp 方向的兩端（延伸線起點，與尺寸線同方向）
+        // FixedRadius: A = center（只畫半徑線，從圓心）
+        A = (m_info.type == CT::FixedDiameter) ? center - perp * r : center;
+        B = center + perp * r;
+        // 把 dir/perp/r/center 存入臨時變數供 dA/dB 段使用
+        m_dimDir  = dir;
+        m_dimPerp = perp;
+        m_dimR    = r;
+        m_dimCenter = center;
     } else {
         // FixedDistance / HorizDist / VertDist
         if (m_info.refs.size() < 2) return;
@@ -186,25 +196,31 @@ void DimPreviewOverlay::rebuild()
     }
 
     // ── 計算尺寸線端點 dA/dB（草圖平面 2D）──────────────────────────────────
-    // 規則：
-    //   延伸線 A→dA, B→dB 垂直於兩點連線（或水平/垂直方向）
-    //   偏移距離及方向由滑鼠決定
     QVector2D dA, dB;
+    // 直徑/半徑：A/B 已是圓周上的端點，尺寸線就是 A→B，不需要延伸線
+    const bool isDiamOrRadius =
+        (m_info.type == CT::FixedDiameter || m_info.type == CT::FixedRadius);
 
-    if (m_info.type == CT::FixedHorizDist) {
+    if (isDiamOrRadius) {
+        // 正確的直徑標注幾何：
+        //   延伸線方向 = dir（圓心→滑鼠），延伸線起點 = A, B（圓周）
+        //   尺寸線方向 = perp（垂直 dir），尺寸線中點 = m_mouse
+        //   dA = m_mouse - perp * r（尺寸線 A 端）
+        //   dB = m_mouse + perp * r（尺寸線 B 端）
+        //   延伸線：A→dA, B→dB（沿 dir）
+        dA = m_mouse - m_dimPerp * m_dimR;
+        dB = m_mouse + m_dimPerp * m_dimR;
+    } else if (m_info.type == CT::FixedHorizDist) {
         // 水平距離：尺寸線水平（草圖 Y 固定 = 滑鼠 Y 座標）
-        // 尺寸線 Y 直接用滑鼠的 Y，兩端 X 各自對齊 A、B
         float dimY = m_mouse.y();
-        // 最小偏移保護：若滑鼠 Y 太靠近兩點，強制偏移
         float minY = std::min(A.y(), B.y());
         float maxY = std::max(A.y(), B.y());
         if (dimY >= minY - 5.f && dimY <= maxY + 5.f) {
-            // 滑鼠在兩點 Y 範圍內，依偏移方向強制移出
             float midY = (A.y() + B.y()) * 0.5f;
             dimY = (m_mouse.y() >= midY) ? maxY + 20.f : minY - 20.f;
         }
-        dA = QVector2D(A.x(), dimY);   // 延伸線 A→dA：垂直，長度 |A.y - dimY|
-        dB = QVector2D(B.x(), dimY);   // 延伸線 B→dB：垂直，長度 |B.y - dimY|（不等長）
+        dA = QVector2D(A.x(), dimY);
+        dB = QVector2D(B.x(), dimY);
     } else if (m_info.type == CT::FixedVertDist) {
         // 垂直距離：尺寸線垂直（草圖 X 固定 = 滑鼠 X 座標）
         float dimX = m_mouse.x();
@@ -214,24 +230,23 @@ void DimPreviewOverlay::rebuild()
             float midX = (A.x() + B.x()) * 0.5f;
             dimX = (m_mouse.x() >= midX) ? maxX + 20.f : minX - 20.f;
         }
-        dA = QVector2D(dimX, A.y());   // 延伸線 A→dA：水平，長度 |A.x - dimX|
-        dB = QVector2D(dimX, B.y());   // 延伸線 B→dB：水平，長度 |B.x - dimX|（不等長）
+        dA = QVector2D(dimX, A.y());
+        dB = QVector2D(dimX, B.y());
     } else {
         // FixedLength / FixedDistance(PointToPoint)
-        // 延伸線垂直於 AB 連線，偏移到滑鼠一側
         QVector2D ab = B - A;
         float abLen = ab.length();
         QVector2D perpDir;
         if (abLen < 1e-4f) {
             perpDir = QVector2D(0, 1);
         } else {
-            perpDir = QVector2D(-ab.y(), ab.x()) / abLen;  // 左法向量（垂直 AB）
+            perpDir = QVector2D(-ab.y(), ab.x()) / abLen;
         }
         QVector2D mid = (A + B) * 0.5f;
         float dot = QVector2D::dotProduct(m_mouse - mid, perpDir);
-        if (dot < 0) perpDir = -perpDir;          // 朝滑鼠那側
+        if (dot < 0) perpDir = -perpDir;
         float offset = std::abs(dot);
-        if (offset < 5.f) offset = 20.f;          // 最小偏移 20 草圖單位
+        if (offset < 5.f) offset = 20.f;
         dA = A + perpDir * offset;
         dB = B + perpDir * offset;
     }
@@ -240,41 +255,42 @@ void DimPreviewOverlay::rebuild()
     m_prs = new Prs3d_Presentation(
         m_context->MainPrsMgr()->StructureManager());
 
-    // 顏色：尺寸線綠色，虛線延伸線也綠色
     Quantity_Color lineCol(0.0, 0.85, 0.0, Quantity_TOC_RGB);
 
-    // ── 延伸線（虛線）────────────────────────────────────────────────────────
+    // ── 延伸線 + 尺寸線（Style 與 FixedDistance 相同：全實線，單一 polyline）────
     {
-        Handle(Graphic3d_AspectLine3d) dashAsp =
-            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_DOT, 1.2f);
+        Handle(Graphic3d_AspectLine3d) asp =
+            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
         Handle(Graphic3d_Group) grp = m_prs->NewGroup();
-        grp->SetGroupPrimitivesAspect(dashAsp);
-        addLine(grp, toWorld(A), toWorld(dA));
-        addLine(grp, toWorld(B), toWorld(dB));
-    }
+        grp->SetGroupPrimitivesAspect(asp);
 
-    // ── 尺寸線（實線）+ 箭頭 ─────────────────────────────────────────────────
-    {
-        Handle(Graphic3d_AspectLine3d) solidAsp =
-            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.8f);
-        Handle(Graphic3d_Group) grp = m_prs->NewGroup();
-        grp->SetGroupPrimitivesAspect(solidAsp);
+        gp_Pnt wA  = toWorld(A);  gp_Pnt wB  = toWorld(B);
+        gp_Pnt wdA = toWorld(dA); gp_Pnt wdB = toWorld(dB);
 
-        gp_Pnt wdA = toWorld(dA);
-        gp_Pnt wdB = toWorld(dB);
-        addLine(grp, wdA, wdB);
+        Handle(Graphic3d_ArrayOfPolylines) lines =
+            new Graphic3d_ArrayOfPolylines(6, 3);
+        // 延伸線 A→dA
+        lines->AddBound(2); lines->AddVertex(wA);  lines->AddVertex(wdA);
+        // 延伸線 B→dB
+        lines->AddBound(2); lines->AddVertex(wB);  lines->AddVertex(wdB);
+        // 尺寸線 dA→dB
+        lines->AddBound(2); lines->AddVertex(wdA); lines->AddVertex(wdB);
+        grp->AddPrimitiveArray(lines);
 
-        // 箭頭方向
-        gp_Vec dirAB(wdA, wdB);
-        if (dirAB.Magnitude() > Precision::Confusion()) {
-            addArrow3D(grp, wdA, gp_Vec(wdB, wdA));  // 指向 A 端
-            addArrow3D(grp, wdB, dirAB);              // 指向 B 端
+        // 箭頭：沿尺寸線方向（dA→dB）
+        gp_Vec along(wdA, wdB);
+        if (along.Magnitude() > Precision::Confusion()) {
+            along.Normalize();
+            addArrow3D(grp, wdA, along * -1.0);
+            addArrow3D(grp, wdB, along);
         }
     }
 
     // ── 數值文字（紅色，字高 36，平行尺寸線，居中）──────────────────────────
+    // 直徑/半徑：標籤放圓心；其他：放尺寸線中點
     {
         QString label = QString::number(m_info.value, 'f', 2);
+        // 標籤放在尺寸線中點（dA/dB）：當滑鼠在圓外時尺寸線已平移，標籤跟著走
         QVector2D midDim = (dA + dB) * 0.5f;
         gp_Pnt wMid = toWorld(midDim);
 
