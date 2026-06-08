@@ -16,17 +16,25 @@ namespace aicad::cad {
 
 int GeomVarLayout::indexFor(GeomHandle h) const {
     // Line layout:    [x1, y1, x2, y2]（或共用 SketchPoint DOF）
-    // Circle layout:  [cx, cy, r]
+    // Circle layout:  [cx, cy, r]  OR  shared-center: offset→r only, startOffset→cx
     // Arc layout:     [cx, cy, r, startAngle, endAngle]
     // Ellipse layout: [cx, cy, majorR, minorR, angle]
+
+    // ── shared-center Circle（dof==1）：offset 指向 radius，startOffset 指向 cx ──
+    const bool sharedCenter = (dof == 1 && startOffset >= 0 && offset >= 0);
+
     switch (h) {
     case GeomHandle::Start:
         // 若有共用 SketchPoint，用 startOffset；否則用傳統 offset+0
-        return (startOffset >= 0) ? startOffset : offset + 0;
+        return (startOffset >= 0 && !sharedCenter) ? startOffset : offset + 0;
     case GeomHandle::End:
         return (endOffset >= 0) ? endOffset : offset + 2;
-    case GeomHandle::Center:       return offset + 0;  // cx
-    case GeomHandle::RadiusValue:  return offset + 2;  // r
+    case GeomHandle::Center:
+        // shared-center Circle：圓心 index 存於 startOffset
+        return sharedCenter ? startOffset : offset + 0;
+    case GeomHandle::RadiusValue:
+        // shared-center Circle：offset 直接就是 radius index（不是 offset+2）
+        return sharedCenter ? offset : offset + 2;
     case GeomHandle::ArcStartAngle:return offset + 3;
     case GeomHandle::ArcEndAngle:  return offset + 4;
     case GeomHandle::MajorRadius:  return offset + 2;

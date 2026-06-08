@@ -71,6 +71,11 @@ QVector2D GeomRef::resolvePosition(const Sketch* sketch) const
     auto* geom = sketch->findGeometry(geomUuid);
     if (!geom) return {};
     if (!geom->points.isEmpty()) return geom->points[0];
+    // SketchCircle / SketchEllipse 不填 points，改從具體欄位取中心
+    if (auto* c = dynamic_cast<const SketchCircle*>(geom))
+        return c->center;
+    if (auto* e = dynamic_cast<const SketchEllipse*>(geom))
+        return e->center;
     return {};
 }
 
