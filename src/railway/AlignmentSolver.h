@@ -97,6 +97,67 @@ struct SolvedSCS
 };
 
 // ============================================================================
+//  SolvedLC  — unknown-length Clothoid between Fixed Tangent → Fixed Arc
+// ============================================================================
+
+/**
+ * @brief Result of solveLC(): Line → Clothoid → Arc.
+ *
+ * The spiral's entry tangent lies on the incoming Fixed Tangent (TS slides
+ * along the tangent).  The spiral's exit point SC lies on the Fixed Arc and
+ * its tangent is tangent to the arc.  The arc is trimmed: its new PC' = scPoint;
+ * its original end (PT) is unchanged.
+ *
+ * Coordinate / azimuth conventions identical to SolvedCurve.
+ */
+struct SolvedLC
+{
+    bool    valid    = false;
+
+    // Spiral  TS → SC
+    double  Ls       = 0.0;   ///< Solved Clothoid length [m]
+    double  R        = 0.0;   ///< Arc radius (absolute) [m]
+    double  thetaS   = 0.0;   ///< Spiral angle at SC = Ls/(2R) for Clothoid [rad]
+    QPointF tsPoint;           ///< Start of spiral (on incoming tangent)
+    QPointF scPoint;           ///< End of spiral = trimmed arc new-PC
+    double  azTS     = 0.0;   ///< Azimuth at TS = incoming tangent azimuth [rad]
+    double  azSC     = 0.0;   ///< Azimuth at SC = azTS + thetaS [rad]
+
+    // Trimmed arc  SC → original arc-end (PT)
+    QPointF arcEndPoint;       ///< Original arc end (PT), unchanged
+    double  arcLen   = 0.0;   ///< Trimmed arc length  SC → PT [m]
+    double  azArcEnd = 0.0;   ///< Forward azimuth at PT [rad]
+};
+
+// ============================================================================
+//  SolvedCA  — unknown-length Clothoid between Fixed Arc → Fixed Tangent
+// ============================================================================
+
+/**
+ * @brief Result of solveCA(): Arc → Clothoid → Line.
+ *
+ * Mirror image of SolvedLC: the arc is trimmed at its exit end; the spiral
+ * runs from the new CS point (on the arc) to ST (on the outgoing Fixed Tangent).
+ */
+struct SolvedCA
+{
+    bool    valid    = false;
+
+    // Trimmed arc  original arc-start (PC) → CS
+    QPointF arcStartPoint;     ///< Original arc start (PC), unchanged
+    QPointF csPoint;           ///< Trimmed arc new-PT = start of spiral
+    double  arcLen   = 0.0;   ///< Trimmed arc length  PC → CS [m]
+    double  azCS     = 0.0;   ///< Forward azimuth at CS [rad]
+
+    // Spiral  CS → ST
+    double  Ls       = 0.0;   ///< Solved Clothoid length [m]
+    double  R        = 0.0;   ///< Arc radius (absolute) [m]
+    double  thetaS   = 0.0;   ///< Spiral angle at CS [rad]
+    QPointF stPoint;           ///< End of spiral (on outgoing tangent)
+    double  azST     = 0.0;   ///< Azimuth at ST = outgoing tangent azimuth [rad]
+};
+
+// ============================================================================
 //  AlignmentSolver
 // ============================================================================
 
@@ -161,6 +222,86 @@ public:
         SpiralType type1, SpiralType type2,
         const QPointF& tanStartPrev, const QPointF& tanEndPrev,
         const QPointF& tanStartNext, const QPointF& tanEndNext);
+
+    /**
+     * @brief Solve for an unknown-length Clothoid between a Fixed Tangent
+     *        (Line) and a Fixed CircularArc  —  LC group.
+     *
+     * @par Problem statement
+     * Given:
+     *   - Fixed Tangent with direction az1 = azimuthOf(tanStart, tanEnd).
+     *   - Fixed CircularArc with centre @p arcCenter, absolute radius @p arcRadius,
+     *     and fixed far-end @p arcEnd (PT stays where the user placed it).
+     *
+     * Find: Clothoid length Ls such that
+     *   (a) TS lies on the incoming tangent line,
+     *   (b) SC lies exactly on the circular arc  (|SC − arcCenter| = R), and
+     *   (c) the spiral's tangent at SC is tangent to the arc.
+     *
+     * @par Algorithm  (cross-track gap f(Ls) = 0)
+     * For a given Ls, the spiral end-point SC relative to TS is:
+     *   @code
+     *   azSC  = az1 + thetaS(Ls)
+     *   scDx  = Xm·sin(az1) + Ym·cos(az1)
+     *   scDy  = Xm·cos(az1) − Ym·sin(az1)
+     *   @endcode
+     * Condition (c) pins SC to the specific arc point whose tangent is azSC:
+     *   @code
+     *   SC_on_arc = arcCenter + R·(−signR·cos(azSC),  signR·sin(azSC))
+     *   @endcode
+     * Condition (a) means TS slides freely along az1; its along-tangent
+     * position cancels out in the cross-track gap:
+     *   @code
+     *   f(Ls) = (tanEnd + (scDx,scDy) − SC_on_arc) · n1   [n1 = right-perp of az1]
+     *   @endcode
+     * A bisection solver on f(Ls) finds Ls to 0.1 mm accuracy.
+     *
+     * After solving, TS = SC_on_arc − (scDx, scDy); the arc is trimmed
+     * to SC → arcEnd.
+     *
+     * @param arcCenter    Centre of the Fixed CircularArc.
+     * @param arcRadius    Absolute radius [m].
+     * @param arcEnd       Unchanged far-end (PT) of the Fixed Arc.
+     * @param arcAzEnd     Forward azimuth at PT [rad].
+     * @param tanStart     Start of the Fixed Tangent (far end from the arc).
+     * @param tanEnd       End of the Fixed Tangent (close end, near the arc).
+     * @param spiralType   Clothoid family (default: Clothoid).
+     * @return SolvedLC with valid==true on success.
+     */
+    static SolvedLC solveLC(
+        QPointF arcCenter, double arcRadius,
+        QPointF arcEnd,    double arcAzEnd,
+        const QPointF& tanStart, const QPointF& tanEnd,
+        SpiralType spiralType = SpiralType::Clothoid);
+
+    /**
+     * @brief Solve for an unknown-length Clothoid between a Fixed CircularArc
+     *        and a Fixed Tangent (Line)  —  CA group.
+     *
+     * Mirror image of solveLC: the spiral runs CT (curvature decreasing) from
+     * CS (on the arc) to ST (on the outgoing Fixed Tangent).
+     *
+     * @par Gap function
+     *   @code
+     *   azCS = az2 − thetaS(Ls)
+     *   CS_on_arc = arcCenter + R·(−signR·cos(azCS),  signR·sin(azCS))
+     *   f(Ls) = (tanStart − (stDx,stDy) − CS_on_arc) · n2   [n2 = right-perp of az2]
+     *   @endcode
+     *
+     * @param arcCenter    Centre of the Fixed CircularArc.
+     * @param arcRadius    Absolute radius [m].
+     * @param arcStart     Unchanged near-start (PC) of the Fixed Arc.
+     * @param arcAzStart   Forward azimuth at PC [rad].
+     * @param tanStart     Start of the Fixed Tangent (close end, near the arc).
+     * @param tanEnd       End of the Fixed Tangent (far end from the arc).
+     * @param spiralType   Clothoid family (default: Clothoid).
+     * @return SolvedCA with valid==true on success.
+     */
+    static SolvedCA solveCA(
+        QPointF arcCenter, double arcRadius,
+        QPointF arcStart,  double arcAzStart,
+        const QPointF& tanStart, const QPointF& tanEnd,
+        SpiralType spiralType = SpiralType::Clothoid);
 
 private:
 

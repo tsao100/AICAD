@@ -124,6 +124,40 @@ public:
                double radius, double spiralLength1, double spiralLength2,
                SpiralType type1, SpiralType type2);
 
+    /**
+     * @brief 在 Fixed Tangent 與 Fixed CircularArc 之間插入長度未知的 Clothoid
+     *        （LC 群組 = 直線 → Clothoid → 弧）。
+     *
+     * Solver 以二分法求解 Clothoid 長度 Ls，使螺旋線的入端切線吻合直線、
+     * 出端 SC 點落在弧上且切線相切。弧的 PC（startPI）會被更新為 SC 點。
+     *
+     * 建立 1 個 SpiralIn EditableElement（mode = Floating）。
+     *
+     * @param tangentIdx  Fixed Tangent 的 index（直線，位於螺旋之前）。
+     * @param arcIdx      Fixed CircularArc 的 index（弧，位於螺旋之後）。
+     * @param spiralType  Clothoid 類型，預設 Clothoid。
+     * @return SpiralIn 元素的 index；失敗時回傳 -1。
+     */
+    int addLC(int tangentIdx, int arcIdx,
+              SpiralType spiralType = SpiralType::Clothoid);
+
+    /**
+     * @brief 在 Fixed CircularArc 與 Fixed Tangent 之間插入長度未知的 Clothoid
+     *        （CA 群組 = 弧 → Clothoid → 直線）。
+     *
+     * Solver 求解 Ls 使螺旋線的入端 CS 點落在弧上且切線相切、出端切線吻合直線。
+     * 弧的 PT（endPI）會被更新為 CS 點。
+     *
+     * 建立 1 個 SpiralOut EditableElement（mode = Floating）。
+     *
+     * @param arcIdx      Fixed CircularArc 的 index（弧，位於螺旋之前）。
+     * @param tangentIdx  Fixed Tangent 的 index（直線，位於螺旋之後）。
+     * @param spiralType  Clothoid 類型，預設 Clothoid。
+     * @return SpiralOut 元素的 index；失敗時回傳 -1。
+     */
+    int addCA(int arcIdx, int tangentIdx,
+              SpiralType spiralType = SpiralType::Clothoid);
+
     // ── 元素操作 ─────────────────────────────────────────────────────────────
 
     void movePI(int idx, QPointF newPos);

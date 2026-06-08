@@ -370,6 +370,319 @@ SolvedSCS AlignmentSolver::solveSCS(
 }
 
 // ============================================================================
+//  solveLC  —  Line → Clothoid → Arc  (unknown Ls)
+//
+//  Derivation of the cross-track gap f(Ls)
+//  ─────────────────────────────────────────
+//  Let az1 = incoming tangent azimuth (fixed).
+//  Let signR = +1 if arc turns right, −1 if left (determined by which side of
+//              az1 the arc centre lies).
+//
+//  For a given trial Ls, obtain from localFrame(Ls):
+//    thetaS  — spiral deflection angle (signed, carries turn direction)
+//    Xm      — along-tangent reach from TS to SC
+//    Ym      — cross-track offset from TS to SC (signed: positive = right)
+//
+//  azSC = az1 + thetaS
+//
+//  Condition (c): SC tangent is tangent to the arc.
+//  ⟹ The centre is exactly one radius to the right of the forward direction
+//    at SC (for a right-hand arc):
+//        arcCenter = SC + signR · R · right_perp(azSC)
+//    ⟹ SC_on_arc = arcCenter − signR · R · right_perp(azSC)
+//               = arcCenter + (−signR·R·cos azSC,  +signR·R·sin azSC)
+//
+//  Condition (a): TS slides freely along az1:
+//    TS = tanEnd − t · (sin az1, cos az1)   for some t
+//    SC = TS + (scDx, scDy)                 [scDx/scDy from Xm, Ym, az1]
+//
+//  Cross-track equation  (project onto right-perp n1 = (cos az1, −sin az1)):
+//    SC · n1 = SC_on_arc · n1          (t drops out because TS · n1 is independent of t)
+//
+//  ⟹ f(Ls) = (tanEnd + (scDx,scDy) − SC_on_arc) · n1 = 0
+//
+//  After finding Ls, TS is recovered from the along-track projection (h = 0):
+//    h = (tanEnd + (scDx,scDy) − SC_on_arc) · u1
+//    TS = tanEnd − h · u1
+//  which gives exactly  TS = SC_on_arc − (scDx, scDy).
+// ============================================================================
+
+SolvedLC AlignmentSolver::solveLC(
+    QPointF arcCenter, double arcRadius,
+    QPointF arcEnd,    double arcAzEnd,
+    const QPointF& tanStart, const QPointF& tanEnd,
+    SpiralType spiralType)
+{
+    SolvedLC result;
+
+    const double R = std::abs(arcRadius);
+    if (R < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveLC: arcRadius ≈ 0";
+        return result;
+    }
+
+    // ── Step 1: incoming tangent azimuth ─────────────────────────────────────
+    const double az1 = azimuthOf(tanStart, tanEnd);
+    const double sA1 = std::sin(az1), cA1 = std::cos(az1);
+    // right-perpendicular of az1: n1 = (cos az1, −sin az1)
+    const double n1x = cA1, n1y = -sA1;
+
+    // ── Step 2: hand-of-curve ────────────────────────────────────────────────
+    // If the arc centre lies to the right of the tangent direction, it's a
+    // right-hand (CW) curve: signR = +1; left-hand: signR = −1.
+    const double sideVal = (arcCenter.x() - tanEnd.x()) * n1x
+                         + (arcCenter.y() - tanEnd.y()) * n1y;
+    const int signR = (sideVal >= 0.0) ? 1 : -1;
+
+    // ── Step 3: bisection on f(Ls) ───────────────────────────────────────────
+    // SC_on_arc at trial azSC:
+    //   SC_on_arc = (arcCenter.x − signR·R·cos azSC,
+    //                arcCenter.y + signR·R·sin azSC)
+    // f(Ls) = (tanEnd.x + scDx − SC_on_arc.x)·n1x
+    //       + (tanEnd.y + scDy − SC_on_arc.y)·n1y
+
+    auto evalF = [&](double Ls) -> double {
+        const auto elem = makeTransitionElement(spiralType, Ls, signR * R);
+        const LocalFrame lf = elem->localFrame(Ls);
+        const double Xm     = lf.x;
+        const double Ym     = lf.y;
+        const double thetaS = lf.theta;
+
+        const double azSC = az1 + thetaS;
+        // Offset from TS to SC in world frame
+        const double scDx = Xm * sA1 + Ym * cA1;
+        const double scDy = Xm * cA1 - Ym * sA1;
+
+        // Point on arc whose forward tangent is azSC
+        const double sc_arc_x = arcCenter.x() - signR * R * std::cos(azSC);
+        const double sc_arc_y = arcCenter.y() + signR * R * std::sin(azSC);
+
+        const double bx = tanEnd.x() + scDx - sc_arc_x;
+        const double by = tanEnd.y() + scDy - sc_arc_y;
+        return bx * n1x + by * n1y;
+    };
+
+    // Search bounds:
+    // Lower bound: near-zero (degenerate spiral).
+    // Upper bound: thetaS cannot exceed π/2 (spiral would fold back), so
+    //   Ls_max ≤ π·R (Clothoid: thetaS = Ls²/(2RL) but we use localFrame).
+    // Also clamp to a generous multiple of the geometry size.
+    const double geomDist = std::hypot(arcEnd.x() - tanEnd.x(),
+                                       arcEnd.y() - tanEnd.y())
+                          + std::hypot(arcEnd.x() - arcCenter.x(),
+                                       arcEnd.y() - arcCenter.y()); // ≈ chord + arc
+    const double Ls_max = std::min(geomDist * 2.0, M_PI * R * 0.95);
+
+    // Scan for sign change
+    const int    nScan = 400;
+    double Ls_lo = 1e-3;
+    double f_lo  = evalF(Ls_lo);
+    double Ls_hi = -1.0;
+
+    for (int k = 1; k <= nScan; ++k) {
+        const double Ls_k = Ls_max * k / static_cast<double>(nScan);
+        const double f_k  = evalF(Ls_k);
+        if (f_lo * f_k < 0.0) { Ls_hi = Ls_k; break; }
+        f_lo = f_k;
+        Ls_lo = Ls_k;
+    }
+
+    if (Ls_hi < 0.0) {
+        qWarning() << "[AlignmentSolver] solveLC: f(Ls) has no sign change."
+                   << "az1=" << qRadiansToDegrees(az1)
+                   << "R="   << R
+                   << "Ls_max=" << Ls_max;
+        return result;
+    }
+
+    // Bisect to 0.1 mm
+    for (int iter = 0; iter < 80; ++iter) {
+        const double Ls_mid = 0.5 * (Ls_lo + Ls_hi);
+        if (std::abs(Ls_hi - Ls_lo) < 1e-4) { Ls_lo = Ls_mid; break; }
+        if (evalF(Ls_lo) * evalF(Ls_mid) <= 0.0)
+            Ls_hi = Ls_mid;
+        else
+            Ls_lo = Ls_mid;
+    }
+    const double Ls = Ls_lo;
+
+    // ── Step 4: final geometry ────────────────────────────────────────────────
+    const auto   elemF  = makeTransitionElement(spiralType, Ls, signR * R);
+    const LocalFrame lf = elemF->localFrame(Ls);
+    const double Xm     = lf.x;
+    const double Ym     = lf.y;
+    const double thetaS = lf.theta;
+
+    const double azSC = az1 + thetaS;
+    const double scDx = Xm * sA1 + Ym * cA1;
+    const double scDy = Xm * cA1 - Ym * sA1;
+
+    // SC pinned to arc (tangency condition)
+    const QPointF scPoint(arcCenter.x() - signR * R * std::cos(azSC),
+                          arcCenter.y() + signR * R * std::sin(azSC));
+    // TS derived from SC and the rigid spiral offset
+    const QPointF tsPoint(scPoint.x() - scDx, scPoint.y() - scDy);
+
+    // ── Step 5: trimmed arc  SC → arcEnd ─────────────────────────────────────
+    const QPointF r_sc  = scPoint - arcCenter;
+    const QPointF r_end = arcEnd  - arcCenter;
+    const double  crossV = r_sc.x() * r_end.y() - r_sc.y() * r_end.x();
+    const double  dotV   = r_sc.x() * r_end.x() + r_sc.y() * r_end.y();
+    double dPhi = std::atan2(std::abs(crossV), dotV);
+    // Ensure arc goes in the correct travel direction:
+    //   right-turn (signR=+1): crossV should be ≤ 0 (clockwise sweep SC→end)
+    if (signR > 0 && crossV > 0.0) dPhi = 2.0 * M_PI - dPhi;
+    if (signR < 0 && crossV < 0.0) dPhi = 2.0 * M_PI - dPhi;
+
+    result.valid       = true;
+    result.Ls          = Ls;
+    result.R           = R;
+    result.thetaS      = thetaS;
+    result.tsPoint     = tsPoint;
+    result.scPoint     = scPoint;
+    result.azTS        = az1;
+    result.azSC        = azSC;
+    result.arcEndPoint = arcEnd;
+    result.arcLen      = R * dPhi;
+    result.azArcEnd    = arcAzEnd;
+
+    return result;
+}
+
+// ============================================================================
+//  solveCA  —  Arc → Clothoid → Line  (unknown Ls)
+//
+//  Exact mirror of solveLC with the spiral running CT (curvature decreasing).
+//
+//  f(Ls) for CA:
+//    azCS = az2 − thetaS(Ls)                         [exit from arc into spiral]
+//    CS_on_arc = arcCenter + (−signR·R·cos azCS,  +signR·R·sin azCS)
+//    stDx = Xm·sin(az2) + Ym·cos(az2)               [CT: same local frame as TC]
+//    stDy = Xm·cos(az2) − Ym·sin(az2)
+//    f(Ls) = (tanStart − (stDx,stDy) − CS_on_arc) · n2   [n2 = right-perp of az2]
+// ============================================================================
+
+SolvedCA AlignmentSolver::solveCA(
+    QPointF arcCenter, double arcRadius,
+    QPointF arcStart,  double arcAzStart,
+    const QPointF& tanStart, const QPointF& tanEnd,
+    SpiralType spiralType)
+{
+    SolvedCA result;
+
+    const double R = std::abs(arcRadius);
+    if (R < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveCA: arcRadius ≈ 0";
+        return result;
+    }
+
+    // ── Step 1: outgoing tangent azimuth ─────────────────────────────────────
+    const double az2 = azimuthOf(tanStart, tanEnd);
+    const double sA2 = std::sin(az2), cA2 = std::cos(az2);
+    const double n2x = cA2, n2y = -sA2;
+
+    // ── Step 2: hand-of-curve ────────────────────────────────────────────────
+    const double sideVal = (arcCenter.x() - tanStart.x()) * n2x
+                         + (arcCenter.y() - tanStart.y()) * n2y;
+    const int signR = (sideVal >= 0.0) ? 1 : -1;
+
+    // ── Step 3: bisection on f(Ls) ───────────────────────────────────────────
+    auto evalF = [&](double Ls) -> double {
+        const auto elem = makeTransitionElement(spiralType, Ls, signR * R);
+        const LocalFrame lf = elem->localFrame(Ls);
+        const double Xm     = lf.x;
+        const double Ym     = lf.y;
+        const double thetaS = lf.theta;
+
+        const double azCS = az2 - thetaS;
+        // CT spiral: TS→SC in local frame, mirrored for CS→ST direction
+        const double stDx = Xm * sA2 + Ym * cA2;
+        const double stDy = Xm * cA2 - Ym * sA2;
+
+        const double cs_arc_x = arcCenter.x() - signR * R * std::cos(azCS);
+        const double cs_arc_y = arcCenter.y() + signR * R * std::sin(azCS);
+
+        const double bx = tanStart.x() - stDx - cs_arc_x;
+        const double by = tanStart.y() - stDy - cs_arc_y;
+        return bx * n2x + by * n2y;
+    };
+
+    const double geomDist = std::hypot(arcStart.x() - tanStart.x(),
+                                       arcStart.y() - tanStart.y())
+                          + std::hypot(arcStart.x() - arcCenter.x(),
+                                       arcStart.y() - arcCenter.y());
+    const double Ls_max = std::min(geomDist * 2.0, M_PI * R * 0.95);
+
+    const int    nScan = 400;
+    double Ls_lo = 1e-3;
+    double f_lo  = evalF(Ls_lo);
+    double Ls_hi = -1.0;
+
+    for (int k = 1; k <= nScan; ++k) {
+        const double Ls_k = Ls_max * k / static_cast<double>(nScan);
+        const double f_k  = evalF(Ls_k);
+        if (f_lo * f_k < 0.0) { Ls_hi = Ls_k; break; }
+        f_lo = f_k;
+        Ls_lo = Ls_k;
+    }
+
+    if (Ls_hi < 0.0) {
+        qWarning() << "[AlignmentSolver] solveCA: f(Ls) has no sign change."
+                   << "az2=" << qRadiansToDegrees(az2)
+                   << "R="   << R
+                   << "Ls_max=" << Ls_max;
+        return result;
+    }
+
+    for (int iter = 0; iter < 80; ++iter) {
+        const double Ls_mid = 0.5 * (Ls_lo + Ls_hi);
+        if (std::abs(Ls_hi - Ls_lo) < 1e-4) { Ls_lo = Ls_mid; break; }
+        if (evalF(Ls_lo) * evalF(Ls_mid) <= 0.0)
+            Ls_hi = Ls_mid;
+        else
+            Ls_lo = Ls_mid;
+    }
+    const double Ls = Ls_lo;
+
+    // ── Step 4: final geometry ────────────────────────────────────────────────
+    const auto   elemF  = makeTransitionElement(spiralType, Ls, signR * R);
+    const LocalFrame lf = elemF->localFrame(Ls);
+    const double Xm     = lf.x;
+    const double Ym     = lf.y;
+    const double thetaS = lf.theta;
+
+    const double azCS = az2 - thetaS;
+    const double stDx = Xm * sA2 + Ym * cA2;
+    const double stDy = Xm * cA2 - Ym * sA2;
+
+    const QPointF csPoint(arcCenter.x() - signR * R * std::cos(azCS),
+                          arcCenter.y() + signR * R * std::sin(azCS));
+    const QPointF stPoint(csPoint.x() + stDx, csPoint.y() + stDy);
+
+    // ── Step 5: trimmed arc  arcStart → CS ───────────────────────────────────
+    const QPointF r_start = arcStart - arcCenter;
+    const QPointF r_cs    = csPoint  - arcCenter;
+    const double  crossV  = r_start.x() * r_cs.y() - r_start.y() * r_cs.x();
+    const double  dotV    = r_start.x() * r_cs.x() + r_start.y() * r_cs.y();
+    double dPhi = std::atan2(std::abs(crossV), dotV);
+    if (signR > 0 && crossV > 0.0) dPhi = 2.0 * M_PI - dPhi;
+    if (signR < 0 && crossV < 0.0) dPhi = 2.0 * M_PI - dPhi;
+
+    result.valid          = true;
+    result.arcStartPoint  = arcStart;
+    result.csPoint        = csPoint;
+    result.arcLen         = R * dPhi;
+    result.azCS           = azCS;
+    result.Ls             = Ls;
+    result.R              = R;
+    result.thetaS         = thetaS;
+    result.stPoint        = stPoint;
+    result.azST           = az2;
+
+    return result;
+}
+
+// ============================================================================
 //  solve()  — main entry point
 // ============================================================================
 
@@ -406,6 +719,26 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         int       spiralOutIdx = -1; ///< index of the SpiralOut element
     };
     QVector<SCSData> scsData(n);
+
+    // LC group data — stored per SpiralIn element index
+    // (SpiralIn sits between Fixed Tangent and Fixed Arc)
+    struct LCData {
+        bool     valid   = false;
+        SolvedLC lc;
+        int      arcIdx  = -1;   ///< index of the Fixed CircularArc element
+        int      tanIdx  = -1;   ///< index of the Fixed Tangent element (before)
+    };
+    QVector<LCData> lcData(n);
+
+    // CA group data — stored per SpiralOut element index
+    // (SpiralOut sits between Fixed Arc and Fixed Tangent)
+    struct CAData {
+        bool     valid   = false;
+        SolvedCA ca;
+        int      arcIdx  = -1;   ///< index of the Fixed CircularArc element
+        int      tanIdx  = -1;   ///< index of the Fixed Tangent element (after)
+    };
+    QVector<CAData> caData(n);
 
     // ════════════════════════════════════════════════════════════════════════
     //  Pass 1 – Fixed CircularArc: foot-of-perpendicular T1 / T2
@@ -586,6 +919,153 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    //  Pass 2c — LC group  (Fixed Tangent → SpiralIn → Fixed CircularArc)
+    //
+    //  Identification: element i is a SpiralIn with mode==Floating and
+    //    tangentIdxBefore pointing to a Fixed Tangent, while the very next
+    //    emittable element (i+1) is a Fixed CircularArc.
+    //
+    //  The Clothoid length Ls is unknown; solveLC() finds it iteratively.
+    //  The Fixed Arc's PC (startPI) is then updated to the solved SC point
+    //  so that subsequent rendering shows the trimmed arc.
+    // ════════════════════════════════════════════════════════════════════════
+    for (int i = 0; i < n - 1; ++i) {
+        if (elems[i].type != EditableElementType::SpiralIn) continue;
+        if (elems[i].mode != ConstraintMode::Floating)      continue;
+
+        const int arcI = i + 1;
+        if (arcI >= n) continue;
+        if (elems[arcI].type != EditableElementType::CircularArc) continue;
+        if (elems[arcI].mode != ConstraintMode::Fixed)            continue;
+
+        // Already handled by Pass 2b as part of an SCS group?
+        if (scsData[i].valid) continue;
+
+        const int tb = elems[i].tangentIdxBefore;
+        if (tb < 0 || tb >= n) continue;
+        if (elems[tb].type != EditableElementType::Tangent) continue;
+        if (elems[tb].mode != ConstraintMode::Fixed)        continue;
+
+        const SpiralType stype = elems[i].spiralType1;
+        const double     Rarc  = std::abs(elems[arcI].radius);
+
+        // arcData[arcI] was populated in Pass 1 (Fixed arc)
+        if (!arcData[arcI].valid) {
+            qWarning() << "[AlignmentSolver] Pass2c LC idx" << i
+                       << ": Fixed arc at idx" << arcI << " not solved in Pass 1";
+            continue;
+        }
+
+        const SolvedLC lc = solveLC(
+            elems[arcI].arcCenter, Rarc,
+            arcData[arcI].pt,   // arcEnd = original PT (unchanged)
+            arcData[arcI].azPC + arcData[arcI].arcLen / Rarc, // azArcEnd
+            tanStart[tb], tanEnd[tb],
+            stype);
+
+        if (!lc.valid) {
+            qWarning() << "[AlignmentSolver] Pass2c LC idx" << i << ": solveLC failed";
+            continue;
+        }
+
+        // Store result
+        LCData ld;
+        ld.valid  = true;
+        ld.lc     = lc;
+        ld.arcIdx = arcI;
+        ld.tanIdx = tb;
+        lcData[i] = ld;
+
+        // Write solved Ls back to the element so it survives save/load
+        // (the element's length field is serialised in toJson)
+        // We need a mutable reference — elems is const, so we cast via the
+        // caller's QVector.  Pass the solved length through lcData; the
+        // AlignmentDocument::solve() wrapper (which owns m_elems) should do
+        // this.  Here we use a const_cast as a pragmatic in-solver fix:
+        const_cast<EditableElement&>(elems[i]).length = lc.Ls;
+
+        // Trim incoming tangent: its end becomes TS
+        tanEnd[tb] = lc.tsPoint;
+
+        // Update the Fixed Arc's PC to the solved SC (trim the arc's start)
+        arcData[arcI].pc     = lc.scPoint;
+        arcData[arcI].azPC   = lc.azSC;
+        arcData[arcI].arcLen = lc.arcLen;
+        // arcData[arcI].pt and .valid remain as set by Pass 1
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  Pass 2d — CA group  (Fixed CircularArc → SpiralOut → Fixed Tangent)
+    //
+    //  Identification: element i is a SpiralOut with mode==Floating and
+    //    tangentIdxAfter pointing to a Fixed Tangent, while the element
+    //    immediately before (i−1) is a Fixed CircularArc.
+    // ════════════════════════════════════════════════════════════════════════
+    for (int i = 1; i < n; ++i) {
+        if (elems[i].type != EditableElementType::SpiralOut) continue;
+        if (elems[i].mode != ConstraintMode::Floating)       continue;
+
+        const int arcI = i - 1;
+        if (elems[arcI].type != EditableElementType::CircularArc) continue;
+        if (elems[arcI].mode != ConstraintMode::Fixed)            continue;
+
+        // Already handled by Pass 2b or 2c?
+        if (scsData[arcI - 1 >= 0 ? arcI - 1 : 0].valid && arcI > 0) {
+            // Check if arcI was part of an SCS at arcI-1
+            if (arcI > 0 && scsData[arcI - 1].valid &&
+                scsData[arcI - 1].arcIdx == arcI) continue;
+        }
+
+        const int ta = elems[i].tangentIdxAfter;
+        if (ta < 0 || ta >= n) continue;
+        if (elems[ta].type != EditableElementType::Tangent) continue;
+        if (elems[ta].mode != ConstraintMode::Fixed)        continue;
+
+        const SpiralType stype = elems[i].spiralType2;
+        const double     Rarc  = std::abs(elems[arcI].radius);
+
+        if (!arcData[arcI].valid) {
+            qWarning() << "[AlignmentSolver] Pass2d CA idx" << i
+                       << ": Fixed arc at idx" << arcI << " not solved in Pass 1";
+            continue;
+        }
+
+        // If Pass 2c already trimmed the arc's PC, use arcData (already updated)
+        const double azArcStart = arcData[arcI].azPC;
+
+        const SolvedCA ca = solveCA(
+            elems[arcI].arcCenter, Rarc,
+            arcData[arcI].pc,   // arcStart (may already be trimmed by Pass 2c)
+            azArcStart,
+            tanStart[ta], tanEnd[ta],
+            stype);
+
+        if (!ca.valid) {
+            qWarning() << "[AlignmentSolver] Pass2d CA idx" << i << ": solveCA failed";
+            continue;
+        }
+
+        // Store result
+        CAData cd;
+        cd.valid  = true;
+        cd.ca     = ca;
+        cd.arcIdx = arcI;
+        cd.tanIdx = ta;
+        caData[i] = cd;
+
+        // Write solved Ls back so it survives serialisation
+        const_cast<EditableElement&>(elems[i]).length = ca.Ls;
+
+        // Trim outgoing tangent: its start becomes ST
+        tanStart[ta] = ca.stPoint;
+
+        // Update the Fixed Arc's PT to the solved CS (trim the arc's end)
+        arcData[arcI].arcLen = ca.arcLen;
+        arcData[arcI].pt     = ca.csPoint;
+        // arcData[arcI].pc and .azPC remain (set by Pass 1 or Pass 2c)
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     //  Pass 3 — Free elements: derive geometry from solved neighbours
     //
     //  Strategy: iterative residual minimisation.
@@ -709,6 +1189,14 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             if (ta >= 0 && ta < n && ta < i)
                 handledBySCS[ta] = true;
         }
+        // LC group: SpiralIn is emitted inline with the Fixed Arc → suppress SpiralIn
+        if (lcData[i].valid) {
+            handledBySCS[i] = true;  // SpiralIn handled inside arc emission
+        }
+        // CA group: SpiralOut is emitted inline with the Fixed Arc → suppress SpiralOut
+        if (caData[i].valid) {
+            handledBySCS[i] = true;  // SpiralOut handled inside arc emission
+        }
     }
 
     for (int i = 0; i < n; ++i) {
@@ -831,17 +1319,92 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             if (!arcData[i].valid) continue;
             const ArcData& arc = arcData[i];
 
-            pt.tsc      = QStringLiteral("CC");
+            // ── Check whether this arc has an LC spiral attached at its start ──
+            // An LC group has SpiralIn at index (i-1) → lcData[i-1].arcIdx == i
+            const bool hasLC = (i > 0 && lcData[i-1].valid && lcData[i-1].arcIdx == i);
+            // A CA group has SpiralOut at index (i+1) → caData[i+1].arcIdx == i
+            const bool hasCA = (i + 1 < n && caData[i+1].valid && caData[i+1].arcIdx == i);
+
+            // ── Emit LC spiral keypoint (TS) before the arc CC point ──────────
+            if (hasLC) {
+                const SolvedLC& lc = lcData[i-1].lc;
+                auto spiralTypeName = [](SpiralType t) -> QString {
+                    switch (t) {
+                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
+                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
+                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
+                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
+                    default:                   return QStringLiteral("SPIRAL");
+                    }
+                };
+                const QString curveType = spiralTypeName(elems[i-1].spiralType1);
+
+                AlignmentPoint tspt;
+                tspt.tsc       = QStringLiteral("TS");
+                tspt.curveType = curveType;
+                tspt.easting   = lc.tsPoint.x();
+                tspt.northing  = lc.tsPoint.y();
+                tspt.azimuth   = lc.azTS;
+                tspt.length    = lc.Ls;
+                tspt.radius    = lc.R;
+                tspt.chainage  = chainage;
+                chainage      += lc.Ls;
+                pts.append(tspt);
+            }
+
+            // ── Emit the arc itself ───────────────────────────────────────────
+            pt.tsc      = hasLC ? QStringLiteral("SC") : QStringLiteral("CC");
             pt.easting  = arc.pc.x();
             pt.northing = arc.pc.y();
             pt.azimuth  = arc.azPC;
-            pt.radius   = e.radius;   // absolute value; load() assigns sign
+            pt.radius   = e.radius;
             pt.length   = arc.arcLen;
             pt.chainage = chainage;
             chainage   += arc.arcLen;
             pts.append(pt);
 
-            // ── PT waypoint: anchor the arc's endpoint in pts ─────────────────
+            // ── Emit CA spiral keypoint (CS then ST) after the arc ────────────
+            if (hasCA) {
+                const SolvedCA& ca = caData[i+1].ca;
+                auto spiralTypeName = [](SpiralType t) -> QString {
+                    switch (t) {
+                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
+                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
+                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
+                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
+                    default:                   return QStringLiteral("SPIRAL");
+                    }
+                };
+                const QString curveType = spiralTypeName(elems[i+1].spiralType2);
+
+                // CS point (arc-end / spiral-start)
+                AlignmentPoint cspt;
+                cspt.tsc       = QStringLiteral("CS");
+                cspt.curveType = curveType;
+                cspt.easting   = ca.csPoint.x();
+                cspt.northing  = ca.csPoint.y();
+                cspt.azimuth   = ca.azCS;
+                cspt.length    = ca.Ls;
+                cspt.radius    = ca.R;
+                cspt.chainage  = chainage;
+                chainage      += ca.Ls;
+                pts.append(cspt);
+
+                // ST waypoint = start of the trimmed exit tangent
+                AlignmentPoint stpt;
+                stpt.tsc      = QStringLiteral("TT");
+                stpt.easting  = ca.stPoint.x();
+                stpt.northing = ca.stPoint.y();
+                stpt.azimuth  = ca.azST;
+                stpt.length   = 0.0;
+                stpt.chainage = chainage;
+                pts.append(stpt);
+                // (the trimmed tangent itself will be emitted in normal Tangent flow
+                //  since tanStart[ta] was updated to ca.stPoint)
+                continue;  // skip the default PT waypoint below
+            }
+
+            // ── Default: PT waypoint (no CA spiral) ───────────────────────────
             // The arc's PT (end-point) must always appear in the pts array so
             // that (a) PI grips are drawn there, and (b) it is never lost when
             // a subsequent element is appended and the sentinel moves.
