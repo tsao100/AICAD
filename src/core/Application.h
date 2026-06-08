@@ -1,67 +1,67 @@
-// src/core/Application.h
+/**
+ * @file Application.h
+ * @brief AICAD 應用程式核心單例
+ * @author Jack
+ * @date 2024-12-04
+ */
 
 #ifndef AICAD_CORE_APPLICATION_H
 #define AICAD_CORE_APPLICATION_H
 
+#include <cad/sketch/SketchRegion.h>
+#include <optional>
+
 #include <QObject>
 #include <QString>
-#include <QCoreApplication>
 
+// 前向宣告
 namespace aicad {
-
-// Forward declarations
 namespace cad {
-    class DocumentManager;
+class Document;
+class Sketch;
 }
-
-namespace commands {
-    class CommandManager;
+namespace ui {
+class UIManager;
 }
 
 namespace view {
-    class ViewManager;
+class ViewManager;
 }
 
 namespace scripting {
-    class LispEngine;
+class LispEngine;
 }
 
+namespace command {
+class CommandManager;
+class CommandAlias;
+}
+}
+
+namespace aicad {
 namespace core {
 
 class EventBus;
-class PluginManager;
+class DocumentManager;
+class MenuParser;
+class CommandLineManager;
 
 /**
- * @file Application.h
- * @brief AICAD 應用程式單例類別
- * @author Jack
- * @date 2024-12-06
- */
-
-/**
- * @brief AICAD 應用程式單例
+ * @brief 應用程式單例，管理全域資源和模組生命週期
  * 
- * Application 是整個系統的核心，管理所有全域資源和管理器。
- * 採用單例模式確保只有一個實例存在。
- * 
- * 主要職責:
- * - 初始化和關閉應用程式
- * - 管理各個子系統 (文件、命令、視圖、腳本)
- * - 提供事件總線進行模組間通訊
- * - 管理應用程式設定
+ * Application 是整個應用程式的核心，負責:
+ * - 初始化和關閉各個模組
+ * - 提供全域資源的存取點
+ * - 管理應用程式生命週期
  * 
  * 使用範例:
  * @code
  * Application* app = Application::instance();
  * if (app->initialize()) {
  *     DocumentManager* docMgr = app->documentManager();
- *     // 使用文件管理器...
+ *     CommandManager* cmdMgr = app->commandManager();
  * }
  * @endcode
- * 
- * @see DocumentManager
- * @see CommandManager
- * @see EventBus
  */
 class Application : public QObject {
     Q_OBJECT
@@ -69,9 +69,7 @@ class Application : public QObject {
 public:
     /**
      * @brief 取得應用程式單例實例
-     * @return Application 單例指標
-     * 
-     * @note 第一次呼叫時會建立實例
+     * @return Application 指標 (永不為 nullptr)
      */
     static Application* instance();
     
@@ -79,140 +77,103 @@ public:
      * @brief 初始化應用程式
      * @return 成功回傳 true，失敗回傳 false
      * 
-     * 初始化流程:
-     * 1. 載入應用程式設定
-     * 2. 初始化事件總線
-     * 3. 建立各個管理器
-     * 4. 初始化 Lisp 引擎 (如果啟用)
-     * 5. 載入外掛程式
-     * 
-     * @note 必須在使用任何功能前呼叫此函式
-     * @warning 此函式只能呼叫一次
+     * 此方法執行以下初始化:
+     * - 建立事件總線
+     * - 建立文件管理器
+     * - 建立命令管理器
+     * - 初始化 OCCT 環境
+     * - 註冊預設模組
      */
     bool initialize();
-    
+
+    void connectDocumentManagerSignals();
+    void registerDefaultCommands();
+
     /**
-     * @brief 關閉應用程式
+     * @brief 關閉應用程式並釋放資源
      * 
-     * 清理流程:
-     * 1. 儲存應用程式設定
-     * 2. 關閉所有文件
-     * 3. 清理各個管理器
-     * 4. 關閉 Lisp 引擎
-     * 5. 卸載外掛程式
-     * 
-     * @note 會自動儲存未儲存的文件
+     * 此方法執行清理工作:
+     * - 關閉所有開啟的文件
+     * - 釋放模組資源
+     * - 清理暫存檔案
      */
     void shutdown();
     
     /**
-     * @brief 應用程式是否已初始化
+     * @brief 取得文件管理器
+     * @return DocumentManager 指標，未初始化則為 nullptr
+     */
+    DocumentManager* documentManager() const;
+
+    ui::UIManager* uiManager() const;
+    view::ViewManager* viewManager() const;
+    scripting::LispEngine* lispEngine() const;
+    command::CommandManager* commandManager() const;
+    core::CommandLineManager* commandLineManager() const;
+    command::CommandAlias* commandAlias() const;
+    /**
+     * @brief 取得事件總線
+     * @return EventBus 指標，未初始化則為 nullptr
+     */
+    EventBus* eventBus() const;
+
+    MenuParser* menuParser() const;
+    
+    /**
+     * @brief 檢查應用程式是否已初始化
      */
     bool isInitialized() const;
     
-    // === 管理器存取 ===
-    
-    /**
-     * @brief 取得文件管理器
-     * @return DocumentManager 指標，未初始化則回傳 nullptr
-     */
-    cad::DocumentManager* documentManager() const;
-    
-    /**
-     * @brief 取得命令管理器
-     * @return CommandManager 指標，未初始化則回傳 nullptr
-     */
-    commands::CommandManager* commandManager() const;
-    
-    /**
-     * @brief 取得視圖管理器
-     * @return ViewManager 指標，未初始化則回傳 nullptr
-     */
-    view::ViewManager* viewManager() const;
-    
-    /**
-     * @brief 取得 Lisp 引擎
-     * @return LispEngine 指標，未啟用則回傳 nullptr
-     */
-    scripting::LispEngine* lispEngine() const;
-    
-    /**
-     * @brief 取得事件總線
-     * @return EventBus 指標
-     */
-    EventBus* eventBus() const;
-    
-    /**
-     * @brief 取得外掛管理器
-     * @return PluginManager 指標
-     */
-    PluginManager* pluginManager() const;
-    
-    // === 設定管理 ===
-    
-    /**
-     * @brief 取得應用程式設定值
-     * @param key 設定鍵值
-     * @param defaultValue 預設值
-     * @return 設定值
-     */
-    QVariant setting(const QString& key, const QVariant& defaultValue = QVariant()) const;
-    
-    /**
-     * @brief 設定應用程式設定值
-     * @param key 設定鍵值
-     * @param value 設定值
-     */
-    void setSetting(const QString& key, const QVariant& value);
-    
-    /**
-     * @brief 儲存所有設定
-     */
-    void saveSettings();
-    
-    // === 版本資訊 ===
-    
     /**
      * @brief 取得應用程式版本
-     * @return 版本字串 (如 "1.0.0")
      */
-    static QString version();
+    QString version() const;
     
     /**
-     * @brief 取得建置日期
-     * @return 建置日期字串
+     * @brief 取得應用程式名稱
      */
-    static QString buildDate();
-    
+    QString applicationName() const;
+
+    void registerCommandsFromMenu();
+
+    // ✅ 新增：建立預設文件的私有方法
     /**
-     * @brief 取得建置資訊
-     * @return 包含編譯器、Qt 版本等資訊的字串
+     * @brief 建立預設文件
+     * @return 成功回傳 true
+     *
+     * 在應用程式初始化完成後自動建立一個預設的空白文件，
+     * 包含參考幾何（原點、軸、平面），使應用程式立即可用。
      */
-    static QString buildInfo();
-    
+    bool createDefaultDocument();
+
+    /**
+     * @brief Get/Set active sketch for drawing operations
+     */
+    cad::Sketch* activeSketch() const;
+    void setActiveSketch(cad::Sketch* sketch);
+
+    std::optional<cad::SketchRegion> selectedRegion() const;
+    void setSelectedRegion(const std::optional<cad::SketchRegion>& region);
+    void clearSelectedRegion();
+
 Q_SIGNALS:
     /**
-     * @brief 應用程式初始化完成
+     * @brief 初始化完成時發出
      */
     void initialized();
     
     /**
-     * @brief 應用程式即將關閉
+     * @brief 即將關閉時發出
      */
     void aboutToQuit();
     
     /**
-     * @brief 設定值改變
-     * @param key 設定鍵值
-     * @param value 新值
-     */
-    void settingChanged(const QString& key, const QVariant& value);
-    
-    /**
-     * @brief 錯誤發生
+     * @brief 錯誤發生時發出
      * @param message 錯誤訊息
      */
     void errorOccurred(const QString& message);
+
+    void selectedRegionChanged();
     
 private:
     /**
@@ -221,64 +182,26 @@ private:
     Application();
     
     /**
-     * @brief 私有解構子
+     * @brief 解構子
      */
-    ~Application() override;
+    ~Application() override;    
+
+    std::optional<aicad::cad::SketchRegion> m_selectedRegion;
     
-    // 禁止複製
+    // 禁用複製
     Q_DISABLE_COPY(Application)
     
-    /**
-     * @brief 初始化事件總線
-     */
-    bool initializeEventBus();
-    
-    /**
-     * @brief 初始化文件管理器
-     */
-    bool initializeDocumentManager();
-    
-    /**
-     * @brief 初始化命令管理器
-     */
-    bool initializeCommandManager();
-    
-    /**
-     * @brief 初始化視圖管理器
-     */
-    bool initializeViewManager();
-    
-    /**
-     * @brief 初始化 Lisp 引擎
-     */
-    bool initializeLispEngine();
-    
-    /**
-     * @brief 初始化外掛系統
-     */
-    bool initializePluginManager();
-    
-    /**
-     * @brief 載入應用程式設定
-     */
-    void loadSettings();
-    
-    /**
-     * @brief 連接子系統信號
-     */
-    void connectSubsystems();
-    
-    // PIMPL 模式隱藏實作細節
+    // Private implementation (PIMPL idiom)
     class Private;
     Private* d;
-    
-    static Application* s_instance;
+
+private Q_SLOTS:
+    void onDocumentCreated(const QString& name);
+
+
 };
 
 } // namespace core
 } // namespace aicad
-
-// 便捷巨集
-#define aicadApp (aicad::core::Application::instance())
 
 #endif // AICAD_CORE_APPLICATION_H

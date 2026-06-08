@@ -1,0 +1,31 @@
+{
+    "alignment": {
+        "horizontal": {
+            "elements": [
+            ]
+        },
+        "vertical": {
+            "vips": [
+            ]
+        }
+    },
+    "features": [
+    ],
+    "fileName": "new.aicad",
+    "parameters": {
+    },
+    "version": "1.0",
+    "viewState": {
+        "atX": 0,
+        "atY": 0,
+        "atZ": 0,
+        "eyeX": 288.67513459481285,
+        "eyeY": -288.67513459481285,
+        "eyeZ": 288.67513459481285,
+        "scale": 1,
+        "upX": -0.408248290463863,
+        "upY": 0.408248290463863,
+        "upZ": 0.816496580927726,
+        "viewType": 7
+    }
+}

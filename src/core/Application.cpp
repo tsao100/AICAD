@@ -1,32 +1,40 @@
-// src/core/Application.cpp
+/**
+ * @file Application.cpp
+ * @brief Application 類別實作
+ * @author Jack
+ * @date 2024-12-04
+ */
 
 #include "Application.h"
 #include "EventBus.h"
-#include "PluginManager.h"
-#include "../cad/DocumentManager.h"
-#include "../commands/CommandManager.h"
-#include "../view/ViewManager.h"
-#include "../scripting/LispEngine.h"
+#include "DocumentManager.h"
+#include "CommandLineManager.h"
+#include "MenuParser.h"
+#include "cad/Document.h"
+#include "cad/Sketch.h"
+#include "command/CommandManager.h"
+#include "command/RectCommand.h"
+#include "command/LineCommand.h"
+#include "command/CommandFactory.h"
+#include "command/CommandAlias.h"
+#include "ui/UIManager.h"
+#include "view/ViewManager.h"
+#include "scripting/LispEngine.h"
+#include "scripting/LispBindings.h"
+#include "../command/ConstraintCommands.h"  // Phase 9
+#include <optional>
+#include "cad/sketch/SketchRegion.h"
 
-#include <QSettings>
-#include <QDir>
-#include <QStandardPaths>
+#include <QApplication>
+#include <QFile>
 #include <QDebug>
-#include <QDateTime>
+#include <QMutex>
+#include <QMutexLocker>
 
 namespace aicad {
 namespace core {
 
-// 版本資訊
-#define AICAD_VERSION "1.0.0"
-#define AICAD_BUILD_DATE __DATE__
-
-// 靜態成員初始化
-Application* Application::s_instance = nullptr;
-
-/**
- * @brief Application 的私有實作類別 (PIMPL 模式)
- */
+// Private implementation
 class Application::Private {
 public:
     Private()
@@ -34,55 +42,69 @@ public:
         , eventBus(nullptr)
         , documentManager(nullptr)
         , commandManager(nullptr)
+        , uiManager(nullptr)
         , viewManager(nullptr)
         , lispEngine(nullptr)
-        , pluginManager(nullptr)
-        , settings(nullptr)
+        , menuParser(nullptr)
+        , activeSketch(nullptr)
+        , commandLineManager(nullptr)  // ✅ 新增
+        , commandAlias(nullptr)        // ✅ 新增
     {
     }
-    
+
     ~Private() {
-        // 清理資源 (按照相反順序)
-        delete pluginManager;
         delete lispEngine;
         delete viewManager;
+        delete uiManager;
         delete commandManager;
         delete documentManager;
+        delete menuParser;
         delete eventBus;
-        delete settings;
     }
-    
+
     bool initialized;
-    
-    // 子系統
     EventBus* eventBus;
-    cad::DocumentManager* documentManager;
-    commands::CommandManager* commandManager;
+    DocumentManager* documentManager;
+    command::CommandManager* commandManager;
+    ui::UIManager* uiManager;
     view::ViewManager* viewManager;
     scripting::LispEngine* lispEngine;
-    PluginManager* pluginManager;
-    
-    // 設定
-    QSettings* settings;
-    QString settingsPath;
+    MenuParser* menuParser;
+    cad::Sketch* activeSketch;
+    // ✅ 新增
+    core::CommandLineManager* commandLineManager;
+    command::CommandAlias* commandAlias;
+
+    static const QString VERSION;
+    static const QString APP_NAME;
 };
+
+const QString Application::Private::VERSION = "1.0.0-dev";
+const QString Application::Private::APP_NAME = "AICAD";
+
+// Singleton instance
+static QMutex s_mutex;
+static Application* s_instance = nullptr;
 
 Application::Application()
     : QObject(nullptr)
     , d(new Private())
 {
-    qDebug() << "[Application] Creating instance";
+    qDebug() << "[Application] Constructor called";
 }
 
 Application::~Application() {
-    qDebug() << "[Application] Destroying instance";
+    qDebug() << "[Application] Destructor called";
     shutdown();
     delete d;
 }
 
 Application* Application::instance() {
     if (s_instance == nullptr) {
-        s_instance = new Application();
+        QMutexLocker locker(&s_mutex);
+        if (s_instance == nullptr) {
+            s_instance = new Application();
+        }
     }
     return s_instance;
 }
@@ -92,104 +114,222 @@ bool Application::initialize() {
         qWarning() << "[Application] Already initialized";
         return true;
     }
-    
-    qDebug() << "[Application] Initializing AICAD" << version();
-    qDebug() << "[Application] Build date:" << buildDate();
-    qDebug() << "[Application] Build info:" << buildInfo();
-    
-    // 1. 載入設定
-    loadSettings();
-    
-    // 2. 初始化事件總線 (最先初始化，其他模組需要使用)
-    if (!initializeEventBus()) {
-        qCritical() << "[Application] Failed to initialize EventBus";
-        return false;
-    }
-    
-    // 3. 初始化文件管理器
-    if (!initializeDocumentManager()) {
-        qCritical() << "[Application] Failed to initialize DocumentManager";
-        return false;
-    }
-    
-    // 4. 初始化命令管理器
-    if (!initializeCommandManager()) {
-        qCritical() << "[Application] Failed to initialize CommandManager";
-        return false;
-    }
-    
-    // 5. 初始化視圖管理器
-    if (!initializeViewManager()) {
-        qCritical() << "[Application] Failed to initialize ViewManager";
-        return false;
-    }
-    
-    // 6. 初始化 Lisp 引擎 (可選)
-    bool enableLisp = setting("scripting/enableLisp", true).toBool();
-    if (enableLisp) {
-        if (!initializeLispEngine()) {
-            qWarning() << "[Application] Failed to initialize LispEngine (non-critical)";
+
+    qDebug() << "[Application] Initializing" << d->APP_NAME << d->VERSION;
+
+    try {
+        // 1. 建立事件總線
+        qDebug() << "[Application] Creating EventBus...";
+        d->eventBus = new EventBus(this);
+        if (!d->eventBus) {
+            Q_EMIT errorOccurred("Failed to create EventBus");
+            return false;
         }
+
+        // 2. 建立 MenuParser (早期載入)
+        qDebug() << "[Application] Creating MenuParser...";
+        d->menuParser = new MenuParser(this);
+
+        // 嘗試載入 menu.txt (從多個可能的位置)
+        QStringList searchPaths = {
+            "menu.txt",              // 當前目錄
+            "../menu.txt",           // 上層目錄
+            "../../menu.txt",        // 原始碼目錄
+            QCoreApplication::applicationDirPath() + "/menu.txt"
+        };
+
+        bool menuLoaded = false;
+        for (const QString& path : searchPaths) {
+            if (QFile::exists(path)) {
+                qDebug() << "[Application] Found menu.txt at:" << path;
+                if (d->menuParser->load(path)) {
+                    menuLoaded = true;
+                    break;
+                }
+            }
+        }
+
+        if (!menuLoaded) {
+            qWarning() << "[Application] menu.txt not found or failed to load";
+            // 非致命錯誤,繼續初始化
+        }
+
+        // 2. 建立文件管理器
+        qDebug() << "[Application] Creating DocumentManager...";
+        d->documentManager = new DocumentManager(this);
+        if (!d->documentManager) {
+            Q_EMIT errorOccurred("Failed to create DocumentManager");
+            return false;
+        }
+
+        // ✅ 在創建 UIManager 之前初始化命令列單例
+        // 2.5. 初始化命令列系統
+        qDebug() << "[Application] Initializing command line system...";
+        d->commandLineManager = core::CommandLineManager::instance();
+        d->commandAlias = command::CommandAlias::instance();
+
+        // 載入別名（如果有配置檔）
+        QString aliasFile = QCoreApplication::applicationDirPath() + "/acad.pgp";
+        if (QFile::exists(aliasFile)) {
+            d->commandAlias->loadFromFile(aliasFile);
+        } else {
+            // 使用預設別名
+            d->commandAlias->loadDefaults();
+        }
+
+        // 3. 建立命令管理器
+        qDebug() << "[Application] Creating CommandManager...";
+        d->commandManager = new command::CommandManager(this);
+        if (!d->commandManager) {
+            Q_EMIT errorOccurred("Failed to create CommandManager");
+            return false;
+        }
+
+        // 4. 建立視圖管理器
+        qDebug() << "[Application] Creating ViewManager...";
+        d->viewManager = new view::ViewManager(this);
+        if (!d->viewManager) {
+            Q_EMIT errorOccurred("Failed to create ViewManager");
+            return false;
+        }
+
+        // 5. 建立 UI 管理器
+        qDebug() << "[Application] Creating UIManager...";
+        d->uiManager = new ui::UIManager(this);
+        if (!d->uiManager) {
+            Q_EMIT errorOccurred("Failed to create UIManager");
+            return false;
+        }
+
+        // 6. 初始化 UI 系統
+        // qDebug() << "[Application] Initializing UI system...";
+        // if (!d->uiManager->initialize()) {
+        //     Q_EMIT errorOccurred("Failed to initialize UI system");
+        //     return false;
+        // }
+
+        // 傳遞 MenuParser 給 UIManager
+        if (!d->uiManager->initialize(d->menuParser)) {
+            Q_EMIT errorOccurred("Failed to initialize UI system");
+            return false;
+        }
+
+        // ✅ 7. 建立預設文件（在 UI 初始化之後）
+        qDebug() << "[Application] Creating default document...";
+        if (!createDefaultDocument()) {
+            qWarning() << "[Application] Failed to create default document (non-critical)";
+            // 不是致命錯誤，繼續
+        }
+
+        // 7. 建立 Lisp 引擎
+        qDebug() << "[Application] Creating LispEngine...";
+        d->lispEngine = new scripting::LispEngine(this);
+        if (!d->lispEngine) {
+            Q_EMIT errorOccurred("Failed to create LispEngine");
+            return false;
+        }
+
+        // 8. 初始化 Lisp 引擎
+        qDebug() << "[Application] Initializing LispEngine...";
+        if (!d->lispEngine->initialize()) {
+            qWarning() << "[Application] LispEngine initialization failed (non-critical)";
+            // 不是致命錯誤,繼續
+        } else {
+            // 9. 註冊 Lisp 綁定
+            qDebug() << "[Application] Registering Lisp bindings...";
+            scripting::LispBindings* bindings =
+                new scripting::LispBindings(d->lispEngine, this, this);
+            bindings->registerAll();
+        }
+
+        // 10. 連接文件管理器信號
+        connectDocumentManagerSignals();
+
+        // 10. 從 menu.txt 註冊命令
+        if (menuLoaded) {
+            registerCommandsFromMenu();
+        } else {
+            // 回退到註冊預設命令
+            registerDefaultCommands();
+        }
+
+        // Phase 9：註冊所有約束命令（別名已在 registerConstraintCommands 內建立）
+        command::registerConstraintCommands(this);
+        qDebug() << "[Application] Phase 9: Constraint commands registered.";
+
+        d->initialized = true;
+        qDebug() << "[Application] Initialization completed successfully";
+
+        Q_EMIT initialized();
+
+        QString filePath = QString(PROJECT_SOURCE_DIR) + "/Draw/1.aicad";
+        //QString filePath = QString(PROJECT_SOURCE_DIR) + "/Draw/new.aicad";
+
+        if (d->documentManager->openDocument(filePath)) {
+            qDebug() << "[MainWindow] Loaded:" << filePath;
+        }
+        return true;
+
+    } catch (const std::exception& e) {
+        QString error = QString("Initialization failed: %1").arg(e.what());
+        qCritical() << "[Application]" << error;
+        Q_EMIT errorOccurred(error);
+        return false;
+    } catch (...) {
+        QString error = "Initialization failed: Unknown exception";
+        qCritical() << "[Application]" << error;
+        Q_EMIT errorOccurred(error);
+        return false;
     }
-    
-    // 7. 初始化外掛管理器
-    if (!initializePluginManager()) {
-        qWarning() << "[Application] Failed to initialize PluginManager (non-critical)";
-    }
-    
-    // 8. 連接子系統
-    connectSubsystems();
-    
-    d->initialized = true;
-    
-    qDebug() << "[Application] Initialization complete";
-    Q_EMIT initialized();
-    
-    return true;
 }
 
-void Application::shutdown() {
-    if (!d->initialized) {
-        return;
-    }
-    
-    qDebug() << "[Application] Shutting down";
-    
-    Q_EMIT aboutToQuit();
-    
-    // 1. 儲存設定
-    saveSettings();
-    
-    // 2. 關閉所有文件
-    if (d->documentManager) {
-        d->documentManager->closeAll();
-    }
-    
-    // 3. 清理外掛
-    if (d->pluginManager) {
-        d->pluginManager->unloadAll();
-    }
-    
-    // 4. 關閉 Lisp 引擎
-    if (d->lispEngine) {
-        // Lisp 引擎會在解構時自動關閉
-    }
-    
-    d->initialized = false;
-    
-    qDebug() << "[Application] Shutdown complete";
+void Application::connectDocumentManagerSignals() {
+    connect(d->documentManager, &DocumentManager::documentCreated,
+            this, [this](cad::Document* doc) {
+                if (doc) {
+                    qDebug() << "[Application] Document created:" << doc->fileName();
+                    d->eventBus->publish(Events::DOCUMENT_CREATED,
+                                         QVariant::fromValue(doc));
+                }
+            });
+
+    connect(d->documentManager, &DocumentManager::documentOpened,
+            this, [this](cad::Document* doc) {
+                if (doc) {
+                    qDebug() << "[Application] Document opened:" << doc->fileName();
+                    d->eventBus->publish(Events::DOCUMENT_OPENED,
+                                         QVariant::fromValue(doc));
+                }
+            });
+
+    connect(d->documentManager, &DocumentManager::documentClosed,
+            this, [this](const QString& fileName) {
+                qDebug() << "[Application] Document closed:" << fileName;
+                d->eventBus->publish(Events::DOCUMENT_CLOSED, fileName);
+            });
 }
 
-bool Application::isInitialized() const {
-    return d->initialized;
+void Application::registerDefaultCommands() {
+    using namespace command;
+
+    // 註冊矩形命令
+    //d->commandManager->registerCommand("rectangle", {"rect"},
+    //                                   []() { return new command::RectCommand(); });
+
+    // 註冊直線命令 (待實作)
+    // d->commandManager->registerCommand("line", {"l"},
+    //     []() { return new commands::LineCommand(); });
+
+    // 註冊圓形命令 (待實作)
+    // d->commandManager->registerCommand("circle", {"c"},
+    //     []() { return new commands::CircleCommand(); });
+
+    qDebug() << "[Application] Default commands registered";
 }
 
-cad::DocumentManager* Application::documentManager() const {
-    return d->documentManager;
-}
-
-commands::CommandManager* Application::commandManager() const {
-    return d->commandManager;
+// 添加 getter 方法
+ui::UIManager* Application::uiManager() const {
+    return d->uiManager;
 }
 
 view::ViewManager* Application::viewManager() const {
@@ -200,238 +340,203 @@ scripting::LispEngine* Application::lispEngine() const {
     return d->lispEngine;
 }
 
+command::CommandManager* Application::commandManager() const {
+    return d->commandManager;
+}
+
+// 添加 getter 方法
+
+core::CommandLineManager* Application::commandLineManager() const {
+    return d->commandLineManager;
+}
+
+command::CommandAlias* Application::commandAlias() const {
+    return d->commandAlias;
+}
+
+// 槽函數實作
+void Application::onDocumentCreated(const QString& name) {
+    qDebug() << "[Application] Document created:" << name;
+    if (d->eventBus) {
+        d->eventBus->publish(Events::DOCUMENT_CREATED, name);
+    }
+}
+
+// ui::UIManager* Application::uiManager() const {
+//     return d->uiManager;
+// }
+
+// scripting::LispEngine* Application::lispEngine() const {
+//     return d->lispEngine;
+// }
+
+
+void Application::shutdown() {
+    if (!d->initialized) {
+        return;
+    }
+
+    qDebug() << "[Application] Shutting down...";
+
+    Q_EMIT aboutToQuit();
+
+    // 取消當前執行的命令
+    // if (d->commandManager) {
+    //     qDebug() << "[Application] Cancelling current command...";
+    //     d->commandManager->cancelCurrentCommand();
+    // }
+
+    // 關閉所有文件
+    if (d->documentManager) {
+        qDebug() << "[Application] Closing all documents...";
+        d->documentManager->closeAll();
+    }
+
+    // 清理 OCCT 資源 (暫略)
+    qDebug() << "[Application] Cleaning up OCCT resources...";
+    // TODO: 實際的 OCCT 清理
+
+    d->initialized = false;
+    qDebug() << "[Application] Shutdown completed";
+}
+
+DocumentManager* Application::documentManager() const {
+    return d->documentManager;
+}
+
 EventBus* Application::eventBus() const {
     return d->eventBus;
 }
 
-PluginManager* Application::pluginManager() const {
-    return d->pluginManager;
+// CommandManager* Application::commandManager() const {
+//     return d->commandManager;
+// }
+
+bool Application::isInitialized() const {
+    return d->initialized;
 }
 
-QVariant Application::setting(const QString& key, const QVariant& defaultValue) const {
-    if (!d->settings) {
-        return defaultValue;
-    }
-    return d->settings->value(key, defaultValue);
+QString Application::version() const {
+    return d->VERSION;
 }
 
-void Application::setSetting(const QString& key, const QVariant& value) {
-    if (!d->settings) {
+QString Application::applicationName() const {
+    return d->APP_NAME;
+}
+
+// 新增方法:
+void Application::registerCommandsFromMenu() {
+    if (!d->menuParser || !d->menuParser->isLoaded()) {
         return;
     }
-    
-    d->settings->setValue(key, value);
-    Q_EMIT settingChanged(key, value);
-}
 
-void Application::saveSettings() {
-    if (d->settings) {
-        d->settings->sync();
-        qDebug() << "[Application] Settings saved to" << d->settingsPath;
+    qDebug() << "[Application] Registering commands from menu.txt...";
+
+    auto commands = d->menuParser->getAllCommands();
+
+    for (const CommandDef& cmdDef : commands) {
+        // 根據命令 ID 建立對應的 Command 物件
+        // 這裡需要一個工廠函式來映射 ID 到實際的 Command 類別
+
+        d->commandManager->registerCommand(
+            cmdDef.id,
+            cmdDef.aliases,
+            [cmdDef]() -> command::Command* {
+                // 根據 ID 建立對應的命令
+                // TODO: 實作命令工廠
+                return command::CommandFactory::create(cmdDef.id);
+            }
+            );
     }
+
+    // 補註冊不在 menu.txt 但需互動式啟動的內建命令
+    auto registerBuiltin = [&](const QString& id, const QStringList& aliases,
+                               std::function<command::Command*()> factory) {
+        if (!d->commandManager->hasCommand(id))
+            d->commandManager->registerCommand(id, aliases, factory);
+    };
+
+    registerBuiltin("construction-line", {},
+                    []() -> command::Command* {
+                        auto* cmd = new command::LineCommand();
+                        cmd->setRole(cad::GeomRole::Construction);
+                        return cmd;
+                    });
+
+    registerBuiltin("centerline", {},
+                    []() -> command::Command* {
+                        auto* cmd = new command::LineCommand();
+                        cmd->setRole(cad::GeomRole::Centerline);
+                        return cmd;
+                    });
+
+    qDebug() << "[Application] Registered" << commands.size() << "commands";
 }
 
-QString Application::version() {
-    return QString(AICAD_VERSION);
+// 新增 getter:
+MenuParser* Application::menuParser() const {
+    return d->menuParser;
 }
 
-QString Application::buildDate() {
-    return QString(AICAD_BUILD_DATE);
-}
+// ✅ 新增：建立預設文件的方法
+bool Application::createDefaultDocument() {
+    qDebug() << "[Application] Creating default document...";
 
-QString Application::buildInfo() {
-    QString info;
-    info += QString("Qt %1 (%2-bit)\n").arg(qVersion()).arg(QSysInfo::WordSize);
-    info += QString("Compiler: %1\n").arg(
-#if defined(Q_CC_MSVC)
-        "MSVC"
-#elif defined(Q_CC_GNU)
-        "GCC"
-#elif defined(Q_CC_CLANG)
-        "Clang"
-#else
-        "Unknown"
-#endif
-    );
-    info += QString("Build type: %1\n").arg(
-#ifdef NDEBUG
-        "Release"
-#else
-        "Debug"
-#endif
-    );
-    info += QString("Platform: %1").arg(QSysInfo::prettyProductName());
-    return info;
-}
+    try {
+        // 建立預設文件
+        cad::Document* defaultDoc = d->documentManager->createDocument("Untitled");
 
-bool Application::initializeEventBus() {
-    qDebug() << "[Application] Initializing EventBus";
-    
-    d->eventBus = new EventBus(this);
-    
-    if (!d->eventBus) {
+        if (!defaultDoc) {
+            qWarning() << "[Application] Failed to create default document";
+            return false;
+        }
+
+        qDebug() << "[Application] Default document created:" << defaultDoc->fileName();
+
+        // 發布事件
+        d->eventBus->publish(Events::DOCUMENT_CREATED,
+                             QVariant::fromValue(defaultDoc));
+
+        // 設定狀態訊息
+        if (d->uiManager) {
+            d->uiManager->setStatusMessage("Ready - New document created", 3000);
+        }
+
+        return true;
+
+    } catch (const std::exception& e) {
+        qWarning() << "[Application] Exception creating default document:" << e.what();
+        return false;
+    } catch (...) {
+        qWarning() << "[Application] Unknown exception creating default document";
         return false;
     }
-    
-    qDebug() << "[Application] EventBus initialized";
-    return true;
 }
 
-bool Application::initializeDocumentManager() {
-    qDebug() << "[Application] Initializing DocumentManager";
-    
-    d->documentManager = new cad::DocumentManager(this);
-    
-    if (!d->documentManager) {
-        return false;
-    }
-    
-    // 連接文件管理器信號到事件總線
-    connect(d->documentManager, &cad::DocumentManager::documentCreated,
-            this, [this](cad::Document* doc) {
-        d->eventBus->publish("document.created", QVariant::fromValue(doc));
-    });
-    
-    connect(d->documentManager, &cad::DocumentManager::documentClosed,
-            this, [this](cad::Document* doc) {
-        d->eventBus->publish("document.closed", QVariant::fromValue(doc));
-    });
-    
-    qDebug() << "[Application] DocumentManager initialized";
-    return true;
+cad::Sketch* Application::activeSketch() const {
+    return d->activeSketch;
 }
 
-bool Application::initializeCommandManager() {
-    qDebug() << "[Application] Initializing CommandManager";
-    
-    d->commandManager = new commands::CommandManager(this);
-    
-    if (!d->commandManager) {
-        return false;
-    }
-    
-    // 連接命令管理器信號到事件總線
-    connect(d->commandManager, &commands::CommandManager::commandExecuted,
-            this, [this](commands::Command* cmd) {
-        d->eventBus->publish("command.executed", QVariant::fromValue(cmd));
-    });
-    
-    qDebug() << "[Application] CommandManager initialized";
-    return true;
+void Application::setActiveSketch(cad::Sketch* sketch) {
+    d->activeSketch = sketch;
+    qDebug() << "[Application] Active sketch set to:"
+             << (sketch ? sketch->name() : "null");
 }
 
-bool Application::initializeViewManager() {
-    qDebug() << "[Application] Initializing ViewManager";
-    
-    d->viewManager = new view::ViewManager(this);
-    
-    if (!d->viewManager) {
-        return false;
-    }
-    
-    // 連接視圖管理器信號到事件總線
-    connect(d->viewManager, &view::ViewManager::viewCreated,
-            this, [this](view::CadView* view) {
-        d->eventBus->publish("view.created", QVariant::fromValue(view));
-    });
-    
-    qDebug() << "[Application] ViewManager initialized";
-    return true;
+std::optional<aicad::cad::SketchRegion> Application::selectedRegion() const {
+    return m_selectedRegion;
 }
 
-bool Application::initializeLispEngine() {
-    qDebug() << "[Application] Initializing LispEngine";
-    
-    d->lispEngine = new scripting::LispEngine(this);
-    
-    if (!d->lispEngine) {
-        return false;
-    }
-    
-    if (!d->lispEngine->initialize()) {
-        qWarning() << "[Application] LispEngine initialization failed";
-        delete d->lispEngine;
-        d->lispEngine = nullptr;
-        return false;
-    }
-    
-    // 連接 Lisp 輸出
-    connect(d->lispEngine, &scripting::LispEngine::output,
-            this, [](const QString& text) {
-        qDebug() << "[Lisp]" << text;
-    });
-    
-    connect(d->lispEngine, &scripting::LispEngine::errorOccurred,
-            this, [this](const QString& error) {
-        qWarning() << "[Lisp Error]" << error;
-        Q_EMIT errorOccurred(error);
-    });
-    
-    qDebug() << "[Application] LispEngine initialized";
-    return true;
+void Application::setSelectedRegion(
+    const std::optional<aicad::cad::SketchRegion>& region)
+{
+    m_selectedRegion = region;
+    Q_EMIT selectedRegionChanged();
 }
 
-bool Application::initializePluginManager() {
-    qDebug() << "[Application] Initializing PluginManager";
-    
-    d->pluginManager = new PluginManager(this);
-    
-    if (!d->pluginManager) {
-        return false;
-    }
-    
-    // 載入外掛目錄
-    QString pluginDir = setting("plugins/directory", "plugins").toString();
-    d->pluginManager->loadPluginsFromDirectory(pluginDir);
-    
-    qDebug() << "[Application] PluginManager initialized";
-    return true;
-}
-
-void Application::loadSettings() {
-    // 設定檔路徑 (跨平台)
-    QString configPath = QStandardPaths::writableLocation(
-        QStandardPaths::AppConfigLocation);
-    
-    QDir().mkpath(configPath);
-    
-    d->settingsPath = configPath + "/aicad.ini";
-    d->settings = new QSettings(d->settingsPath, QSettings::IniFormat, this);
-    
-    qDebug() << "[Application] Settings loaded from" << d->settingsPath;
-    
-    // 設定預設值
-    if (!d->settings->contains("general/language")) {
-        d->settings->setValue("general/language", "en");
-    }
-    
-    if (!d->settings->contains("scripting/enableLisp")) {
-        d->settings->setValue("scripting/enableLisp", true);
-    }
-    
-    if (!d->settings->contains("view/backgroundColor")) {
-        d->settings->setValue("view/backgroundColor", "#C8C8C8");
-    }
-}
-
-void Application::connectSubsystems() {
-    qDebug() << "[Application] Connecting subsystems";
-    
-    // 文件管理器 -> 視圖管理器
-    if (d->documentManager && d->viewManager) {
-        connect(d->documentManager, &cad::DocumentManager::activeDocumentChanged,
-                d->viewManager, &view::ViewManager::setActiveDocument);
-    }
-    
-    // 命令管理器 -> 文件管理器
-    if (d->commandManager && d->documentManager) {
-        // 命令可能需要存取當前文件
-        // 透過事件總線或直接存取
-    }
-    
-    // 其他子系統連接...
-    
-    qDebug() << "[Application] Subsystems connected";
+void Application::clearSelectedRegion() {
+    m_selectedRegion = std::nullopt;
+    Q_EMIT selectedRegionChanged();
 }
 
 } // namespace core

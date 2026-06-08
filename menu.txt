@@ -1,54 +1,170 @@
-# Format: TYPE|ID|LABEL|ICON|SHORTCUT|CALLBACK
-# TYPE: menu, toolbar, command
-# Callbacks must match MainWindow method names
-# For command: command|name|alias|expectedArgs|callback
+# ============================================================
+# menu.txt (v2.2)
+# Single Source of Truth for UI / Commands / Scripting
+#
+# UI FORMAT
+# TYPE|MENU|ID|LABEL|ICON|SHORTCUT
+#
+# TYPE : menu | toolbar
+# MENU : menu name or toolbar name
+# ID   : global command id
+#
+# COMMAND FORMAT
+# command|ID|ALIAS|EXPECTED_ARGS
+# ============================================================
 
-toolbar|sketch|Create Sketch|:/icons/sketch.png||onCreateSketch
-toolbar|extrude|Create Extrusion|:/icons/extrude.png||onCreateExtrude
-toolbar|separator||||
-toolbar|line|Draw Line|:/icons/line.png||onDrawLine
-toolbar|arc|Draw Arc|:/icons/arc.png||onDrawArc
-toolbar|rect|Draw Rectangle|:/icons/rect.png||onDrawRectangle
-toolbar|circle|Draw Circle|:/icons/circle.png||onDrawCircle
-toolbar|separator||||
-toolbar|save|Save|:/icons/save.png|Ctrl+S|onSave
-toolbar|load|Load|:/icons/load.png|Ctrl+O|onLoad
-toolbar|separator||||
-toolbar|print|Print|:/icons/print.png|Ctrl+P|onPrint
-toolbar|exportpdf|Export PDF|:/icons/export_pdf.png||onExportPdf
-toolbar|separator||||
-toolbar|top|Top View|:/icons/top.png|U|onViewTop
-toolbar|front|Front View|:/icons/front.png|F|onViewFront
-toolbar|right|Right View|:/icons/right.png|R|onViewRight
 
-menu|File|save|Save|Ctrl+S|onSave
-menu|File|load|Load|Ctrl+O|onLoad
-menu|File|load_lisp|Load Lisp File...|Ctrl+Shift+L|onLoadLisp
+# ======================
+# Toolbar : main
+# ======================
+
+toolbar|main|new|New Document|:/icons/new.png|Ctrl+N
+
+toolbar|main|separator|||
+
+toolbar|main|sketch|Create Sketch|:/icons/sketch.png|
+toolbar|main|extrude|Create Extrusion|:/icons/extrude.png|
+
+toolbar|main|separator|||
+
+toolbar|main|line|Draw Line|:/icons/line.png|L
+toolbar|main|arc|Draw Arc|:/icons/arc.png|A
+toolbar|main|polyline|Draw Polyline|:/icons/polyline.png|PL
+toolbar|main|polygon|Draw Polygon|:/icons/polygon.png|POL
+toolbar|main|rect|Draw Rectangle|:/icons/rect.png|R
+toolbar|main|circle|Draw Circle|:/icons/circle.png|C
+toolbar|main|spline|Draw Spline|:/icons/spline.png|SPL
+toolbar|main|ellipse|Draw Ellipse|:/icons/ellipse.png|EL
+
+toolbar|main|separator|||
+
+toolbar|main|track|New Track Centerline|:/icons/sketch.png|
+toolbar|main|save|Save|:/icons/save.png|Ctrl+S
+toolbar|main|saveas|Save As|:/icons/save_as.png|Ctrl+Shift+A
+toolbar|main|load|Load|:/icons/load.png|Ctrl+O
+
+toolbar|main|separator|||
+
+toolbar|main|print|Print|:/icons/print.png|Ctrl+P
+toolbar|main|exportpdf|Export PDF|:/icons/export_pdf.png|
+
+toolbar|main|separator|||
+
+toolbar|main|view_top|Top View|:/icons/top.png|
+toolbar|main|view_front|Front View|:/icons/front.png|
+toolbar|main|view_right|Right View|:/icons/right.png|
+toolbar|main|view_iso|Isometric|:/icons/isometric.png|
+
+
+# ======================
+# Menu : File
+# ======================
+
+menu|File|new|New||Ctrl+N
 menu|File|separator|||
-menu|File|print|Print|Ctrl+P|onPrint
-menu|File|exportpdf|Export PDF||onExportPdf
+menu|File|save|Save||Ctrl+S
+menu|File|saveas|Save As||Ctrl+Shift+A
+menu|File|load|Load||Ctrl+O
+menu|File|load_lisp|Load Lisp File...||Ctrl+Shift+L
 menu|File|separator|||
-menu|File|exit|Exit|Ctrl+Q|onExit
+menu|File|print|Print||Ctrl+P
+menu|File|exportpdf|Export PDF||
+menu|File|separator|||
+menu|File|exit|Exit||Ctrl+Q
 
-menu|Sketch|createsketch|Create Sketch||onCreateSketch
-menu|Sketch|line|Draw Line||onDrawLine
-menu|Sketch|arc|Draw Arc||onDrawArc
-menu|Sketch|rect|Draw Rectangle||onDrawRectangle
-menu|Sketch|circle|Draw Circle||onDrawCircle
 
-menu|Features|extrude|Create Extrusion||onCreateExtrude
+# ======================
+# Menu : Sketch
+# ======================
 
-menu|View|top|Top (XY)|U|onViewTop
-menu|View|front|Front (XZ)|F|onViewFront
-menu|View|right|Right (YZ)|R|onViewRight
+menu|Sketch|sketch|Create Sketch||
+menu|Sketch|line|Draw Line||
+menu|Sketch|polyline|Draw Polyline||
+menu|Sketch|polygon|Draw Polygon||
+menu|Sketch|arc|Draw Arc||
+menu|Sketch|rect|Draw Rectangle||
+menu|Sketch|circle|Draw Circle||
+menu|Sketch|spline|Draw Spline||
+menu|Sketch|ellipse|Draw Ellipse||
+
+
+# ======================
+# Menu : Features
+# ======================
+
+menu|Features|extrude|Create Extrusion||
+
+
+# ======================
+# Menu : View
+# ======================
+
+menu|View|view_top|Top (XY)||
+menu|View|view_front|Front (XZ)||
+menu|View|view_right|Right (YZ)||
 menu|View|separator|||
-menu|View|isometric|Isometric|I|onViewIsometric
+menu|View|view_iso|Isometric||
 
-# Command format: command|name|alias|expectedArgs|callback
-# expectedArgs: -1=variable, 0=none, 1+=fixed count
-command|rectangle|rect|2|onDrawRectangle
-command|sketch||0|onCreateSketch
-command|extrude||1|onCreateExtrude
-command|line|l|2|onDrawLine
-command|arc||3|onDrawArc
-command|circle|c|2|onDrawCircle
+
+# ======================
+# Commands (for CommandManager / Script)
+# ======================
+
+command|new|n|0
+
+command|sketch||0
+command|line|l|2
+command|polyline|pl|2
+command|polygon|pol|3
+command|arc||3
+command|rect|r|2
+command|circle|c|2
+command|spline|spl|3
+command|ellipse|el|3
+command|extrude||1
+
+command|save||0
+command|saveas||0
+command|load||0
+command|load_lisp||1
+command|print||0
+command|exportpdf||1
+command|exit||0
+
+command|view_top||0
+command|view_front||0
+command|view_right||0
+command|view_iso||0
+
+command|alignmentfixtangent||0
+command|alignmentfixcurve||0
+command|alignmentfloatcurve||0
+command|alignmentscs||0
+command|alignmentaddspiral||0
+
+# ======================
+# Menu : Railway
+# ======================
+
+menu|Railway|track|New Track Centerline||
+menu|Railway|separator|||
+menu|Railway|alignmentfixtangent|Fixed Tangent||
+menu|Railway|alignmentfixcurve|Fixed Curve||
+menu|Railway|alignmentfloatcurve|Float Curve||
+menu|Railway|alignmentscs|SCS Curve||
+menu|Railway|separator|||
+menu|Railway|profileview|Vertical Profile View||
+menu|Railway|valigncheckgrade|Check Grade||
+
+
+# ======================
+# Commands (for CommandManager / Script)
+# ======================
+
+command|track|tcl|0
+
+command|valignfloatvcurve||0
+command|valignmovepvi||0
+command|valignsetk||0
+command|profileview||0
+command|valigncheckgrade||0

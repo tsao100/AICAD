@@ -1,0 +1,101 @@
+#ifndef INPUTPARSER_H
+#define INPUTPARSER_H
+
+#include <QString>
+#include <QList>
+#include <QVector2D>
+#include <QVariant>
+
+namespace aicad {
+namespace command {
+
+enum class InputType {
+    Unknown,
+    AbsoluteCoordinate,    // 100,200
+    RelativeCoordinate,    // @50,30
+    PolarCoordinate,       // @100<45
+    Number,                // 123.45
+    Option,                // Close, Undo
+    String                 // "text"
+};
+
+struct ParsedInput {
+    InputType type;
+    QVariant value;
+    bool isValid;
+    QString errorMessage;
+
+    ParsedInput()
+        : type(InputType::Unknown)
+        , isValid(false) {}
+
+    ParsedInput(InputType t, const QVariant& v, bool valid = true, const QString& error = QString())
+        : type(t)
+        , value(v)
+        , isValid(valid)
+        , errorMessage(error) {}
+};
+
+class InputParser {
+public:
+
+    struct ParsedOption {
+        QString label;    // 顯示名：「退回」或「Undo」
+        QString shortcut; // 快捷鍵：「U」
+    };
+
+    struct ParsedPrompt {
+        QString prefix;
+        QList<ParsedOption> options;
+    };
+
+    // 主解析方法
+    static ParsedInput parse(const QString& input, InputType expectedType = InputType::Unknown);
+
+    // 特定類型解析
+    static QVector2D parseCoordinate(const QString& input, const QVector2D& basePoint = QVector2D());
+    static double parseNumber(const QString& input, bool* ok = nullptr);
+    static double parseAngle(const QString& input, bool* ok = nullptr);
+    static QString parseString(const QString& input);
+    static QString parseOption(const QString& input, const QStringList& validOptions);
+
+    // 類型檢測
+    static bool isAbsoluteCoordinate(const QString& input);
+    static bool isRelativeCoordinate(const QString& input);
+    static bool isPolarCoordinate(const QString& input);
+    static bool isNumber(const QString& input);
+    static bool isOption(const QString& input);
+
+    // 格式化
+    static QString formatCoordinate(const QVector2D& point, int precision = 4);
+    static QString formatNumber(double value, int precision = 4);
+    static QString formatAngle(double degrees, int precision = 2);
+
+    // KEY=VALUE 解析（不分大小寫），供 SCS / alignment 命令使用
+    // 回傳 true 且填入 outValue，當輸入形如 "KEY=123.4"。
+    static bool tryParseKeyValueDouble(const QString& input,
+                                       const QString& expectedKey,
+                                       double& outValue);
+
+    // 便利函式：嘗試 "KEY=<num>" 或純數字，成功回傳 true 並填入 outValue。
+    static bool tryParseKeyedOrPlainDouble(const QString& input,
+                                           const QString& preferredKey,
+                                           double& outValue);
+
+    static ParsedPrompt parsePrompt(const QString& promptText);
+    static QString      matchOption(const QString& input,
+                               const QStringList& options);
+
+private:
+    static QVector2D parseAbsoluteCoord(const QString& input);
+    static QVector2D parseRelativeCoord(const QString& input, const QVector2D& basePoint);
+    static QVector2D parsePolarCoord(const QString& input, const QVector2D& basePoint);
+
+    static double degreesToRadians(double degrees);
+    static double radiansToDegrees(double radians);
+};
+
+} // namespace command
+} // namespace aicad
+
+#endif

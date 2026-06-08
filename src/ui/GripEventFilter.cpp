@@ -1,0 +1,127 @@
+// src/ui/GripEventFilter.cpp
+
+#include "core/Application.h"
+#include "core/EventBus.h"
+#include "GripEventFilter.h"
+#include <QWidget>
+#include <QMouseEvent>
+#include <V3d_View.hxx>
+#include <AIS_InteractiveContext.hxx>
+
+namespace aicad::ui {
+
+GripEventFilter::GripEventFilter(cad::GripManager* mgr,
+                                 Handle(V3d_View) view,
+                                 QObject* parent)
+    : QObject(parent)
+    , m_gripManager(mgr)
+    , m_view(view)
+{}
+
+// src/ui/GripEventFilter.cpp
+gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
+{
+    if (!m_sketchPlane) {
+        // Fallback: point on view plane
+        double wx, wy, wz;
+        m_view->Convert(x, y, wx, wy, wz);
+        return gp_Pnt(wx, wy, wz);
+    }
+
+    // ✅ Project screen ray onto sketch plane
+
+    // 1. Get ray origin (eye position) and ray direction
+    double px, py, pz, dx, dy, dz;
+    m_view->ProjReferenceAxe(x, y, px, py, pz, dx, dy, dz);
+
+    gp_Pnt  rayOrigin(px, py, pz);
+    gp_Dir  rayDir(dx, dy, dz);
+
+    // 2. Plane equation: (P - planeOrigin) · normal = 0
+    QVector3D qOrigin = m_sketchPlane->origin();
+    QVector3D qNormal = m_sketchPlane->normal();
+
+    gp_Pnt  planeOrigin(qOrigin.x(), qOrigin.y(), qOrigin.z());
+    gp_Dir  planeNormal(qNormal.x(), qNormal.y(), qNormal.z());
+
+    // 3. Ray-plane intersection:
+    //    t = (planeOrigin - rayOrigin) · normal / (rayDir · normal)
+    gp_Vec toPlane(rayOrigin, planeOrigin);
+    double denom = rayDir.XYZ().Dot(planeNormal.XYZ());
+
+    if (std::abs(denom) < 1e-10) {
+        // Ray parallel to plane, fallback
+        double wx, wy, wz;
+        m_view->Convert(x, y, wx, wy, wz);
+        return gp_Pnt(wx, wy, wz);
+    }
+
+    double t = toPlane.XYZ().Dot(planeNormal.XYZ()) / denom;
+
+    return gp_Pnt(
+        rayOrigin.X() + rayDir.X() * t,
+        rayOrigin.Y() + rayDir.Y() * t,
+        rayOrigin.Z() + rayDir.Z() * t
+        );
+}
+
+bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
+{
+    if (!m_enabled) return false;
+    if (m_view.IsNull() || !m_gripManager) return false;
+
+    const qreal dpr = qobject_cast<QWidget*>(obj)
+                          ? qobject_cast<QWidget*>(obj)->devicePixelRatio()
+                          : 1.0;
+    auto toPhys = [dpr](const QPointF& lp, int& px, int& py) {
+        px = static_cast<int>(lp.x() * dpr);
+        py = static_cast<int>(lp.y() * dpr);
+    };
+
+    switch (event->type()) {
+
+    case QEvent::MouseMove: {
+        auto* e = static_cast<QMouseEvent*>(event);
+        int px, py;
+        toPhys(e->pos(), px, py);
+        gp_Pnt wp = screenToWorld(px, py);
+
+        bool handled = m_gripManager->mouseMoveEvent(wp, px, py);
+
+        // Hover 事件發布（同原邏輯）
+        bool wasHovered = m_lastHovered;
+        if (handled != wasHovered) {
+            auto* bus = core::Application::instance()->eventBus();
+            if (bus) {
+                if (handled) bus->publish("grip.hovered", QVariant{});
+                else         bus->publish("grip.released", QVariant{});
+            }
+            m_lastHovered = handled;
+        }
+
+        // grip 已選取時，阻止 orbit 旋轉
+        if (m_gripManager->isGripSelected()) return true;
+        return handled;
+    }
+
+    case QEvent::MouseButtonPress: {
+        auto* e = static_cast<QMouseEvent*>(event);
+        if (e->button() != Qt::LeftButton) break;
+        int px, py;
+        toPhys(e->pos(), px, py);
+        gp_Pnt wp = screenToWorld(px, py);
+        // 第一次點：選取 grip；第二次點：確認位置
+        return m_gripManager->mousePressEvent(wp, px, py);
+    }
+
+    case QEvent::MouseButtonRelease:
+        // Click-to-place 模式下，release 不做任何事
+        if (m_gripManager->isGripSelected()) return true;  // 吃掉，避免 orbit deselect
+        break;
+
+    default: break;
+    }
+    return false;
+}
+
+} // namespace aicad::ui

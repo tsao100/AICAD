@@ -1,0 +1,301 @@
+{
+    "alignment": {
+        "horizontal": {
+            "elements": [
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": -57.83145523071289,
+                    "endY": -12.70838737487793,
+                    "length": 253.19639066722485,
+                    "mode": 0,
+                    "radius": 0,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": -220.0229034423828,
+                    "startY": -207.1366424560547,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 0
+                },
+                {
+                    "centerX": 214.76203991256892,
+                    "centerY": -15.48666410675916,
+                    "endX": 325.9880676269531,
+                    "endY": 114.22405242919922,
+                    "length": 0,
+                    "mode": 0,
+                    "radius": 170.8686547452113,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 43.91597366333008,
+                    "startY": -12.70838737487793,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "groupCA": true,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 170.8686547452113,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 0,
+                    "tangentIdxBefore": -1,
+                    "type": 3
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "groupCA": true,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 170.8686547452113,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 0,
+                    "tangentIdxBefore": -1,
+                    "type": 3
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "groupCA": true,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 170.8686547452113,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 0,
+                    "tangentIdxBefore": -1,
+                    "type": 3
+                },
+                {
+                    "centerX": 628.2049573063277,
+                    "centerY": -393.85853724663536,
+                    "endX": 937.1620483398438,
+                    "endY": 50.68220520019531,
+                    "length": 0,
+                    "mode": 0,
+                    "radius": 541.3602828016401,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 464.2242126464844,
+                    "startY": 122.06904602050781,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 180.0360565185547,
+                    "endY": -190.92977905273438,
+                    "length": 455.7309702523987,
+                    "mode": 0,
+                    "radius": 0,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": -117.83876037597656,
+                    "startY": -535.8374633789062,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 0
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 663.4293823242188,
+                    "endY": -162.18746948242188,
+                    "length": 484.24707308655627,
+                    "mode": 0,
+                    "radius": 0,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 180.0360565185547,
+                    "startY": -190.92977905273438,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 0
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 150,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 7,
+                    "tangentIdxBefore": 6,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "groupLC": true,
+                    "length": 194.77573326286546,
+                    "mode": 1,
+                    "radius": 200.9087209553274,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": 6,
+                    "type": 2
+                },
+                {
+                    "centerX": 284.3537248688451,
+                    "centerY": -389.4564001560153,
+                    "endX": 260.5530700683594,
+                    "endY": -189.96243286132812,
+                    "length": 0,
+                    "mode": 0,
+                    "radius": 200.9087209553274,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 136.95367431640625,
+                    "startY": -252.93702697753906,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 1
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 0,
+                    "endY": 0,
+                    "groupCA": true,
+                    "length": 0,
+                    "mode": 1,
+                    "radius": 200.9087209553274,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 0,
+                    "startY": 0,
+                    "tangentIdxAfter": 7,
+                    "tangentIdxBefore": -1,
+                    "type": 3
+                },
+                {
+                    "centerX": 0,
+                    "centerY": 0,
+                    "endX": 601.9126586914062,
+                    "endY": -267.461181640625,
+                    "length": 253.51226331348542,
+                    "mode": 0,
+                    "radius": 0,
+                    "solved": false,
+                    "spiralType1": 0,
+                    "spiralType2": 0,
+                    "startX": 356.4263610839844,
+                    "startY": -204.17654418945312,
+                    "tangentIdxAfter": -1,
+                    "tangentIdxBefore": -1,
+                    "type": 0
+                }
+            ]
+        },
+        "vertical": {
+            "vips": [
+            ]
+        }
+    },
+    "features": [
+    ],
+    "fileName": "as.aicad",
+    "parameters": {
+    },
+    "trackCenterLines": [
+        {
+            "editorVips": [
+                {
+                    "ch": 0,
+                    "el": 0,
+                    "lvc": 0
+                },
+                {
+                    "ch": 1000,
+                    "el": 0,
+                    "lvc": 0
+                }
+            ],
+            "horizontal": {
+                "rawPoints": [
+                ]
+            },
+            "id": "69a0f105-9912-4ad6-8f1f-91e8cf474854",
+            "name": "Track 1",
+            "vertical": {
+                "points": [
+                    {
+                        "chainage": 0,
+                        "elevation": 0,
+                        "grade": 0,
+                        "kValue": 0,
+                        "lvc": 0,
+                        "mo": 0,
+                        "pviElevation": 0
+                    },
+                    {
+                        "chainage": 1000,
+                        "elevation": 0,
+                        "grade": 0,
+                        "kValue": 0,
+                        "lvc": 0,
+                        "mo": 0,
+                        "pviElevation": 0
+                    }
+                ]
+            }
+        }
+    ],
+    "version": "1.0",
+    "viewState": {
+        "atX": 229.38530399350566,
+        "atY": -129.1437647184684,
+        "atZ": 0,
+        "eyeX": 229.38530399350566,
+        "eyeY": -129.1437647184684,
+        "eyeZ": 204.32865065155448,
+        "scale": 2.357934078818147,
+        "upX": 0,
+        "upY": 1,
+        "upZ": 0,
+        "viewType": 7
+    }
+}

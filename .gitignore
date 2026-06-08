@@ -11,3 +11,7 @@ AICAD.creator.user
 AICAD.pro.*
 AICAD.pro
 AICAD.pro.user
+test_integration.pro.user
+test/*
+.qtc_clangd/*
+.vscode/*

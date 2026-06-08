@@ -25,5 +25,25 @@
         <file>icons/eyeClose.png</file>
         <file>icons/eyeOpen.png</file>
         <file>icons/return.png</file>
+        <file>icons/osnap/OSNAP.ico</file>
+        <file>icons/osnap/OSNAPP.ico</file>
+        <file>icons/osnap/OSNCEN.ico</file>
+        <file>icons/osnap/OSNEND.ico</file>
+        <file>icons/osnap/OSNEXT.ico</file>
+        <file>icons/osnap/OSNFRO.ico</file>
+        <file>icons/osnap/OSNINS.ico</file>
+        <file>icons/osnap/OSNINT.ico</file>
+        <file>icons/osnap/OSNMID.ico</file>
+        <file>icons/osnap/OSNNEA.ico</file>
+        <file>icons/osnap/OSNNOD.ico</file>
+        <file>icons/osnap/OSNNON.ico</file>
+        <file>icons/osnap/OSNPAR.ico</file>
+        <file>icons/osnap/OSNPER.ico</file>
+        <file>icons/osnap/OSNQUA.ico</file>
+        <file>icons/osnap/OSNTAN.ico</file>
+        <file>icons/osnap/OSNTMP.ico</file>
+        <file>icons/osnap/OSNGRID.ico</file>
+        <file>icons/isometric.png</file>
+        <file>icons/save_as.png</file>
     </qresource>
 </RCC>
