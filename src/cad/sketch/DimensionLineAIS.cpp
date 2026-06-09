@@ -99,7 +99,30 @@ bool AIS_DimensionLine::getRefPoints(gp_Pnt& p1, gp_Pnt& p2) const {
     };
 
     QVector2D c1 = geomCenter(m_geoms.value(0));
-    QVector2D c2 = m_geoms.size() > 1 ? geomCenter(m_geoms.value(1)) : c1 + QVector2D(m_constraint.value, 0);
+    QVector2D c2;
+
+    if (m_geoms.size() > 1) {
+        c2 = geomCenter(m_geoms.value(1));
+    } else {
+        // 單 ref：依類型合成第二點
+        switch (m_constraint.type) {
+        case ConstraintType::FixedX:
+            // 水平引線：從點 → (value, pt.y)
+            c2 = QVector2D(static_cast<float>(m_constraint.value), c1.y());
+            break;
+        case ConstraintType::FixedY:
+            // 垂直引線：從點 → (pt.x, value)
+            c2 = QVector2D(c1.x(), static_cast<float>(m_constraint.value));
+            break;
+        case ConstraintType::CoordinateDim:
+            // 水平 X 引線
+            c2 = QVector2D(static_cast<float>(m_constraint.value), c1.y());
+            break;
+        default:
+            c2 = c1 + QVector2D(static_cast<float>(m_constraint.value), 0);
+            break;
+        }
+    }
 
     gp_Pnt pt1(c1.x(), c1.y(), 0.0);
     gp_Pnt pt2(c2.x(), c2.y(), 0.0);
@@ -432,11 +455,25 @@ void AIS_DimensionLine::drawVerticalDim(const Handle(Prs3d_Presentation)& prs) {
 
 void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& prs) {
     // 半徑：從圓心到圓周（方向由 m_dimOffsetX/Y 決定）
+    // 支援 SketchCircle 和 SketchArc
     if (m_geoms.isEmpty()) return;
-    auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0]);
-    if (!circ) return;
 
+    QVector2D center2D;
     double r = m_constraint.value;
+
+    if (auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0])) {
+        center2D = circ->center;
+    } else if (auto* arc = dynamic_cast<const SketchArc*>(m_geoms[0])) {
+        // SketchArc: points[2] = center（若有），否則從 GeomRef 取
+        if (arc->points.size() >= 3)
+            center2D = arc->points[2];
+        else if (!m_constraint.refs.isEmpty())
+            center2D = GeomRef(m_constraint.refs[0].geomUuid,
+                               GeomHandle::Center)
+                       .resolvePosition(nullptr);  // fallback = (0,0)
+    } else {
+        return;
+    }
 
     // 方向（草圖平面內），優先用 offset，否則草圖 X 軸
     gp_Vec sk_dir(1.0, 0.0, 0.0);
@@ -446,7 +483,7 @@ void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& pr
             sk_dir = off.Normalized();
     }
 
-    gp_Pnt sk_ctr(circ->center.x(), circ->center.y(), 0.0);
+    gp_Pnt sk_ctr(center2D.x(), center2D.y(), 0.0);
     gp_Pnt sk_edge(sk_ctr.X() + sk_dir.X() * r,
                    sk_ctr.Y() + sk_dir.Y() * r, 0.0);
     sk_ctr.Transform(m_sketchToWorld);
@@ -458,12 +495,124 @@ void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& pr
 }
 
 void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
-    // 角度：簡化為標籤顯示
-    gp_Pnt p1, p2;
-    if (!getRefPoints(p1, p2)) return;
-    addDimLine(prs, p1, p2, m_offsetDist,
-               dimColor(m_constraint.driving, m_status),
-               labelText() + "°");
+    // 角度尺寸：兩條線夾角，繪製角弧＋引線＋標籤
+    // refs[0] = 線A, refs[1] = 線B
+    if (m_geoms.size() < 2) return;
+    auto* geomA = dynamic_cast<const SketchLine*>(m_geoms[0]);
+    auto* geomB = dynamic_cast<const SketchLine*>(m_geoms[1]);
+    if (!geomA || !geomB) {
+        // fallback
+        gp_Pnt p1, p2;
+        if (!getRefPoints(p1, p2)) return;
+        addDimLine(prs, p1, p2, m_offsetDist,
+                   dimColor(m_constraint.driving, m_status),
+                   labelText() + "°");
+        return;
+    }
+
+    // 求兩線交點（草圖平面）
+    // A: Pa + t*Da, B: Pb + s*Db
+    gp_Pnt2d pA(geomA->start.x(), geomA->start.y());
+    gp_Vec2d dA(geomA->end.x() - geomA->start.x(),
+                geomA->end.y() - geomA->start.y());
+    gp_Pnt2d pB(geomB->start.x(), geomB->start.y());
+    gp_Vec2d dB(geomB->end.x() - geomB->start.x(),
+                geomB->end.y() - geomB->start.y());
+
+    double cross = dA.X() * dB.Y() - dA.Y() * dB.X();
+    gp_Pnt2d apex;
+    if (std::abs(cross) < 1e-8) {
+        // 平行：使用 A 中點
+        apex = gp_Pnt2d((geomA->start.x() + geomA->end.x()) * 0.5,
+                        (geomA->start.y() + geomA->end.y()) * 0.5);
+    } else {
+        gp_Vec2d ab(pA, pB);
+        double t = (ab.X() * dB.Y() - ab.Y() * dB.X()) / cross;
+        apex = gp_Pnt2d(pA.X() + t * dA.X(), pA.Y() + t * dA.Y());
+    }
+
+    // 角弧半徑：由 offset 決定，若無 offset 則用 m_offsetDist
+    double arcR = m_offsetDist;
+    if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+        double ox = m_dimOffsetX, oy = m_dimOffsetY;
+        arcR = std::max(5.0, std::sqrt(ox*ox + oy*oy));
+    }
+
+    // 各線方向角（0..2π）
+    double angA = std::atan2(dA.Y(), dA.X());
+    double angB = std::atan2(dB.Y(), dB.X());
+
+    // 夾角中間方向（用於放標籤）
+    double midAng = (angA + angB) * 0.5;
+    // 確保標籤方向和角弧在同側
+    if (std::abs(angB - angA) > M_PI) midAng += M_PI;
+
+    // 角弧（離散折線逼近）
+    double a0 = angA, a1 = angB;
+    // 讓 a1 > a0
+    while (a1 < a0) a1 += 2 * M_PI;
+    if (a1 - a0 > M_PI) { double tmp = a0; a0 = a1 - 2*M_PI; a1 = tmp + 2*M_PI; std::swap(a0,a1); a0 -= 2*M_PI; a1 -= 2*M_PI; while(a1<a0) a1+=2*M_PI; }
+
+    Quantity_Color col = dimColor(m_constraint.driving, m_status);
+    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+
+    // 角弧（20段折線）
+    {
+        int nSeg = 20;
+        Handle(Graphic3d_ArrayOfPolylines) arc =
+            new Graphic3d_ArrayOfPolylines(nSeg + 1, 1);
+        arc->AddBound(nSeg + 1);
+        for (int i = 0; i <= nSeg; ++i) {
+            double a = a0 + (a1 - a0) * i / nSeg;
+            gp_Pnt sk(apex.X() + arcR * std::cos(a),
+                      apex.Y() + arcR * std::sin(a), 0.0);
+            sk.Transform(m_sketchToWorld);
+            arc->AddVertex(sk);
+        }
+        Handle(Graphic3d_Group) grp = prs->NewGroup();
+        Handle(Graphic3d_AspectLine3d) asp =
+            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
+        grp->SetPrimitivesAspect(asp);
+        grp->AddPrimitiveArray(arc);
+
+        // 兩條短引線：apex→弧起/終
+        double extLen = arcR * 0.3;
+        auto addRefLine = [&](double ang) {
+            gp_Pnt inner(apex.X() + (arcR - extLen) * std::cos(ang),
+                         apex.Y() + (arcR - extLen) * std::sin(ang), 0.0);
+            gp_Pnt outer(apex.X() + (arcR + extLen) * std::cos(ang),
+                         apex.Y() + (arcR + extLen) * std::sin(ang), 0.0);
+            inner.Transform(m_sketchToWorld);
+            outer.Transform(m_sketchToWorld);
+            Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(2, 1);
+            seg->AddBound(2);
+            seg->AddVertex(inner); seg->AddVertex(outer);
+            grp->AddPrimitiveArray(seg);
+        };
+        addRefLine(a0);
+        addRefLine(a1);
+    }
+
+    // 標籤（放在角弧中點方向）
+    double labelAng = (a0 + a1) * 0.5;
+    gp_Pnt sk_label(apex.X() + arcR * std::cos(labelAng),
+                    apex.Y() + arcR * std::sin(labelAng), 0.0);
+    sk_label.Transform(m_sketchToWorld);
+
+    // 角度轉換：弧度 → 度
+    double deg = m_constraint.value * 180.0 / M_PI;
+    QString lbl = QString::number(deg, 'f', 2) + "°";
+    if (!m_constraint.paramExpr.isEmpty())
+        lbl = m_constraint.paramExpr + " = " + lbl;
+
+    Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
+    gtext->SetText(TCollection_ExtendedString(lbl.toUtf8().constData(), Standard_True));
+    gtext->SetPosition(sk_label);
+    gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
+    gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
+    Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
+    txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+    txtGrp->AddText(gtext);
 }
 
 // ── General Dimension 新增繪製函式 ────────────────────────────────────────
@@ -543,35 +692,170 @@ void AIS_DimensionLine::drawDiameterDimension(const Handle(Prs3d_Presentation)& 
 
 void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)& prs) {
     // 弧長：以同心弧（半徑略大）為尺寸線，標籤加 ~ 前綴
-    gp_Pnt ctr, dummy;
-    if (!getRefPoints(ctr, dummy)) return;
-    // 簡化：用線性尺寸線顯示（弧幾何複雜，實際實作可再改進）
     if (m_geoms.isEmpty()) return;
-    auto* g = m_geoms[0];
-    if (!g || g->points.size() < 2) return;
-    gp_Pnt p1(g->points.first().x(), g->points.first().y(), 0.0);
-    gp_Pnt p2(g->points.last().x(),  g->points.last().y(),  0.0);
-    p1.Transform(m_sketchToWorld);
-    p2.Transform(m_sketchToWorld);
-    addDimLine(prs, p1, p2, m_offsetDist,
-               dimColor(m_constraint.driving, m_status),
-               "~" + labelText());
+    auto* arc = dynamic_cast<const SketchArc*>(m_geoms[0]);
+    if (!arc || arc->points.size() < 3) {
+        // fallback：線性
+        gp_Pnt p1, p2;
+        if (!getRefPoints(p1, p2)) return;
+        addDimLine(prs, p1, p2, m_offsetDist,
+                   dimColor(m_constraint.driving, m_status),
+                   "~" + labelText());
+        return;
+    }
+
+    QVector2D startPt = arc->points[0];
+    QVector2D endPt   = arc->points[1];
+    QVector2D ctrPt   = arc->points[2];
+    double r = (startPt - ctrPt).length();
+
+    // 同心弧半徑（略大，由 offset 決定偏移距離）
+    double extraR = m_offsetDist;
+    if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+        double ox = m_dimOffsetX, oy = m_dimOffsetY;
+        // offset 向外分量
+        gp_Vec2d ov(ox, oy);
+        if (ov.Magnitude() > 1e-6) extraR = ov.Magnitude();
+    }
+    double dimR = r + std::abs(extraR);
+
+    double angStart = std::atan2(startPt.y() - ctrPt.y(), startPt.x() - ctrPt.x());
+    double angEnd   = std::atan2(endPt.y()   - ctrPt.y(), endPt.x()   - ctrPt.x());
+    // 保持 CCW 掃角
+    while (angEnd <= angStart) angEnd += 2 * M_PI;
+    if (angEnd - angStart > 2 * M_PI) angEnd = angStart + 2 * M_PI;
+
+    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+
+    // 同心弧（30段折線）
+    {
+        int nSeg = 30;
+        Handle(Graphic3d_ArrayOfPolylines) arcLine =
+            new Graphic3d_ArrayOfPolylines(nSeg + 1, 1);
+        arcLine->AddBound(nSeg + 1);
+        for (int i = 0; i <= nSeg; ++i) {
+            double a = angStart + (angEnd - angStart) * i / nSeg;
+            gp_Pnt sk(ctrPt.x() + dimR * std::cos(a),
+                      ctrPt.y() + dimR * std::sin(a), 0.0);
+            sk.Transform(m_sketchToWorld);
+            arcLine->AddVertex(sk);
+        }
+        Handle(Graphic3d_Group) grp = prs->NewGroup();
+        Handle(Graphic3d_AspectLine3d) asp =
+            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
+        grp->SetPrimitivesAspect(asp);
+        grp->AddPrimitiveArray(arcLine);
+
+        // 延伸線：原弧端點 → 同心弧端點
+        auto addExtLine = [&](double ang) {
+            gp_Pnt inner(ctrPt.x() + r    * std::cos(ang),
+                         ctrPt.y() + r    * std::sin(ang), 0.0);
+            gp_Pnt outer(ctrPt.x() + dimR * std::cos(ang),
+                         ctrPt.y() + dimR * std::sin(ang), 0.0);
+            inner.Transform(m_sketchToWorld);
+            outer.Transform(m_sketchToWorld);
+            Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(2, 1);
+            seg->AddBound(2);
+            seg->AddVertex(inner); seg->AddVertex(outer);
+            grp->AddPrimitiveArray(seg);
+        };
+        addExtLine(angStart);
+        addExtLine(angEnd);
+    }
+
+    // 標籤放在同心弧中點
+    double midAng = (angStart + angEnd) * 0.5;
+    gp_Pnt sk_label(ctrPt.x() + dimR * std::cos(midAng),
+                    ctrPt.y() + dimR * std::sin(midAng), 0.0);
+    sk_label.Transform(m_sketchToWorld);
+
+    Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
+    gtext->SetText(TCollection_ExtendedString(
+        ("~" + labelText()).toUtf8().constData(), Standard_True));
+    gtext->SetPosition(sk_label);
+    gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
+    gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
+    Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
+    txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+    txtGrp->AddText(gtext);
 }
 
 void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)& prs) {
-    // 座標尺寸：從點畫兩條引線（水平 X，垂直 Y），各自加標籤
-    gp_Pnt pt, dummy;
-    if (!getRefPoints(pt, dummy)) return;
+    // 座標尺寸：從點畫兩條引線到 X/Y 軸，各自加標籤
+    // 需要從 refs[0] 解析點的草圖位置
     Quantity_Color col = dimColor(m_constraint.driving, m_status);
-    gp_Pnt origin(0.0, 0.0, pt.Z());
-    // 水平引線（X 軸方向）
-    gp_Pnt px(m_constraint.value, pt.Y(), pt.Z());
-    addDimLine(prs, pt, px, 0.0, col,
-               QString("X=%1").arg(m_constraint.value, 0, 'f', 2));
-    // 垂直引線（Y 軸方向）
-    gp_Pnt py(pt.X(), m_constraint.value2, pt.Z());
-    addDimLine(prs, pt, py, 0.0, col,
-               QString("Y=%1").arg(m_constraint.value2, 0, 'f', 2));
+
+    // 取點座標（優先 m_hasRefPos，否則用 geoms 的第一個點）
+    gp_Pnt2d sk_pt;
+    if (m_hasRefPos) {
+        sk_pt = gp_Pnt2d(m_refPos1.x(), m_refPos1.y());
+    } else if (!m_geoms.isEmpty() && !m_geoms[0]->points.isEmpty()) {
+        sk_pt = gp_Pnt2d(m_geoms[0]->points[0].x(), m_geoms[0]->points[0].y());
+    } else {
+        return;
+    }
+
+    // 轉世界座標
+    auto toW = [&](double x, double y) {
+        gp_Pnt p(x, y, 0.0);
+        p.Transform(m_sketchToWorld);
+        return p;
+    };
+
+    gp_Pnt wPt = toW(sk_pt.X(), sk_pt.Y());
+
+    // X 引線：從點水平到 (value, pt.y)
+    gp_Pnt wPx = toW(m_constraint.value, sk_pt.Y());
+    // Y 引線：從點垂直到 (pt.x, value2)
+    gp_Pnt wPy = toW(sk_pt.X(), m_constraint.value2);
+
+    // X 尺寸線
+    {
+        Handle(Graphic3d_Group) grp = prs->NewGroup();
+        Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+        Handle(Graphic3d_AspectLine3d) asp =
+            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
+        grp->SetPrimitivesAspect(asp);
+        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(2, 1);
+        seg->AddBound(2);
+        seg->AddVertex(wPt); seg->AddVertex(wPx);
+        grp->AddPrimitiveArray(seg);
+
+        gp_Pnt midX((wPt.X()+wPx.X())*0.5, (wPt.Y()+wPx.Y())*0.5, wPt.Z());
+        Handle(Graphic3d_Text) gt = new Graphic3d_Text(36.0f);
+        QString xl = QString("X=%1").arg(m_constraint.value, 0, 'f', 2);
+        gt->SetText(TCollection_ExtendedString(xl.toUtf8().constData(), Standard_True));
+        gt->SetPosition(midX);
+        gt->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
+        gt->SetVerticalAlignment(Graphic3d_VTA_BOTTOM);
+        Handle(Graphic3d_Group) tg = prs->NewGroup();
+        tg->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        tg->AddText(gt);
+    }
+
+    // Y 尺寸線
+    {
+        Handle(Graphic3d_Group) grp = prs->NewGroup();
+        Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+        Handle(Graphic3d_AspectLine3d) asp =
+            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
+        grp->SetPrimitivesAspect(asp);
+        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(2, 1);
+        seg->AddBound(2);
+        seg->AddVertex(wPt); seg->AddVertex(wPy);
+        grp->AddPrimitiveArray(seg);
+
+        gp_Pnt midY((wPt.X()+wPy.X())*0.5, (wPt.Y()+wPy.Y())*0.5, wPt.Z());
+        Handle(Graphic3d_Text) gt = new Graphic3d_Text(36.0f);
+        QString yl = QString("Y=%1").arg(m_constraint.value2, 0, 'f', 2);
+        gt->SetText(TCollection_ExtendedString(yl.toUtf8().constData(), Standard_True));
+        gt->SetPosition(midY);
+        gt->SetHorizontalAlignment(Graphic3d_HTA_LEFT);
+        gt->SetVerticalAlignment(Graphic3d_VTA_CENTER);
+        Handle(Graphic3d_Group) tg = prs->NewGroup();
+        tg->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        tg->AddText(gt);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -581,32 +865,113 @@ void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)
 
 gp_Pnt AIS_DimensionLine::labelPosition3D() const
 {
-    // 特殊情況：半徑 / 直徑的標籤位置
-    if (m_constraint.type == ConstraintType::FixedRadius) {
-        if (!m_geoms.isEmpty()) {
-            auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0]);
-            if (circ) {
-                double r = m_constraint.value;
-                gp_Vec2d sk_dir(1.0, 0.0);
-                if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
-                    gp_Vec2d off(m_dimOffsetX, m_dimOffsetY);
-                    if (off.Magnitude() > Precision::Confusion())
-                        sk_dir = off.Normalized();
+    const ConstraintType ct = m_constraint.type;
+
+    // ── FixedAngleDim：標籤在角弧中點方向 ────────────────────────────────────
+    if (ct == ConstraintType::FixedAngleDim || ct == ConstraintType::FixedAngle) {
+        if (m_geoms.size() >= 2) {
+            auto* geomA = dynamic_cast<const SketchLine*>(m_geoms[0]);
+            auto* geomB = dynamic_cast<const SketchLine*>(m_geoms[1]);
+            if (geomA && geomB) {
+                gp_Vec2d dA(geomA->end.x()-geomA->start.x(), geomA->end.y()-geomA->start.y());
+                gp_Vec2d dB(geomB->end.x()-geomB->start.x(), geomB->end.y()-geomB->start.y());
+                double cross = dA.X()*dB.Y() - dA.Y()*dB.X();
+                gp_Pnt2d apex;
+                if (std::abs(cross) < 1e-8) {
+                    apex = gp_Pnt2d((geomA->start.x()+geomA->end.x())*0.5,
+                                    (geomA->start.y()+geomA->end.y())*0.5);
+                } else {
+                    gp_Pnt2d pA(geomA->start.x(), geomA->start.y());
+                    gp_Vec2d ab(pA.X()-geomB->start.x(), pA.Y()-geomB->start.y());
+                    // reuse intersection formula
+                    double t = (ab.X()*dB.Y() - ab.Y()*dB.X()) / cross;
+                    apex = gp_Pnt2d(pA.X() + t*dA.X(), pA.Y() + t*dA.Y());
                 }
-                // 標籤在圓心到邊的中點
-                gp_Pnt sk_mid(circ->center.x() + sk_dir.X() * r * 0.5,
-                              circ->center.y() + sk_dir.Y() * r * 0.5, 0.0);
-                sk_mid.Transform(m_sketchToWorld);
-                return sk_mid;
+                double arcR = m_offsetDist;
+                if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0)
+                    arcR = std::max(5.0, std::sqrt(m_dimOffsetX*m_dimOffsetX + m_dimOffsetY*m_dimOffsetY));
+                double angA = std::atan2(dA.Y(), dA.X());
+                double angB = std::atan2(dB.Y(), dB.X());
+                while (angB < angA) angB += 2*M_PI;
+                if (angB - angA > M_PI) angB -= 2*M_PI;
+                double midAng = (angA + angB) * 0.5;
+                gp_Pnt sk(apex.X() + arcR*std::cos(midAng),
+                          apex.Y() + arcR*std::sin(midAng), 0.0);
+                sk.Transform(m_sketchToWorld);
+                return sk;
             }
         }
     }
 
-    if (m_constraint.type == ConstraintType::FixedDiameter) {
+    // ── FixedArcLength：標籤在同心弧中點 ─────────────────────────────────────
+    if (ct == ConstraintType::FixedArcLength) {
+        if (!m_geoms.isEmpty()) {
+            auto* arc = dynamic_cast<const SketchArc*>(m_geoms[0]);
+            if (arc && arc->points.size() >= 3) {
+                QVector2D ctrPt   = arc->points[2];
+                QVector2D startPt = arc->points[0];
+                QVector2D endPt   = arc->points[1];
+                double r    = (startPt - ctrPt).length();
+                double dimR = r + std::abs(m_offsetDist);
+                if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+                    double mag = std::sqrt(m_dimOffsetX*m_dimOffsetX + m_dimOffsetY*m_dimOffsetY);
+                    if (mag > 1e-6) dimR = r + mag;
+                }
+                double angStart = std::atan2(startPt.y()-ctrPt.y(), startPt.x()-ctrPt.x());
+                double angEnd   = std::atan2(endPt.y()-ctrPt.y(),   endPt.x()-ctrPt.x());
+                while (angEnd <= angStart) angEnd += 2*M_PI;
+                double midAng = (angStart + angEnd) * 0.5;
+                gp_Pnt sk(ctrPt.x() + dimR*std::cos(midAng),
+                          ctrPt.y() + dimR*std::sin(midAng), 0.0);
+                sk.Transform(m_sketchToWorld);
+                return sk;
+            }
+        }
+    }
+
+    // ── CoordinateDim：標籤在 X 引線中點（主要交互點）───────────────────────
+    if (ct == ConstraintType::CoordinateDim) {
+        gp_Pnt2d sk_pt;
+        if (m_hasRefPos) {
+            sk_pt = gp_Pnt2d(m_refPos1.x(), m_refPos1.y());
+        } else if (!m_geoms.isEmpty() && !m_geoms[0]->points.isEmpty()) {
+            sk_pt = gp_Pnt2d(m_geoms[0]->points[0].x(), m_geoms[0]->points[0].y());
+        } else {
+            return gp_Pnt(0,0,0);
+        }
+        // X 引線中點（水平方向）
+        gp_Pnt sk((sk_pt.X() + m_constraint.value) * 0.5, sk_pt.Y(), 0.0);
+        sk.Transform(m_sketchToWorld);
+        return sk;
+    }
+
+    // ── FixedRadius（含弧）────────────────────────────────────────────────────
+    if (ct == ConstraintType::FixedRadius) {
+        if (!m_geoms.isEmpty()) {
+            QVector2D center2D;
+            double r = m_constraint.value;
+            if (auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0])) {
+                center2D = circ->center;
+            } else if (auto* arc = dynamic_cast<const SketchArc*>(m_geoms[0])) {
+                center2D = arc->points.size() >= 3 ? arc->points[2] : QVector2D(0,0);
+            }
+            gp_Vec2d sk_dir(1.0, 0.0);
+            if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
+                gp_Vec2d off(m_dimOffsetX, m_dimOffsetY);
+                if (off.Magnitude() > Precision::Confusion()) sk_dir = off.Normalized();
+            }
+            gp_Pnt sk_mid(center2D.x() + sk_dir.X() * r * 0.5,
+                          center2D.y() + sk_dir.Y() * r * 0.5, 0.0);
+            sk_mid.Transform(m_sketchToWorld);
+            return sk_mid;
+        }
+    }
+
+    // ── FixedDiameter ─────────────────────────────────────────────────────────
+    if (ct == ConstraintType::FixedDiameter) {
         if (!m_geoms.isEmpty()) {
             auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0]);
             if (circ) {
-                // 標籤在 dimMid（= center + offset）轉世界
                 gp_Pnt sk_mid(circ->center.x() + m_dimOffsetX,
                               circ->center.y() + m_dimOffsetY, 0.0);
                 sk_mid.Transform(m_sketchToWorld);
@@ -615,13 +980,12 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
         }
     }
 
-    // 通用：算出尺寸線兩端點 d1/d2，標籤在中點
+    // ── 取兩端點（通用）──────────────────────────────────────────────────────
     gp_Pnt p1, p2;
     if (!getRefPoints(p1, p2)) return gp_Pnt(0, 0, 0);
 
-    const ConstraintType ct = m_constraint.type;
+    // FixedX / FixedHorizDist：水平尺寸線中點
     if (ct == ConstraintType::FixedX || ct == ConstraintType::FixedHorizDist) {
-        // 水平尺寸線：d1/d2 的 Y = abMidY + rawOffset
         double rawOffset = (m_dimOffsetY != 0.0) ? m_dimOffsetY : m_offsetDist;
         gp_Pnt skO(0, 0, 0); skO.Transform(m_sketchToWorld);
         gp_Pnt skX(1, 0, 0); skX.Transform(m_sketchToWorld);
@@ -636,8 +1000,8 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
         return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
     }
 
+    // FixedY / FixedVertDist：垂直尺寸線中點
     if (ct == ConstraintType::FixedY || ct == ConstraintType::FixedVertDist) {
-        // 垂直尺寸線：d1/d2 的 X = abMidX + rawOffset
         double rawOffset = (m_dimOffsetX != 0.0) ? m_dimOffsetX : m_offsetDist;
         gp_Pnt skO(0, 0, 0); skO.Transform(m_sketchToWorld);
         gp_Pnt skX(1, 0, 0); skX.Transform(m_sketchToWorld);
@@ -652,15 +1016,13 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
         return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
     }
 
-    // 線性（FixedDistance、FixedLength、FixedAngleDim、FixedArcLength）：
-    // 尺寸線中點 = mid(p1,p2) + perp * offset
+    // 線性通用（FixedLength、FixedDistance、FixedArcLength fallback）
     if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
         gp_Pnt op(m_dimOffsetX, m_dimOffsetY, 0.0);
         op.Transform(m_sketchToWorld);
         gp_Pnt orig(0.0, 0.0, 0.0);
         orig.Transform(m_sketchToWorld);
         gp_Vec offsetVec(orig, op);
-
         gp_Vec along(p1, p2);
         if (along.Magnitude() > Precision::Confusion()) {
             along.Normalize();
@@ -686,7 +1048,6 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
     gp_Pnt d2 = p2.Translated(perp * m_offsetDist);
     return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // ComputeSelection — 只對數值標籤建立 sensitive region
 // 尺寸線本體、延伸線不可 hover / 選取，避免覆蓋幾何元素

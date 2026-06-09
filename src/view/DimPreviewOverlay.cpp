@@ -146,7 +146,11 @@ void DimPreviewOverlay::rebuild()
     if (m_info.refs.size() < 2 &&
         m_info.type != CT::FixedLength &&
         m_info.type != CT::FixedDiameter &&
-        m_info.type != CT::FixedRadius)
+        m_info.type != CT::FixedRadius  &&
+        m_info.type != CT::FixedArcLength &&
+        m_info.type != CT::FixedAngleDim &&
+        m_info.type != CT::FixedAngle   &&
+        m_info.type != CT::CoordinateDim)
         return;
 
     // ── 計算幾何 ─────────────────────────────────────────────────────────────
@@ -232,6 +236,71 @@ void DimPreviewOverlay::rebuild()
         }
         dA = QVector2D(dimX, A.y());
         dB = QVector2D(dimX, B.y());
+    } else if (m_info.type == CT::FixedX) {
+        // FixedX：單點水平引線（點 → X=value 的投影點）
+        if (!m_info.refs.isEmpty()) {
+            A = m_info.refs[0].resolvePosition(m_sketch);
+            B = QVector2D(static_cast<float>(m_info.value), A.y());
+        }
+        float dimY = m_mouse.y();
+        dA = QVector2D(A.x(), dimY);
+        dB = QVector2D(B.x(), dimY);
+    } else if (m_info.type == CT::FixedY) {
+        // FixedY：單點垂直引線（點 → Y=value 的投影點）
+        if (!m_info.refs.isEmpty()) {
+            A = m_info.refs[0].resolvePosition(m_sketch);
+            B = QVector2D(A.x(), static_cast<float>(m_info.value));
+        }
+        float dimX = m_mouse.x();
+        dA = QVector2D(dimX, A.y());
+        dB = QVector2D(dimX, B.y());
+    } else if (m_info.type == CT::FixedAngleDim || m_info.type == CT::FixedAngle) {
+        // 角度：使用角弧形式，dA/dB 用一般線性 fallback（弧在後段單獨畫）
+        if (m_info.refs.size() >= 2) {
+            A = m_info.refs[0].resolvePosition(m_sketch);
+            B = m_info.refs[1].resolvePosition(m_sketch);
+        }
+        QVector2D ab = B - A;
+        float abLen = ab.length();
+        QVector2D perpDir = (abLen < 1e-4f)
+            ? QVector2D(0, 1)
+            : QVector2D(-ab.y(), ab.x()) / abLen;
+        QVector2D mid = (A + B) * 0.5f;
+        float dot = QVector2D::dotProduct(m_mouse - mid, perpDir);
+        if (dot < 0) perpDir = -perpDir;
+        float offset = std::max(std::abs(dot), 15.f);
+        dA = A + perpDir * offset;
+        dB = B + perpDir * offset;
+    } else if (m_info.type == CT::FixedArcLength) {
+        // 弧長：同心弧，此處用線性近似（真弧由 AIS 繪製）
+        if (!m_info.refs.isEmpty()) {
+            auto* geom = m_sketch->findGeometry(m_info.refs[0].geomUuid);
+            if (auto* arc = dynamic_cast<const cad::SketchArc*>(geom)) {
+                if (arc->points.size() >= 3) {
+                    A = arc->points[0];
+                    B = arc->points[1];
+                }
+            }
+        }
+        QVector2D ab = B - A;
+        float abLen = ab.length();
+        QVector2D perpDir = (abLen < 1e-4f)
+            ? QVector2D(0, 1)
+            : QVector2D(-ab.y(), ab.x()) / abLen;
+        QVector2D mid = (A + B) * 0.5f;
+        float dot = QVector2D::dotProduct(m_mouse - mid, perpDir);
+        if (dot < 0) perpDir = -perpDir;
+        float offset = std::max(std::abs(dot), 15.f);
+        dA = A + perpDir * offset;
+        dB = B + perpDir * offset;
+    } else if (m_info.type == CT::CoordinateDim) {
+        // 座標尺寸：從點畫兩條引線（水平 + 垂直），dA/dB 用水平線
+        if (!m_info.refs.isEmpty()) {
+            A = m_info.refs[0].resolvePosition(m_sketch);
+        }
+        B = QVector2D(static_cast<float>(m_info.value), A.y());
+        dA = A;
+        dB = B;
     } else {
         // FixedLength / FixedDistance(PointToPoint)
         QVector2D ab = B - A;
