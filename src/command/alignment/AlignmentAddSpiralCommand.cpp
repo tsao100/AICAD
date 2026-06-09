@@ -54,7 +54,7 @@ namespace command {
 
 AlignmentAddSpiralCommand::AlignmentAddSpiralCommand(QObject* parent)
     : AlignmentCommandBase("alignmentaddspiral",
-                           "Insert unknown-length Clothoid between Fixed Tangent and Fixed Arc (LC or CA)",
+                           "Insert unknown-length Clothoid between Fixed elements: LC, CA, or ACA",
                            parent)
 {}
 
@@ -303,6 +303,62 @@ void AlignmentAddSpiralCommand::showSolverPreview()
             outputMessage("CA solver: no solution found with current geometry. "
                           "Check that the tangent direction is compatible with the arc.");
         }
+
+    } else if (m_mode == GroupMode::ACA) {
+        if (m_arcIdx < 0 || m_arc2Idx < 0
+            || m_arcIdx >= n || m_arc2Idx >= n) return;
+
+        const auto& arc1Elem = elems[m_arcIdx];
+        const auto& arc2Elem = elems[m_arc2Idx];
+        const double R1 = std::abs(arc1Elem.radius);
+        const double R2 = std::abs(arc2Elem.radius);
+
+        // Approximate azimuths from geometry stored in EditableElement
+        const QPointF r1s = arc1Elem.startPI - arc1Elem.arcCenter;
+        const QPointF r1e = arc1Elem.endPI   - arc1Elem.arcCenter;
+        const double cross1 = r1s.x() * r1e.y() - r1s.y() * r1e.x();
+        const double phi1   = std::abs(std::atan2(std::abs(cross1),
+                                                   r1s.x()*r1e.x()+r1s.y()*r1e.y()));
+        const double azArc1Start = std::atan2(-r1s.y(), r1s.x());
+        const double azArc1End   = azArc1Start + (cross1 >= 0.0 ? phi1 : -phi1);
+
+        const QPointF r2s = arc2Elem.startPI - arc2Elem.arcCenter;
+        const QPointF r2e = arc2Elem.endPI   - arc2Elem.arcCenter;
+        const double cross2 = r2s.x() * r2e.y() - r2s.y() * r2e.x();
+        const double phi2   = std::abs(std::atan2(std::abs(cross2),
+                                                   r2s.x()*r2e.x()+r2s.y()*r2e.y()));
+        const double azArc2End = std::atan2(-r2s.y(), r2s.x())
+                               + (cross2 >= 0.0 ? phi2 : -phi2);
+
+        const railway::SolvedACA aca = railway::AlignmentSolver::solveACA(
+            arc1Elem.arcCenter, R1,
+            arc1Elem.startPI,   azArc1Start,
+            arc2Elem.arcCenter, R2,
+            arc2Elem.endPI,     azArc2End,
+            m_spiralType);
+
+        if (aca.valid) {
+            const double Req = (R1 * R2) / std::abs(R1 - R2);
+            outputMessage(
+                QString("ACA preview:  Ls = %1 m  [%2]  Req = %3 m\n"
+                        "  Arc₁ trimmed length = %4 m\n"
+                        "  SC₁ = (%5, %6)\n"
+                        "  SC₂ = (%7, %8)\n"
+                        "  Arc₂ trimmed length = %9 m\n"
+                        "Press Enter or click to confirm, or T=<type> to change spiral family:")
+                    .arg(aca.Ls,           0, 'f', 3)
+                    .arg(spiralTypeName(m_spiralType))
+                    .arg(Req,              0, 'f', 1)
+                    .arg(aca.arc1Len,      0, 'f', 3)
+                    .arg(aca.sc1Point.x(), 0, 'f', 3)
+                    .arg(aca.sc1Point.y(), 0, 'f', 3)
+                    .arg(aca.sc2Point.x(), 0, 'f', 3)
+                    .arg(aca.sc2Point.y(), 0, 'f', 3)
+                    .arg(aca.arc2Len,      0, 'f', 3));
+        } else {
+            outputMessage("ACA solver: no solution found with current geometry.\n"
+                          "Check that R1 ≠ R2 and the two arcs are geometrically compatible.");
+        }
     }
 }
 
@@ -315,9 +371,18 @@ void AlignmentAddSpiralCommand::goToConfirm()
     EventBus* bus = Application::instance()->eventBus();
     showSolverPreview();
     m_step = Step::WaitingForConfirm;
+
+    QString modeLabel;
+    switch (m_mode) {
+    case GroupMode::LC:  modeLabel = QStringLiteral("LC");  break;
+    case GroupMode::CA:  modeLabel = QStringLiteral("CA");  break;
+    case GroupMode::ACA: modeLabel = QStringLiteral("ACA"); break;
+    default:             modeLabel = QStringLiteral("?");   break;
+    }
+
     bus->publish(Events::COMMAND_PROMPT,
                  tr("%1 spiral [%2] — Enter to confirm, T=<type> to change:")
-                     .arg(m_mode == GroupMode::LC ? "LC" : "CA")
+                     .arg(modeLabel)
                      .arg(spiralTypeName(m_spiralType)));
     CommandLineManager::instance()->waitForInput(core::InputType::Number);
 }
@@ -334,18 +399,22 @@ CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
             "No AlignmentDocument — open or create an alignment first.");
     }
 
-    // Need at least one Fixed Tangent and one Fixed CircularArc
+    // Need at least one Fixed Tangent and one Fixed CircularArc  (LC/CA),
+    // OR at least two Fixed CircularArcs with different radii (ACA).
     const auto& elems = m_alignDoc->horizontal()->elements();
     bool hasTangent = false, hasArc = false;
+    int fixedArcCount = 0;
     for (const auto& e : elems) {
         if (e.type == EditableElementType::Tangent) hasTangent = true;
         if (e.type == EditableElementType::CircularArc
-            && e.mode == ConstraintMode::Fixed)     hasArc = true;
+            && e.mode == ConstraintMode::Fixed) { hasArc = true; ++fixedArcCount; }
     }
-    if (!hasTangent || !hasArc) {
+    if (!hasTangent && fixedArcCount < 2) {
         return CommandResult::Failure(
-            "AS requires at least one Fixed Tangent (FT) and one Fixed CircularArc (FC). "
-            "Add these elements first.");
+            "AS requires either:\n"
+            "  • a Fixed Tangent + Fixed Arc  (LC or CA), or\n"
+            "  • two Fixed CircularArcs with different radii (ACA).\n"
+            "Add these elements first (FT / FC).");
     }
 
     // ── Reset state ──────────────────────────────────────────────────────────
@@ -354,6 +423,7 @@ CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
     m_isFinishing = false;
     m_tangentIdx  = -1;
     m_arcIdx      = -1;
+    m_arc2Idx     = -1;
     m_spiralType  = SpiralType::Clothoid;
 
     EventBus* bus = Application::instance()->eventBus();
@@ -386,11 +456,12 @@ CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
     setState(CommandState::Running);
 
     bus->publish(Events::COMMAND_PROMPT,
-                 tr("AS — Click a Fixed Tangent (LC mode) or Fixed Arc (CA mode):"));
+                 tr("AS — Click a Fixed Tangent (LC/CA) or Fixed Arc (CA/ACA):"));
     outputMessage(
-        "AS — Insert Clothoid between Fixed Tangent and Fixed Arc.\n"
-        "  Click a FIXED TANGENT to start LC (Line→Clothoid→Arc), or\n"
-        "  click a FIXED ARC    to start CA (Arc→Clothoid→Line).");
+        "AS — Insert Clothoid between Fixed elements.\n"
+        "  Click a FIXED TANGENT → LC (Line→Clothoid→Arc), or\n"
+        "  Click a FIXED ARC     → CA (Arc→Clothoid→Line)  — then click a tangent, or\n"
+        "                          ACA (Arc→Clothoid→Arc)  — then click a second arc.");
     return CommandResult::Success("Waiting for input");
 }
 
@@ -412,7 +483,7 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QVector2D& point)
         if (idx < 0) {
             outputMessage("No Fixed Tangent or Fixed Arc found near that point — click closer.");
             bus->publish(Events::COMMAND_PROMPT,
-                         tr("Click a Fixed Tangent (LC) or Fixed Arc (CA):"));
+                         tr("Click a Fixed Tangent (LC) or Fixed Arc (CA/ACA):"));
             return;
         }
 
@@ -426,12 +497,14 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QVector2D& point)
                                   "Now click the Fixed Arc to connect to:").arg(idx));
             bus->publish(Events::COMMAND_PROMPT, tr("LC: Click the Fixed CircularArc:"));
         } else {
-            // CA mode: first element is the arc
-            m_mode   = GroupMode::CA;
+            // CA or ACA: first element is an arc — defer mode decision to PickSecond
+            m_mode   = GroupMode::Unknown;   // resolved in PickSecond
             m_arcIdx = idx;
-            outputMessage(QString("CA mode: Fixed Arc #%1 selected.  "
-                                  "Now click the outgoing Fixed Tangent:").arg(idx));
-            bus->publish(Events::COMMAND_PROMPT, tr("CA: Click the outgoing Fixed Tangent:"));
+            outputMessage(QString("Fixed Arc #%1 selected.\n"
+                                  "  Click a FIXED TANGENT → CA (Arc→Clothoid→Line)\n"
+                                  "  Click a FIXED ARC     → ACA (Arc→Clothoid→Arc)").arg(idx));
+            bus->publish(Events::COMMAND_PROMPT,
+                         tr("CA/ACA: Click a Fixed Tangent or a second Fixed Arc:"));
         }
         m_step = Step::PickSecond;
         break;
@@ -454,22 +527,38 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QVector2D& point)
             m_arcIdx = idx;
             highlightElement(idx);
             outputMessage(QString("Fixed Arc #%1 selected.").arg(idx));
+
         } else {
-            // CA mode: expect a Fixed Tangent
-            int idx = AlignmentFloatCurveCommand::nearestTangentIndex(
-                point, m_alignDoc->horizontal());
+            // First element was an arc (m_arcIdx is set); resolve CA vs ACA now.
+            // Try to detect what the user clicked: Tangent → CA, Arc → ACA.
+            EditableElementType detectedType = EditableElementType::Tangent;
+            int idx = nearestTangentOrArc(point, m_alignDoc->horizontal(), detectedType);
+
             if (idx < 0) {
-                outputMessage("No Fixed Tangent found near that point — click closer to a tangent.");
-                bus->publish(Events::COMMAND_PROMPT, tr("CA: Click the Fixed Tangent:"));
+                outputMessage("Nothing found near that point — click closer to a tangent or arc.");
+                bus->publish(Events::COMMAND_PROMPT,
+                             tr("CA/ACA: Click a Fixed Tangent or a second Fixed Arc:"));
                 return;
             }
-            if (idx == m_tangentIdx) {
-                outputMessage("Please select a different tangent.");
+            if (idx == m_arcIdx) {
+                outputMessage("Please select a different element.");
                 return;
             }
-            m_tangentIdx = idx;
-            highlightElement(idx);
-            outputMessage(QString("Fixed Tangent #%1 selected.").arg(idx));
+
+            if (detectedType == EditableElementType::Tangent) {
+                // CA mode
+                m_mode       = GroupMode::CA;
+                m_tangentIdx = idx;
+                highlightElement(idx);
+                outputMessage(QString("CA mode: Fixed Tangent #%1 selected.").arg(idx));
+            } else {
+                // ACA mode: second element is another Fixed Arc
+                m_mode    = GroupMode::ACA;
+                m_arc2Idx = idx;
+                highlightElement(idx);
+                outputMessage(QString("ACA mode: Fixed Arc₂ #%1 selected.  "
+                                      "Arc₁=#%2  Arc₂=#%3").arg(idx).arg(m_arcIdx).arg(idx));
+            }
         }
 
         // Proceed to spiral type selection
@@ -555,7 +644,15 @@ void AlignmentAddSpiralCommand::commitSpiral()
 {
     if (m_isFinishing) return;
 
-    if (m_tangentIdx < 0 || m_arcIdx < 0) {
+    // Validate indices per mode
+    bool valid = false;
+    switch (m_mode) {
+    case GroupMode::LC:  valid = (m_tangentIdx >= 0 && m_arcIdx  >= 0); break;
+    case GroupMode::CA:  valid = (m_arcIdx     >= 0 && m_tangentIdx >= 0); break;
+    case GroupMode::ACA: valid = (m_arcIdx     >= 0 && m_arc2Idx >= 0); break;
+    default: break;
+    }
+    if (!valid) {
         outputMessage("Internal error: elements not fully selected.");
         m_isFinishing = true;
         Q_EMIT finished(CommandResult::Failure("Incomplete selection"));
@@ -568,36 +665,51 @@ void AlignmentAddSpiralCommand::commitSpiral()
     if (m_mode == GroupMode::LC) {
         idx     = m_alignDoc->horizontal()->addLC(m_tangentIdx, m_arcIdx, m_spiralType);
         modeStr = QStringLiteral("LC");
-    } else {
+    } else if (m_mode == GroupMode::CA) {
         idx     = m_alignDoc->horizontal()->addCA(m_arcIdx, m_tangentIdx, m_spiralType);
         modeStr = QStringLiteral("CA");
+    } else {
+        idx     = m_alignDoc->horizontal()->addACA(m_arcIdx, m_arc2Idx, m_spiralType);
+        modeStr = QStringLiteral("ACA");
     }
 
     if (idx < 0) {
         outputMessage(
-            QString("%1: addLC/addCA failed — check that the tangent and arc geometry "
-                    "is compatible (tangent direction must intersect arc).").arg(modeStr));
+            QString("%1: add%1 failed — check that the geometry is compatible.\n"
+                    "  ACA: R1 ≠ R2 required; arcs must be geometrically reachable.")
+                .arg(modeStr));
         m_isFinishing = true;
-        Q_EMIT finished(CommandResult::Failure("addLC/addCA returned -1"));
+        Q_EMIT finished(CommandResult::Failure(modeStr + " returned -1"));
         return;
     }
 
     // Solve and refresh
     m_alignDoc->horizontal()->solve();
 
-    // Report solved Ls from the newly created SpiralIn/SpiralOut element
+    // Report solved Ls from the newly created spiral element
     const auto& elems = m_alignDoc->horizontal()->elements();
     const double Ls = (idx >= 0 && idx < elems.size()) ? elems[idx].length : 0.0;
 
-    outputMessage(
-        QString("%1 spiral #%2 added  [%3]  Ls = %4 m  "
-                "(tangent #%5  arc #%6)")
-            .arg(modeStr)
-            .arg(idx)
-            .arg(spiralTypeName(m_spiralType))
-            .arg(Ls, 0, 'f', 3)
-            .arg(m_tangentIdx)
-            .arg(m_arcIdx));
+    if (m_mode == GroupMode::ACA) {
+        outputMessage(
+            QString("ACA spiral #%1 added  [%2]  Ls = %3 m\n"
+                    "  Arc₁ #%4  →  Clothoid  →  Arc₂ #%5")
+                .arg(idx)
+                .arg(spiralTypeName(m_spiralType))
+                .arg(Ls, 0, 'f', 3)
+                .arg(m_arcIdx)
+                .arg(m_arc2Idx));
+    } else {
+        outputMessage(
+            QString("%1 spiral #%2 added  [%3]  Ls = %4 m  "
+                    "(tangent #%5  arc #%6)")
+                .arg(modeStr)
+                .arg(idx)
+                .arg(spiralTypeName(m_spiralType))
+                .arg(Ls, 0, 'f', 3)
+                .arg(m_tangentIdx)
+                .arg(m_arcIdx));
+    }
 
     m_isFinishing = true;
     Q_EMIT finished(CommandResult::Success("AlignmentAddSpiral completed"));
@@ -634,6 +746,7 @@ void AlignmentAddSpiralCommand::cleanup()
     m_isFinishing = false;
     m_tangentIdx  = -1;
     m_arcIdx      = -1;
+    m_arc2Idx     = -1;
     m_spiralType  = SpiralType::Clothoid;
     m_alignDoc    = nullptr;
 }
@@ -645,15 +758,15 @@ void AlignmentAddSpiralCommand::cleanup()
 QString AlignmentAddSpiralCommand::getUsage() const
 {
     return
-        "Usage: AS  (Add Spiral — LC or CA group)\n"
+        "Usage: AS  (Add Spiral — LC, CA, or ACA group)\n"
         "\n"
         "  LC mode (Line → Clothoid → Arc):\n"
         "    1. Click a Fixed Tangent (the incoming straight line).\n"
         "    2. Click a Fixed CircularArc (the arc the spiral must join).\n"
         "    3. Enter spiral type T= (or Enter for Clothoid).\n"
         "    4. Enter to confirm.\n"
-        "    Result: a Clothoid of solved length Ls is inserted;\n"
-        "            the arc's PC is trimmed to the SC point.\n"
+        "    Result: Clothoid of solved length Ls inserted;\n"
+        "            arc's PC trimmed to the SC point.\n"
         "\n"
         "  CA mode (Arc → Clothoid → Line):\n"
         "    1. Click a Fixed CircularArc (the arc the spiral exits).\n"
@@ -661,10 +774,22 @@ QString AlignmentAddSpiralCommand::getUsage() const
         "    3–4. Same as LC.\n"
         "    Result: Clothoid inserted; arc's PT trimmed to CS point.\n"
         "\n"
-        "  Auto-detect: clicking a tangent first → LC;\n"
-        "               clicking an arc first   → CA.\n"
+        "  ACA mode (Arc₁ → Clothoid → Arc₂):\n"
+        "    1. Click a Fixed CircularArc (Arc₁, the arc before the spiral).\n"
+        "    2. Click a second Fixed CircularArc (Arc₂, after the spiral).\n"
+        "       Note: auto-detected when the second click hits an arc, not a tangent.\n"
+        "    3–4. Same as LC.\n"
+        "    Result: Egg-Transition Clothoid inserted between the two arcs;\n"
+        "            Arc₁ trimmed at SC₁, Arc₂ trimmed at SC₂.\n"
+        "    Constraint: |R₁| ≠ |R₂| required (degenerate otherwise).\n"
         "\n"
-        "  Spiral types (T= or T1= / T2=):\n"
+        "  Auto-detect flow:\n"
+        "    1st click on Tangent → LC mode (arc pick next).\n"
+        "    1st click on Arc     → CA/ACA pending.\n"
+        "      2nd click on Tangent → CA mode.\n"
+        "      2nd click on Arc     → ACA mode.\n"
+        "\n"
+        "  Spiral types (T=):\n"
         "    CLOTHOID (C)   — Euler-Cornu, linear curvature [default]\n"
         "    HALFSINE (HS)  — Half-sine curvature profile\n"
         "    PARABOLA (P)   — Cubic parabola\n"

@@ -158,6 +158,48 @@ struct SolvedCA
 };
 
 // ============================================================================
+//  SolvedACA  — unknown-length Clothoid between Fixed Arc → Fixed Arc
+// ============================================================================
+
+/**
+ * @brief Result of solveACA(): Arc₁ → Clothoid → Arc₂.
+ *
+ * The Clothoid has curvature κ₁ = 1/R₁ at its entry (SC₁, tangent to Arc₁)
+ * and curvature κ₂ = 1/R₂ at its exit (SC₂, tangent to Arc₂).  Because
+ * curvature varies linearly with arc length, this is equivalent to a segment
+ * of a longer clothoid whose parameter A satisfies  A² = Ls · Req  where the
+ * equivalent radius is  Req = |R₁·R₂| / |R₁ − R₂|  (i.e. an EggTransition).
+ *
+ * Both arcs are trimmed: Arc₁ new-PT = sc1Point; Arc₂ new-PC = sc2Point.
+ * The arc lengths stored here are the trimmed lengths.
+ *
+ * Coordinate / azimuth conventions identical to SolvedLC / SolvedCA.
+ */
+struct SolvedACA
+{
+    bool    valid    = false;
+
+    // Trimmed Arc₁  (original arc1-start → SC₁)
+    QPointF arc1StartPoint;    ///< Original arc1 start (PC₁), unchanged
+    QPointF sc1Point;          ///< Trimmed arc1 new-PT = start of spiral
+    double  arc1Len  = 0.0;   ///< Trimmed arc1 length  PC₁ → SC₁ [m]
+    double  azSC1    = 0.0;   ///< Forward azimuth at SC₁ [rad]
+
+    // Spiral  SC₁ → SC₂
+    double  Ls       = 0.0;   ///< Solved Clothoid length [m]
+    double  R1       = 0.0;   ///< Arc₁ radius (absolute) [m]
+    double  R2       = 0.0;   ///< Arc₂ radius (absolute) [m]
+    double  thetaS   = 0.0;   ///< Total spiral angle = Ls·(1/R₂ − 1/R₁) / 2  [rad]
+                               ///<   (accumulated tangent rotation from SC₁ to SC₂)
+
+    // Trimmed Arc₂  (SC₂ → original arc2-end)
+    QPointF sc2Point;          ///< Trimmed arc2 new-PC = end of spiral
+    QPointF arc2EndPoint;      ///< Original arc2 end (PT₂), unchanged
+    double  arc2Len  = 0.0;   ///< Trimmed arc2 length  SC₂ → PT₂ [m]
+    double  azSC2    = 0.0;   ///< Forward azimuth at SC₂ [rad]
+};
+
+// ============================================================================
 //  AlignmentSolver
 // ============================================================================
 
@@ -303,7 +345,48 @@ public:
         const QPointF& tanStart, const QPointF& tanEnd,
         SpiralType spiralType = SpiralType::Clothoid);
 
-private:
+    /**
+     * @brief Solve for an unknown-length Clothoid between two Fixed CircularArcs
+     *        —  ACA group  (Arc₁ → Clothoid → Arc₂).
+     *
+     * @par Problem statement
+     * Given:
+     *   - Fixed Arc₁: centre @p arc1Center, absolute radius @p arc1Radius,
+     *     fixed start @p arc1Start (PC₁, unchanged), start azimuth @p arc1AzStart.
+     *   - Fixed Arc₂: centre @p arc2Center, absolute radius @p arc2Radius,
+     *     fixed end   @p arc2End   (PT₂, unchanged), end azimuth @p arc2AzEnd.
+     *
+     * Find: Clothoid length Ls such that
+     *   (a) SC₁ lies on Arc₁ and the spiral's entry tangent is tangent to Arc₁;
+     *   (b) SC₂ lies on Arc₂ and the spiral's exit  tangent is tangent to Arc₂;
+     *   (c) The spiral has curvature 1/R₁ at SC₁ and 1/R₂ at SC₂ (linear κ).
+     *
+     * @par Algorithm  (two-point cross-track gap  f(Ls) = 0)
+     * The spiral is modelled as an EggTransition (bi-quadratic clothoid segment)
+     * with equivalent full-spiral length  Ls_eq = Ls · max(R₁,R₂)/|R₁ − R₂|.
+     *
+     * For a given trial Ls, the EggTransitionElement provides SC₁ and SC₂
+     * positions in local frame.  The gap function measures the cross-track
+     * error of SC₂ relative to its required position on Arc₂ (tangency condition).
+     * Bisection drives f(Ls) to zero.
+     *
+     * @param arc1Center   Centre of Fixed Arc₁.
+     * @param arc1Radius   Absolute radius of Arc₁ [m].
+     * @param arc1Start    Unchanged start (PC₁) of Fixed Arc₁.
+     * @param arc1AzStart  Forward azimuth at PC₁ [rad].
+     * @param arc2Center   Centre of Fixed Arc₂.
+     * @param arc2Radius   Absolute radius of Arc₂ [m].
+     * @param arc2End      Unchanged end (PT₂) of Fixed Arc₂.
+     * @param arc2AzEnd    Forward azimuth at PT₂ [rad].
+     * @param spiralType   Clothoid family (default: Clothoid).
+     * @return SolvedACA with valid==true on success.
+     */
+    static SolvedACA solveACA(
+        QPointF arc1Center, double arc1Radius,
+        QPointF arc1Start,  double arc1AzStart,
+        QPointF arc2Center, double arc2Radius,
+        QPointF arc2End,    double arc2AzEnd,
+        SpiralType spiralType = SpiralType::Clothoid);
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
