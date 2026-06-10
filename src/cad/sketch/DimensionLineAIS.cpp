@@ -368,13 +368,101 @@ static void addDimLineWithOffset(const Handle(Prs3d_Presentation)& prs,
     addDimLineExplicit(prs, p1, p2, d1, d2, col, label);
 }
 
+// 垂足小方框符號
+void AIS_DimensionLine::drawPerpendicularSymbol(
+    const Handle(Prs3d_Presentation)& prs,
+    const gp_Pnt& foot,
+    const gp_Pnt& fromPt,
+    const gp_Pnt& /*onLinePt*/,
+    double symSize)
+{
+    // 方向：foot→fromPt（垂距方向），法向（沿線方向）
+    gp_Vec toFrom(foot, fromPt);
+    if (toFrom.Magnitude() < Precision::Confusion()) return;
+    toFrom.Normalize();
+
+    // 沿線方向 = toFrom × Z
+    gp_Vec along = toFrom.Crossed(gp_Vec(0, 0, 1));
+    if (along.Magnitude() < Precision::Confusion()) along = gp_Vec(1, 0, 0);
+    along.Normalize();
+
+    // 四個角點
+    gp_Pnt c1 = foot.Translated(toFrom * symSize);
+    gp_Pnt c2 = c1.Translated(along * symSize);
+    gp_Pnt c3 = foot.Translated(along * symSize);
+
+    Handle(Graphic3d_ArrayOfPolylines) sq = new Graphic3d_ArrayOfPolylines(4, 1);
+    sq->AddBound(4);
+    sq->AddVertex(foot);
+    sq->AddVertex(c1);
+    sq->AddVertex(c2);
+    sq->AddVertex(c3);
+
+    Handle(Graphic3d_Group) grp = prs->NewGroup();
+    Quantity_Color col(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+    Handle(Graphic3d_AspectLine3d) asp =
+        new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
+    grp->SetPrimitivesAspect(asp);
+    grp->AddPrimitiveArray(sq);
+}
+
 void AIS_DimensionLine::drawLinearDimension(const Handle(Prs3d_Presentation)& prs) {
     gp_Pnt p1, p2;
     if (!getRefPoints(p1, p2)) return;
+
+    // ── PointToLine：p2 改為點到線的投影點，並畫垂足符號 ───────────────────
+    if (m_constraint.distMode == DistanceMode::PointToLine
+        && m_geoms.size() >= 2)
+    {
+        auto* ln = dynamic_cast<const SketchLine*>(m_geoms[1]);
+        if (ln) {
+            // 在草圖平面計算投影點，再轉世界座標
+            gp_Vec2d AB(ln->end.x() - ln->start.x(),
+                        ln->end.y() - ln->start.y());
+            double len2 = AB.X()*AB.X() + AB.Y()*AB.Y();
+            // p1 的草圖座標（反變換）
+            gp_Pnt p1sk = p1;
+            gp_Trsf inv = m_sketchToWorld.Inverted();
+            p1sk.Transform(inv);
+            gp_Vec2d AP(p1sk.X() - ln->start.x(), p1sk.Y() - ln->start.y());
+            double t = (len2 > 1e-10) ? (AP.X()*AB.X() + AP.Y()*AB.Y()) / len2 : 0.0;
+            gp_Pnt p2sk(ln->start.x() + t * AB.X(),
+                         ln->start.y() + t * AB.Y(), 0.0);
+            p2sk.Transform(m_sketchToWorld);
+            p2 = p2sk;
+
+            // 垂足小方框（邊長 = 3mm）
+            drawPerpendicularSymbol(prs, p2, p1, p2);
+        }
+    }
+
+    // ── LineToLine：p1=線A起點, p2=線A起點投影到線B ─────────────────────────
+    if (m_constraint.distMode == DistanceMode::LineToLine
+        && m_geoms.size() >= 2)
+    {
+        auto* lnA = dynamic_cast<const SketchLine*>(m_geoms[0]);
+        auto* lnB = dynamic_cast<const SketchLine*>(m_geoms[1]);
+        if (lnA && lnB) {
+            gp_Vec2d AB(lnB->end.x() - lnB->start.x(),
+                        lnB->end.y() - lnB->start.y());
+            double len2 = AB.X()*AB.X() + AB.Y()*AB.Y();
+            gp_Vec2d AP(lnA->start.x() - lnB->start.x(),
+                        lnA->start.y() - lnB->start.y());
+            double t = (len2 > 1e-10) ? (AP.X()*AB.X() + AP.Y()*AB.Y()) / len2 : 0.0;
+            gp_Pnt p1sk(lnA->start.x(), lnA->start.y(), 0.0);
+            gp_Pnt p2sk(lnB->start.x() + t * AB.X(),
+                         lnB->start.y() + t * AB.Y(), 0.0);
+            p1sk.Transform(m_sketchToWorld);
+            p2sk.Transform(m_sketchToWorld);
+            p1 = p1sk;
+            p2 = p2sk;
+            drawPerpendicularSymbol(prs, p2, p1, p2);
+        }
+    }
+
     // 若使用者已拖曳設定偏移，用 XY 偏移向量；否則用預設垂直偏移
     double offDist = m_offsetDist;
     if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
-        // 將草圖平面偏移轉為世界座標偏移向量
         gp_Pnt op(m_dimOffsetX, m_dimOffsetY, 0.0);
         op.Transform(m_sketchToWorld);
         gp_Pnt orig(0.0, 0.0, 0.0);

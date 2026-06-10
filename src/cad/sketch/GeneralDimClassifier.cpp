@@ -5,32 +5,32 @@
 namespace aicad::cad {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 輔助
+// isPointLike
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool GeneralDimClassifier::isPointLike(const GeomRef& r, const Sketch* sketch)
 {
     if (!sketch) return false;
+    // 獨立 SketchPoint
+    if (sketch->point(r.geomUuid)) return true;
+
     auto* geom = sketch->findGeometry(r.geomUuid);
     if (!geom) return false;
-    if (geom->type == SketchGeometryType::Point)
+
+    switch (geom->type) {
+    case SketchGeometryType::Point:
         return true;
-    // Line endpoint handles
-    if (geom->type == SketchGeometryType::Line) {
-        return r.handle == GeomHandle::Start ||
-               r.handle == GeomHandle::End;
-    }
-    // Arc endpoint / center handles
-    if (geom->type == SketchGeometryType::Arc) {
-        return r.handle == GeomHandle::Start  ||
-               r.handle == GeomHandle::End    ||
-               r.handle == GeomHandle::Center;
-    }
-    // Circle center
-    if (geom->type == SketchGeometryType::Circle) {
+    case SketchGeometryType::Line:
+        return r.handle == GeomHandle::Start || r.handle == GeomHandle::End;
+    case SketchGeometryType::Arc:
+        return r.handle == GeomHandle::Start
+            || r.handle == GeomHandle::End
+            || r.handle == GeomHandle::Center;
+    case SketchGeometryType::Circle:
         return r.handle == GeomHandle::Center;
+    default:
+        return false;
     }
-    return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ bool GeneralDimClassifier::isPointLike(const GeomRef& r, const Sketch* sketch)
 
 GeneralDimClassifier::Result
 GeneralDimClassifier::classify(const QList<GeomRef>& refs, const Sketch* sketch,
-                               bool allowHorizVert)
+                               bool /*allowHorizVert*/)
 {
     if (refs.isEmpty()) {
         Result r; r.needMore = true;
@@ -48,11 +48,21 @@ GeneralDimClassifier::classify(const QList<GeomRef>& refs, const Sketch* sketch,
     }
     if (refs.size() == 1)
         return classifySingle(refs[0], sketch);
-    return classifyPair(refs[0], refs[1], sketch, allowHorizVert);
+    return classifyPair(refs[0], refs[1], sketch);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // classifySingle
+//
+// 決策表：
+//   整條線   → FixedLength（自動）
+//   整個圓   → 需選單：FixedDiameter / FixedRadius
+//   整條弧   → 需選單：FixedRadius / FixedArcLength
+//   線端點   → 點狀，WaitSecond（或選單 FixedX/Y/Coord）
+//   弧端點   → 點狀，WaitSecond（或選單 FixedX/Y/Coord）
+//   弧圓心   → 點狀，選單 FixedX/Y/Coord/WaitSecond
+//   圓心     → 點狀，選單 FixedX/Y/Coord/WaitSecond
+//   獨立點   → 點狀，選單 FixedX/Y/Coord/WaitSecond
 // ─────────────────────────────────────────────────────────────────────────────
 
 GeneralDimClassifier::Result
@@ -61,61 +71,73 @@ GeneralDimClassifier::classifySingle(const GeomRef& r, const Sketch* sketch)
     Result res;
     if (!sketch) return res;
 
+    // 獨立 SketchPoint
+    if (sketch->point(r.geomUuid)) {
+        res.needMenu   = true;
+        res.menuKey    = MenuKey::PointCoord;
+        res.nextPrompt = "GDIM 點：X座標(X) / Y座標(Y) / XY座標(C) / 量距第二點(D)";
+        return res;
+    }
+
     auto* geom = sketch->findGeometry(r.geomUuid);
     if (!geom) return res;
 
     switch (geom->type) {
+
     case SketchGeometryType::Line:
         if (r.handle == GeomHandle::Start || r.handle == GeomHandle::End) {
-            // 線端點：當作「點」，需要第二個選取
-            res.needMore   = true;
-            res.nextPrompt = "GDIM 再選一個幾何元素";
+            // 線端點 → 點狀選單
+            res.needMenu   = true;
+            res.menuKey    = MenuKey::PointCoord;
+            res.nextPrompt = "GDIM 線端點：X座標(X) / Y座標(Y) / XY座標(C) / 量距第二點(D)";
         } else {
-            // WholeGeom → 線段長度，直接進 DimPlace
-            res.type  = ConstraintType::FixedLength;
-            res.valid = true;
+            // 整條線 → 選單：線長 / 量距第二點（點到線垂距、線到線）
+            res.needMenu   = true;
+            res.menuKey    = MenuKey::LineType;
+            res.nextPrompt = "GDIM 線段：線長(L) / 量距第二點(D)";
         }
         break;
 
     case SketchGeometryType::Circle:
         if (r.handle == GeomHandle::Center) {
-            // 點選圓心 → 座標尺寸，需要第二個確認（或直接顯示 X/Y）
-            res.type  = ConstraintType::CoordinateDim;
-            res.valid = true;
+            // 圓心 → 座標選單
+            res.needMenu   = true;
+            res.menuKey    = MenuKey::PointCoord;
+            res.nextPrompt = "GDIM 圓心：X座標(X) / Y座標(Y) / XY座標(C) / 量距第二點(D)";
         } else {
-            // WholeGeom → 直徑，直接進 DimPlace
-            res.type  = ConstraintType::FixedDiameter;
-            res.valid = true;
+            // 整個圓 → 直徑/半徑選單
+            res.needMenu   = true;
+            res.menuKey    = MenuKey::CircleType;
+            res.nextPrompt = "GDIM 圓：直徑(D) / 半徑(R)";
         }
         break;
 
     case SketchGeometryType::Arc:
         if (r.handle == GeomHandle::Start || r.handle == GeomHandle::End) {
-            // 弧端點：當作「點」，需要第二個選取
-            res.needMore   = true;
-            res.nextPrompt = "GDIM 再選一個幾何元素";
+            // 弧端點 → 點狀選單
+            res.needMenu   = true;
+            res.menuKey    = MenuKey::PointCoord;
+            res.nextPrompt = "GDIM 弧端點：X座標(X) / Y座標(Y) / XY座標(C) / 量距第二點(D)";
         } else if (r.handle == GeomHandle::Center) {
-            // 弧圓心：當作「點」，需要第二個選取
-            res.needMore   = true;
-            res.nextPrompt = "GDIM 再選一個幾何元素";
+            // 弧圓心 → 點狀選單
+            res.needMenu   = true;
+            res.menuKey    = MenuKey::PointCoord;
+            res.nextPrompt = "GDIM 弧圓心：X座標(X) / Y座標(Y) / XY座標(C) / 量距第二點(D)";
         } else {
-            // WholeGeom → FixedRadius；command 狀態機會再詢問 R/L
-            res.type  = ConstraintType::FixedRadius;
-            res.valid = true;
+            // 整條弧 → 半徑/弧長選單
+            res.needMenu   = true;
+            res.menuKey    = MenuKey::ArcType;
+            res.nextPrompt = "GDIM 弧：半徑(R) / 弧長(L)";
         }
         break;
 
     case SketchGeometryType::Point:
-        // 獨立點 → 需要第二個選取
-        res.needMore   = true;
-        res.nextPrompt = "GDIM 再選一個幾何元素";
+        res.needMenu   = true;
+        res.menuKey    = MenuKey::PointCoord;
+        res.nextPrompt = "GDIM 點：X座標(X) / Y座標(Y) / XY座標(C) / 量距第二點(D)";
         break;
 
     default:
-        if (isPointLike(r, sketch)) {
-            res.needMore   = true;
-            res.nextPrompt = "GDIM 再選一個幾何元素";
-        }
         break;
     }
 
@@ -124,55 +146,86 @@ GeneralDimClassifier::classifySingle(const GeomRef& r, const Sketch* sketch)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // classifyPair
+//
+// 規則（a = 第一選，b = 第二選）：
+//
+//   a 必須是「點狀」或「整條線/圓/弧」才進入此函數。
+//   如果 a 是 WaitSecond（點狀），b 的合法範圍：
+//     b = 點狀        → FixedDistance(P2P)，拖曳切換 H/V
+//     b = 整條線      → FixedDistance(PointToLine) 垂距
+//     b = 整個圓/弧   → FixedDistance(P2P) 點到圓心距
+//     b = 同一物件    → 拒絕
+//   如果 a 是整條線（進入此函數表示使用者強制雙選），b：
+//     b = 整條線（平行） → FixedDistance(LineToLine)
+//     b = 整條線（相交） → FixedAngleDim
+//     其他            → 拒絕
 // ─────────────────────────────────────────────────────────────────────────────
 
 GeneralDimClassifier::Result
 GeneralDimClassifier::classifyPair(const GeomRef& a, const GeomRef& b,
-                                    const Sketch* sketch,
-                                    bool allowHorizVert)
+                                    const Sketch* sketch)
 {
     Result res;
     if (!sketch) return res;
 
     auto* geomA = sketch->findGeometry(a.geomUuid);
     auto* geomB = sketch->findGeometry(b.geomUuid);
-    if (!geomA || !geomB) return res;
+    const bool aIsIndepPt = (!geomA && sketch->point(a.geomUuid));
+    const bool bIsIndepPt = (!geomB && sketch->point(b.geomUuid));
+    if (!geomA && !aIsIndepPt) return res;
+    if (!geomB && !bIsIndepPt) return res;
 
-    bool aIsPoint = isPointLike(a, sketch);
-    bool bIsPoint = isPointLike(b, sketch);
-    bool aIsLine  = (geomA->type == SketchGeometryType::Line);
-    bool bIsLine  = (geomB->type == SketchGeometryType::Line);
+    const bool aIsPoint       = aIsIndepPt || isPointLike(a, sketch);
+    const bool bIsPoint       = bIsIndepPt || isPointLike(b, sketch);
+    const bool aIsWholeLine   = geomA && geomA->type == SketchGeometryType::Line
+                                && a.handle == GeomHandle::WholeGeom;
+    const bool bIsWholeLine   = geomB && geomB->type == SketchGeometryType::Line
+                                && b.handle == GeomHandle::WholeGeom;
+    const bool bIsWholeArc    = geomB && geomB->type == SketchGeometryType::Arc
+                                && b.handle == GeomHandle::WholeGeom;
+    const bool bIsWholeCircle = geomB && geomB->type == SketchGeometryType::Circle
+                                && b.handle == GeomHandle::WholeGeom;
 
-    if (aIsPoint && bIsPoint) {
-        // 取得兩點位置
-        QVector2D pa = a.resolvePosition(sketch);
-        QVector2D pb = b.resolvePosition(sketch);
-        double dx = std::abs(static_cast<double>(pb.x() - pa.x()));
-        double dy = std::abs(static_cast<double>(pb.y() - pa.y()));
+    // ── 防止選到同一物件 ────────────────────────────────────────────────────
+    if (!a.geomUuid.isEmpty() && a.geomUuid == b.geomUuid)
+        return res;  // invalid
 
-        // 初始分類一律為 FixedDistance；
-        // H/V 切換由 WaitDimPlace 的 DIM_LINE_PREVIEW handler 依滑鼠位置決定
+    // ── a 是點狀（WaitSecond 進入 classifyPair）─────────────────────────────
+    if (aIsPoint) {
+
+        if (bIsPoint) {
+            // 點 + 點 → FixedDistance(PointToPoint)，拖曳切換 H/V
+            res.type     = ConstraintType::FixedDistance;
+            res.distMode = DistanceMode::PointToPoint;
+            res.valid    = true;
+            return res;
+        }
+
+        if (bIsWholeLine) {
+            // 點 + 線 → 垂距
+            res.type     = ConstraintType::FixedDistance;
+            res.distMode = DistanceMode::PointToLine;
+            res.valid    = true;
+            return res;
+        }
+
+        if (bIsWholeArc || bIsWholeCircle) {
+            // 點 + 弧/圓 → 點到圓心距
+            res.type     = ConstraintType::FixedDistance;
+            res.distMode = DistanceMode::PointToPoint;
+            res.valid    = true;
+            return res;
+        }
+
+        // 點 + 其他點狀 handle
         res.type     = ConstraintType::FixedDistance;
         res.distMode = DistanceMode::PointToPoint;
-        res.valid = true;
-        return res;
-    }
-
-    if (aIsPoint && bIsLine) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToLine;
-        res.valid    = true;
-        return res;
-    }
-    if (bIsPoint && aIsLine) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToLine;
         res.valid    = true;
         return res;
     }
 
-    if (aIsLine && bIsLine) {
-        // 判斷是否平行：比較方向向量
+    // ── a 是整條線（線+線角度/間距）────────────────────────────────────────
+    if (aIsWholeLine && bIsWholeLine) {
         auto* lineA = dynamic_cast<const SketchLine*>(geomA);
         auto* lineB = dynamic_cast<const SketchLine*>(geomB);
         if (lineA && lineB) {
@@ -181,10 +234,11 @@ GeneralDimClassifier::classifyPair(const GeomRef& a, const GeomRef& b,
             double cross = static_cast<double>(
                 dirA.x() * dirB.y() - dirA.y() * dirB.x());
             if (std::abs(cross) < 1e-4) {
-                // 平行
+                // 平行 → 線間距
                 res.type     = ConstraintType::FixedDistance;
                 res.distMode = DistanceMode::LineToLine;
             } else {
+                // 相交 → 角度
                 res.type     = ConstraintType::FixedAngleDim;
                 res.distMode = DistanceMode::PointToPoint;
             }
@@ -193,100 +247,35 @@ GeneralDimClassifier::classifyPair(const GeomRef& a, const GeomRef& b,
         }
     }
 
-    // ── 以下處理含弧/圓的組合 ─────────────────────────────────────────────
-
-    using ST = SketchGeometryType;
-
-    bool aIsArc    = (geomA->type == ST::Arc);
-    bool bIsArc    = (geomB->type == ST::Arc);
-    bool aIsCircle = (geomA->type == ST::Circle);
-    bool bIsCircle = (geomB->type == ST::Circle);
-
-    // 情境7: 點 + 弧（點到弧圓心距）
-    if (aIsPoint && bIsArc) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToPoint;  // point ↔ arc center
-        res.valid    = true;
-        return res;
-    }
-    if (bIsPoint && aIsArc) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToPoint;
-        res.valid    = true;
-        return res;
-    }
-
-    // 情境8: 點 + 圓（點到圓心距）
-    if (aIsPoint && bIsCircle) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToPoint;
-        res.valid    = true;
-        return res;
-    }
-    if (bIsPoint && aIsCircle) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToPoint;
-        res.valid    = true;
-        return res;
-    }
-
-    // 情境9: 線 + 弧（最短距離，以點到線近似）
-    if (aIsLine && bIsArc) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToLine;
-        res.valid    = true;
-        return res;
-    }
-    if (bIsLine && aIsArc) {
+    // ── a 是整條線 + b 是點（垂距，順序調換）───────────────────────────────
+    if (aIsWholeLine && bIsPoint) {
         res.type     = ConstraintType::FixedDistance;
         res.distMode = DistanceMode::PointToLine;
         res.valid    = true;
         return res;
     }
 
-    // 情境10: 線 + 圓（圓心到線距離）
-    if (aIsLine && bIsCircle) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToLine;
-        res.valid    = true;
-        return res;
-    }
-    if (bIsLine && aIsCircle) {
+    // ── a 是整條線 + b 是圓/弧（圓心到線垂距）──────────────────────────────
+    if (aIsWholeLine && (bIsWholeArc || bIsWholeCircle)) {
         res.type     = ConstraintType::FixedDistance;
         res.distMode = DistanceMode::PointToLine;
         res.valid    = true;
         return res;
     }
 
-    // 情境11: 弧 + 弧（兩圓心距）
-    if (aIsArc && bIsArc) {
+    // ── 其他組合（圓/弧 整體 + 圓/弧 整體）→ 兩圓心距 ──────────────────────
+    const bool aIsWholeArc    = geomA && geomA->type == SketchGeometryType::Arc
+                                && a.handle == GeomHandle::WholeGeom;
+    const bool aIsWholeCircle = geomA && geomA->type == SketchGeometryType::Circle
+                                && a.handle == GeomHandle::WholeGeom;
+    if ((aIsWholeArc || aIsWholeCircle) && (bIsWholeArc || bIsWholeCircle)) {
         res.type     = ConstraintType::FixedDistance;
         res.distMode = DistanceMode::PointToPoint;
         res.valid    = true;
         return res;
     }
 
-    // 情境12: 圓 + 圓（兩圓心距）
-    if (aIsCircle && bIsCircle) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToPoint;
-        res.valid    = true;
-        return res;
-    }
-
-    // 情境13: 弧 + 圓（兩圓心距）
-    if ((aIsArc && bIsCircle) || (aIsCircle && bIsArc)) {
-        res.type     = ConstraintType::FixedDistance;
-        res.distMode = DistanceMode::PointToPoint;
-        res.valid    = true;
-        return res;
-    }
-
-    // 最後回退（不應到達此處）
-    res.type     = ConstraintType::FixedDistance;
-    res.distMode = DistanceMode::PointToPoint;
-    res.valid    = true;
-    return res;
+    return res;  // invalid
 }
 
 } // namespace aicad::cad

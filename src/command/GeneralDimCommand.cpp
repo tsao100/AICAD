@@ -30,6 +30,31 @@ cad::Sketch* GeneralDimCommand::activeSketch() const {
     return core::Application::instance()->activeSketch();
 }
 
+// 點 P 到線段 (A,B) 的投影點（在直線上，不 clamp 到端點）
+static QVector2D projectPointOnLine(const QVector2D& P,
+                                     const QVector2D& A,
+                                     const QVector2D& B)
+{
+    QVector2D AB = B - A;
+    float len2 = QVector2D::dotProduct(AB, AB);
+    if (len2 < 1e-10f) return A;
+    float t = QVector2D::dotProduct(P - A, AB) / len2;
+    return A + AB * t;
+}
+
+// 點 P 到直線 (A,B) 的垂距
+static double pointToLineDistance(const QVector2D& P,
+                                   const QVector2D& A,
+                                   const QVector2D& B)
+{
+    QVector2D AB = B - A;
+    float len = AB.length();
+    if (len < 1e-7f) return static_cast<double>((P - A).length());
+    // 叉積 / 線長
+    float cross = AB.x() * (A.y() - P.y()) - AB.y() * (A.x() - P.x());
+    return static_cast<double>(std::abs(cross) / len);
+}
+
 QString GeneralDimCommand::constraintTypeName() const {
     switch (m_type) {
     case ConstraintType::FixedLength:    return "FixedLength";
@@ -41,6 +66,8 @@ QString GeneralDimCommand::constraintTypeName() const {
     case ConstraintType::FixedRadius:    return "FixedRadius";
     case ConstraintType::FixedDistance:  return "FixedDistance";
     case ConstraintType::FixedAngleDim:  return "FixedAngleDim";
+    case ConstraintType::FixedX:         return "FixedX";
+    case ConstraintType::FixedY:         return "FixedY";
     default: return "Constraint";
     }
 }
@@ -97,6 +124,28 @@ double GeneralDimCommand::measureCurrentValue() const {
     case ConstraintType::FixedVertDist:
     case ConstraintType::FixedDistance: {
         if (m_refs.size() < 2) return 0.0;
+
+        if (m_distMode == cad::DistanceMode::PointToLine) {
+            // refs[0]=點, refs[1]=整條線 WholeGeom → 垂距
+            QVector2D pt = m_refs[0].resolvePosition(sk);
+            auto* geomB  = sk->findGeometry(m_refs[1].geomUuid);
+            if (!geomB) return 0.0;
+            auto* ln = dynamic_cast<const cad::SketchLine*>(geomB);
+            if (!ln) return 0.0;
+            return pointToLineDistance(pt, ln->start, ln->end);
+        }
+
+        if (m_distMode == cad::DistanceMode::LineToLine) {
+            // refs[0]=線A WholeGeom, refs[1]=線B WholeGeom → 平行線間距
+            auto* geomA = sk->findGeometry(m_refs[0].geomUuid);
+            auto* geomB = sk->findGeometry(m_refs[1].geomUuid);
+            auto* lnA = dynamic_cast<const cad::SketchLine*>(geomA);
+            auto* lnB = dynamic_cast<const cad::SketchLine*>(geomB);
+            if (!lnA || !lnB) return 0.0;
+            // 用 A 的起點到 B 線的垂距
+            return pointToLineDistance(lnA->start, lnB->start, lnB->end);
+        }
+
         QVector2D pa = m_refs[0].resolvePosition(sk);
         QVector2D pb = m_refs[1].resolvePosition(sk);
         if (m_type == ConstraintType::FixedHorizDist)
@@ -108,6 +157,16 @@ double GeneralDimCommand::measureCurrentValue() const {
     case ConstraintType::CoordinateDim: {
         QVector2D p = m_refs[0].resolvePosition(sk);
         return static_cast<double>(p.x());  // value = x
+    }
+    case ConstraintType::FixedX: {
+        if (m_refs.isEmpty()) return 0.0;
+        QVector2D p = m_refs[0].resolvePosition(sk);
+        return static_cast<double>(p.x());
+    }
+    case ConstraintType::FixedY: {
+        if (m_refs.isEmpty()) return 0.0;
+        QVector2D p = m_refs[0].resolvePosition(sk);
+        return static_cast<double>(p.y());
     }
     case ConstraintType::FixedAngleDim:
     case ConstraintType::FixedAngle: {
@@ -199,11 +258,14 @@ void GeneralDimCommand::subscribePreview() {
             using CT = cad::ConstraintType;
             using GH = cad::GeomHandle;
 
+            // PointToLine / LineToLine / FixedAngleDim 等不做 H/V 切換
             const bool isFHV =
-                m_type == CT::FixedDistance  ||
-                m_type == CT::FixedHorizDist ||
-                m_type == CT::FixedVertDist  ||
-                m_type == CT::FixedLength;
+                (m_type == CT::FixedDistance  ||
+                 m_type == CT::FixedHorizDist ||
+                 m_type == CT::FixedVertDist  ||
+                 m_type == CT::FixedLength)
+                && m_distMode != cad::DistanceMode::PointToLine
+                && m_distMode != cad::DistanceMode::LineToLine;
             if (!isFHV) return;
 
             auto* sk = activeSketch();
@@ -478,7 +540,8 @@ void GeneralDimCommand::clearDimPreview()
 
 void GeneralDimCommand::onGeomHover(const QVariant& payload)
 {
-    // 只在 Idle（未選任何幾何）或 WaitSecond（已選1個）時更新預覽
+    // WaitMenu 狀態下 hover 不更新預覽（等待鍵盤輸入）
+    if (m_state == State::WaitMenu) return;
     if (m_state != State::Idle && m_state != State::WaitSecond) return;
 
     QVariantMap map    = payload.toMap();
@@ -486,41 +549,99 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
     int     hoverHandle= map.value("handle", -1).toInt();
 
     if (hoverUuid.isEmpty()) {
-        // 滑鼠沒有 hover 到任何幾何
-        if (m_state == State::Idle) {
-            clearDimPreview();
-        }
-        // WaitSecond 狀態仍保留第一個選取的單選預覽
+        if (m_state == State::Idle) clearDimPreview();
         return;
     }
 
     GeomRef extraRef(hoverUuid, static_cast<GeomHandle>(hoverHandle));
+    auto* sk = activeSketch();
 
     if (m_state == State::Idle) {
-        // 尚未選任何幾何：用 hover 幾何單獨預覽
+        // 尚未選任何幾何：用 hover 幾何顯示預覽
+        // 對 needMenu 情況，用預設類型預覽（整條線→長度，圓→直徑，弧→半徑）
         QList<GeomRef> tempRefs = { extraRef };
-        auto* sk = activeSketch();
         auto result = GeneralDimClassifier::classify(tempRefs, sk);
-        if (!result.valid || result.needMore) {
+
+        ConstraintType previewType = result.type;
+        DistanceMode   previewMode = result.distMode;
+
+        if (result.needMenu) {
+            // 為 hover 選一個合理的預覽類型
+            using MK = GeneralDimClassifier::MenuKey;
+            switch (result.menuKey) {
+            case MK::LineType:
+                previewType = cad::ConstraintType::FixedLength;
+                break;
+            case MK::CircleType:
+                previewType = cad::ConstraintType::FixedDiameter;
+                break;
+            case MK::ArcType:
+                previewType = cad::ConstraintType::FixedRadius;
+                break;
+            case MK::PointCoord:
+                // 點類 hover 不顯示預覽（不知道要顯示哪種）
+                clearDimPreview();
+                return;
+            default:
+                clearDimPreview();
+                return;
+            }
+        } else if (!result.valid) {
             clearDimPreview();
             return;
         }
-        // 暫時設置量測
+
         QList<GeomRef> savedRefs = m_refs;
         ConstraintType savedType = m_type;
         DistanceMode   savedMode = m_distMode;
-        m_refs = tempRefs; m_type = result.type; m_distMode = result.distMode;
+        m_refs = tempRefs; m_type = previewType; m_distMode = previewMode;
         double val = measureCurrentValue();
         m_refs = savedRefs; m_type = savedType; m_distMode = savedMode;
 
         view::CadView::DimPreviewInfo info;
-        info.refs = tempRefs; info.type = result.type;
-        info.distMode = result.distMode; info.value = val; info.valid = true;
+        info.refs = tempRefs; info.type = previewType;
+        info.distMode = previewMode; info.value = val; info.valid = true;
         auto* cadView = core::Application::instance()->uiManager()->cadView();
         if (cadView) cadView->setDimPreview(info);
+
     } else {
-        // WaitSecond：已選1個，hover 第2個 → 顯示雙選預覽
-        updateDimPreview(&extraRef);
+        // WaitSecond：已選1個，hover 第2個
+        QList<GeomRef> tempRefs = m_refs;
+        tempRefs.append(extraRef);
+
+        // ── hover 時也做第二選 handle 正規化（與 onGeomPicked 邏輯一致）──────
+        if (tempRefs.size() == 2) {
+            const GeomRef& first  = tempRefs[0];
+            GeomRef&       second = tempRefs[1];
+            auto* geomFirst  = sk ? sk->findGeometry(first.geomUuid)  : nullptr;
+            auto* geomSecond = sk ? sk->findGeometry(second.geomUuid) : nullptr;
+            const bool firstIsWholeGeom =
+                geomFirst && first.handle == GeomHandle::WholeGeom;
+            const bool secondIsLine =
+                geomSecond && geomSecond->type == SketchGeometryType::Line;
+            const bool secondIsArc =
+                geomSecond && geomSecond->type == SketchGeometryType::Arc;
+            const bool secondIsCircle =
+                geomSecond && geomSecond->type == SketchGeometryType::Circle;
+            if (firstIsWholeGeom &&
+                (secondIsLine || secondIsArc || secondIsCircle) &&
+                second.handle != GeomHandle::WholeGeom)
+            {
+                second = GeomRef(second.geomUuid, GeomHandle::WholeGeom);
+            }
+        }
+
+        auto result = GeneralDimClassifier::classify(tempRefs, sk);
+
+        if (!result.valid) {
+            // 非法組合：退回只顯示第一選的預覽（不清除，保持第一選提示）
+            updateDimPreview(nullptr);
+            return;
+        }
+
+        // 有合法結果：更新雙選預覽（傳入正規化後的第二個 ref）
+        GeomRef normalizedSecond = tempRefs.size() == 2 ? tempRefs[1] : extraRef;
+        updateDimPreview(&normalizedSecond);
     }
 }
 
@@ -596,13 +717,104 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
 
     m_refs.append(ref);
 
+    // ── WaitSecond 第二選 handle 正規化 ──────────────────────────────────────
+    // 當第一選是整條線/弧/圓（WholeGeom），第二選如果是同一類型幾何的端點
+    // （OSnap 吸附到線端、弧端），應把 handle 正規化為 WholeGeom，
+    // 確保 classifyPair 能走到「線+線」或「線+弧/圓」分支
+    if (m_refs.size() == 2) {
+        auto* sk2 = sk ? sk : activeSketch();
+        if (sk2) {
+            const GeomRef& first  = m_refs[0];
+            GeomRef&       second = m_refs[1];
+
+            auto* geomFirst  = sk2->findGeometry(first.geomUuid);
+            auto* geomSecond = sk2->findGeometry(second.geomUuid);
+
+            // 第一選是 WholeGeom 的線/弧/圓
+            const bool firstIsWholeGeom =
+                geomFirst && first.handle == GeomHandle::WholeGeom;
+
+            // 第二選是同類型的線段（handle 可能是 Start/End/WholeGeom）
+            const bool secondIsLine =
+                geomSecond && geomSecond->type == SketchGeometryType::Line;
+            const bool secondIsArc =
+                geomSecond && geomSecond->type == SketchGeometryType::Arc;
+            const bool secondIsCircle =
+                geomSecond && geomSecond->type == SketchGeometryType::Circle;
+
+            if (firstIsWholeGeom &&
+                (secondIsLine || secondIsArc || secondIsCircle) &&
+                second.handle != GeomHandle::WholeGeom)
+            {
+                // 把第二選的 handle 正規化為 WholeGeom
+                second = GeomRef(second.geomUuid, GeomHandle::WholeGeom);
+            }
+        }
+    }
+
     auto result = GeneralDimClassifier::classify(m_refs, sk ? sk : activeSketch());
 
+    // ── 非法組合（例如選了同一物件的不同 handle）：撤銷，留在 WaitSecond ────
+    if (m_refs.size() == 2 && !result.valid && !result.needMore && !result.needMenu) {
+        m_refs.removeLast();
+        if (cmdMgr)
+            cmdMgr->printError("無法與前一個選取組合，請重新選擇");
+        return;
+    }
+
+    // ── 需要再選第二個 ────────────────────────────────────────────────────────
     if (result.needMore && m_refs.size() == 1) {
         transitionToWaitSecond();
         return;
     }
 
+    // ── 需要彈出選單讓使用者選類型 ───────────────────────────────────────────
+    if (result.needMenu) {
+        using MK = GeneralDimClassifier::MenuKey;
+        using CT = cad::ConstraintType;
+
+        QList<MenuOption> opts;
+        QString prompt = result.nextPrompt;
+
+        switch (result.menuKey) {
+
+        case MK::LineType:
+            // 整條線：線長 / 量距第二點
+            opts.append({"L", "線長",      CT::FixedLength,  false});
+            opts.append({"D", "量距第二點", CT::FixedDistance, true});
+            break;
+
+        case MK::CircleType:
+            // 整個圓：直徑 / 半徑
+            opts.append({"D", "直徑 Ø",  CT::FixedDiameter, false});
+            opts.append({"R", "半徑 R",  CT::FixedRadius,   false});
+            break;
+
+        case MK::ArcType:
+            // 整條弧：半徑 / 弧長
+            opts.append({"R", "半徑 R",  CT::FixedRadius,   false});
+            opts.append({"L", "弧長 ~",  CT::FixedArcLength,false});
+            break;
+
+        case MK::PointCoord:
+            // 點/圓心/弧圓心：X / Y / XY / 量距第二點
+            opts.append({"X", "X 座標",   CT::FixedX,        false});
+            opts.append({"Y", "Y 座標",   CT::FixedY,        false});
+            opts.append({"C", "XY 座標",  CT::CoordinateDim, false});
+            opts.append({"D", "量距第二點",CT::FixedDistance, true});
+            break;
+
+        default:
+            break;
+        }
+
+        if (!opts.isEmpty()) {
+            transitionToWaitMenu(opts, prompt);
+            return;
+        }
+    }
+
+    // ── 已分類完成，進入 DimPlace ─────────────────────────────────────────────
     if (result.valid) {
         m_type     = result.type;
         m_distMode = result.distMode;
@@ -631,18 +843,60 @@ void GeneralDimCommand::onStringInput(const QVariant& payload)
     auto* cmdMgr = core::CommandLineManager::instance();
     QString input = payload.toString().trimmed();
 
+    // ── WaitMenu：使用者從選單選擇束制類型 ───────────────────────────────────
+    if (m_state == State::WaitMenu) {
+        QString key = input.toUpper();
+
+        // 找符合的選項
+        const MenuOption* chosen = nullptr;
+        for (const auto& opt : m_menuOptions) {
+            if (opt.key.compare(key, Qt::CaseInsensitive) == 0) {
+                chosen = &opt;
+                break;
+            }
+        }
+
+        if (!chosen) {
+            // 無效輸入，列出選項重試
+            if (cmdMgr) {
+                QStringList keys;
+                for (const auto& o : m_menuOptions)
+                    keys << QString("%1=%2").arg(o.key).arg(o.label);
+                cmdMgr->printError(
+                    QString("無效選項，請輸入：%1").arg(keys.join(" / ")));
+            }
+            return;  // 留在 WaitMenu
+        }
+
+        m_type = chosen->type;
+
+        if (chosen->needSecond) {
+            // 選「量距第二點」→ 進 WaitSecond
+            transitionToWaitSecond();
+        } else {
+            // 直接確定類型，進 WaitDimPlace
+            if (cmdMgr)
+                cmdMgr->printMessage(
+                    QString("  類型: %1").arg(constraintTypeName()));
+            updateDimPreview(nullptr);
+            transitionToWaitDimPlace();
+        }
+        return;
+    }
+
+    // ── WaitArcType（舊路徑，保留相容）────────────────────────────────────────
     if (m_state == State::WaitArcType) {
         if (input.compare("L", Qt::CaseInsensitive) == 0)
-            m_type = ConstraintType::FixedArcLength;
+            m_type = cad::ConstraintType::FixedArcLength;
         else
-            m_type = ConstraintType::FixedRadius;
+            m_type = cad::ConstraintType::FixedRadius;
         transitionToWaitDimPlace();
         return;
     }
 
+    // ── WaitValue：使用者輸入尺寸數值 ────────────────────────────────────────
     if (m_state == State::WaitValue) {
         if (input.isEmpty()) {
-            // 採用量測值
             m_pendingValue = m_measuredValue;
         } else {
             bool isNum;
@@ -651,13 +905,13 @@ void GeneralDimCommand::onStringInput(const QVariant& payload)
                 m_pendingValue = v;
                 m_pendingExpr.clear();
             } else {
-                Sketch* sk = activeSketch();
+                cad::Sketch* sk = activeSketch();
                 if (!sk) { cleanup(); return; }
                 auto [ok, ev] = sk->parameterStore()->evaluate(input);
                 if (!ok) {
                     if (cmdMgr) cmdMgr->printError(
                         QString("Unknown expression: '%1'").arg(input));
-                    return;  // 保持 WaitValue，讓使用者重試
+                    return;
                 }
                 m_pendingValue = ev;
                 m_pendingExpr  = input;
@@ -698,6 +952,20 @@ void GeneralDimCommand::onCancelled(const QVariant&) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 狀態轉換
 // ─────────────────────────────────────────────────────────────────────────────
+
+void GeneralDimCommand::transitionToWaitMenu(
+    const QList<MenuOption>& options, const QString& prompt)
+{
+    m_state       = State::WaitMenu;
+    m_menuOptions = options;
+
+    auto* cmdMgr = core::CommandLineManager::instance();
+    if (cmdMgr) {
+        cmdMgr->showPrompt(prompt);
+        cmdMgr->waitForInput(core::InputType::String);
+    }
+    subscribeStringInput();
+}
 
 void GeneralDimCommand::transitionToWaitSecond()
 {
@@ -868,6 +1136,7 @@ void GeneralDimCommand::cleanup()
     unsubscribeAll();
     m_state          = State::Idle;
     m_refs.clear();
+    m_menuOptions.clear();
     m_originalLineRef = cad::GeomRef{};
     m_pendingValue   = 0.0;
     m_pendingExpr.clear();

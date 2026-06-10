@@ -193,10 +193,39 @@ void DimPreviewOverlay::rebuild()
         m_dimR    = r;
         m_dimCenter = center;
     } else {
-        // FixedDistance / HorizDist / VertDist
+        // FixedDistance / HorizDist / VertDist / PointToLine / LineToLine
         if (m_info.refs.size() < 2) return;
         A = m_info.refs[0].resolvePosition(m_sketch);
-        B = m_info.refs[1].resolvePosition(m_sketch);
+
+        if (m_info.distMode == cad::DistanceMode::PointToLine) {
+            // refs[1] = 整條線 WholeGeom → B = 投影點
+            auto* geomB = m_sketch->findGeometry(m_info.refs[1].geomUuid);
+            auto* ln    = dynamic_cast<const cad::SketchLine*>(geomB);
+            if (!ln) return;
+            // 投影公式：B = A + (A→線 的垂足)
+            QVector2D AB = ln->end - ln->start;
+            float len2   = QVector2D::dotProduct(AB, AB);
+            float t      = (len2 > 1e-10f)
+                           ? QVector2D::dotProduct(A - ln->start, AB) / len2
+                           : 0.0f;
+            B = ln->start + AB * t;
+        } else if (m_info.distMode == cad::DistanceMode::LineToLine) {
+            // refs[0]=線A, refs[1]=線B → A=線A起點, B=線A起點投影到線B
+            auto* geomA = m_sketch->findGeometry(m_info.refs[0].geomUuid);
+            auto* geomB = m_sketch->findGeometry(m_info.refs[1].geomUuid);
+            auto* lnA   = dynamic_cast<const cad::SketchLine*>(geomA);
+            auto* lnB   = dynamic_cast<const cad::SketchLine*>(geomB);
+            if (!lnA || !lnB) return;
+            A = lnA->start;
+            QVector2D AB = lnB->end - lnB->start;
+            float len2   = QVector2D::dotProduct(AB, AB);
+            float t      = (len2 > 1e-10f)
+                           ? QVector2D::dotProduct(A - lnB->start, AB) / len2
+                           : 0.0f;
+            B = lnB->start + AB * t;
+        } else {
+            B = m_info.refs[1].resolvePosition(m_sketch);
+        }
     }
 
     // ── 計算尺寸線端點 dA/dB（草圖平面 2D）──────────────────────────────────
@@ -215,7 +244,7 @@ void DimPreviewOverlay::rebuild()
         dA = m_mouse - m_dimPerp * m_dimR;
         dB = m_mouse + m_dimPerp * m_dimR;
     } else if (m_info.type == CT::FixedHorizDist) {
-        // 水平距離：尺寸線水平（草圖 Y 固定 = 滑鼠 Y 座標）
+        // 水平距離
         float dimY = m_mouse.y();
         float minY = std::min(A.y(), B.y());
         float maxY = std::max(A.y(), B.y());
@@ -226,7 +255,7 @@ void DimPreviewOverlay::rebuild()
         dA = QVector2D(A.x(), dimY);
         dB = QVector2D(B.x(), dimY);
     } else if (m_info.type == CT::FixedVertDist) {
-        // 垂直距離：尺寸線垂直（草圖 X 固定 = 滑鼠 X 座標）
+        // 垂直距離
         float dimX = m_mouse.x();
         float minX = std::min(A.x(), B.x());
         float maxX = std::max(A.x(), B.x());
@@ -236,6 +265,19 @@ void DimPreviewOverlay::rebuild()
         }
         dA = QVector2D(dimX, A.y());
         dB = QVector2D(dimX, B.y());
+    } else if (m_info.distMode == cad::DistanceMode::PointToLine
+               || m_info.distMode == cad::DistanceMode::LineToLine) {
+        // PointToLine / LineToLine：尺寸線沿 A→B 方向（垂足方向），
+        // 偏移量由滑鼠到 AB 中點的垂直分量決定
+        QVector2D ab  = B - A;
+        float abLen   = ab.length();
+        // 垂直尺寸方向（A→B 的法向）
+        QVector2D perpDir = (abLen < 1e-4f)
+            ? QVector2D(1, 0)
+            : QVector2D(-ab.y(), ab.x()) / abLen;
+        // 尺寸線就是 A→B（垂距線），不再偏移
+        dA = A;
+        dB = B;
     } else if (m_info.type == CT::FixedX) {
         // FixedX：單點水平引線（點 → X=value 的投影點）
         if (!m_info.refs.isEmpty()) {
