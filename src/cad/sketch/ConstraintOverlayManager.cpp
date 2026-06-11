@@ -131,6 +131,20 @@ void ConstraintOverlayManager::createSymbolFor(const SketchConstraint& c) {
             QVector2D rp2 = c.refs[1].resolvePosition(m_sketch);
             if (!rp1.isNull() || !rp2.isNull())
                 dim->setRefPositions(rp1, rp2);
+        } else if (c.refs.size() == 1 && m_sketch) {
+            // 單 ref 類型（FixedX, FixedY, CoordinateDim）：設 rp1，rp2 依值合成
+            QVector2D rp1 = c.refs[0].resolvePosition(m_sketch);
+            QVector2D rp2;
+            if (c.type == ConstraintType::FixedX)
+                rp2 = QVector2D(static_cast<float>(c.value), rp1.y());
+            else if (c.type == ConstraintType::FixedY)
+                rp2 = QVector2D(rp1.x(), static_cast<float>(c.value));
+            else if (c.type == ConstraintType::CoordinateDim)
+                rp2 = QVector2D(static_cast<float>(c.value), rp1.y());
+            else
+                rp2 = rp1;
+            if (!rp1.isNull())
+                dim->setRefPositions(rp1, rp2);
         }
         // 套用已儲存的尺寸線偏移（使用者拖曳後存入 constraint）
         dim->setDimLineOffset(c.dimLineOffsetX, c.dimLineOffsetY);
@@ -162,6 +176,19 @@ void ConstraintOverlayManager::updateSymbolFor(const SketchConstraint& c) {
             QVector2D rp1 = c.refs[0].resolvePosition(m_sketch);
             QVector2D rp2 = c.refs[1].resolvePosition(m_sketch);
             if (!rp1.isNull() || !rp2.isNull())
+                dimAIS->setRefPositions(rp1, rp2);
+        } else if (c.refs.size() == 1 && m_sketch) {
+            QVector2D rp1 = c.refs[0].resolvePosition(m_sketch);
+            QVector2D rp2;
+            if (c.type == ConstraintType::FixedX)
+                rp2 = QVector2D(static_cast<float>(c.value), rp1.y());
+            else if (c.type == ConstraintType::FixedY)
+                rp2 = QVector2D(rp1.x(), static_cast<float>(c.value));
+            else if (c.type == ConstraintType::CoordinateDim)
+                rp2 = QVector2D(static_cast<float>(c.value), rp1.y());
+            else
+                rp2 = rp1;
+            if (!rp1.isNull())
                 dimAIS->setRefPositions(rp1, rp2);
         }
         dimAIS->setDimLineOffset(c.dimLineOffsetX, c.dimLineOffsetY);

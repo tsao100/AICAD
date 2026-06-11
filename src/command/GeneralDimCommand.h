@@ -26,7 +26,8 @@ private:
     enum class State {
         Idle,           ///< 等待第一個幾何
         WaitSecond,     ///< 等待第二個幾何（Point 選取後）
-        WaitArcType,    ///< 等待使用者選 Radius / ArcLength
+        WaitMenu,       ///< 等待使用者從選單選擇束制類型
+        WaitArcType,    ///< 等待使用者選 Radius / ArcLength（已棄用，由 WaitMenu 取代）
         WaitDimPlace,   ///< PlaceDimLine 模式，等待點擊確認偏移
         WaitValue,      ///< 等待使用者輸入數值/表達式
     };
@@ -43,8 +44,17 @@ private:
     bool                 m_driving       = true;
     double               m_dimOffsetX    = 0.0;
     double               m_dimOffsetY    = 0.0;
-    QVector2D            m_dimAnchor2D;           ///< beginPlaceDimLine 時的錨點（草圖座標），用於 commit 時修正 H/V offset
+    QVector2D            m_dimAnchor2D;           ///< beginPlaceDimLine 時的錨點（草圖座標）
     bool                 m_hasPending    = false; ///< execute() 帶入了預設值
+
+    /// WaitMenu 選單選項列表，key=使用者輸入字母, value=ConstraintType
+    struct MenuOption {
+        QString           key;   ///< 使用者輸入（單個字母，大小寫均可）
+        QString           label; ///< 顯示給使用者的說明
+        cad::ConstraintType type;
+        bool              needSecond = false; ///< true = 選此項後進 WaitSecond
+    };
+    QList<MenuOption>    m_menuOptions;
 
     void subscribeGeomPicked   ();
     void subscribeGeomHover    ();   ///< 新增：GetGeom 模式 hover 預覽
@@ -62,6 +72,7 @@ private:
     void onCancelled    (const QVariant&);
 
     void transitionToWaitSecond  ();
+    void transitionToWaitMenu    (const QList<MenuOption>& options, const QString& prompt);
     void transitionToWaitArcType ();
     void transitionToWaitDimPlace();
     void transitionToWaitValue   ();

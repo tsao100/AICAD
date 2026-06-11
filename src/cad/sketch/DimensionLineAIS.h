@@ -53,6 +53,9 @@ public:
     double  dimOffsetY() const { return m_dimOffsetY; }
     gp_Pnt  dimLineAnchorPoint3D() const;
 
+    /// 計算數值標籤的世界座標中心（供 ComputeSelection 及拖曳錨點使用）
+    gp_Pnt  labelPosition3D() const;
+
 private:
     void Compute(const Handle(PrsMgr_PresentationManager)&,
                  const Handle(Prs3d_Presentation)& prs,
@@ -70,6 +73,11 @@ private:
     void drawDiameterDimension  (const Handle(Prs3d_Presentation)& prs);
     void drawArcLengthDimension (const Handle(Prs3d_Presentation)& prs);
     void drawCoordinateDimension(const Handle(Prs3d_Presentation)& prs);
+    void drawPerpendicularSymbol(const Handle(Prs3d_Presentation)& prs,
+                                 const gp_Pnt& foot,
+                                 const gp_Pnt& fromPt,
+                                 const gp_Pnt& onLinePt,
+                                 double symSize = 3.0);
 
     // 輔助：從約束 refs 取得世界座標點
     bool getRefPoints(gp_Pnt& p1, gp_Pnt& p2) const;
