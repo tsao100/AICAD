@@ -489,6 +489,28 @@ void GeneralDimCommand::updateDimPreview(const cad::GeomRef* extraRef)
     if (extraRef && !extraRef->geomUuid.isEmpty())
         tempRefs.append(*extraRef);
 
+    // ── 第二選 handle 正規化 ─────────────────────────────────────────────────
+    // 當第一選是整條幾何（WholeGeom），第二選若是同類型幾何但 OSnap 吸附到端點
+    // （handle = Start/End），強制改為 WholeGeom，確保 classifyPair 走正確分支
+    if (tempRefs.size() == 2 && sk) {
+        const GeomRef& first  = tempRefs[0];
+        GeomRef&       second = tempRefs[1];
+        auto* geomFirst  = sk->findGeometry(first.geomUuid);
+        auto* geomSecond = sk->findGeometry(second.geomUuid);
+        const bool firstIsWhole =
+            geomFirst && first.handle == GeomHandle::WholeGeom;
+        const bool secondIsGeom =
+            geomSecond &&
+            (geomSecond->type == SketchGeometryType::Line   ||
+             geomSecond->type == SketchGeometryType::Arc    ||
+             geomSecond->type == SketchGeometryType::Circle);
+        if (firstIsWhole && secondIsGeom &&
+            second.handle != GeomHandle::WholeGeom)
+        {
+            second = GeomRef(second.geomUuid, GeomHandle::WholeGeom);
+        }
+    }
+
     if (tempRefs.isEmpty()) { cadView->clearDimPreview(); return; }
 
     // WaitDimPlace 狀態：m_type/m_distMode 已由 subscribePreview 動態設好（F/H/V），
@@ -606,25 +628,24 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
 
     } else {
         // WaitSecond：已選1個，hover 第2個
+        // 先用正規化後的 tempRefs 做 classify 確認合法性
         QList<GeomRef> tempRefs = m_refs;
         tempRefs.append(extraRef);
 
-        // ── hover 時也做第二選 handle 正規化（與 onGeomPicked 邏輯一致）──────
-        if (tempRefs.size() == 2) {
+        // 正規化：第一選是 WholeGeom 時，第二選幾何強制 WholeGeom
+        if (tempRefs.size() == 2 && sk) {
             const GeomRef& first  = tempRefs[0];
             GeomRef&       second = tempRefs[1];
-            auto* geomFirst  = sk ? sk->findGeometry(first.geomUuid)  : nullptr;
-            auto* geomSecond = sk ? sk->findGeometry(second.geomUuid) : nullptr;
-            const bool firstIsWholeGeom =
+            auto* geomFirst  = sk->findGeometry(first.geomUuid);
+            auto* geomSecond = sk->findGeometry(second.geomUuid);
+            const bool firstIsWhole =
                 geomFirst && first.handle == GeomHandle::WholeGeom;
-            const bool secondIsLine =
-                geomSecond && geomSecond->type == SketchGeometryType::Line;
-            const bool secondIsArc =
-                geomSecond && geomSecond->type == SketchGeometryType::Arc;
-            const bool secondIsCircle =
-                geomSecond && geomSecond->type == SketchGeometryType::Circle;
-            if (firstIsWholeGeom &&
-                (secondIsLine || secondIsArc || secondIsCircle) &&
+            const bool secondIsGeom =
+                geomSecond &&
+                (geomSecond->type == SketchGeometryType::Line   ||
+                 geomSecond->type == SketchGeometryType::Arc    ||
+                 geomSecond->type == SketchGeometryType::Circle);
+            if (firstIsWhole && secondIsGeom &&
                 second.handle != GeomHandle::WholeGeom)
             {
                 second = GeomRef(second.geomUuid, GeomHandle::WholeGeom);
@@ -632,16 +653,14 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
         }
 
         auto result = GeneralDimClassifier::classify(tempRefs, sk);
-
         if (!result.valid) {
-            // 非法組合：退回只顯示第一選的預覽（不清除，保持第一選提示）
             updateDimPreview(nullptr);
             return;
         }
 
-        // 有合法結果：更新雙選預覽（傳入正規化後的第二個 ref）
-        GeomRef normalizedSecond = tempRefs.size() == 2 ? tempRefs[1] : extraRef;
-        updateDimPreview(&normalizedSecond);
+        // 傳正規化後的第二個 ref（updateDimPreview 內部也會再做一次正規化）
+        GeomRef secondNorm = (tempRefs.size() == 2) ? tempRefs[1] : extraRef;
+        updateDimPreview(&secondNorm);
     }
 }
 
