@@ -65,6 +65,14 @@ Document::Document(QObject* parent)
 {
     initOCAF();
 
+    // ✅ Subscribe visibility-changed here so Railway-only documents
+    //    (which never call initializeOrigin) also handle eye icon toggles.
+    core::EventBus* bus = core::Application::instance()->eventBus();
+    bus->subscribe("feature.visibility-changed", this,
+                   [this](const QVariant& data) {
+                       onVisibilityChanged(data.toMap());
+                   });
+
     // 當任一參數改變 → 標記所有參數化特徵 dirty 並重建
     connect(m_parameterStore, &aicad::core::ParameterStore::parameterChanged,
             this, [this](const QString&) { rebuildAll(); });
@@ -1160,6 +1168,38 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
     // ── 3. Feature (Sketch, Extrude …) ───────────────────────────────────
     Feature* feature = findFeature(itemId);
     if (!feature || m_aisContext.IsNull()) {
+        // ── 4. TrackCenterLine or its VAlignment child ────────────────────
+        // Check valign_ prefix first
+        if (itemId.startsWith("valign_")) {
+            const QString tclId = itemId.mid(7);  // strip "valign_"
+            railway::TrackCenterLine* tcl = findTrackCenterLine(tclId);
+            if (tcl) {
+                tcl->setVAlignVisible(visible);
+                setModified(true);
+                // Publish a separate event so UIManager can show/hide dock
+                core::EventBus* bus = core::Application::instance()->eventBus();
+                QVariantMap vdata;
+                vdata["tclId"]   = tclId;
+                vdata["visible"] = visible;
+                bus->publish("railway.valign-visibility-changed", vdata);
+                Q_EMIT treeStructureChanged();
+            }
+            return;
+        }
+        // Check TrackCenterLine id
+        railway::TrackCenterLine* tcl = findTrackCenterLine(itemId);
+        if (tcl) {
+            tcl->setHAlignVisible(visible);
+            setModified(true);
+            // Publish event so UIManager can show/hide AlignmentRenderer
+            core::EventBus* bus = core::Application::instance()->eventBus();
+            QVariantMap vdata;
+            vdata["tclId"]   = tcl->id();
+            vdata["visible"] = visible;
+            bus->publish("railway.halign-visibility-changed", vdata);
+            Q_EMIT treeStructureChanged();
+            return;
+        }
         qWarning() << "[Document] onVisibilityChanged: item not found:" << itemId;
         return;
     }
@@ -1187,13 +1227,6 @@ void Document::initializeOrigin(const Handle(AIS_InteractiveContext)& context) {
     qDebug() << "[Document] Initializing origin";
     initializeReferenceGeometry(context);
     createOriginFolderItems();
-
-    // ✅ Subscribe to visibility-changed events from FeatureBrowser
-    core::EventBus* bus = core::Application::instance()->eventBus();
-    bus->subscribe("feature.visibility-changed", this,
-                   [this](const QVariant& data) {
-                       onVisibilityChanged(data.toMap());
-                   });
 
     Q_EMIT treeStructureChanged();
 }
@@ -1284,9 +1317,19 @@ QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
         tclItem.id         = tcl->id();
         tclItem.name       = tcl->name();
         tclItem.parentId   = "__railway_folder__";
-        tclItem.visible    = true;
+        tclItem.visible    = tcl->hAlignVisible();
         tclItem.selectable = true;
         items.append(tclItem);
+
+        // ── Vertical Alignment child ────────────────────────────────────────
+        ui::FeatureTreeItem vAlignItem;
+        vAlignItem.type       = ui::ItemType::VAlignment;
+        vAlignItem.id         = QStringLiteral("valign_%1").arg(tcl->id());
+        vAlignItem.name       = tr("Vertical Alignment");
+        vAlignItem.parentId   = tcl->id();
+        vAlignItem.visible    = tcl->vAlignVisible();
+        vAlignItem.selectable = true;
+        items.append(vAlignItem);
     }
 
     return items;

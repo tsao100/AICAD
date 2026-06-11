@@ -111,7 +111,32 @@ public:
             auto* me = static_cast<QMouseEvent*>(event);
             if (eyeIconRect(opt.rect).contains(me->pos())) {
                 bool cur = index.data(Qt::UserRole + 2).toBool();
-                model->setData(index, !cur, Qt::UserRole + 2);
+                bool next = !cur;
+
+                // ── 1. Update item data directly (QTreeWidget model requires this) ──
+                //    model->setData on a QTreeWidget doesn't always emit dataChanged,
+                //    so we update the item directly and publish EventBus ourselves.
+                if (auto* tw = static_cast<AccessibleTreeWidget*>(
+                        const_cast<QWidget*>(opt.widget))) {
+                    if (QTreeWidgetItem* item = tw->itemFromIdx(index)) {
+                        // Block treeWidget signals to avoid spurious itemChanged
+                        tw->blockSignals(true);
+                        item->setData(0, Qt::UserRole + 2, next);
+                        tw->blockSignals(false);
+                        tw->update(index);   // repaint eye icon
+                    }
+                }
+
+                // ── 2. Publish EventBus directly ─────────────────────────────────
+                QString id = index.data(Qt::UserRole).toString();
+                if (!id.isEmpty()) {
+                    qDebug() << "[FeatureBrowser] Eye toggled:" << id << "visible=" << next;
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    QVariantMap data;
+                    data["itemId"]  = id;
+                    data["visible"] = next;
+                    bus->publish("feature.visibility-changed", data);
+                }
                 return true;
             }
         }
@@ -186,12 +211,19 @@ void FeatureBrowser::connectSignals() {
             this, &FeatureBrowser::onCustomContextMenu);
 
     // Eye icon toggle is handled by the delegate via model->setData(…, UserRole+2)
+    // QAbstractItemModel::dataChanged has 3 params; use correct signature.
     connect(d->treeWidget->model(), &QAbstractItemModel::dataChanged,
-            this, [this](const QModelIndex& idx) {
-                QTreeWidgetItem* item = d->treeWidget->itemFromIdx(idx);  // ✅
+            this, [this](const QModelIndex& topLeft, const QModelIndex& /*bottomRight*/,
+                         const QVector<int>& roles) {
+                // Only react to UserRole+2 (visibility) changes
+                if (!roles.isEmpty() && !roles.contains(Qt::UserRole + 2))
+                    return;
+                QTreeWidgetItem* item = d->treeWidget->itemFromIdx(topLeft);
                 if (!item) return;
                 bool    visible = item->data(0, Qt::UserRole + 2).toBool();
                 QString id      = item->data(0, Qt::UserRole).toString();
+                if (id.isEmpty()) return;
+                qDebug() << "[FeatureBrowser] Eye toggled:" << id << "visible=" << visible;
                 core::EventBus* bus = core::Application::instance()->eventBus();
                 QVariantMap data;
                 data["itemId"]  = id;
@@ -320,6 +352,7 @@ QIcon FeatureBrowser::getIconForType(ItemType type) {
     case ItemType::Extrude:         return QIcon(":/icons/extrude.png");
     case ItemType::Railway:         return QIcon(":/icons/folder.png");      // 路線資料夾
     case ItemType::TrackCenterLine: return QIcon(":/icons/sketch.png");      // 單線路
+    case ItemType::VAlignment:      return QIcon(":/icons/plane.png");       // 縱斷面
     default:                        return QIcon();
     }
 }
@@ -419,6 +452,25 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
         QAction* actAdd = menu.addAction(tr("新增線路中心線"));
         connect(actAdd, &QAction::triggered, this, [this] {
             Q_EMIT editAlignmentRequested(QString());  // 空 id = 新增
+        });
+        menu.exec(globalPos);
+        return;
+    }
+
+    // ── VAlignment 縱斷面 ─────────────────────────────────────────────────
+    if (itemType == ItemType::VAlignment) {
+        // itemId 格式 = "valign_<tclId>"
+        const QString tclId = itemId.mid(7);
+        QMenu menu(this);
+        QAction* actEdit = menu.addAction(
+            QIcon(":/icons/plane.png"), tr("編輯縱斷面 (Edit VAlignment)"));
+        connect(actEdit, &QAction::triggered, this, [this, tclId] {
+            // 設定 vAlignVisible = true 就會觸發 valign-visibility-changed
+            core::EventBus* bus = core::Application::instance()->eventBus();
+            QVariantMap d2;
+            d2["tclId"]   = tclId;
+            d2["visible"] = true;
+            bus->publish("railway.valign-visibility-changed", d2);
         });
         menu.exec(globalPos);
         return;

@@ -28,7 +28,8 @@ enum class ItemType {
     Extrude,          ///< 擠出
     Feature,          ///< 一般特徵
     Railway,          ///< Railway 資料夾節點
-    TrackCenterLine   ///< 單條線路實例
+    TrackCenterLine,  ///< 單條線路實例
+    VAlignment        ///< 縱斷面（TrackCenterLine 的子節點）
 };
 
 /**
@@ -64,6 +65,7 @@ struct FeatureTreeItem {
             case ItemType::Extrude:         return "Extrude";
             case ItemType::Railway:         return "Railway";
             case ItemType::TrackCenterLine: return "TrackCenterLine";
+            case ItemType::VAlignment:      return "VAlignment";
             default:                        return "Feature";
         }
     }

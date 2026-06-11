@@ -44,6 +44,7 @@
 #include "command/GripMoveCommand.h"
 #include "view/AlignmentRenderer.h"
 #include "railway/AlignmentDocument.h"
+#include "railway/RailwayAlignment.h"
 #include "ui/VAlignEditorDockWidget.h"   // Step 16
 
 #include <QMenu>
@@ -126,6 +127,9 @@ public:
     railway::AlignmentDocument*  alignmentDoc      = nullptr;
     view::AlignmentRenderer*     alignmentRenderer = nullptr;
     ui::VAlignEditorDockWidget*  vAlignDock        = nullptr;  ///< Step 16
+
+    /// Per-TCL renderers for 3D visibility (key = tcl->id())
+    QHash<QString, view::AlignmentRenderer*> tclRenderers;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -486,12 +490,42 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                 // ✅ 還原 alignment 資料
                                 if (d->alignmentDoc && !doc->alignmentData().isEmpty())
                                     d->alignmentDoc->fromJson(doc->alignmentData());
+
+                                // ✅ 還原 TCL overlay / vAlign dock visibility
+                                for (auto* tcl : doc->trackCenterLines()) {
+                                    if (tcl->hAlignVisible()) {
+                                        view::AlignmentRenderer* r = d->tclRenderers.value(tcl->id(), nullptr);
+                                        if (!r) {
+                                            r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                                            d->tclRenderers.insert(tcl->id(), r);
+                                        }
+                                        r->setHorizontalAlignment(tcl->horizontal());
+                                        r->setVisible(true);
+                                        r->refresh();
+                                    }
+                                    if (tcl->vAlignVisible()) {
+                                        if (d->alignmentDoc && tcl->horizontal()) {
+                                            QJsonObject hJson = tcl->horizontal()->toJson();
+                                            d->alignmentDoc->horizontal()->fromJson(hJson);
+                                            d->alignmentDoc->horizontal()->solve();
+                                        }
+                                        d->vAlignDock->loadTrackCenterLine(tcl);
+                                        d->vAlignDock->show();
+                                    }
+                                }
                            });
 
         bus->subscribe(core::Events::DOCUMENT_CLOSED, this,
             [this](const QVariant& data) {
                 qDebug() << "[UIManager] Document closed:" << data.toString();
                 updateFeatureTree();
+                // ✅ 清除所有 per-TCL renderers
+                for (auto* r : d->tclRenderers)
+                    delete r;
+                d->tclRenderers.clear();
+                // ✅ 隱藏 vAlign dock
+                if (d->vAlignDock)
+                    d->vAlignDock->hide();
                 // ✅ 重設 OSnap 狀態，避免 dangling plane 指標
                 if (d->cadView && d->cadView->snapManager()) {
                     d->cadView->snapManager()->setActivePlane(nullptr);
@@ -501,6 +535,63 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 }
             });
         
+        // ── TCL h-alignment 3D visibility ─────────────────────────────────────
+        bus->subscribe("railway.halign-visibility-changed", this,
+            [this, docMgr](const QVariant& data) {
+                QVariantMap m = data.toMap();
+                const QString tclId  = m["tclId"].toString();
+                const bool    vis    = m["visible"].toBool();
+
+                auto* doc = docMgr->currentDocument();
+                if (!doc) return;
+                auto* tcl = doc->findTrackCenterLine(tclId);
+                if (!tcl) return;
+
+                view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
+                if (!r) {
+                    r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                    d->tclRenderers.insert(tclId, r);
+                }
+                if (vis) {
+                    r->setHorizontalAlignment(tcl->horizontal());
+                    r->setVisible(true);
+                    r->refresh();
+                } else {
+                    r->setVisible(false);
+                }
+            });
+
+        // ── TCL v-alignment profile dock visibility ────────────────────────────
+        bus->subscribe("railway.valign-visibility-changed", this,
+            [this, docMgr](const QVariant& data) {
+                QVariantMap m = data.toMap();
+                const QString tclId = m["tclId"].toString();
+                const bool    vis   = m["visible"].toBool();
+
+                auto* doc = docMgr->currentDocument();
+                if (!doc) return;
+                auto* tcl = doc->findTrackCenterLine(tclId);
+                if (!tcl) return;
+
+                if (vis) {
+                    // ── 同步 TCL 的 H-alignment 到 alignmentDoc ──────────────
+                    // 讓 VAlignProfileView 的 PLAN DEV strip 能從 alignmentDoc
+                    // 取到正確資料（rebuildHStrip 讀 alignmentDoc->horizontal()->result()）
+                    if (d->alignmentDoc && tcl->horizontal()) {
+                        // 用 TCL 的 rawPoints 重建 alignmentDoc 的 horizontal
+                        QJsonObject hJson = tcl->horizontal()->toJson();
+                        d->alignmentDoc->horizontal()->fromJson(hJson);
+                        // solve() 觸發 changed() → rebuildHStrip 更新 PLAN DEV
+                        d->alignmentDoc->horizontal()->solve();
+                    }
+                    d->vAlignDock->loadTrackCenterLine(tcl);
+                    d->vAlignDock->show();
+                    d->vAlignDock->raise();
+                } else {
+                    d->vAlignDock->hide();
+                }
+            });
+
         // 監聽特徵事件
         bus->subscribe(core::Events::FEATURE_CREATED, this,
             [this](const QVariant& data) {
@@ -1334,6 +1425,35 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     auto* tcl = doc->findTrackCenterLine(tclId);
                     if (!tcl) return;
 
+                    // ── 啟用 H-alignment 3D 可見性 ────────────────────────────
+                    if (!tcl->hAlignVisible()) {
+                        tcl->setHAlignVisible(true);
+                        doc->setModified(true);
+                    }
+
+                    // ── 記錄 active TCL id（供 save 時 sync 回用）─────────────
+                    if (d->alignmentDoc)
+                        d->alignmentDoc->setActiveTclId(tclId);
+                    // 建立/更新 per-TCL renderer
+                    view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
+                    if (!r) {
+                        r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                        d->tclRenderers.insert(tclId, r);
+                    }
+                    r->setHorizontalAlignment(tcl->horizontal());
+                    r->setVisible(true);
+                    r->refresh();
+
+                    // ── 更新 FeatureBrowser eye icon ──────────────────────────
+                    Q_EMIT doc->treeStructureChanged();
+
+                    // ── 開啟縱斷面 dock ────────────────────────────────────────
+                    // 先同步 TCL 的 H-alignment 到 alignmentDoc，讓 PLAN DEV 正確顯示
+                    if (d->alignmentDoc && tcl->horizontal()) {
+                        QJsonObject hJson = tcl->horizontal()->toJson();
+                        d->alignmentDoc->horizontal()->fromJson(hJson);
+                        d->alignmentDoc->horizontal()->solve();
+                    }
                     d->vAlignDock->loadTrackCenterLine(tcl);
                     d->vAlignDock->show();
                     d->vAlignDock->raise();

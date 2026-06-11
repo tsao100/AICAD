@@ -309,6 +309,13 @@ public:
     QString name() const { return m_name; }
     void    setName(const QString& n);
 
+    // ── Visibility state (persisted) ──────────────────────────────────────────
+    bool hAlignVisible() const { return m_hAlignVisible; }
+    void setHAlignVisible(bool v) { m_hAlignVisible = v; Q_EMIT dataChanged(); }
+
+    bool vAlignVisible() const { return m_vAlignVisible; }
+    void setVAlignVisible(bool v) { m_vAlignVisible = v; Q_EMIT dataChanged(); }
+
     HorizontalAlignment* horizontal() const { return m_h; }
     VerticalAlignment*   vertical()   const { return m_v; }
 
@@ -377,6 +384,9 @@ private:
     QString              m_name;
     HorizontalAlignment* m_h = nullptr;
     VerticalAlignment*   m_v = nullptr;
+
+    bool                 m_hAlignVisible = false;  ///< 3D view visibility
+    bool                 m_vAlignVisible = false;  ///< profile dock visibility
 
     QJsonArray           m_editorVips;   ///< High-level VIP data from the profile editor
 

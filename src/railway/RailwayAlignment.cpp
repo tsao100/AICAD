@@ -644,8 +644,10 @@ void TrackCenterLine::loadVertical(const QVector<VerticalAlignmentPoint>& pts)
 QJsonObject TrackCenterLine::toJson() const
 {
     QJsonObject o;
-    o["id"]         = m_id;
-    o["name"]       = m_name;
+    o["id"]             = m_id;
+    o["name"]           = m_name;
+    o["hAlignVisible"]  = m_hAlignVisible;
+    o["vAlignVisible"]  = m_vAlignVisible;
     o["horizontal"] = m_h->toJson();
     o["vertical"]   = m_v->toJson();
     if (!m_editorVips.isEmpty())
@@ -657,6 +659,8 @@ bool TrackCenterLine::fromJson(const QJsonObject& j)
 {
     m_id = j["id"].toString(m_id);
     setName(j["name"].toString(m_name));
+    m_hAlignVisible = j["hAlignVisible"].toBool(false);
+    m_vAlignVisible = j["vAlignVisible"].toBool(false);
 
     if (!m_h->fromJson(j["horizontal"].toObject()))
         return false;

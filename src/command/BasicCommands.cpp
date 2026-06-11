@@ -18,6 +18,7 @@
 #include "ui/UIManager.h"
 #include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
+#include "railway/RailwayAlignment.h"
 #include <QFileDialog>
 #include <QJsonObject>
 #include <QSettings>
@@ -363,8 +364,18 @@ public:
         // guaranteed same doc pointer that save() writes to.
         if (context.cadView)
             doc->setViewState(context.cadView->saveViewState());
-        if (context.alignmentDoc)
+        if (context.alignmentDoc) {
+            // ── Sync AlignmentDocument H-result back to active TCL ────────
+            const QString activeTclId = context.alignmentDoc->activeTclId();
+            if (!activeTclId.isEmpty()) {
+                railway::TrackCenterLine* tcl = doc->findTrackCenterLine(activeTclId);
+                const railway::HorizontalAlignment* ha =
+                    context.alignmentDoc->horizontal()->result();
+                if (tcl && ha && !ha->isEmpty())
+                    tcl->loadHorizontal(ha->rawPoints());
+            }
             doc->setAlignmentData(context.alignmentDoc->toJson());
+        }
 
         if (doc->save(fileName)) {
             QSettings settings("AICAD", "AICAD");
@@ -417,8 +428,18 @@ public:
 
         if (context.cadView)
             doc->setViewState(context.cadView->saveViewState());
-        if (context.alignmentDoc)
+        if (context.alignmentDoc) {
+            // ── Sync AlignmentDocument H-result back to active TCL ────────
+            const QString activeTclId = context.alignmentDoc->activeTclId();
+            if (!activeTclId.isEmpty()) {
+                railway::TrackCenterLine* tcl = doc->findTrackCenterLine(activeTclId);
+                const railway::HorizontalAlignment* ha =
+                    context.alignmentDoc->horizontal()->result();
+                if (tcl && ha && !ha->isEmpty())
+                    tcl->loadHorizontal(ha->rawPoints());
+            }
             doc->setAlignmentData(context.alignmentDoc->toJson());
+        }
 
         if (doc->save(fileName)) {
             return CommandResult::Success("Document saved as: " + QFileInfo(fileName).fileName());

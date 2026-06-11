@@ -10,6 +10,7 @@
 namespace aicad {
 namespace railway {
 class HorizontalAlignmentEdit;
+class HorizontalAlignment;
 class AlignmentElement;
 class TangentElement;
 class CircularArcElement;
@@ -61,6 +62,12 @@ public:
     void setAlignment(railway::HorizontalAlignmentEdit* edit);
 
     /**
+     * @brief Directly set a read-only HorizontalAlignment for rendering
+     *        (used for TrackCenterLine 3D visibility without an edit model).
+     */
+    void setHorizontalAlignment(const railway::HorizontalAlignment* ha);
+
+    /**
      * @brief Returns true if @p obj is one of the AIS overlay objects managed
      *        by this renderer (used to detect alignment element clicks).
      */
@@ -71,6 +78,12 @@ public:
 
     /** Hide PI marker grips from the CadView. */
     void hidePIGrips();
+
+    /** Show or hide all overlay objects without destroying them. */
+    void setVisible(bool visible);
+
+    /** Remove and clear all overlays (used when switching active TCL). */
+    void clearOverlays();
 
 public Q_SLOTS:
     /**
@@ -130,6 +143,8 @@ private:
 
     CadView*                              m_cadView  = nullptr;
     railway::HorizontalAlignmentEdit*     m_edit     = nullptr;
+    const railway::HorizontalAlignment*   m_directHA = nullptr;  ///< direct (no edit model)
+    bool                                  m_visible  = true;  ///< overlay visibility
 
     /** All geometry overlay objects currently displayed (excl. PI grips). */
     QList<Handle(AIS_InteractiveObject)>  m_overlays;

@@ -246,6 +246,10 @@ public:
     HorizontalAlignmentEdit* horizontal() const { return m_horizontal.get(); }
     VerticalAlignmentEdit*   vertical()   const { return m_vertical.get();   }
 
+    /** Track which TCL this edit session belongs to (set by UIManager). */
+    void    setActiveTclId(const QString& id) { m_activeTclId = id; }
+    QString activeTclId()             const { return m_activeTclId; }
+
     /** 將求解結果同步寫入 OCAF Document（AIS 端使用） */
     void syncToOCAF(aicad::cad::Document* doc);
 
@@ -255,6 +259,7 @@ public:
 private:
     std::unique_ptr<HorizontalAlignmentEdit> m_horizontal;
     std::unique_ptr<VerticalAlignmentEdit>   m_vertical;
+    QString                                  m_activeTclId;
 };
 
 } // namespace railway
