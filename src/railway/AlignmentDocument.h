@@ -158,7 +158,23 @@ public:
     int addCA(int arcIdx, int tangentIdx,
               SpiralType spiralType = SpiralType::Clothoid);
 
-    // ── 元素操作 ─────────────────────────────────────────────────────────────
+    /**
+     * @brief 在兩個 Fixed CircularArc 之間插入長度未知的 Clothoid
+     *        （ACA 群組 = 弧₁ → Clothoid → 弧₂）。
+     *
+     * 兩段弧均為 Fixed 模式，Clothoid 長度由求解器自動計算。
+     * 弧₁ 末端（PT₁）與弧₂ 起始（PC₂）均將被修剪至螺旋切點。
+     *
+     * 插入 1 個 SpiralIn EditableElement（mode = Floating）於 arc1Idx 之後
+     * （即 arc2Idx 之前）。
+     *
+     * @param arc1Idx     Fixed CircularArc₁ 的 index（位於螺旋之前）。
+     * @param arc2Idx     Fixed CircularArc₂ 的 index（位於螺旋之後）。
+     * @param spiralType  Clothoid 類型，預設 Clothoid。
+     * @return SpiralIn 元素的 index；失敗時回傳 -1。
+     */
+    int addACA(int arc1Idx, int arc2Idx,
+               SpiralType spiralType = SpiralType::Clothoid);
 
     void movePI(int idx, QPointF newPos);
     void setRadius(int idx, double radius);

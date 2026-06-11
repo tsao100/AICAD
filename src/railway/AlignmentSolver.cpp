@@ -683,6 +683,366 @@ SolvedCA AlignmentSolver::solveCA(
 }
 
 // ============================================================================
+//  solveACA  —  Arc₁ → Clothoid → Arc₂  (unknown Ls)
+//
+//  Problem:
+//    Two Fixed circular arcs with absolute radii R₁ and R₂ separated by an
+//    unknown-length clothoid.  The clothoid must be tangent to both arcs
+//    (entry curvature κ₁ = 1/R₁, exit curvature κ₂ = 1/R₂, linearly varying).
+//
+//  Representation:
+//    This is exactly an Egg (bi-quadratic) transition spanning from the exit
+//    point of Arc₁ to the entry point of Arc₂.  For a trial length Ls the
+//    equivalent full-clothoid length is:
+//        Ls_eq = Ls · max(R₁,R₂) / |R₁ − R₂|
+//    and the traversal starts at arc-length  Ls_start = Ls_eq − Ls  along the
+//    equivalent clothoid (from the larger-radius end).
+//
+//  Gap function  f(Ls):
+//    Given Ls, the EggTransitionElement provides the local-frame offset of
+//    SC₂ from SC₁.  We compare the expected world position of SC₂ (derived
+//    from the tangency condition on Arc₂) with the computed world position and
+//    project the difference onto the cross-track direction of Arc₂ at SC₂.
+//    Bisection drives f(Ls) → 0.
+//
+//  After solving, both arcs are trimmed:
+//    Arc₁ loses its tail (its new PT = SC₁).
+//    Arc₂ loses its head (its new PC = SC₂).
+// ============================================================================
+
+SolvedACA AlignmentSolver::solveACA(
+    QPointF arc1Center, double arc1Radius,
+    QPointF arc1Start,  double arc1AzStart,
+    QPointF arc2Center, double arc2Radius,
+    QPointF arc2End,    double arc2AzEnd,
+    SpiralType spiralType)
+{
+    SolvedACA result;
+
+    const double R1 = std::abs(arc1Radius);
+    const double R2 = std::abs(arc2Radius);
+    if (R1 < 1e-9 || R2 < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveACA: arc radius ≈ 0";
+        return result;
+    }
+    if (std::abs(R1 - R2) < 1e-6) {
+        qWarning() << "[AlignmentSolver] solveACA: R1 ≈ R2 — degenerate (concentric arcs)";
+        return result;
+    }
+
+    // ── Determine turn signs from arc centres relative to an initial guess ──
+    //   signR1 = +1 if Arc₁ turns right, -1 if left.
+    //   signR2 = +1 if Arc₂ turns right, -1 if left.
+    //   We derive signR from the cross-product of the radius vector at the
+    //   arc's entry point and the arc's travel direction.
+    //
+    //   For Arc₁, we compute at arc1Start (PC₁):
+    //     r1 = arc1Start − arc1Center
+    //     tangent1 direction (dE, dN) derived from arc1AzStart
+    //     signR1 = +1 if centre is to the RIGHT of tangent.
+    //
+    //   For Arc₂, we compute at arc2End (PT₂):
+    //     The centre must be to the RIGHT for a right-hand arc.
+    {
+        const double sA1 = std::sin(arc1AzStart), cA1 = std::cos(arc1AzStart);
+        const double n1x = cA1, n1y = -sA1;   // right-perp of az1
+        const double side1 = (arc1Center.x() - arc1Start.x()) * n1x
+                           + (arc1Center.y() - arc1Start.y()) * n1y;
+        // side1 > 0 means centre is to the right → right-hand curve
+        (void)side1; // used only in sign computation below
+    }
+
+    // Signed radii used internally:
+    //   Derive signR1 from (arc1Center relative to the travel direction at arc1Start)
+    //   Derive signR2 from (arc2Center relative to the travel direction at arc2End)
+    auto computeSignR = [](QPointF centre, QPointF refPt, double az) -> int {
+        const double n_x = std::cos(az), n_y = -std::sin(az);   // right-perp
+        const double side = (centre.x() - refPt.x()) * n_x
+                          + (centre.y() - refPt.y()) * n_y;
+        return (side >= 0.0) ? 1 : -1;
+    };
+
+    const int signR1 = computeSignR(arc1Center, arc1Start, arc1AzStart);
+    const int signR2 = computeSignR(arc2Center, arc2End,   arc2AzEnd - M_PI);
+    // Note: at PT₂ we travel in the forward direction az2, so the right-perp
+    // check uses az2AzEnd.  But arc2AzEnd is the forward azimuth at PT₂,
+    // so the travel direction at PT₂ is arc2AzEnd.  The centre should be on
+    // the same side at both entry and exit.
+    const int signR2b = computeSignR(arc2Center, arc2End, arc2AzEnd);
+    (void)signR2; // resolve below
+
+    // Use signR2b (evaluated at PT₂ with forward-travel direction) for Arc₂.
+    const double signedR1 = signR1 * R1;
+    const double signedR2 = signR2b * R2;
+
+    // ── Gap-function evaluation ───────────────────────────────────────────────
+    //
+    //  For trial Ls, the spiral sweeps from curvature 1/R1 to curvature 1/R2.
+    //  We use an EggTransitionElement internally to get the local-frame geometry.
+    //
+    //  SC₁ on Arc₁: The spiral enters Arc₁ with azimuth azSC1.  The tangency
+    //  condition pins azSC1 to a specific point on Arc₁:
+    //      SC₁ = arc1Center + (-signR1·R1·cos azSC1,  +signR1·R1·sin azSC1)
+    //
+    //  SC₂ on Arc₂: Similarly
+    //      SC₂_expected = arc2Center + (-signR2·R2·cos azSC2, +signR2·R2·sin azSC2)
+    //
+    //  The EggTransitionElement provides (Xm, Ym, thetaTotal) from SC₁ to SC₂.
+    //  Given azSC1 we can compute the world position of SC₂:
+    //      SC₂_computed = SC₁ + (Xm·sin(azSC1) + Ym·cos(azSC1),
+    //                             Xm·cos(azSC1) − Ym·sin(azSC1))
+    //
+    //  The error is projected onto the cross-track direction at SC₂ (n_SC2):
+    //      f(Ls) = (SC₂_computed − SC₂_expected) · n_SC2
+    //
+    //  This makes the gap function insensitive to along-track position of SC₁
+    //  (which slides freely along Arc₁).
+
+    auto evalF = [&](double Ls) -> double {
+        // Build EggTransitionElement for this Ls
+        EggTransitionElement egg(signedR1, signedR2, Ls);
+
+        // Local frame at full Ls from SC₁
+        const LocalFrame lf = egg.localFrame(Ls);
+        const double Xm      = lf.x;
+        const double Ym      = lf.y;
+        const double thetaS  = lf.theta;   // accumulated rotation from SC₁ to SC₂
+
+        // azSC1 is unknown but determined by: exit azimuth azSC2 = azSC1 + thetaS
+        // And SC₂ must satisfy tangency with Arc₂:
+        //   azSC2 is the forward tangent of Arc₂ at SC₂.
+        //
+        // We iterate: guess azSC1, compute SC₁ and SC₂_computed, compare with
+        // SC₂_expected.  But to keep a simple 1-D bisection we pick the degree
+        // of freedom as Ls; azSC1 is recovered from azSC2.
+        //
+        // Strategy: use the direction from arc1Center to arc2Center as a seed
+        // to estimate azSC1.  For the bisection we only need the SIGN of f(Ls),
+        // not its exact value, so an inner Newton loop on azSC1 is fast.
+        //
+        // Simpler consistent approach: for a given Ls, solve for azSC1 such
+        // that |SC₂_computed − arc2Center| = R₂  (point on Arc₂ circle).
+        // Then check tangency: (SC₂_computed − arc2Center) should be perpendicular
+        // to the spiral tangent direction at SC₂.
+        //
+        // Cross-track gap: project (SC₂_computed − SC₂_expected) onto the
+        // cross-track direction of arc2.
+        //
+        // We solve the inner equation  |SC₂_computed(azSC1) − arc2Center|² = R₂²
+        // analytically.
+        //
+        //  SC₂_computed(azSC1) = SC₁(azSC1) + T·(sin azSC1, cos azSC1) + C
+        //  where T = Xm, and the cross-track term Ym is rotated by azSC1.
+        //
+        //  Let  SC₁(azSC1) = arc1Center + (-signR1·R1·cos azSC1, +signR1·R1·sin azSC1)
+        //  Then:
+        //    SC₂_computed.x = arc1Center.x - signR1·R1·cos(azSC1)
+        //                      + Xm·sin(azSC1) + Ym·cos(azSC1)
+        //    SC₂_computed.y = arc1Center.y + signR1·R1·sin(azSC1)
+        //                      + Xm·cos(azSC1) - Ym·sin(azSC1)
+        //
+        //  |SC₂_computed − arc2Center|² = R₂²  is a transcendental equation
+        //  in azSC1.  We solve it by a fast bisection on azSC1 as an inner loop.
+        //
+        //  For the OUTER bisection (over Ls), we evaluate the signed gap after
+        //  finding the inner azSC1.
+
+        // Inner bisection: find azSC1 such that SC₂ lies on Arc₂ circle
+        // Search range for azSC1: full circle, but start near initial estimate
+        const double azSC1_init = std::atan2(arc2Center.x() - arc1Center.x(),
+                                             arc2Center.y() - arc1Center.y());
+
+        auto sc2FromAzSC1 = [&](double azSC1) -> QPointF {
+            const double sc1x = arc1Center.x() - signR1 * R1 * std::cos(azSC1);
+            const double sc1y = arc1Center.y() + signR1 * R1 * std::sin(azSC1);
+            const double dx   = Xm * std::sin(azSC1) + Ym * std::cos(azSC1);
+            const double dy   = Xm * std::cos(azSC1) - Ym * std::sin(azSC1);
+            return QPointF(sc1x + dx, sc1y + dy);
+        };
+
+        auto radialError = [&](double azSC1) -> double {
+            const QPointF sc2 = sc2FromAzSC1(azSC1);
+            const double dr2 = (sc2.x() - arc2Center.x()) * (sc2.x() - arc2Center.x())
+                             + (sc2.y() - arc2Center.y()) * (sc2.y() - arc2Center.y());
+            return dr2 - R2 * R2;
+        };
+
+        // Scan for a bracket near the estimate
+        double az_lo = azSC1_init - M_PI;
+        double az_hi = azSC1_init + M_PI;
+        double f_lo  = radialError(az_lo);
+        double az_br = -999.0;
+
+        {
+            const int nInner = 360;
+            double prev_f = f_lo;
+            for (int k = 1; k <= nInner; ++k) {
+                const double az_k = az_lo + 2.0 * M_PI * k / nInner;
+                const double f_k  = radialError(az_k);
+                if (prev_f * f_k < 0.0) { az_br = az_k; az_hi = az_k; az_lo = az_lo + 2.0 * M_PI * (k-1) / nInner; break; }
+                prev_f = f_k;
+            }
+        }
+
+        if (az_br < -900.0) {
+            // No intersection: spiral can't reach Arc₂ at this Ls
+            // Return a large positive error (gap too big)
+            return 1e9;
+        }
+
+        // Bisect inner loop to find azSC1
+        for (int iter = 0; iter < 60; ++iter) {
+            const double az_mid = 0.5 * (az_lo + az_hi);
+            if (std::abs(az_hi - az_lo) < 1e-9) { az_lo = az_mid; break; }
+            if (radialError(az_lo) * radialError(az_mid) <= 0.0)
+                az_hi = az_mid;
+            else
+                az_lo = az_mid;
+        }
+        const double azSC1 = az_lo;
+
+        // azSC2 = azSC1 + thetaS
+        const double azSC2 = azSC1 + thetaS;
+
+        // Expected SC₂ from tangency condition on Arc₂
+        const double sc2_exp_x = arc2Center.x() - signR2b * R2 * std::cos(azSC2);
+        const double sc2_exp_y = arc2Center.y() + signR2b * R2 * std::sin(azSC2);
+
+        // Computed SC₂
+        const QPointF sc2_comp = sc2FromAzSC1(azSC1);
+
+        // Cross-track gap: project difference onto right-perp of azSC2
+        const double nx = std::cos(azSC2), ny = -std::sin(azSC2);
+        return (sc2_comp.x() - sc2_exp_x) * nx
+             + (sc2_comp.y() - sc2_exp_y) * ny;
+    };
+
+    // ── Outer bisection over Ls ───────────────────────────────────────────────
+    const double geomDist = std::hypot(arc2End.x() - arc1Start.x(),
+                                       arc2End.y() - arc1Start.y())
+                          + R1 + R2;
+    const double Req    = (R1 * R2) / std::abs(R1 - R2);   // equivalent radius
+    const double Ls_max = std::min(geomDist * 2.0, M_PI * Req * 0.95);
+
+    const int    nScan = 400;
+    double Ls_lo = 1e-3;
+    double f_lo  = evalF(Ls_lo);
+    double Ls_hi = -1.0;
+
+    for (int k = 1; k <= nScan; ++k) {
+        const double Ls_k = Ls_max * k / static_cast<double>(nScan);
+        const double f_k  = evalF(Ls_k);
+        if (f_lo * f_k < 0.0) { Ls_hi = Ls_k; break; }
+        f_lo = f_k;
+        Ls_lo = Ls_k;
+    }
+
+    if (Ls_hi < 0.0) {
+        qWarning() << "[AlignmentSolver] solveACA: f(Ls) has no sign change."
+                   << "R1=" << R1 << "R2=" << R2 << "Ls_max=" << Ls_max;
+        return result;
+    }
+
+    for (int iter = 0; iter < 80; ++iter) {
+        const double Ls_mid = 0.5 * (Ls_lo + Ls_hi);
+        if (std::abs(Ls_hi - Ls_lo) < 1e-4) { Ls_lo = Ls_mid; break; }
+        if (evalF(Ls_lo) * evalF(Ls_mid) <= 0.0)
+            Ls_hi = Ls_mid;
+        else
+            Ls_lo = Ls_mid;
+    }
+    const double Ls = Ls_lo;
+
+    // ── Final geometry ────────────────────────────────────────────────────────
+    EggTransitionElement eggF(signedR1, signedR2, Ls);
+    const LocalFrame lfF = eggF.localFrame(Ls);
+    const double XmF      = lfF.x;
+    const double YmF      = lfF.y;
+    const double thetaSF  = lfF.theta;
+
+    // Recover azSC1 with the same inner bisection logic
+    const double azSC1_init = std::atan2(arc2Center.x() - arc1Center.x(),
+                                         arc2Center.y() - arc1Center.y());
+
+    auto sc2FromAzSC1_F = [&](double azSC1) -> QPointF {
+        const double sc1x = arc1Center.x() - signR1 * R1 * std::cos(azSC1);
+        const double sc1y = arc1Center.y() + signR1 * R1 * std::sin(azSC1);
+        const double dx   = XmF * std::sin(azSC1) + YmF * std::cos(azSC1);
+        const double dy   = XmF * std::cos(azSC1) - YmF * std::sin(azSC1);
+        return QPointF(sc1x + dx, sc1y + dy);
+    };
+    auto radialError_F = [&](double azSC1) -> double {
+        const QPointF sc2 = sc2FromAzSC1_F(azSC1);
+        const double dr2 = (sc2.x() - arc2Center.x()) * (sc2.x() - arc2Center.x())
+                         + (sc2.y() - arc2Center.y()) * (sc2.y() - arc2Center.y());
+        return dr2 - R2 * R2;
+    };
+
+    double az_lo_F = azSC1_init - M_PI, az_hi_F = azSC1_init + M_PI;
+    {
+        const int nI = 360;
+        double prev_f = radialError_F(az_lo_F);
+        for (int k = 1; k <= nI; ++k) {
+            const double az_k = (azSC1_init - M_PI) + 2.0 * M_PI * k / nI;
+            const double f_k  = radialError_F(az_k);
+            if (prev_f * f_k < 0.0) {
+                az_hi_F = az_k;
+                az_lo_F = (azSC1_init - M_PI) + 2.0 * M_PI * (k-1) / nI;
+                break;
+            }
+            prev_f = f_k;
+        }
+    }
+    for (int iter = 0; iter < 60; ++iter) {
+        const double az_mid = 0.5 * (az_lo_F + az_hi_F);
+        if (std::abs(az_hi_F - az_lo_F) < 1e-9) { az_lo_F = az_mid; break; }
+        if (radialError_F(az_lo_F) * radialError_F(az_mid) <= 0.0)
+            az_hi_F = az_mid;
+        else
+            az_lo_F = az_mid;
+    }
+    const double azSC1 = az_lo_F;
+    const double azSC2 = azSC1 + thetaSF;
+
+    // SC₁ and SC₂ world positions
+    const QPointF sc1Point(arc1Center.x() - signR1 * R1 * std::cos(azSC1),
+                           arc1Center.y() + signR1 * R1 * std::sin(azSC1));
+    const QPointF sc2Point(arc2Center.x() - signR2b * R2 * std::cos(azSC2),
+                           arc2Center.y() + signR2b * R2 * std::sin(azSC2));
+
+    // ── Trimmed arc lengths ───────────────────────────────────────────────────
+    auto arcAngle = [](QPointF from, QPointF to, QPointF centre, int signR) -> double {
+        const QPointF rf = from - centre;
+        const QPointF rt = to   - centre;
+        const double cross = rf.x() * rt.y() - rf.y() * rt.x();
+        const double dot   = rf.x() * rt.x() + rf.y() * rt.y();
+        double phi = std::atan2(std::abs(cross), dot);
+        if (signR > 0 && cross > 0.0) phi = 2.0 * M_PI - phi;
+        if (signR < 0 && cross < 0.0) phi = 2.0 * M_PI - phi;
+        return phi;
+    };
+
+    const double phi1 = arcAngle(arc1Start, sc1Point, arc1Center, signR1);
+    const double phi2 = arcAngle(sc2Point,  arc2End,  arc2Center, signR2b);
+
+    result.valid         = true;
+    result.arc1StartPoint = arc1Start;
+    result.sc1Point       = sc1Point;
+    result.arc1Len        = R1 * phi1;
+    result.azSC1          = azSC1;
+    result.Ls             = Ls;
+    result.R1             = R1;
+    result.R2             = R2;
+    result.thetaS         = thetaSF;
+    result.sc2Point       = sc2Point;
+    result.arc2EndPoint   = arc2End;
+    result.arc2Len        = R2 * phi2;
+    result.azSC2          = azSC2;
+
+    return result;
+}
+
+// ============================================================================
 //  solve()  — main entry point
 // ============================================================================
 
@@ -739,6 +1099,16 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         int      tanIdx  = -1;   ///< index of the Fixed Tangent element (after)
     };
     QVector<CAData> caData(n);
+
+    // ACA group data — stored per SpiralIn element index
+    // (SpiralIn sits between Fixed Arc₁ and Fixed Arc₂)
+    struct ACAData {
+        bool      valid    = false;
+        SolvedACA aca;
+        int       arc1Idx  = -1;   ///< index of the Fixed Arc₁ element (before spiral)
+        int       arc2Idx  = -1;   ///< index of the Fixed Arc₂ element (after spiral)
+    };
+    QVector<ACAData> acaData(n);
 
     // ════════════════════════════════════════════════════════════════════════
     //  Pass 1 – Fixed CircularArc: foot-of-perpendicular T1 / T2
@@ -1066,6 +1436,99 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    //  Pass 2e — ACA group  (Fixed Arc₁ → SpiralIn → Fixed Arc₂)
+    //
+    //  Identification: element i is a SpiralIn with mode==Floating,
+    //    tangentIdxBefore == -1  (no bounding tangent — it references Arc₁),
+    //    and is bracketed by Fixed CircularArc elements at (i-1) and (i+1).
+    //
+    //  The spiral element carries arc1Idx / arc2Idx in its tangentIdxBefore /
+    //  tangentIdxAfter fields (overloaded: -1 means "not a tangent reference";
+    //  in addACA() we set tangentIdxBefore = arc1Idx, tangentIdxAfter = arc2Idx,
+    //  but both point to CircularArc elements, not Tangents).
+    //
+    //  The Clothoid length Ls is unknown; solveACA() finds it iteratively.
+    //  Both fixed arcs are trimmed at their new cut-points.
+    // ════════════════════════════════════════════════════════════════════════
+    for (int i = 0; i < n; ++i) {
+        if (elems[i].type != EditableElementType::SpiralIn) continue;
+        if (elems[i].mode != ConstraintMode::Floating)      continue;
+
+        // ACA spirals store arc1Idx in tangentIdxBefore, arc2Idx in tangentIdxAfter,
+        // but BOTH reference CircularArc elements (not Tangents).
+        const int arc1I = elems[i].tangentIdxBefore;
+        const int arc2I = elems[i].tangentIdxAfter;
+
+        if (arc1I < 0 || arc1I >= n) continue;
+        if (arc2I < 0 || arc2I >= n) continue;
+        if (elems[arc1I].type != EditableElementType::CircularArc) continue;
+        if (elems[arc2I].type != EditableElementType::CircularArc) continue;
+        if (elems[arc1I].mode != ConstraintMode::Fixed)            continue;
+        if (elems[arc2I].mode != ConstraintMode::Fixed)            continue;
+
+        // Skip if already handled as SCS or LC or CA
+        if (scsData[i].valid || lcData[i].valid) continue;
+        // Also: LC uses tangentIdxBefore pointing to a Tangent,
+        // ACA uses it pointing to a CircularArc — so the above checks already
+        // distinguish them.  But guard against a spurious SCS match as well.
+
+        if (!arcData[arc1I].valid) {
+            qWarning() << "[AlignmentSolver] Pass2e ACA idx" << i
+                       << ": Fixed arc1 at idx" << arc1I << " not solved in Pass 1";
+            continue;
+        }
+        if (!arcData[arc2I].valid) {
+            qWarning() << "[AlignmentSolver] Pass2e ACA idx" << i
+                       << ": Fixed arc2 at idx" << arc2I << " not solved in Pass 1";
+            continue;
+        }
+
+        const SpiralType stype = elems[i].spiralType1;
+        const double R1 = std::abs(elems[arc1I].radius);
+        const double R2 = std::abs(elems[arc2I].radius);
+
+        // arc1 azimuth at its start = arcData[arc1I].azPC
+        const double az1Start = arcData[arc1I].azPC;
+        // arc2 azimuth at its end = azPC + arcLen / R (signed delta)
+        const double signedDelta2 = (elems[arc2I].radius >= 0.0)
+                                    ? (arcData[arc2I].arcLen / R2)
+                                    : -(arcData[arc2I].arcLen / R2);
+        const double az2End = arcData[arc2I].azPC + signedDelta2;
+
+        const SolvedACA aca = solveACA(
+            elems[arc1I].arcCenter, R1,
+            arcData[arc1I].pc,  az1Start,
+            elems[arc2I].arcCenter, R2,
+            arcData[arc2I].pt,  az2End,
+            stype);
+
+        if (!aca.valid) {
+            qWarning() << "[AlignmentSolver] Pass2e ACA idx" << i << ": solveACA failed";
+            continue;
+        }
+
+        // Store result
+        ACAData ad;
+        ad.valid   = true;
+        ad.aca     = aca;
+        ad.arc1Idx = arc1I;
+        ad.arc2Idx = arc2I;
+        acaData[i] = ad;
+
+        // Write solved Ls back so it survives serialisation
+        const_cast<EditableElement&>(elems[i]).length = aca.Ls;
+
+        // Trim Arc₁ tail: its new PT = SC₁
+        arcData[arc1I].arcLen = aca.arc1Len;
+        arcData[arc1I].pt     = aca.sc1Point;
+
+        // Trim Arc₂ head: its new PC = SC₂
+        arcData[arc2I].pc     = aca.sc2Point;
+        arcData[arc2I].azPC   = aca.azSC2;
+        arcData[arc2I].arcLen = aca.arc2Len;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     //  Pass 3 — Free elements: derive geometry from solved neighbours
     //
     //  Strategy: iterative residual minimisation.
@@ -1197,6 +1660,10 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         if (caData[i].valid) {
             handledBySCS[i] = true;  // SpiralOut handled inside arc emission
         }
+        // ACA group: SpiralIn is emitted inline between the two arcs → suppress SpiralIn
+        if (acaData[i].valid) {
+            handledBySCS[i] = true;  // SpiralIn handled inside arc emission
+        }
     }
 
     for (int i = 0; i < n; ++i) {
@@ -1324,6 +1791,12 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             const bool hasLC = (i > 0 && lcData[i-1].valid && lcData[i-1].arcIdx == i);
             // A CA group has SpiralOut at index (i+1) → caData[i+1].arcIdx == i
             const bool hasCA = (i + 1 < n && caData[i+1].valid && caData[i+1].arcIdx == i);
+            // An ACA group has SpiralIn at index (i+1) where arc1Idx == i (Arc₁ side)
+            // and another SpiralIn at index (i-1) where arc2Idx == i (Arc₂ side).
+            // We detect: this arc is Arc₁ of an ACA → spiral at i+1 has arc1Idx==i
+            const bool hasACA_exit  = (i + 1 < n && acaData[i+1].valid && acaData[i+1].arc1Idx == i);
+            // This arc is Arc₂ of an ACA → spiral at i-1 has arc2Idx==i
+            const bool hasACA_entry = (i > 0      && acaData[i-1].valid && acaData[i-1].arc2Idx == i);
 
             // ── Emit LC spiral keypoint (TS) before the arc CC point ──────────
             if (hasLC) {
@@ -1353,7 +1826,11 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             }
 
             // ── Emit the arc itself ───────────────────────────────────────────
-            pt.tsc      = hasLC ? QStringLiteral("SC") : QStringLiteral("CC");
+            // tsc label depends on what precedes/follows this arc:
+            //   LC  entry  → "SC"   (coming from a spiral)
+            //   ACA entry  → "SC"   (coming from the ACA spiral's SC₂)
+            //   otherwise  → "CC"   (bare arc start)
+            pt.tsc      = (hasLC || hasACA_entry) ? QStringLiteral("SC") : QStringLiteral("CC");
             pt.easting  = arc.pc.x();
             pt.northing = arc.pc.y();
             pt.azimuth  = arc.azPC;
@@ -1362,6 +1839,43 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             pt.chainage = chainage;
             chainage   += arc.arcLen;
             pts.append(pt);
+
+            // ── Emit ACA spiral keypoint (SC₁ at arc end → SC₂) ─────────────
+            // When this arc is Arc₁ of an ACA group, emit the spiral that
+            // connects Arc₁ (trimmed at SC₁) to Arc₂ (trimmed at SC₂).
+            if (hasACA_exit) {
+                const SolvedACA& aca = acaData[i+1].aca;
+                auto spiralTypeName = [](SpiralType t) -> QString {
+                    switch (t) {
+                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
+                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
+                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
+                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
+                    default:                   return QStringLiteral("SPIRAL");
+                    }
+                };
+                const QString curveType = spiralTypeName(elems[i+1].spiralType1);
+
+                // CS point = SC₁ (exit of Arc₁ = entry of spiral)
+                // We emit it as "CS" (leaving the arc) with the spiral geometry.
+                // The spiral's length Ls and equivalent radius are stored in aca.
+                const double Req = (aca.R1 * aca.R2) / std::abs(aca.R1 - aca.R2);
+
+                AlignmentPoint cspt;
+                cspt.tsc       = QStringLiteral("CS");
+                cspt.curveType = curveType;
+                cspt.easting   = aca.sc1Point.x();
+                cspt.northing  = aca.sc1Point.y();
+                cspt.azimuth   = aca.azSC1;
+                cspt.length    = aca.Ls;
+                cspt.radius    = Req;          // equivalent radius for display
+                cspt.chainage  = chainage;
+                chainage      += aca.Ls;
+                pts.append(cspt);
+                // Arc₂ (starting at SC₂) will be emitted in the normal arc flow
+                // for element acaData[i+1].arc2Idx, with its updated pc = SC₂.
+                continue;  // skip default PT waypoint for Arc₁
+            }
 
             // ── Emit CA spiral keypoint (CS then ST) after the arc ────────────
             if (hasCA) {

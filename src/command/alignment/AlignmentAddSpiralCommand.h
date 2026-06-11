@@ -69,7 +69,8 @@ private:
     enum class GroupMode {
         Unknown,  ///< 尚未決定；由第一次點擊自動偵測
         LC,       ///< 直線 → Clothoid → 弧
-        CA        ///< 弧 → Clothoid → 直線
+        CA,       ///< 弧 → Clothoid → 直線
+        ACA       ///< 弧₁ → Clothoid → 弧₂ (兩弧均 Fixed，長度未知)
     };
 
     // ── 狀態機 ────────────────────────────────────────────────────────────────
@@ -129,8 +130,9 @@ private:
     GroupMode                   m_mode        = GroupMode::Unknown;
     bool                        m_isFinishing = false;
 
-    int m_tangentIdx = -1;   ///< Fixed Tangent 的 index
-    int m_arcIdx     = -1;   ///< Fixed CircularArc 的 index
+    int m_tangentIdx = -1;   ///< Fixed Tangent 的 index（LC/CA 使用）
+    int m_arcIdx     = -1;   ///< Fixed CircularArc 的 index（LC: 後方弧；CA: 前方弧；ACA: Arc₁）
+    int m_arc2Idx    = -1;   ///< ACA 群組：Arc₂ 的 index（螺旋後方的第二段弧）
 
     railway::SpiralType m_spiralType = railway::SpiralType::Clothoid;
 };

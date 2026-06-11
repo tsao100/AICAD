@@ -990,5 +990,93 @@ int HorizontalAlignmentEdit::addCA(int arcIdx, int tangentIdx,
     return spiralOutIdx;
 }
 
+// ============================================================================
+//  addACA  ─ Fixed Arc₁ → Clothoid(未知長度) → Fixed Arc₂
+//
+//  The SpiralIn element is inserted between arc1Idx and arc2Idx.  Its
+//  tangentIdxBefore = arc1Idx and tangentIdxAfter = arc2Idx (both reference
+//  CircularArc elements — Pass 2e uses this to distinguish ACA from LC/CA).
+//
+//  After insertion both arc indices shift if needed; the stored indices in
+//  all other elements are patched accordingly.
+// ============================================================================
+
+int HorizontalAlignmentEdit::addACA(int arc1Idx, int arc2Idx,
+                                     SpiralType spiralType)
+{
+    if (arc1Idx < 0 || arc1Idx >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: arc1Idx out of range:" << arc1Idx;
+        return -1;
+    }
+    if (arc2Idx < 0 || arc2Idx >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: arc2Idx out of range:" << arc2Idx;
+        return -1;
+    }
+    if (m_elems[arc1Idx].type != EditableElementType::CircularArc) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: element at arc1Idx is not a CircularArc";
+        return -1;
+    }
+    if (m_elems[arc2Idx].type != EditableElementType::CircularArc) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: element at arc2Idx is not a CircularArc";
+        return -1;
+    }
+    if (m_elems[arc1Idx].mode != ConstraintMode::Fixed) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: arc1 must be Fixed (arc1Idx=" << arc1Idx << ")";
+        return -1;
+    }
+    if (m_elems[arc2Idx].mode != ConstraintMode::Fixed) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: arc2 must be Fixed (arc2Idx=" << arc2Idx << ")";
+        return -1;
+    }
+    if (std::abs(m_elems[arc1Idx].radius) < 1e-9 ||
+        std::abs(m_elems[arc2Idx].radius) < 1e-9) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: arc radius ≈ 0";
+        return -1;
+    }
+    if (std::abs(std::abs(m_elems[arc1Idx].radius) - std::abs(m_elems[arc2Idx].radius)) < 1e-6) {
+        qWarning() << "[HorizontalAlignmentEdit] addACA: R1 ≈ R2 — degenerate (EggTransition undefined)";
+        return -1;
+    }
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    // Build the SpiralIn element
+    // tangentIdxBefore / tangentIdxAfter are overloaded here to carry arc indices.
+    // Pass 2e checks that both referenced elements are CircularArc (not Tangent).
+    EditableElement spiralIn;
+    spiralIn.type             = EditableElementType::SpiralIn;
+    spiralIn.mode             = ConstraintMode::Floating;
+    spiralIn.radius           = std::abs(m_elems[arc1Idx].radius);  // entry radius
+    spiralIn.length           = 0.0;   // unknown — solver sets it
+    spiralIn.tangentIdxBefore = arc1Idx;   // ← Arc₁ index (not a tangent)
+    spiralIn.tangentIdxAfter  = arc2Idx;   // ← Arc₂ index (not a tangent)
+    spiralIn.spiralType1      = spiralType;
+    spiralIn.spiralType2      = spiralType;
+
+    // Insert between arc1Idx and arc2Idx.
+    // We insert AFTER arc1Idx (i.e. at arc1Idx + 1).
+    const int insertPos  = arc1Idx + 1;
+    m_elems.insert(insertPos, spiralIn);
+    const int spiralInIdx = insertPos;
+
+    // Fix up all stored indices that were >= insertPos (shifted by +1)
+    for (int i = 0; i < m_elems.size(); ++i) {
+        if (i == spiralInIdx) continue;
+        auto& e = m_elems[i];
+        if (e.tangentIdxBefore >= insertPos) ++e.tangentIdxBefore;
+        if (e.tangentIdxAfter  >= insertPos) ++e.tangentIdxAfter;
+    }
+    // Fix spiralIn's own stored arc indices if they were >= insertPos
+    if (arc1Idx >= insertPos) m_elems[spiralInIdx].tangentIdxBefore = arc1Idx + 1;
+    if (arc2Idx >= insertPos) m_elems[spiralInIdx].tangentIdxAfter  = arc2Idx + 1;
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add ACA (Arc-Clothoid-Arc)");
+    }
+    return spiralInIdx;
+}
+
 } // namespace railway
 } // namespace aicad
