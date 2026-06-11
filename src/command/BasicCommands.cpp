@@ -16,6 +16,7 @@
 #include "core/DocumentManager.h"
 #include "core/EventBus.h"
 #include "ui/UIManager.h"
+#include "ui/VAlignEditorDockWidget.h"   // for writeBackToTcl implicit usage
 #include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
 #include "railway/RailwayAlignment.h"
@@ -364,16 +365,24 @@ public:
         // guaranteed same doc pointer that save() writes to.
         if (context.cadView)
             doc->setViewState(context.cadView->saveViewState());
-        if (context.alignmentDoc) {
-            // ── Sync AlignmentDocument H-result back to active TCL ────────
-            const QString activeTclId = context.alignmentDoc->activeTclId();
-            if (!activeTclId.isEmpty()) {
-                railway::TrackCenterLine* tcl = doc->findTrackCenterLine(activeTclId);
+        // ── Sync per-TCL AlignmentDocument data before save ─────────────
+        if (context.uiManager) {
+            const auto& tclDocs = context.uiManager->tclAlignmentDocs();
+            for (auto it = tclDocs.constBegin(); it != tclDocs.constEnd(); ++it) {
+                const QString& tclId = it.key();
+                railway::AlignmentDocument* aDoc = it.value();
+                if (!aDoc) continue;
+                // Sync solved H-result back to TCL rawPoints
+                railway::TrackCenterLine* tcl = doc->findTrackCenterLine(tclId);
                 const railway::HorizontalAlignment* ha =
-                    context.alignmentDoc->horizontal()->result();
+                    aDoc->horizontal()->result();
                 if (tcl && ha && !ha->isEmpty())
                     tcl->loadHorizontal(ha->rawPoints());
+                // Store edit session JSON per-TCL
+                doc->setTclAlignmentData(tclId, aDoc->toJson());
             }
+        } else if (context.alignmentDoc) {
+            // Legacy fallback
             doc->setAlignmentData(context.alignmentDoc->toJson());
         }
 
@@ -428,16 +437,24 @@ public:
 
         if (context.cadView)
             doc->setViewState(context.cadView->saveViewState());
-        if (context.alignmentDoc) {
-            // ── Sync AlignmentDocument H-result back to active TCL ────────
-            const QString activeTclId = context.alignmentDoc->activeTclId();
-            if (!activeTclId.isEmpty()) {
-                railway::TrackCenterLine* tcl = doc->findTrackCenterLine(activeTclId);
+        // ── Sync per-TCL AlignmentDocument data before save ─────────────
+        if (context.uiManager) {
+            const auto& tclDocs = context.uiManager->tclAlignmentDocs();
+            for (auto it = tclDocs.constBegin(); it != tclDocs.constEnd(); ++it) {
+                const QString& tclId = it.key();
+                railway::AlignmentDocument* aDoc = it.value();
+                if (!aDoc) continue;
+                // Sync solved H-result back to TCL rawPoints
+                railway::TrackCenterLine* tcl = doc->findTrackCenterLine(tclId);
                 const railway::HorizontalAlignment* ha =
-                    context.alignmentDoc->horizontal()->result();
+                    aDoc->horizontal()->result();
                 if (tcl && ha && !ha->isEmpty())
                     tcl->loadHorizontal(ha->rawPoints());
+                // Store edit session JSON per-TCL
+                doc->setTclAlignmentData(tclId, aDoc->toJson());
             }
+        } else if (context.alignmentDoc) {
+            // Legacy fallback
             doc->setAlignmentData(context.alignmentDoc->toJson());
         }
 

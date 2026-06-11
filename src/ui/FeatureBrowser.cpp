@@ -210,25 +210,12 @@ void FeatureBrowser::connectSignals() {
     connect(d->treeWidget, &QTreeWidget::customContextMenuRequested,
             this, &FeatureBrowser::onCustomContextMenu);
 
-    // Eye icon toggle is handled by the delegate via model->setData(…, UserRole+2)
-    // QAbstractItemModel::dataChanged has 3 params; use correct signature.
+    // Eye icon toggle is handled directly in delegate editorEvent above.
+    // dataChanged is connected only to keep the model in sync; the actual
+    // EventBus publish happens inside editorEvent to avoid double-firing.
     connect(d->treeWidget->model(), &QAbstractItemModel::dataChanged,
-            this, [this](const QModelIndex& topLeft, const QModelIndex& /*bottomRight*/,
-                         const QVector<int>& roles) {
-                // Only react to UserRole+2 (visibility) changes
-                if (!roles.isEmpty() && !roles.contains(Qt::UserRole + 2))
-                    return;
-                QTreeWidgetItem* item = d->treeWidget->itemFromIdx(topLeft);
-                if (!item) return;
-                bool    visible = item->data(0, Qt::UserRole + 2).toBool();
-                QString id      = item->data(0, Qt::UserRole).toString();
-                if (id.isEmpty()) return;
-                qDebug() << "[FeatureBrowser] Eye toggled:" << id << "visible=" << visible;
-                core::EventBus* bus = core::Application::instance()->eventBus();
-                QVariantMap data;
-                data["itemId"]  = id;
-                data["visible"] = visible;
-                bus->publish("feature.visibility-changed", data);
+            this, [](const QModelIndex&, const QModelIndex&, const QVector<int>&) {
+                // intentionally empty — publish is done in delegate editorEvent
             });
 }
 
@@ -363,19 +350,10 @@ void FeatureBrowser::onTreeStructureChanged() {
 }
 
 void FeatureBrowser::onItemVisibilityToggled(QTreeWidgetItem* item, int column) {
-    if (column != 1) return;  // 只處理可見性欄位
-
-    // ✅ ID 保持字串，不轉 int
-    QString itemId = item->data(0, Qt::UserRole).toString();
-    bool visible   = (item->checkState(2) == Qt::Checked);
-
-    qDebug() << "[FeatureBrowser] Visibility toggled:" << itemId << visible;
-
-    core::EventBus* bus = core::Application::instance()->eventBus();
-    QVariantMap data;
-    data["itemId"]  = itemId;
-    data["visible"] = visible;
-    bus->publish("feature.visibility-changed", data);
+    // Visibility toggling is now handled entirely in FeatureItemDelegate::editorEvent.
+    // This slot is kept to avoid linker errors but does nothing to prevent double-publish.
+    Q_UNUSED(item)
+    Q_UNUSED(column)
 }
 
 void FeatureBrowser::clear() {
