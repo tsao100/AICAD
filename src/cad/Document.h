@@ -288,6 +288,12 @@ public:
     void setAlignmentData(const QJsonObject& data) { m_alignmentData = data; }
     QJsonObject alignmentData() const { return m_alignmentData; }
 
+    // ── Per-TCL alignment edit data ───────────────────────────────────────────
+    /** Store the AlignmentDocument edit-session JSON for a specific TCL. */
+    void        setTclAlignmentData(const QString& tclId, const QJsonObject& data);
+    QJsonObject tclAlignmentData(const QString& tclId) const;
+    QStringList tclAlignmentDataIds() const;
+
     // ── TrackCenterLine 管理 ───────────────────────────────────────────────
     railway::TrackCenterLine* addTrackCenterLine(const QString& name = QString());
     void removeTrackCenterLine(const QString& id);
@@ -424,7 +430,8 @@ private:
     aicad::core::ParameterStore* m_parameterStore;
     DependencyGraph              m_depGraph;
     QJsonObject m_viewState;       // ✅ 儲存視圖狀態（camera eye/at/up/scale）
-    QJsonObject m_alignmentData;   // passthrough — owned by UIManager::d->alignmentDoc
+    QJsonObject m_alignmentData;   // legacy passthrough — kept for compatibility
+    QHash<QString, QJsonObject> m_tclAlignmentData;  // per-TCL edit session JSON
 
     QList<railway::TrackCenterLine*> m_trackCenterLines;  ///< 線路中心線列表
 

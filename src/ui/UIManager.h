@@ -206,6 +206,9 @@ public:
     /// Railway alignment document (owned by UIManager)
     railway::AlignmentDocument* alignmentDocument() const;
 
+    /// All per-TCL AlignmentDocument instances (key = tclId)
+    const QHash<QString, railway::AlignmentDocument*>& tclAlignmentDocs() const;
+
     /// Step 16: Vertical-alignment dock widget
     ui::VAlignEditorDockWidget* vAlignDockWidget() const;
 

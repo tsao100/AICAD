@@ -1,167 +1,4 @@
 {
-    "alignment": {
-        "horizontal": {
-            "elements": [
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 281361.43533,
-                    "endY": 2764221.01593,
-                    "length": 132.73629,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 281320.24494,
-                    "startY": 2764094.83243,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 281492.25401,
-                    "endY": 2764205.67638,
-                    "length": 131.71496,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 281361.43533,
-                    "startY": 2764221.01593,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 40,
-                    "mode": 1,
-                    "radius": 110,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 1,
-                    "tangentIdxBefore": 0,
-                    "type": 2
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 110,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 1,
-                    "tangentIdxBefore": 0,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 40,
-                    "mode": 1,
-                    "radius": 110,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 1,
-                    "tangentIdxBefore": 0,
-                    "type": 3
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 281639.90625,
-                    "endY": 2764218.75,
-                    "length": 78.88740492784638,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 281563.21875,
-                    "startY": 2764200.25,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 30,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 5,
-                    "tangentIdxBefore": 1,
-                    "type": 2
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 5,
-                    "tangentIdxBefore": 1,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 30,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 5,
-                    "tangentIdxBefore": 1,
-                    "type": 3
-                }
-            ]
-        },
-        "vertical": {
-            "vips": [
-            ]
-        }
-    },
     "features": [
     ],
     "fileName": "2.aicad",
@@ -169,6 +6,101 @@
     },
     "trackCenterLines": [
         {
+            "alignmentEdit": {
+                "horizontal": {
+                    "elements": [
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": -78.98686218261719,
+                            "endY": 37.66162872314453,
+                            "length": 300.1393635311986,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": -229.08950805664062,
+                            "startY": -222.24765014648438,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 197.0408172607422,
+                            "endY": 134.37205505371094,
+                            "length": 292.47937770025067,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": -78.98686218261719,
+                            "startY": 37.66162872314453,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 55,
+                            "mode": 1,
+                            "radius": 300,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 1,
+                            "tangentIdxBefore": 0,
+                            "type": 2
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 0,
+                            "mode": 1,
+                            "radius": 300,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 1,
+                            "tangentIdxBefore": 0,
+                            "type": 1
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 55,
+                            "mode": 1,
+                            "radius": 300,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 1,
+                            "tangentIdxBefore": 0,
+                            "type": 3
+                        }
+                    ]
+                },
+                "vertical": {
+                    "vips": [
+                    ]
+                }
+            },
             "editorVips": [
                 {
                     "ch": 0,
@@ -176,78 +108,206 @@
                     "lvc": 0
                 },
                 {
-                    "ch": 85.5,
-                    "el": 1.123,
-                    "lvc": 70
-                },
-                {
-                    "ch": 193,
-                    "el": 0.432,
+                    "ch": 121.3,
+                    "el": -0.01,
                     "lvc": 60
                 },
                 {
-                    "ch": 325.9,
-                    "el": 0.613,
-                    "lvc": 40
+                    "ch": 299,
+                    "el": -0.704,
+                    "lvc": 100
                 },
                 {
-                    "ch": 385,
-                    "el": 0,
+                    "ch": 454.6,
+                    "el": 2.045,
+                    "lvc": 30
+                },
+                {
+                    "ch": 583,
+                    "el": 2.04,
                     "lvc": 0
                 }
             ],
+            "hAlignVisible": true,
             "horizontal": {
                 "rawPoints": [
+                    {
+                        "azimuth": 0.5237256002407032,
+                        "cant": 0,
+                        "chainage": 0,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": -229.08950805664062,
+                        "gaugeWidening": 0,
+                        "length": 161.26772485103217,
+                        "northing": -222.24765014648438,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.5237256002407032,
+                        "cant": 0,
+                        "chainage": 161.26772485103217,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -148.43793370322294,
+                        "gaugeWidening": 0,
+                        "length": 55,
+                        "northing": -82.59593109890747,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.6153922669073699,
+                        "cant": 0,
+                        "chainage": 216.26772485103217,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": -119.50057282426198,
+                        "gaugeWidening": 0,
+                        "length": 158.02124435041299,
+                        "northing": -35.84798510220462,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "SC",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.1421297480754133,
+                        "cant": 0,
+                        "chainage": 374.2889692014452,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": 0.7660265010597271,
+                        "gaugeWidening": 0,
+                        "length": 55,
+                        "northing": 63.82459532320527,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "CS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.23379641474208,
+                        "cant": 0,
+                        "chainage": 429.2889692014452,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 52.07337347156351,
+                        "gaugeWidening": 0,
+                        "length": 153.60773902008435,
+                        "northing": 83.58054269097791,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.23379641474208,
+                        "cant": 0,
+                        "chainage": 582.8967082215295,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 197.0408172607422,
+                        "gaugeWidening": 0,
+                        "length": 0,
+                        "northing": 134.37205505371094,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    }
                 ]
             },
-            "id": "3055e3fd-ec62-45fb-953f-e305289a3a65",
+            "id": "78d8011d-2756-4cfc-86d2-ad61d4c6201b",
             "name": "Track 1",
+            "vAlignVisible": true,
             "vertical": {
                 "points": [
                     {
                         "chainage": 0,
                         "elevation": 0,
-                        "grade": 1.3134502923976608,
+                        "grade": -0.008244023083264634,
                         "kValue": 0,
                         "lvc": 0,
                         "mo": 0,
                         "pviElevation": 0
                     },
                     {
-                        "chainage": 85.5,
-                        "elevation": 1.123,
-                        "grade": -0.6427906976744187,
-                        "kValue": 0,
-                        "lvc": 70,
-                        "mo": 0,
-                        "pviElevation": 1.123
-                    },
-                    {
-                        "chainage": 193,
-                        "elevation": 0.432,
-                        "grade": 0.13619262603461252,
+                        "chainage": 121.3,
+                        "elevation": -0.01,
+                        "grade": -0.3905458638154192,
                         "kValue": 0,
                         "lvc": 60,
                         "mo": 0,
-                        "pviElevation": 0.432
+                        "pviElevation": -0.01
                     },
                     {
-                        "chainage": 325.9,
-                        "elevation": 0.613,
-                        "grade": -1.037225042301184,
+                        "chainage": 299,
+                        "elevation": -0.704,
+                        "grade": 1.7667095115681228,
                         "kValue": 0,
-                        "lvc": 40,
+                        "lvc": 100,
                         "mo": 0,
-                        "pviElevation": 0.613
+                        "pviElevation": -0.704
                     },
                     {
-                        "chainage": 385,
-                        "elevation": 0,
-                        "grade": -1.037225042301184,
+                        "chainage": 454.6,
+                        "elevation": 2.045,
+                        "grade": -0.003894080996884653,
+                        "kValue": 0,
+                        "lvc": 30,
+                        "mo": 0,
+                        "pviElevation": 2.045
+                    },
+                    {
+                        "chainage": 583,
+                        "elevation": 2.04,
+                        "grade": -0.003894080996884653,
                         "kValue": 0,
                         "lvc": 0,
                         "mo": 0,
-                        "pviElevation": 0
+                        "pviElevation": 2.04
                     }
                 ]
             }
@@ -255,16 +315,16 @@
     ],
     "version": "1.0",
     "viewState": {
-        "atX": 281549.757611662,
-        "atY": 2764199.515278469,
+        "atX": 11.679164890229625,
+        "atY": -76.17460598196394,
         "atZ": 0,
-        "eyeX": 281549.757611662,
-        "eyeY": 2764199.515278469,
-        "eyeZ": 0,
-        "scale": 4.384010042403651,
+        "eyeX": 11.679164890229625,
+        "eyeY": -76.17460598196394,
+        "eyeZ": 204.32865065155448,
+        "scale": 1.4640915479060315,
         "upX": 0,
         "upY": 1,
         "upZ": 0,
-        "viewType": 1
+        "viewType": 7
     }
 }

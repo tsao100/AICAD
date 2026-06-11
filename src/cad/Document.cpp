@@ -65,6 +65,17 @@ Document::Document(QObject* parent)
 {
     initOCAF();
 
+    // ✅ Subscribe visibility-changed here so Railway-only documents
+    //    (which never call initializeOrigin) also handle eye icon toggles.
+    //    Use a static flag per-instance to avoid duplicate subscriptions
+    //    (e.g. if constructor is somehow called again for the same object).
+    core::EventBus* bus = core::Application::instance()->eventBus();
+    bus->unsubscribe("feature.visibility-changed", this);  // remove any existing
+    bus->subscribe("feature.visibility-changed", this,
+                   [this](const QVariant& data) {
+                       onVisibilityChanged(data.toMap());
+                   });
+
     // 當任一參數改變 → 標記所有參數化特徵 dirty 並重建
     connect(m_parameterStore, &aicad::core::ParameterStore::parameterChanged,
             this, [this](const QString&) { rebuildAll(); });
@@ -85,6 +96,28 @@ void Document::initOCAF() {
     app->NewDocument("BinOcaf", m_ocafDoc);
     qDebug() << "[Document] OCAF initialized";
 }
+
+// ── Per-TCL alignment data ─────────────────────────────────────────────────
+
+void Document::setTclAlignmentData(const QString& tclId, const QJsonObject& data)
+{
+    if (data.isEmpty())
+        m_tclAlignmentData.remove(tclId);
+    else
+        m_tclAlignmentData[tclId] = data;
+}
+
+QJsonObject Document::tclAlignmentData(const QString& tclId) const
+{
+    return m_tclAlignmentData.value(tclId, QJsonObject{});
+}
+
+QStringList Document::tclAlignmentDataIds() const
+{
+    return QStringList(m_tclAlignmentData.keys());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 void Document::setFileName(const QString& fileName) {
     if (m_fileName != fileName) {
@@ -142,17 +175,23 @@ bool Document::save(const QString& fileName) {
         if (!m_viewState.isEmpty())
             docJson["viewState"] = m_viewState;
 
-        // ✅ 儲存 alignment 資料（由 UIManager 在 save 前注入）
-        if (!m_alignmentData.isEmpty())
-            docJson["alignment"] = m_alignmentData;
-
-        // ✅ 儲存 TrackCenterLine 資料
+        // ✅ 儲存 TrackCenterLine 資料（含 per-TCL alignmentEdit）
         if (!m_trackCenterLines.isEmpty()) {
             QJsonArray tclArray;
-            for (railway::TrackCenterLine* tcl : m_trackCenterLines)
-                tclArray.append(tcl->toJson());
+            for (railway::TrackCenterLine* tcl : m_trackCenterLines) {
+                QJsonObject tclJson = tcl->toJson();
+                // Embed the AlignmentDocument edit session for this TCL
+                const QJsonObject editData = m_tclAlignmentData.value(tcl->id());
+                if (!editData.isEmpty())
+                    tclJson["alignmentEdit"] = editData;
+                tclArray.append(tclJson);
+            }
             docJson["trackCenterLines"] = tclArray;
         }
+
+        // ✅ Legacy: also save global alignmentData for backward compat
+        if (!m_alignmentData.isEmpty())
+            docJson["alignment"] = m_alignmentData;
 
         QFile file(saveFileName);
         if (!file.open(QIODevice::WriteOnly)) {
@@ -283,26 +322,33 @@ bool Document::load(const QString& fileName) {
         if (docJson.contains("viewState"))
             m_viewState = docJson["viewState"].toObject();
 
-        // ✅ 讀取 alignment 資料（UIManager 在 DOCUMENT_OPENED 後取出）
-        if (docJson.contains("alignment"))
-            m_alignmentData = docJson["alignment"].toObject();
-
-        // ✅ 讀取 TrackCenterLine 資料
+        // ✅ 讀取 TrackCenterLine 資料（含 per-TCL alignmentEdit）
         if (docJson.contains("trackCenterLines")) {
             qDeleteAll(m_trackCenterLines);
             m_trackCenterLines.clear();
+            m_tclAlignmentData.clear();
             for (const QJsonValue& val : docJson["trackCenterLines"].toArray()) {
+                QJsonObject tclJson = val.toObject();
+                // Extract and remove embedded alignmentEdit before TCL fromJson
+                const QJsonObject editData = tclJson.take("alignmentEdit").toObject();
                 auto* tcl = new railway::TrackCenterLine(this);
-                if (tcl->fromJson(val.toObject()))
+                if (tcl->fromJson(tclJson)) {
                     m_trackCenterLines.append(tcl);
-                else
+                    if (!editData.isEmpty())
+                        m_tclAlignmentData[tcl->id()] = editData;
+                } else {
                     delete tcl;
+                }
             }
             if (!m_trackCenterLines.isEmpty()) {
                 Q_EMIT trackCenterLinesChanged();
                 Q_EMIT treeStructureChanged();
             }
         }
+
+        // ✅ Legacy: read global alignmentData for old files
+        if (docJson.contains("alignment"))
+            m_alignmentData = docJson["alignment"].toObject();
 
         setFileName(fileName);
         setModified(false);
@@ -1160,6 +1206,38 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
     // ── 3. Feature (Sketch, Extrude …) ───────────────────────────────────
     Feature* feature = findFeature(itemId);
     if (!feature || m_aisContext.IsNull()) {
+        // ── 4. TrackCenterLine or its VAlignment child ────────────────────
+        // Check valign_ prefix first
+        if (itemId.startsWith("valign_")) {
+            const QString tclId = itemId.mid(7);  // strip "valign_"
+            railway::TrackCenterLine* tcl = findTrackCenterLine(tclId);
+            if (tcl) {
+                tcl->setVAlignVisible(visible);
+                setModified(true);
+                // Publish a separate event so UIManager can show/hide dock
+                core::EventBus* bus = core::Application::instance()->eventBus();
+                QVariantMap vdata;
+                vdata["tclId"]   = tclId;
+                vdata["visible"] = visible;
+                bus->publish("railway.valign-visibility-changed", vdata);
+                Q_EMIT treeStructureChanged();
+            }
+            return;
+        }
+        // Check TrackCenterLine id
+        railway::TrackCenterLine* tcl = findTrackCenterLine(itemId);
+        if (tcl) {
+            tcl->setHAlignVisible(visible);
+            setModified(true);
+            // Publish event so UIManager can show/hide AlignmentRenderer
+            core::EventBus* bus = core::Application::instance()->eventBus();
+            QVariantMap vdata;
+            vdata["tclId"]   = tcl->id();
+            vdata["visible"] = visible;
+            bus->publish("railway.halign-visibility-changed", vdata);
+            Q_EMIT treeStructureChanged();
+            return;
+        }
         qWarning() << "[Document] onVisibilityChanged: item not found:" << itemId;
         return;
     }
@@ -1187,13 +1265,6 @@ void Document::initializeOrigin(const Handle(AIS_InteractiveContext)& context) {
     qDebug() << "[Document] Initializing origin";
     initializeReferenceGeometry(context);
     createOriginFolderItems();
-
-    // ✅ Subscribe to visibility-changed events from FeatureBrowser
-    core::EventBus* bus = core::Application::instance()->eventBus();
-    bus->subscribe("feature.visibility-changed", this,
-                   [this](const QVariant& data) {
-                       onVisibilityChanged(data.toMap());
-                   });
 
     Q_EMIT treeStructureChanged();
 }
@@ -1284,9 +1355,19 @@ QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
         tclItem.id         = tcl->id();
         tclItem.name       = tcl->name();
         tclItem.parentId   = "__railway_folder__";
-        tclItem.visible    = true;
+        tclItem.visible    = tcl->hAlignVisible();
         tclItem.selectable = true;
         items.append(tclItem);
+
+        // ── Vertical Alignment child ────────────────────────────────────────
+        ui::FeatureTreeItem vAlignItem;
+        vAlignItem.type       = ui::ItemType::VAlignment;
+        vAlignItem.id         = QStringLiteral("valign_%1").arg(tcl->id());
+        vAlignItem.name       = tr("Vertical Alignment");
+        vAlignItem.parentId   = tcl->id();
+        vAlignItem.visible    = tcl->vAlignVisible();
+        vAlignItem.selectable = true;
+        items.append(vAlignItem);
     }
 
     return items;

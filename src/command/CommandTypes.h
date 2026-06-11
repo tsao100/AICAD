@@ -13,6 +13,8 @@
 #include <QVariant>
 #include <QMap>
 
+namespace aicad { namespace ui { class UIManager; } }
+
 // Forward declarations for railway / UI pointers
 namespace aicad {
 namespace railway { class AlignmentDocument; }
@@ -34,6 +36,9 @@ struct CommandContext {
 
     /// Railway alignment document (set by UIManager before execute())
     aicad::railway::AlignmentDocument* alignmentDoc = nullptr;
+
+    /// UIManager — gives commands access to per-TCL alignment docs
+    aicad::ui::UIManager* uiManager = nullptr;
 
     /// Vertical alignment profile view (set by UIManager before execute())
     aicad::ui::VAlignProfileView* profileView = nullptr;

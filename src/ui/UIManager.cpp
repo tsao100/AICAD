@@ -44,6 +44,7 @@
 #include "command/GripMoveCommand.h"
 #include "view/AlignmentRenderer.h"
 #include "railway/AlignmentDocument.h"
+#include "railway/RailwayAlignment.h"
 #include "ui/VAlignEditorDockWidget.h"   // Step 16
 
 #include <QMenu>
@@ -123,9 +124,14 @@ public:
     cad::ConstraintPickSession* pickSession = nullptr;  // Point-pick for dim constraints
 
     // ── Railway alignment ──────────────────────────────────────
-    railway::AlignmentDocument*  alignmentDoc      = nullptr;
-    view::AlignmentRenderer*     alignmentRenderer = nullptr;
+    railway::AlignmentDocument*  alignmentDoc      = nullptr;  ///< active edit session
     ui::VAlignEditorDockWidget*  vAlignDock        = nullptr;  ///< Step 16
+
+    /// Per-TCL AlignmentDocument instances (key = tcl->id())
+    QHash<QString, railway::AlignmentDocument*> tclAlignmentDocs;
+
+    /// Per-TCL renderers for 3D visibility (key = tcl->id())
+    QHash<QString, view::AlignmentRenderer*> tclRenderers;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -227,16 +233,17 @@ void UIManager::initGripSystem()
     // ── B3) geometry.selected → 偵測是否點選到 Alignment 物件 ────────────
     bus->subscribe("geometry.selected", this,
                    [this](const QVariant& payload) {
-                       if (!d->alignmentRenderer) return;
                        const QVariantMap data = payload.toMap();
                        auto* rawPtr = reinterpret_cast<AIS_InteractiveObject*>(
                            data.value("aisObject").value<void*>());
                        if (!rawPtr) return;
-
-                       if (d->alignmentRenderer->containsObject(rawPtr)) {
-                           // 重新發布為 alignment.elementSelected
-                           core::Application::instance()->eventBus()->publish(
-                               "alignment.elementSelected", QVariant{});
+                       // Check all per-TCL renderers
+                       for (auto* r : d->tclRenderers) {
+                           if (r->containsObject(rawPtr)) {
+                               core::Application::instance()->eventBus()->publish(
+                                   "alignment.elementSelected", QVariant{});
+                               return;
+                           }
                        }
                    });
 
@@ -382,19 +389,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // ✅ 在這裡呼叫，d->mainWindow 和 d->cadView 都已存在
         setupSketchPanel();
 
-        d->alignmentDoc      = new railway::AlignmentDocument(d->mainWindow);
-        d->alignmentRenderer = new view::AlignmentRenderer(d->cadView, d->mainWindow);
-        d->alignmentRenderer->setAlignment(d->alignmentDoc->horizontal());
-        connect(d->alignmentDoc->horizontal(),
-                &railway::HorizontalAlignmentEdit::changed,
-                d->alignmentRenderer,
-                &view::AlignmentRenderer::refresh);
-
-        // ── Step 16：建立縱斷面 Dock，連接水平↔縱斷面聯動 ─────────────────
+        // ── Step 16：建立縱斷面 Dock ──────────────────────────────────────────
+        // Per-TCL AlignmentDocument 在 editAlignmentRequested 時建立。
         d->vAlignDock = new ui::VAlignEditorDockWidget(d->mainWindow);
-        d->vAlignDock->setAlignmentDocument(d->alignmentDoc);
         d->mainWindow->addDockWidget(Qt::BottomDockWidgetArea, d->vAlignDock);
-        d->vAlignDock->hide();   // 初始隱藏；PROFILEVIEW 命令顯示
+        d->vAlignDock->hide();
 
         // ── 縱斷面編輯完成 → 寫回 TCL + 標記文件已修改 ───────────────────
         connect(d->vAlignDock, &ui::VAlignEditorDockWidget::alignmentChanged,
@@ -483,15 +482,73 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                     onDocumentCreated();
                                 }
 
-                                // ✅ 還原 alignment 資料
-                                if (d->alignmentDoc && !doc->alignmentData().isEmpty())
-                                    d->alignmentDoc->fromJson(doc->alignmentData());
+                                // ✅ 還原 per-TCL AlignmentDocument + overlay + vAlign dock
+                                for (auto* tcl : doc->trackCenterLines()) {
+                                    const QString tid = tcl->id();
+
+                                    // Build/restore per-TCL AlignmentDocument
+                                    railway::AlignmentDocument* aDoc =
+                                        d->tclAlignmentDocs.value(tid, nullptr);
+                                    if (!aDoc) {
+                                        aDoc = new railway::AlignmentDocument(d->mainWindow);
+                                        d->tclAlignmentDocs.insert(tid, aDoc);
+                                    }
+                                    // Load edit session from per-TCL JSON (new format)
+                                    QJsonObject editJson = doc->tclAlignmentData(tid);
+                                    // Fallback: legacy global alignmentData
+                                    if (editJson.isEmpty() && !doc->alignmentData().isEmpty())
+                                        editJson = doc->alignmentData();
+                                    if (!editJson.isEmpty())
+                                        aDoc->fromJson(editJson);
+                                    else
+                                        aDoc->horizontal()->solve();  // solve empty → clears
+
+                                    // Sync solved rawPoints back to TCL for PLAN DEV
+                                    const railway::HorizontalAlignment* ha =
+                                        aDoc->horizontal()->result();
+                                    if (ha && !ha->isEmpty())
+                                        tcl->loadHorizontal(ha->rawPoints());
+
+                                    if (tcl->hAlignVisible()) {
+                                        view::AlignmentRenderer* r =
+                                            d->tclRenderers.value(tid, nullptr);
+                                        if (!r) {
+                                            r = new view::AlignmentRenderer(
+                                                    d->cadView, d->mainWindow);
+                                            connect(aDoc->horizontal(),
+                                                    &railway::HorizontalAlignmentEdit::changed,
+                                                    r, &view::AlignmentRenderer::refresh);
+                                            d->tclRenderers.insert(tid, r);
+                                        }
+                                        r->setHorizontalAlignment(tcl->horizontal());
+                                        r->setVisible(true);
+                                        r->refresh();
+                                    }
+                                    if (tcl->vAlignVisible()) {
+                                        d->vAlignDock->setAlignmentDocument(aDoc);
+                                        d->vAlignDock->loadTrackCenterLine(tcl);
+                                        d->vAlignDock->show();
+                                        d->alignmentDoc = aDoc;  // track active
+                                    }
+                                }
                            });
 
         bus->subscribe(core::Events::DOCUMENT_CLOSED, this,
             [this](const QVariant& data) {
                 qDebug() << "[UIManager] Document closed:" << data.toString();
                 updateFeatureTree();
+                // ✅ 清除所有 per-TCL renderers
+                for (auto* r : d->tclRenderers)
+                    delete r;
+                d->tclRenderers.clear();
+                // ✅ 清除所有 per-TCL AlignmentDocuments
+                for (auto* ad : d->tclAlignmentDocs)
+                    delete ad;
+                d->tclAlignmentDocs.clear();
+                d->alignmentDoc = nullptr;
+                // ✅ 隱藏 vAlign dock
+                if (d->vAlignDock)
+                    d->vAlignDock->hide();
                 // ✅ 重設 OSnap 狀態，避免 dangling plane 指標
                 if (d->cadView && d->cadView->snapManager()) {
                     d->cadView->snapManager()->setActivePlane(nullptr);
@@ -501,6 +558,62 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 }
             });
         
+        // ── TCL h-alignment 3D visibility ─────────────────────────────────────
+        bus->subscribe("railway.halign-visibility-changed", this,
+            [this, docMgr](const QVariant& data) {
+                QVariantMap m = data.toMap();
+                const QString tclId  = m["tclId"].toString();
+                const bool    vis    = m["visible"].toBool();
+
+                auto* doc = docMgr->currentDocument();
+                if (!doc) return;
+                auto* tcl = doc->findTrackCenterLine(tclId);
+                if (!tcl) return;
+
+                view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
+                if (!r) {
+                    r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                    d->tclRenderers.insert(tclId, r);
+                }
+                if (vis) {
+                    r->setHorizontalAlignment(tcl->horizontal());
+                    r->setVisible(true);
+                    r->refresh();
+                } else {
+                    r->setVisible(false);
+                }
+            });
+
+        // ── TCL v-alignment profile dock visibility ────────────────────────────
+        bus->subscribe("railway.valign-visibility-changed", this,
+            [this, docMgr](const QVariant& data) {
+                QVariantMap m = data.toMap();
+                const QString tclId = m["tclId"].toString();
+                const bool    vis   = m["visible"].toBool();
+
+                auto* doc = docMgr->currentDocument();
+                if (!doc) return;
+                auto* tcl = doc->findTrackCenterLine(tclId);
+                if (!tcl) return;
+
+                if (vis) {
+                    // Get or create per-TCL AlignmentDocument
+                    railway::AlignmentDocument* aDoc =
+                        d->tclAlignmentDocs.value(tclId, nullptr);
+                    if (!aDoc) {
+                        aDoc = new railway::AlignmentDocument(d->mainWindow);
+                        d->tclAlignmentDocs.insert(tclId, aDoc);
+                    }
+                    d->alignmentDoc = aDoc;  // set active
+                    d->vAlignDock->setAlignmentDocument(aDoc);
+                    d->vAlignDock->loadTrackCenterLine(tcl);
+                    d->vAlignDock->show();
+                    d->vAlignDock->raise();
+                } else {
+                    d->vAlignDock->hide();
+                }
+            });
+
         // 監聽特徵事件
         bus->subscribe(core::Events::FEATURE_CREATED, this,
             [this](const QVariant& data) {
@@ -1334,6 +1447,47 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     auto* tcl = doc->findTrackCenterLine(tclId);
                     if (!tcl) return;
 
+                    // ── 啟用 H-alignment 3D 可見性 ────────────────────────────
+                    if (!tcl->hAlignVisible()) {
+                        tcl->setHAlignVisible(true);
+                        doc->setModified(true);
+                    }
+
+                    // ── Get or create per-TCL AlignmentDocument ──────────────
+                    railway::AlignmentDocument* aDoc =
+                        d->tclAlignmentDocs.value(tclId, nullptr);
+                    if (!aDoc) {
+                        aDoc = new railway::AlignmentDocument(d->mainWindow);
+                        d->tclAlignmentDocs.insert(tclId, aDoc);
+                        // Load existing edit data if available
+                        QJsonObject editJson = doc->tclAlignmentData(tclId);
+                        if (!editJson.isEmpty())
+                            aDoc->fromJson(editJson);
+                    }
+                    d->alignmentDoc = aDoc;  // set active
+
+                    // ── 建立/更新 per-TCL renderer ────────────────────────────
+                    view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
+                    if (!r) {
+                        r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                        connect(aDoc->horizontal(),
+                                &railway::HorizontalAlignmentEdit::changed,
+                                r, &view::AlignmentRenderer::refresh);
+                        d->tclRenderers.insert(tclId, r);
+                    }
+                    // Sync solved rawPoints to TCL for PLAN DEV
+                    const railway::HorizontalAlignment* ha = aDoc->horizontal()->result();
+                    if (ha && !ha->isEmpty())
+                        tcl->loadHorizontal(ha->rawPoints());
+                    r->setAlignment(aDoc->horizontal());
+                    r->setVisible(true);
+                    r->refresh();
+
+                    // ── 更新 FeatureBrowser eye icon ──────────────────────────
+                    Q_EMIT doc->treeStructureChanged();
+
+                    // ── 開啟縱斷面 dock ────────────────────────────────────────
+                    d->vAlignDock->setAlignmentDocument(aDoc);
                     d->vAlignDock->loadTrackCenterLine(tcl);
                     d->vAlignDock->show();
                     d->vAlignDock->raise();
@@ -1544,7 +1698,8 @@ void UIManager::connectCommandLineEvents() {
                        // Build context — fill railway fields so alignment
                        // commands can access the document without a global.
                        command::CommandContext ctx;
-                       ctx.alignmentDoc = d->alignmentDoc;
+                       ctx.alignmentDoc = d->alignmentDoc;  // active TCL's doc
+                       ctx.uiManager    = this;
                        ctx.cadView      = d->cadView;
                        // Step 16: profileView now accessible via vAlignDock
                        if (d->vAlignDock)
@@ -2411,6 +2566,11 @@ QUndoStack* UIManager::undoStack() const { return d->undoStack; }
 railway::AlignmentDocument* UIManager::alignmentDocument() const
 {
     return d->alignmentDoc;
+}
+
+const QHash<QString, railway::AlignmentDocument*>& UIManager::tclAlignmentDocs() const
+{
+    return d->tclAlignmentDocs;
 }
 
 ui::VAlignEditorDockWidget* UIManager::vAlignDockWidget() const

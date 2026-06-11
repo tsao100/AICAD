@@ -71,7 +71,14 @@ AlignmentRenderer::~AlignmentRenderer()
 
 void AlignmentRenderer::setAlignment(railway::HorizontalAlignmentEdit* edit)
 {
-    m_edit = edit;
+    m_edit     = edit;
+    m_directHA = nullptr;
+}
+
+void AlignmentRenderer::setHorizontalAlignment(const railway::HorizontalAlignment* ha)
+{
+    m_directHA = ha;
+    m_edit     = nullptr;
 }
 
 bool AlignmentRenderer::containsObject(const AIS_InteractiveObject* obj) const
@@ -96,8 +103,36 @@ void AlignmentRenderer::hidePIGrips()
 }
 
 // ============================================================================
-//  refresh()
+//  setVisible / clearOverlays
 // ============================================================================
+
+void AlignmentRenderer::setVisible(bool visible)
+{
+    if (m_visible == visible) return;
+    m_visible = visible;
+
+    if (!m_cadView) return;
+    auto ctx = m_cadView->context();
+    if (ctx.IsNull()) return;
+
+    for (const auto& obj : m_overlays) {
+        if (visible)
+            ctx->Display(obj, Standard_False);
+        else
+            ctx->Erase(obj, Standard_False);
+    }
+    ctx->UpdateCurrentViewer();
+}
+
+void AlignmentRenderer::clearOverlays()
+{
+    for (const auto& obj : m_overlays)
+        if (m_cadView) m_cadView->removeOverlayAIS(obj);
+    m_overlays.clear();
+    if (m_cadView) m_cadView->refreshView();
+}
+
+
 
 void AlignmentRenderer::refresh()
 {
@@ -108,9 +143,11 @@ void AlignmentRenderer::refresh()
         m_cadView->removeOverlayAIS(obj);
     m_overlays.clear();
 
-    if (!m_edit) return;
+    if (!m_visible) return;
+    if (!m_edit && !m_directHA) return;
 
-    const railway::HorizontalAlignment* ha = m_edit->result();
+    const railway::HorizontalAlignment* ha =
+        m_edit ? m_edit->result() : m_directHA;
     if (!ha || ha->isEmpty()) return;
 
     // ── 2. Rebuild from solved element list ───────────────────────────────────
