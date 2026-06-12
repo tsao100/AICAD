@@ -24,7 +24,10 @@ GripEventFilter::GripEventFilter(cad::GripManager* mgr,
 {}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
 <<<<<<< HEAD
 // ---------------------------------------------------------------------------
 // screenToWorld
@@ -40,7 +43,12 @@ GripEventFilter::GripEventFilter(cad::GripManager* mgr,
 //   • Perspective:  ray origin = Eye,            ray dir = Eye→Convert(pixel)
 // ---------------------------------------------------------------------------
 
+<<<<<<< HEAD
 >>>>>>> 56324d0 (H Alignment grips dbg1.)
+=======
+=======
+>>>>>>> 2604ab0 (H Alignment grips dbg1.)
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
 gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
 {
     // Project screen ray onto a plane.
@@ -79,7 +87,10 @@ gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
     }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
     // ── 4. Fallback: project screen point onto plane along Z ─────────────────
     // (ray nearly parallel to plane — very unusual for plan-view alignment)
     if (!m_sketchPlane) {
@@ -124,7 +135,12 @@ gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
         return gp_Pnt(wx, wy, wz);
     }
 
+<<<<<<< HEAD
 >>>>>>> 56324d0 (H Alignment grips dbg1.)
+=======
+=======
+>>>>>>> 2604ab0 (H Alignment grips dbg1.)
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
     double t = toPlane.XYZ().Dot(planeNormal.XYZ()) / denom;
 
     return gp_Pnt(
@@ -133,9 +149,15 @@ gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
         rayOrigin.Z() + rayDir.Z() * t
     );
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 6bc721d (H Alignment grips dbg1.)
 >>>>>>> 56324d0 (H Alignment grips dbg1.)
+=======
+>>>>>>> 6bc721d (H Alignment grips dbg1.)
+=======
+>>>>>>> 2604ab0 (H Alignment grips dbg1.)
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
 }
 
 bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
@@ -162,13 +184,22 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
         bool handled = m_gripManager->mouseMoveEvent(wp, px, py);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         // Hover 事件發布
 =======
+=======
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
 <<<<<<< HEAD
 =======
         // Hover 事件發布
 >>>>>>> 6bc721d (H Alignment grips dbg1.)
+<<<<<<< HEAD
 >>>>>>> 56324d0 (H Alignment grips dbg1.)
+=======
+=======
+        // Hover 事件發布
+>>>>>>> 2604ab0 (H Alignment grips dbg1.)
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
         bool wasHovered = m_lastHovered;
         if (handled != wasHovered) {
             auto* bus = core::Application::instance()->eventBus();

@@ -424,7 +424,10 @@ void HorizontalAlignmentEdit::moveStartPI(int idx, QPointF newPos)
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
 <<<<<<< HEAD
 void HorizontalAlignmentEdit::movePIDirect(int idx, QPointF newPos)
 {
@@ -457,7 +460,12 @@ void HorizontalAlignmentEdit::moveStartPIDirect(int idx, QPointF newPos)
 
 =======
 >>>>>>> 6bc721d (H Alignment grips dbg1.)
+<<<<<<< HEAD
 >>>>>>> 56324d0 (H Alignment grips dbg1.)
+=======
+=======
+>>>>>>> 2604ab0 (H Alignment grips dbg1.)
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
 void HorizontalAlignmentEdit::setRadius(int idx, double radius)
 {
     // TODO Step 3: Floating 模式才需要 re-solve；Fixed 直接更新

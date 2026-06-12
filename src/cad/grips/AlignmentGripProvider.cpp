@@ -76,7 +76,10 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
     QSet<QPair<int,int>> seen;
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
 <<<<<<< HEAD
     for (const auto& el : elems) {
         if (el.mode != railway::ConstraintMode::Floating) continue;
@@ -88,7 +91,12 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
         seen.insert(key);
         groups.append({b, a});
 =======
+<<<<<<< HEAD
 >>>>>>> 56324d0 (H Alignment grips dbg1.)
+=======
+=======
+>>>>>>> 2604ab0 (H Alignment grips dbg1.)
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
             gp.onDrag = [this, i](const gp_Pnt& np, bool /*snapped*/) {
                 m_edit->moveStartPI(i, toQPointF(np));
                 m_edit->solve();  // → changed() → AlignmentRenderer::refresh()
@@ -145,9 +153,15 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
             grips.append(gp);
         }
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 6bc721d (H Alignment grips dbg1.)
 >>>>>>> 56324d0 (H Alignment grips dbg1.)
+=======
+>>>>>>> 6bc721d (H Alignment grips dbg1.)
+=======
+>>>>>>> 2604ab0 (H Alignment grips dbg1.)
+>>>>>>> 20d6d81 (H Alignment grips dbg1.)
     }
 
     if (groups.isEmpty()) return grips;
