@@ -356,10 +356,14 @@
                         "easting": 54.332160378901136,
                         "gaugeWidening": 0,
 <<<<<<< HEAD
+<<<<<<< HEAD
                         "length": 325.6141764430127,
 =======
                         "length": 325.61417644301275,
 >>>>>>> 6bc721d (H Alignment grips dbg1.)
+=======
+                        "length": 325.61417644301275,
+>>>>>>> 2224441 (H Alignment grips dbg1.)
                         "northing": 86.28026251566297,
                         "plat": "",
                         "radius": 0,
@@ -375,10 +379,14 @@
                         "azimuth": 1.221104856042573,
                         "cant": 0,
 <<<<<<< HEAD
+<<<<<<< HEAD
                         "chainage": 875.1083977742455,
 =======
                         "chainage": 875.1083977742456,
 >>>>>>> 6bc721d (H Alignment grips dbg1.)
+=======
+                        "chainage": 875.1083977742456,
+>>>>>>> 2224441 (H Alignment grips dbg1.)
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
