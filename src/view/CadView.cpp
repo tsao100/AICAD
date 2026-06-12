@@ -1570,12 +1570,25 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
 
         if (!hasCmd) {
-            bool additive = (event->modifiers() & Qt::ShiftModifier);
-            d->context->SelectDetected(
-                additive ? AIS_SelectionScheme_Add
-                         : AIS_SelectionScheme_Replace);
-
             auto* bus = Application::instance()->eventBus();
+
+            // ── Sketch Idle 選取規則 ─────────────────────────────────────────
+            // ① 點到空白處 → 清空所有選取
+            // ② 點到幾何   → 累加選取（不需按 Shift）
+            // Shift 鍵 = XOR（可反選已選物件）
+            if (!d->context->HasDetected()) {
+                // 點到空白 → 清空
+                d->context->ClearSelected(Standard_True);
+                bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
+                bus->publish("selection.cleared", QVariant());
+                return;
+            }
+
+            // 點到幾何：無 Shift = 累加；Shift = XOR（反選）
+            bool shiftHeld = (event->modifiers() & Qt::ShiftModifier);
+            d->context->SelectDetected(
+                shiftHeld ? AIS_SelectionScheme_XOR
+                          : AIS_SelectionScheme_Add);
 
             // ── 同一個迴圈同時收集 UUID（給 Sketch 高亮）和 geomIndex（給 Grips）──
             QStringList uuids;
@@ -1603,24 +1616,26 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             }
 
             if (!uuids.isEmpty()) {
-                // ① 通知 Sketch 高亮選取的幾何
+                // ① 通知 Sketch 高亮選取的幾何（傳送目前所有已選 UUID）
                 QVariantMap data;
                 data["uuids"] = QVariant::fromValue(uuids);
                 bus->publish(Events::SKETCH_GEOM_SELECTED, data);
 
-                // ② 觸發 GripManager 附加 Provider（這是之前完全缺漏的步驟）
-                if (!selectionMap.isEmpty()) {
-                    QString featureId = selectionMap.firstKey();
+                // ② 觸發 GripManager：把所有已選幾何的 indices 合併後一次送出
+                // 支援跨多個 feature 的選取（實務上 sketch 同一個）
+                for (auto it = selectionMap.constBegin();
+                     it != selectionMap.constEnd(); ++it)
+                {
                     QVariantList indexList;
-                    for (int idx : selectionMap[featureId]) indexList.append(idx);
+                    for (int idx : it.value()) indexList.append(idx);
                     QVariantMap selData;
-                    selData["featureId"]   = featureId;
+                    selData["featureId"]   = it.key();
                     selData["geomIndices"] = indexList;
                     bus->publish("selection.featureSelected", selData);
                 }
             } else {
                 bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
-                bus->publish("selection.cleared", QVariant());  // 同步清除 Grips
+                bus->publish("selection.cleared", QVariant());
             }
             return;
         }

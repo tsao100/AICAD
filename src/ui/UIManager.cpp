@@ -162,39 +162,38 @@ void UIManager::initGripSystem()
     bus->subscribe("selection.featureSelected", this,
                    [this, docMgr](const QVariant& v) {
                     QString featureId = v.toMap()["featureId"].toString();
-                    // ✅ Reconstruct QSet<int> from QVariantList
                     QSet<int> geomIndices;
                     for (const QVariant& idx : v.toMap()["geomIndices"].toList())
                         geomIndices.insert(idx.toInt());
-                    qDebug() << "[UIManager]" << featureId;
 
         cad::Feature* feature = docMgr->currentDocument()->findFeature(featureId);
                        if (!feature) return;
 
-                       // Detach old grips first
-                       d->gripManager->detach();
-
-                       // Attach appropriate provider
                        if (auto* sketch = qobject_cast<cad::Sketch*>(feature)) {
                            cad::Plane* plane = sketch->plane();
-
-                           // ✅ 把 sketch plane 的真實軸向傳給 GripManager
                            QVector3D qx = plane->xAxis();
                            QVector3D qy = plane->yAxis();
 
                            d->gripManager->setPlaneAxes(
                                gp_Dir(qx.x(), qx.y(), qx.z()),
-                               gp_Dir(qy.x(), qy.y(), qy.z())
-                               );
-
-                           // ✅ 同樣傳給 GripEventFilter 做 ray-plane 投影
+                               gp_Dir(qy.x(), qy.y(), qy.z()));
                            d->gripFilter->setSketchPlane(plane);
+
+                           // ── 累加模式：合併新舊 geomIndices，不 detach ─────────────
+                           // 取得目前 provider 已有的 indices（若有）
+                           QSet<int> merged = geomIndices;
+                           if (auto* existing = dynamic_cast<cad::SketchGripProvider*>(
+                                   d->gripManager->currentProvider())) {
+                               merged |= existing->geomIndices();
+                           }
+
+                           // detach 舊的，attach 合併後的
+                           d->gripManager->detach();
                            d->gripManager->attachProvider(
-                               std::make_unique<cad::SketchGripProvider>(sketch, geomIndices));
+                               std::make_unique<cad::SketchGripProvider>(sketch, merged));
                            qDebug() << "[UIManager] Grips attached for sketch:"
-                                    << sketch->id() << " -> " << geomIndices;
+                                    << sketch->id() << " -> " << merged;
                        }
-                       // future: else if Extrude → ExtrudeGripProvider ...
                    });
 
     // ── B1) Selection cleared → detach grips ──────────────────────────
