@@ -167,7 +167,7 @@ void AlignmentRenderer::refresh()
 
         if (shape.IsNull()) continue;
 
-        m_cadView->addOverlayAIS(shape);
+        m_cadView->addOverlayAIS(shape, {1});   // mode 1 = 可被 OCCT 選取偵測
         m_overlays.append(shape);
     }
 

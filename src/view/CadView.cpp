@@ -1580,6 +1580,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             // ── 同一個迴圈同時收集 UUID（給 Sketch 高亮）和 geomIndex（給 Grips）──
             QStringList uuids;
             QMap<QString, QSet<int>> selectionMap;
+            Handle(AIS_InteractiveObject) overlayHit;  // alignment overlay (not in aisToFeatureId)
 
             for (d->context->InitSelected();
                  d->context->MoreSelected();
@@ -1593,7 +1594,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 if (!uuid.isEmpty()) uuids << uuid;
 
                 QString featureId = d->aisToFeatureId.value(obj.get());
-                if (featureId.isEmpty()) continue;
+                if (featureId.isEmpty()) {
+                    // Not a sketch feature — could be an alignment overlay
+                    if (overlayHit.IsNull()) overlayHit = obj;
+                    continue;
+                }
 
                 int geomIndex = d->aisToGeomIndex.value(obj.get(), -1);
                 if (geomIndex >= 0)
@@ -1618,6 +1623,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                     selData["geomIndices"] = indexList;
                     bus->publish("selection.featureSelected", selData);
                 }
+            } else if (!overlayHit.IsNull()) {
+                // Alignment overlay clicked in Sketching mode
+                QVariantMap selData;
+                selData["aisObject"] = QVariant::fromValue((void*)overlayHit.get());
+                bus->publish("geometry.selected", selData);
             } else {
                 bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
                 bus->publish("selection.cleared", QVariant());  // 同步清除 Grips
@@ -1695,6 +1705,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
         // ✅ Collect ALL currently selected shapes
         QMap<QString, QSet<int>> selectionMap;  // featureId → set of geomIndices
+        Handle(AIS_InteractiveObject) overlayHit;  // alignment overlay hit (not in aisToFeatureId)
 
         for (d->context->InitSelected();
              d->context->MoreSelected();
@@ -1705,7 +1716,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             if (s.IsNull()) continue;
 
             QString featureId = d->aisToFeatureId.value(s.get());
-            if (featureId.isEmpty()) continue;
+            if (featureId.isEmpty()) {
+                // Not a registered feature — could be an alignment overlay
+                if (overlayHit.IsNull()) overlayHit = s;
+                continue;
+            }
 
             int geomIndex = d->aisToGeomIndex.value(s.get(), -1);
             if (geomIndex >= 0)
@@ -1732,7 +1747,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
         } else {
             auto* bus = core::Application::instance()->eventBus();
-            bus->publish("selection.cleared", QVariant());
+            // 檢查是否點選到 alignment overlay（未登記在 aisToFeatureId 的 AIS 物件）
+            if (!overlayHit.IsNull()) {
+                QVariantMap selData;
+                selData["aisObject"] = QVariant::fromValue((void*)overlayHit.get());
+                bus->publish("geometry.selected", selData);
+            } else {
+                bus->publish("selection.cleared", QVariant());
+            }
         }
     }
 

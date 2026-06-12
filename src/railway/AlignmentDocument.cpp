@@ -401,6 +401,28 @@ void HorizontalAlignmentEdit::movePI(int idx, QPointF newPos)
     }
 }
 
+void HorizontalAlignmentEdit::moveStartPI(int idx, QPointF newPos)
+{
+    if (idx < 0 || idx >= m_elems.size()) return;
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    auto& e = m_elems[idx];
+    e.startPI = newPos;
+    if (e.type == EditableElementType::Tangent)
+        e.length = QLineF(newPos, e.endPI).length();
+    e.solved = false;
+
+    if (parentDocument()) {
+        // mergeId=2: 與 movePI(mergeId=1) 的拖曳互不合併
+        auto* cmd = new command::AlignmentEditCommand(
+            parentDocument(), before, parentDocument()->toJson(), "Move Start PI", /*mergeId=*/2);
+        auto* app = core::Application::instance();
+        if (app && app->uiManager() && app->uiManager()->undoStack())
+            app->uiManager()->undoStack()->push(cmd);
+    }
+}
+
 void HorizontalAlignmentEdit::setRadius(int idx, double radius)
 {
     // TODO Step 3: Floating 模式才需要 re-solve；Fixed 直接更新

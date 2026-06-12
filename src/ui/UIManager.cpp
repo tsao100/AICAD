@@ -277,6 +277,10 @@ void UIManager::initGripSystem()
         if (inSketch) {
             if (d->gripFilter) d->gripFilter->setEnabled(true);
             if (d->gripManager) d->gripManager->setEnabled(true);
+        } else if (d->alignmentDoc && d->gripManager->currentProvider()) {
+            // Alignment 編輯模式：command 結束後也要恢復 grip
+            if (d->gripFilter) d->gripFilter->setEnabled(true);
+            if (d->gripManager) d->gripManager->setEnabled(true);
         }
     };
     bus->subscribe(core::Events::COMMAND_EXECUTED,  this, onCommandEnd);

@@ -38,7 +38,7 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
             gp.enabled  = true;
 
             gp.onDrag = [this, i](const gp_Pnt& np, bool /*snapped*/) {
-                m_edit->movePI(i, toQPointF(np));
+                m_edit->moveStartPI(i, toQPointF(np));
                 m_edit->solve();  // → changed() → AlignmentRenderer::refresh()
             };
 
@@ -78,19 +78,15 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
             gp.enabled  = true;
 
             gp.onDrag = [this, i](const gp_Pnt& np, bool /*snapped*/) {
-                // 平移整個 Floating/Free 元素：
-                // movePI(i) 對 Tangent 移動 endPI；對 Arc/Spiral 移動 startPI。
-                // 中點平移時我們只移動 startPI，然後讓 solver 重算 endPI。
+                // Floating/Free 元素：平移中心點 = 移動 startPI（solver 重算 endPI）
                 const QVector<railway::EditableElement>& els = m_edit->elements();
                 if (i >= els.size()) return;
 
                 const railway::EditableElement& cur = els[i];
                 QPointF oldMid = (cur.startPI + cur.endPI) * 0.5;
-                QPointF newMid = toQPointF(np);
-                QPointF delta  = newMid - oldMid;
+                QPointF delta  = toQPointF(np) - oldMid;
 
-                // 用新的 startPI 呼叫 movePI（將 startPI 移到舊 startPI + delta）
-                m_edit->movePI(i, cur.startPI + delta);
+                m_edit->moveStartPI(i, cur.startPI + delta);
                 m_edit->solve();
             };
 

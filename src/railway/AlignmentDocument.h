@@ -177,6 +177,14 @@ public:
                SpiralType spiralType = SpiralType::Clothoid);
 
     void movePI(int idx, QPointF newPos);
+
+    /**
+     * @brief 移動 Fixed Tangent 的 startPI（from 端）。
+     *
+     * 對非 Tangent 元素，等同 movePI（移動 startPI）。
+     * 連續拖曳時 mergeId=2，與 movePI(mergeId=1) 互不合併。
+     */
+    void moveStartPI(int idx, QPointF newPos);
     void setRadius(int idx, double radius);
     void setConstraintMode(int idx, ConstraintMode mode);
     void removeElement(int idx);
