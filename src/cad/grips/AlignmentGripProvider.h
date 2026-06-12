@@ -37,14 +37,6 @@ public:
                        const gp_Pnt& endPos) override;
 
 private:
-    struct ParsedGrip {
-        int  elemIdx = -1;
-        bool isStart = true;
-        bool isMid   = false;
-    };
-    static ParsedGrip parseGripId(const QString& gripId);
-    static QPointF    toQPointF(const gp_Pnt& p);
-
     railway::HorizontalAlignmentEdit* m_edit = nullptr;
 
     /// drag 開始前的文件快照，供 onGripDragEnd 推入 Undo

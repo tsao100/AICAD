@@ -209,7 +209,10 @@ win32 {
     INCLUDEPATH += D:/Git/eigen-5.0.0
 
     # 每次編譯完自動複製 menu.txt 到輸出資料夾
-    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/menu.txt) $$shell_path($$OUT_PWD)
+    QMAKE_POST_LINK += cmd /c copy /Y \
+        "\"$$shell_path($$PWD/menu.txt)\"" \
+        "\"$$shell_path($$OUT_PWD)\""
+
 }
 
 # ========================================
