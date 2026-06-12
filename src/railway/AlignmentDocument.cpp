@@ -423,35 +423,6 @@ void HorizontalAlignmentEdit::moveStartPI(int idx, QPointF newPos)
     }
 }
 
-void HorizontalAlignmentEdit::movePIDirect(int idx, QPointF newPos)
-{
-    if (idx < 0 || idx >= m_elems.size()) return;
-    auto& e = m_elems[idx];
-    switch (e.type) {
-    case EditableElementType::Tangent:
-        e.endPI  = newPos;
-        e.length = QLineF(e.startPI, newPos).length();
-        break;
-    case EditableElementType::CircularArc:
-        e.startPI = newPos;
-        e.solved  = false;
-        break;
-    default:
-        e.startPI = newPos;
-        break;
-    }
-}
-
-void HorizontalAlignmentEdit::moveStartPIDirect(int idx, QPointF newPos)
-{
-    if (idx < 0 || idx >= m_elems.size()) return;
-    auto& e = m_elems[idx];
-    e.startPI = newPos;
-    if (e.type == EditableElementType::Tangent)
-        e.length = QLineF(newPos, e.endPI).length();
-    e.solved = false;
-}
-
 void HorizontalAlignmentEdit::setRadius(int idx, double radius)
 {
     // TODO Step 3: Floating 模式才需要 re-solve；Fixed 直接更新
