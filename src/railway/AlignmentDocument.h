@@ -185,6 +185,24 @@ public:
      * 連續拖曳時 mergeId=2，與 movePI(mergeId=1) 互不合併。
      */
     void moveStartPI(int idx, QPointF newPos);
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+
+    /**
+     * @brief Grip drag 用：直接修改 PI 座標，不 push Undo。
+     *
+     * Undo 由 AlignmentGripProvider::onGripDragEnd() 統一推入一筆記錄。
+     */
+    void movePIDirect(int idx, QPointF newPos);
+
+    /**
+     * @brief Grip drag 用：直接修改 startPI，不 push Undo。
+     */
+    void moveStartPIDirect(int idx, QPointF newPos);
+=======
+>>>>>>> 6bc721d (H Alignment grips dbg1.)
+>>>>>>> 56324d0 (H Alignment grips dbg1.)
     void setRadius(int idx, double radius);
     void setConstraintMode(int idx, ConstraintMode mode);
     void removeElement(int idx);

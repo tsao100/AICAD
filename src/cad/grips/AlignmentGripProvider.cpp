@@ -75,6 +75,20 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
     QVector<IPGroup> groups;
     QSet<QPair<int,int>> seen;
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+    for (const auto& el : elems) {
+        if (el.mode != railway::ConstraintMode::Floating) continue;
+        const int b = el.tangentIdxBefore;
+        const int a = el.tangentIdxAfter;
+        if (b < 0 || a < 0 || b >= elems.size() || a >= elems.size()) continue;
+        const QPair<int,int> key(b, a);
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+        groups.append({b, a});
+=======
+>>>>>>> 56324d0 (H Alignment grips dbg1.)
             gp.onDrag = [this, i](const gp_Pnt& np, bool /*snapped*/) {
                 m_edit->moveStartPI(i, toQPointF(np));
                 m_edit->solve();  // → changed() → AlignmentRenderer::refresh()
@@ -130,6 +144,10 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
 
             grips.append(gp);
         }
+<<<<<<< HEAD
+=======
+>>>>>>> 6bc721d (H Alignment grips dbg1.)
+>>>>>>> 56324d0 (H Alignment grips dbg1.)
     }
 
     if (groups.isEmpty()) return grips;

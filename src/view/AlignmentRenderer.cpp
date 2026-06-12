@@ -177,7 +177,15 @@ void AlignmentRenderer::refresh()
 
         if (shape.IsNull()) continue;
 
+<<<<<<< HEAD
         m_cadView->addOverlayAIS(shape, {1});   // mode 1 = 可被 OCCT 選取偵測
+=======
+<<<<<<< HEAD
+        m_cadView->addOverlayAIS(shape, {0});   // mode 0 = whole-shape hit test
+=======
+        m_cadView->addOverlayAIS(shape, {1});   // mode 1 = 可被 OCCT 選取偵測
+>>>>>>> 6bc721d (H Alignment grips dbg1.)
+>>>>>>> 56324d0 (H Alignment grips dbg1.)
         m_overlays.append(shape);
     }
 
