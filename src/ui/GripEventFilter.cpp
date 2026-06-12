@@ -18,39 +18,38 @@ GripEventFilter::GripEventFilter(cad::GripManager* mgr,
     , m_view(view)
 {}
 
-// src/ui/GripEventFilter.cpp
 gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
 {
-    if (!m_sketchPlane) {
-        // Fallback: point on view plane
-        double wx, wy, wz;
-        m_view->Convert(x, y, wx, wy, wz);
-        return gp_Pnt(wx, wy, wz);
-    }
+    // Project screen ray onto a plane.
+    // For alignment editing (no sketch plane) the geometry lives at Z = 0.
+    // For sketch editing, project onto the sketch plane.
 
-    // ✅ Project screen ray onto sketch plane
-
-    // 1. Get ray origin (eye position) and ray direction
     double px, py, pz, dx, dy, dz;
     m_view->ProjReferenceAxe(x, y, px, py, pz, dx, dy, dz);
 
-    gp_Pnt  rayOrigin(px, py, pz);
-    gp_Dir  rayDir(dx, dy, dz);
+    gp_Pnt rayOrigin(px, py, pz);
+    gp_Dir rayDir(dx, dy, dz);
 
-    // 2. Plane equation: (P - planeOrigin) · normal = 0
-    QVector3D qOrigin = m_sketchPlane->origin();
-    QVector3D qNormal = m_sketchPlane->normal();
+    gp_Pnt planeOrigin;
+    gp_Dir planeNormal;
 
-    gp_Pnt  planeOrigin(qOrigin.x(), qOrigin.y(), qOrigin.z());
-    gp_Dir  planeNormal(qNormal.x(), qNormal.y(), qNormal.z());
+    if (m_sketchPlane) {
+        QVector3D qOrigin = m_sketchPlane->origin();
+        QVector3D qNormal = m_sketchPlane->normal();
+        planeOrigin = gp_Pnt(qOrigin.x(), qOrigin.y(), qOrigin.z());
+        planeNormal = gp_Dir(qNormal.x(), qNormal.y(), qNormal.z());
+    } else {
+        // Alignment grips live at Z = 0 (XY world plane)
+        planeOrigin = gp_Pnt(0.0, 0.0, 0.0);
+        planeNormal = gp_Dir(0.0, 0.0, 1.0);
+    }
 
-    // 3. Ray-plane intersection:
-    //    t = (planeOrigin - rayOrigin) · normal / (rayDir · normal)
+    // Ray-plane intersection: t = (planeOrigin - rayOrigin) · normal / (rayDir · normal)
     gp_Vec toPlane(rayOrigin, planeOrigin);
     double denom = rayDir.XYZ().Dot(planeNormal.XYZ());
 
     if (std::abs(denom) < 1e-10) {
-        // Ray parallel to plane, fallback
+        // Ray parallel to plane — fallback to view-plane point
         double wx, wy, wz;
         m_view->Convert(x, y, wx, wy, wz);
         return gp_Pnt(wx, wy, wz);
@@ -62,7 +61,7 @@ gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
         rayOrigin.X() + rayDir.X() * t,
         rayOrigin.Y() + rayDir.Y() * t,
         rayOrigin.Z() + rayDir.Z() * t
-        );
+    );
 }
 
 bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
@@ -88,7 +87,7 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
 
         bool handled = m_gripManager->mouseMoveEvent(wp, px, py);
 
-        // Hover 事件發布（同原邏輯）
+        // Hover 事件發布
         bool wasHovered = m_lastHovered;
         if (handled != wasHovered) {
             auto* bus = core::Application::instance()->eventBus();
