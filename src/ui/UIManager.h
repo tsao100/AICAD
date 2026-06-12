@@ -152,6 +152,20 @@ public:
     // Phase 7：供 DimConstraintCommand 取得 pickSession
     cad::ConstraintPickSession* constraintPickSession() const;
 
+    /**
+     * @brief 啟動幾何約束互動選取模式
+     *
+     * 供 GeomConstraintCommand 呼叫：
+     *  1. 呼叫 session->begin(sketch, type, 0)
+     *  2. 切換 CadView 到 GetGeom 模式
+     *  3. 設定 status bar 提示
+     *
+     * constraintReady signal 已在初始化時連接到 SketchPanel::onConstraintReadyFromSession。
+     */
+    void beginGeomConstraintPick(cad::Sketch* sketch,
+                                 cad::ConstraintType type,
+                                 int requiredCount);
+
     void setupMenusFromParser();
     void setupToolbarsFromParser();
     void executeCommand(const QString& commandId);

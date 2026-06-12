@@ -3025,5 +3025,22 @@ cad::ConstraintPickSession* UIManager::constraintPickSession() const
     return d->pickSession;
 }
 
+void UIManager::beginGeomConstraintPick(cad::Sketch* sketch,
+                                        cad::ConstraintType type,
+                                        int /*requiredCount*/)
+{
+    if (!d->pickSession || !sketch) return;
+
+    // 1. 啟動 session（requiredPointCount 已在 session 內部根據 type 決定）
+    d->pickSession->begin(sketch, type, 0.0, QString(), true);
+
+    // 2. 切換到 GetGeom 模式，使 CadView 能 pick 幾何主體（線/圓/弧）
+    if (d->cadView)
+        d->cadView->setMode(view::InteractionMode::GetGeom);
+
+    // 3. 更新 status bar 提示
+    setStatusMessage(d->pickSession->promptText());
+}
+
 } // namespace ui
 } // namespace aicad

@@ -117,16 +117,12 @@ CommandResult GeomConstraintCommand::execute(const CommandContext& ctx)
     auto* ui = app->uiManager();
     if (!ui) return CommandResult::Failure("UIManager not available.");
 
-    // 透過 UIManager 的 ConstraintPickSession 進入 GetGeom 模式
+    // beginGeomConstraintPick 會：begin session + setMode(GetGeom) + 更新 status bar
+    ui->beginGeomConstraintPick(sk, m_type, m_requiredSel);
+
     auto* session = ui->constraintPickSession();
-    if (!session) return CommandResult::Failure("ConstraintPickSession not available.");
-
-    // 幾何約束不需要數值，用 value=0
-    session->begin(sk, m_type, 0.0, QString(), true);
-    // session 的 constraintReady signal 由 UIManager 連接處理
-
-    cmdMgr->showPrompt(session->promptText());
-    return CommandResult::Success(QString("[%1] Interactive mode started.").arg(name()));
+    cmdMgr->showPrompt(session ? session->promptText() : QString());
+    return CommandResult::Success(QString("[%1] 請在視埠中點選幾何元素").arg(name()));
 }
 
 QString GeomConstraintCommand::applyConstraint(Sketch* sketch,

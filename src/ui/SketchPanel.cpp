@@ -2,6 +2,8 @@
 #include "SketchPanel.h"
 #include "cad/ConstraintPickSession.h"   // full definition needed for connect() and method calls
 #include "core/CommandLineManager.h"
+#include <limits>
+#include <QPair>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -638,48 +640,170 @@ void SketchPanel::onConstraintReadyFromSession(
 {
     if (!m_sketch) return;
 
-    cad::SketchConstraint c;
-    c.type      = type;
-    c.refs      = refs;
-    c.value     = value;
-    c.paramExpr = paramExpr;
-    c.driving   = driving;
+    auto* cmdMgr = core::CommandLineManager::instance();
+    using CT = cad::ConstraintType;
+    using GH = cad::GeomHandle;
 
-    // Phase 3B：若有尺寸線偏移，也存入 constraint
-    if (m_pickSession) {
-        c.dimLineOffsetX = m_pickSession->dimLineOffsetX();
-        c.dimLineOffsetY = m_pickSession->dimLineOffsetY();
+    // ── 幾何約束：直接呼叫語意化的 Sketch 方法 ────────────────────────────
+    // 這些方法內部使用正確的 makeXxx 工廠，solver 可正確識別 refs
+    auto uuid0 = refs.size() > 0 ? refs[0].geomUuid : QString();
+    auto uuid1 = refs.size() > 1 ? refs[1].geomUuid : QString();
+    auto uuid2 = refs.size() > 2 ? refs[2].geomUuid : QString();
 
-        // DIST 命令：判斷距離子類型
-        if (type == cad::ConstraintType::FixedDistance) {
-            cad::DistanceMode dm = m_pickSession->resolveDistanceMode();
-            if (dm == cad::DistanceMode::Invalid) {
-                auto* cmdMgr = core::CommandLineManager::instance();
-                if (cmdMgr)
-                    cmdMgr->printError(
-                        "DIST: two non-parallel lines selected — "
-                        "distance is undefined. Select P2P, P2L or parallel L2L.");
-                clearPickPrompt();
+    QString constraintUuid;
+    bool isDimensional = false;
+
+    switch (type) {
+    // ── 單幾何 ──────────────────────────────────────────────────────────────
+    case CT::Horizontal:
+        constraintUuid = m_sketch->constrainHorizontal(uuid0);
+        break;
+    case CT::Vertical:
+        constraintUuid = m_sketch->constrainVertical(uuid0);
+        break;
+    case CT::Fixed:
+        constraintUuid = m_sketch->constrainFixed(uuid0);
+        break;
+
+    // ── 雙幾何 ──────────────────────────────────────────────────────────────
+    case CT::Parallel:
+        constraintUuid = m_sketch->constrainParallel(uuid0, uuid1);
+        break;
+    case CT::Perpendicular:
+        constraintUuid = m_sketch->constrainPerpendicular(uuid0, uuid1);
+        break;
+    case CT::Tangent:
+        constraintUuid = m_sketch->constrainTangent(uuid0, uuid1);
+        break;
+    case CT::EqualLength:
+        constraintUuid = m_sketch->constrainEqualLength(uuid0, uuid1);
+        break;
+    case CT::EqualRadius:
+        constraintUuid = m_sketch->constrainEqualRadius(uuid0, uuid1);
+        break;
+    case CT::Concentric:
+        constraintUuid = m_sketch->constrainConcentric(uuid0, uuid1);
+        break;
+    case CT::Collinear:
+        constraintUuid = m_sketch->constrainCollinear(uuid0, uuid1);
+        break;
+    case CT::PointOnCurve:
+        constraintUuid = m_sketch->constrainPointOnCurve(refs[0], uuid1);
+        break;
+    case CT::Midpoint:
+        constraintUuid = m_sketch->constrainMidpoint(refs[0], uuid1);
+        break;
+
+    // ── Coincident：需要智慧端點配對 ────────────────────────────────────────
+    case CT::Coincident: {
+        // 若 refs 已帶有明確的 handle（OSnap 鎖定端點），直接用
+        bool aHasHandle = (refs[0].handle != GH::WholeGeom);
+        bool bHasHandle = refs.size() > 1 && (refs[1].handle != GH::WholeGeom);
+        if (aHasHandle && bHasHandle) {
+            constraintUuid = m_sketch->constrainCoincident(refs[0], refs[1]);
+        } else {
+            // WholeGeom：找最近端點對
+            auto* gA = m_sketch->findGeometry(uuid0);
+            auto* gB = m_sketch->findGeometry(uuid1);
+            if (!gA || !gB) {
+                if (cmdMgr) cmdMgr->printError("COI: 找不到對應幾何元素");
                 return;
             }
-            c.distMode = dm;
+            // 收集各自端點
+            auto endpoints = [](const cad::SketchGeometry* g)
+                -> QVector<QPair<QVector2D, GH>> {
+                QVector<QPair<QVector2D, GH>> pts;
+                if (g->type == cad::SketchGeometryType::Point) {
+                    if (!g->points.isEmpty())
+                        pts.append({g->points[0], GH::WholeGeom});
+                } else if (!g->points.isEmpty()) {
+                    pts.append({g->points.front(), GH::Start});
+                    if (g->points.size() > 1)
+                        pts.append({g->points.back(), GH::End});
+                    if (g->type == cad::SketchGeometryType::Circle ||
+                        g->type == cad::SketchGeometryType::Arc)
+                        pts.append({g->points[0], GH::Center});
+                }
+                return pts;
+            };
+            auto ptsA = endpoints(gA);
+            auto ptsB = endpoints(gB);
+            GH hA = GH::Start, hB = GH::Start;
+            float best = std::numeric_limits<float>::max();
+            for (auto& [pa, ha] : ptsA) {
+                for (auto& [pb, hb] : ptsB) {
+                    float d = (pa - pb).lengthSquared();
+                    if (d < best) { best = d; hA = ha; hB = hb; }
+                }
+            }
+            constraintUuid = m_sketch->constrainCoincident(
+                cad::GeomRef(uuid0, hA), cad::GeomRef(uuid1, hB));
         }
+        break;
     }
 
-    int dofBefore = m_sketch->degreesOfFreedom();
-    m_sketch->addConstraint(c);
-    cad::SolveResult result = m_sketch->solveConstraints();
-    int dofAfter = m_sketch->degreesOfFreedom();
+    // ── Symmetric：三個幾何（點A, 點B, 軸線）────────────────────────────────
+    case CT::Symmetric:
+        constraintUuid = m_sketch->constrainSymmetric(refs[0], refs[1], uuid2);
+        break;
 
-    // 命令列回報
-    auto* cmdMgr = core::CommandLineManager::instance();
+    // ── 尺寸約束：走舊路徑 ──────────────────────────────────────────────────
+    default: {
+        isDimensional = true;
+        cad::SketchConstraint c;
+        c.type      = type;
+        c.refs      = refs;
+        c.value     = value;
+        c.paramExpr = paramExpr;
+        c.driving   = driving;
+
+        if (m_pickSession) {
+            c.dimLineOffsetX = m_pickSession->dimLineOffsetX();
+            c.dimLineOffsetY = m_pickSession->dimLineOffsetY();
+
+            if (type == CT::FixedDistance) {
+                cad::DistanceMode dm = m_pickSession->resolveDistanceMode();
+                if (dm == cad::DistanceMode::Invalid) {
+                    if (cmdMgr)
+                        cmdMgr->printError(
+                            "DIST: 兩條不平行的線無法計算線線距，"
+                            "請選點-點、點-線或平行線-線。");
+                    clearPickPrompt();
+                    return;
+                }
+                c.distMode = dm;
+            }
+        }
+        int dofBefore = m_sketch->degreesOfFreedom();
+        m_sketch->addConstraint(c);
+        cad::SolveResult result = m_sketch->solveConstraints();
+        int dofAfter = m_sketch->degreesOfFreedom();
+        if (cmdMgr) {
+            cmdMgr->printSuccess(
+                QString("✅ 約束已施加。DOF: %1 → %2").arg(dofBefore).arg(dofAfter));
+            command::reportSolveResult(result, cmdMgr);
+        }
+        clearPickPrompt();
+        return;
+    }
+    } // switch
+
+    // ── 幾何約束共用後處理 ───────────────────────────────────────────────────
+    if (constraintUuid.isEmpty()) {
+        if (cmdMgr)
+            cmdMgr->printError(
+                QString("約束加入失敗（幾何不相容或已存在相同約束）"));
+        clearPickPrompt();
+        return;
+    }
+
+    cad::SolveResult result = m_sketch->solveConstraints();
+    int dof = m_sketch->degreesOfFreedom();
     if (cmdMgr) {
         cmdMgr->printSuccess(
-            QString("✅ Constraint applied. DOF: %1 → %2")
-            .arg(dofBefore).arg(dofAfter));
+            QString("✅ 約束已施加。剩餘 DOF: %1").arg(dof));
         command::reportSolveResult(result, cmdMgr);
     }
-
     clearPickPrompt();
 }
 
