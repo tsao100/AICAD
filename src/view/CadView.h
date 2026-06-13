@@ -140,6 +140,10 @@ public:
      */
     void setMode(InteractionMode mode);
 
+    /// 通知 CadView 目前是否有 ConstraintPickSession 在等待選取
+    /// （GetGeom 模式下 command 已結束，需要區分 idle 與 pick 路徑）
+    void setConstraintPickActive(bool active);
+
     /// ✅ Task E: 啟動 PlaceDimLine 模式，設定用於計算偏移的錨點（兩端點中心，草圖平面座標）
     void beginPlaceDimLine(const QVector2D& anchorPos2D);
 

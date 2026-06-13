@@ -129,6 +129,7 @@ public:
     GripManager*         gripManager;
     bool commandInProgress = false;
     bool isDisplayingAllFeatures = false;
+    bool constraintPickActive = false;  ///< pickSession 等待選取中（GetGeom 但 command 已 finished）
 
     QList<OverlayEntry> overlayObjects;
     QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
@@ -725,10 +726,12 @@ ViewType CadView::viewType() const {
     return d->viewType;
 }
 
+void CadView::setConstraintPickActive(bool active)
+{
+    d->constraintPickActive = active;
+}
+
 void CadView::setMode(InteractionMode mode) {
-    if (d->mode == mode) {
-        return;
-    }
 
     // GetGeom 模式：關閉 OSnap，讓 OCCT DetectedInteractive 決定選取幾何
     // 避免 OSnap 攔截點擊（snapConfirmed 只發 POINT_ACQUIRED，無 geomUuid）
@@ -1571,6 +1574,17 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
         if (!hasCmd) {
             auto* bus = Application::instance()->eventBus();
+
+            // ── GetGeom 模式 + pickSession 等待中 ────────────────────────────
+            // GeomConstraintCommand::execute() 回傳後 command state 不是 Running，
+            // hasCmd = false，但 pickSession 仍在等待幾何選取。
+            // → 走 handlePointInput 路徑，透過 geomRefPicked → feedPoint。
+            if (d->mode == InteractionMode::GetGeom && d->constraintPickActive) {
+                if (m_snapManager && m_snapManager->onMousePress(x, y))
+                    return;
+                handlePointInput(event->pos());
+                return;
+            }
 
             // ── Sketch Idle 選取規則 ─────────────────────────────────────────
             // ① 點到空白處 → 清空所有選取

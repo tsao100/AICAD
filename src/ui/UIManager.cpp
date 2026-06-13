@@ -1694,15 +1694,23 @@ void UIManager::connectCommandLineEvents() {
                        auto* cmdMgr = core::Application::instance()->commandManager();
                        if (!cmdMgr) return;
 
-                       // Build context — fill railway fields so alignment
-                       // commands can access the document without a global.
                        command::CommandContext ctx;
-                       ctx.alignmentDoc = d->alignmentDoc;  // active TCL's doc
+                       ctx.alignmentDoc = d->alignmentDoc;
                        ctx.uiManager    = this;
                        ctx.cadView      = d->cadView;
-                       // Step 16: profileView now accessible via vAlignDock
                        if (d->vAlignDock)
                            ctx.profileView = d->vAlignDock->profileView();
+
+                       // ── 若 CadView 有已選取的幾何，填入 ctx.args ──────────────
+                       // 幾何約束命令（GeomConstraintCommand）在模式 A 時直接用
+                       // ctx.args 作為 UUID 清單，無需進入互動選取（模式 B）。
+                       // 這使得「先選取幾何 → 再按按鈕」的操作流程正確工作。
+                       if (d->cadView) {
+                           QStringList sel = d->cadView->selectedGeomUuids();
+                           if (!sel.isEmpty())
+                               ctx.args = sel;
+                       }
+
                        cmdMgr->executeCommand(cmdName, ctx);
                    });
 
@@ -2059,9 +2067,11 @@ void UIManager::setupSketchPanel()
             sketch->addConstraint(c);
             sketch->solveConstraints();
         }
-        // 切回 Sketching 模式
-        if (d->cadView)
+        // 清除 constraintPickActive flag，切回 Sketching 模式
+        if (d->cadView) {
+            d->cadView->setConstraintPickActive(false);
             d->cadView->setMode(view::InteractionMode::Sketching);
+        }
         setStatusMessage(tr("約束已施加"));
     });
 
@@ -2076,9 +2086,10 @@ void UIManager::setupSketchPanel()
     connect(d->pickSession, &cad::ConstraintPickSession::sessionEnded,
             this, [this] {
         if (d->sketchPanel) d->sketchPanel->clearPickPrompt();
-        if (!d->pickSession->isActive())
-            if (d->cadView)
-                d->cadView->setMode(view::InteractionMode::Sketching);
+        if (d->cadView) {
+            d->cadView->setConstraintPickActive(false);
+            d->cadView->setMode(view::InteractionMode::Sketching);
+        }
     });
     if (d->cadView) {
         connect(d->cadView, &view::CadView::geomRefPicked,
@@ -3030,12 +3041,15 @@ void UIManager::beginGeomConstraintPick(cad::Sketch* sketch,
 {
     if (!d->pickSession || !sketch) return;
 
-    // 1. 啟動 session（requiredPointCount 已在 session 內部根據 type 決定）
+    // 1. 啟動 session
     d->pickSession->begin(sketch, type, 0.0, QString(), true);
 
-    // 2. 切換到 GetGeom 模式，使 CadView 能 pick 幾何主體（線/圓/弧）
-    if (d->cadView)
+    // 2. 切換到 GetGeom 模式
+    if (d->cadView) {
         d->cadView->setMode(view::InteractionMode::GetGeom);
+        // 告知 CadView pickSession 正在等待（command 已 finished，hasCmd = false）
+        d->cadView->setConstraintPickActive(true);
+    }
 
     // 3. 更新 status bar 提示
     setStatusMessage(d->pickSession->promptText());
