@@ -27,7 +27,7 @@
 
 #include "command/alignment/AlignmentCommandBase.h"
 #include "command/CommandFactory.h"
-#include <QVector2D>
+#include <QPointF>
 
 namespace aicad {
 namespace command {
@@ -52,7 +52,7 @@ public:
      * 距離定義：點到線段（startPI → endPI）的最短歐幾里得距離。
      */
     static int nearestTangentIndex(
-        const QVector2D&                            clickPt,
+        const QPointF&                              clickPt,
         const railway::HorizontalAlignmentEdit*     edit);
 
 private:
@@ -64,7 +64,7 @@ private:
         WaitingForConfirm   ///< Radius 已取得，顯示預覽，等待 Enter 或下一個點
     };
 
-    void handlePointAcquired(const QVector2D& point);
+    void handlePointAcquired(const QPointF& point);
     void handleNumberInput(const QString& text);
     void handleCancelled();
     void commitCurve();

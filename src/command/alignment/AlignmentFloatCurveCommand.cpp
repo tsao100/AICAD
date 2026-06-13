@@ -44,6 +44,8 @@
 
 #include <QDebug>
 #include <QLineF>
+#include <QPointF>
+#include <QVector2D>
 #include <QtMath>
 #include <cmath>
 #include <limits>
@@ -109,7 +111,7 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            QVector2D pt    = map["point"].value<QVector2D>();
+            QPointF pt = map["point"].value<QPointF>(); // Alignment 模式發佈 QPointF（double，含 TM2 偏移）
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -144,7 +146,7 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentFloatCurveCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
 
@@ -399,7 +401,7 @@ void AlignmentFloatCurveCommand::highlightTangent(int elemIdx)
 // ────────────────────────────────────────────────────────────────────────────
 
 int AlignmentFloatCurveCommand::nearestTangentIndex(
-    const QVector2D&                        clickPt,
+    const QPointF&                          clickPt,
     const railway::HorizontalAlignmentEdit* edit)
 {
     if (!edit) return -1;
@@ -420,8 +422,9 @@ int AlignmentFloatCurveCommand::nearestTangentIndex(
         const double bx = e.endPI.x();
         const double by = e.endPI.y();
 
-        const double px = static_cast<double>(clickPt.x());
-        const double py = static_cast<double>(clickPt.y());
+        // clickPt 本身已是 QPointF(double)，不需 static_cast
+        const double px = clickPt.x();
+        const double py = clickPt.y();
 
         // AB 向量
         const double abx = bx - ax;

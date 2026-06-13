@@ -22,7 +22,6 @@
 #include "command/alignment/AlignmentCommandBase.h"
 #include "command/CommandFactory.h"
 #include <QPointF>
-#include <QVector2D>
 
 namespace aicad {
 namespace command {
@@ -47,7 +46,7 @@ private:
         WaitingForEnd
     };
 
-    void handlePointAcquired(const QVector2D& point);
+    void handlePointAcquired(const QPointF& point);
     void handleCancelled();
     void cleanup() override;
 
@@ -57,9 +56,9 @@ private:
      * outCenter 以 QPointF（double 精度）回傳，避免 QVector2D float 截斷誤差。
      * @return 成功回傳 true；三點共線時回傳 false。
      */
-    static bool circumcircle(const QVector2D& p1,
-                             const QVector2D& p2,
-                             const QVector2D& p3,
+    static bool circumcircle(const QPointF& p1,
+                             const QPointF& p2,
+                             const QPointF& p3,
                              QPointF& outCenter,
                              double&  outRadius);
 
@@ -68,8 +67,8 @@ private:
     PickState                   m_pickState  = PickState::WaitingForStart;
     bool                        m_isFinishing = false;
 
-    QVector2D m_startPoint;
-    QVector2D m_midPoint;
+    QPointF m_startPoint;
+    QPointF m_midPoint;
 };
 
 REGISTER_COMMAND("alignmentfixcurve", AlignmentFixCurveCommand);

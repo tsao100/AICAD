@@ -10,6 +10,7 @@
 
 #include <QWidget>
 #include <QVector2D>
+#include <QPointF>
 #include <QPushButton>
 
 #include <AIS_InteractiveContext.hxx>
@@ -201,11 +202,32 @@ public:
     void removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj);
 
     /**
-     * @brief 螢幕座標轉平面座標
+     * @brief 螢幕座標轉平面座標（float 版，供 Sketch 模式使用）
      * @param screenPos 螢幕座標
      * @return 平面座標
      */
     QVector2D screenToPlane(const QPoint& screenPos) const;
+
+    /**
+     * @brief 螢幕座標轉平面座標（double 版，供 Alignment / Navigation 模式使用）
+     *
+     * 與 screenToPlane() 計算邏輯相同，但回傳 QPointF（double 精度），
+     * 避免 TM2 大座標（~2,650,000 m）在 float 下精度不足（±1 m 量級）的問題。
+     * @param screenPos 螢幕座標
+     * @return 平面座標（double 精度）
+     */
+    QPointF screenToPlaneD(const QPoint& screenPos) const;
+
+    /**
+     * @brief 設定 TM2 二度分帶座標原點偏移（公尺）
+     *
+     * 設定後，screenToPlaneD() 回傳的座標將疊加此偏移，
+     * 使工作座標對齊 TM2 絕對座標系。
+     * ViewGrid 與 OSnapManager 也會同步更新。
+     * @param easting  東向座標偏移（m）
+     * @param northing 北向座標偏移（m）
+     */
+    void setCoordinateOffset(double easting, double northing);
 
     /**
      * @brief 啟用/停用網格顯示

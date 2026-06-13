@@ -50,7 +50,7 @@
 #include "command/alignment/AlignmentFloatCurveCommand.h"   // nearestTangentIndex
 #include "command/CommandFactory.h"
 #include "railway/AlignmentDocument.h"   // SpiralType
-#include <QVector2D>
+#include <QPointF>
 
 namespace aicad {
 namespace command {
@@ -80,7 +80,7 @@ private:
         WaitingForConfirm   ///< 全部參數就緒；等待確認（Enter / 點擊）
     };
 
-    void handlePointAcquired(const QVector2D& point);
+    void handlePointAcquired(const QPointF& point);
     void handleNumberInput(const QString& text);
     void handleCancelled();
 

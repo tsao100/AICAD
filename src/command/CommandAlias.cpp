@@ -74,6 +74,7 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("FC",  "ALIGNMENTFIXCURVE",    "Add Fixed Curve (3-point arc) to alignment",   true);
     registerAlias("AFC", "ALIGNMENTFLOATCURVE",  "Add Floating Curve between two tangents",      true);
     registerAlias("SCS", "ALIGNMENTSCS",         "Add SCS (Spiral-Circular-Spiral) curve",       true);
+    registerAlias("SO",  "SETORIGIN",            "Set TM2 coordinate origin (大座標偏移)",        true);
     registerAlias("AS",  "ALIGNMENTADDSPIRAL",   "Insert Clothoid between Fixed Tangent and Arc (LC/CA)", true);
     registerAlias("TCL", "TRACK",                "New Track Centerline",                         true);
 

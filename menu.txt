@@ -141,6 +141,7 @@ command|alignmentfixcurve||0
 command|alignmentfloatcurve||0
 command|alignmentscs||0
 command|alignmentaddspiral||0
+command|setorigin||0
 
 # ======================
 # Menu : Railway

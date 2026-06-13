@@ -19,6 +19,7 @@
 #include "view/RubberBand.h"
 #include "view/ViewGrid.h"      // ✅ 添加
 #include <QShortcut>
+#include <QRegularExpression>
 #include "CommandLineWidget.h"
 #include "CommandInputEdit.h"
 #include "TransientCommandHistory.h"
@@ -748,16 +749,30 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                }
                            } else if (action == "clearAndAdd") {
                                rb->clearPoints();
-                               QVector2D pt = map["point"].value<QVector2D>();
-                               rb->addPoint(pt);
+                               // 命令發佈 QPointF（Alignment）或 QVector2D（Sketch）
+                               // 優先嘗試 QPointF；若為 null 則 fallback 到 QVector2D
+                               QPointF ptD = map["point"].value<QPointF>();
+                               if (ptD.isNull()) {
+                                   QVector2D ptF = map["point"].value<QVector2D>();
+                                   ptD = QPointF(ptF.x(), ptF.y());
+                               }
+                               rb->addPoint(ptD);
                                rb->update();
                            } else if (action == "addPoint") {
-                               QVector2D pt = map["point"].value<QVector2D>();
-                               rb->addPoint(pt);
+                               QPointF ptD = map["point"].value<QPointF>();
+                               if (ptD.isNull()) {
+                                   QVector2D ptF = map["point"].value<QVector2D>();
+                                   ptD = QPointF(ptF.x(), ptF.y());
+                               }
+                               rb->addPoint(ptD);
                                rb->update();
                            } else if (action == "setCurrentPoint") {
-                               QVector2D pt = map["point"].value<QVector2D>();
-                               rb->setCurrentPoint(pt);
+                               QPointF ptD = map["point"].value<QPointF>();
+                               if (ptD.isNull()) {
+                                   QVector2D ptF = map["point"].value<QVector2D>();
+                                   ptD = QPointF(ptF.x(), ptF.y());
+                               }
+                               rb->setCurrentPoint(ptD);
                                rb->update();
                            } else if (action == "clear") {
                                rb->clearPoints();
@@ -776,13 +791,57 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
+        // ── TM2 座標原點偏移：SetOriginCommand 發佈，UIManager 轉呼叫 CadView ──
+        bus->subscribe("command.set-coordinate-offset", this,
+                       [this](const QVariant& data) {
+                           QVariantMap map = data.toMap();
+                           if (!d->cadView) return;
+                           const double e = map["easting"].toDouble();
+                           const double n = map["northing"].toDouble();
+                           d->cadView->setCoordinateOffset(e, n);
+                           qDebug() << "[UIManager] setCoordinateOffset:"
+                                    << "E=" << e << "N=" << n;
+                       });
+
+        // ── Task B.2：COORDINATE_INPUT → 解析 "X,Y" 或 "X Y" 格式（支援 TM2 大數字）──
+        // 命令列輸入 InputType::Point 時，CommandLineManager 發佈 COORDINATE_INPUT。
+        // 此處解析成 QPointF（double）並重新發佈 POINT_ACQUIRED，
+        // 與 Alignment 命令期待的格式相同。
+        bus->subscribe(core::Events::COORDINATE_INPUT, this,
+                       [this, bus](const QVariant& data) {   // ← 明確捕捉 bus（Qt6 需要）
+                           const QString text = data.toString().trimmed();
+                           // 支援逗號或空白分隔："2650000,200000" / "2650000 200000"
+                           // Qt6 已移除 QRegExp，改用 QRegularExpression
+                           const QStringList parts = text.split(
+                               QRegularExpression(QString("[,\\s]+")),
+                               Qt::SkipEmptyParts);
+                           if (parts.size() < 2) return;   // 格式不符，不處理
+                           bool okX = false, okY = false;
+                           const double x = parts[0].toDouble(&okX);
+                           const double y = parts[1].toDouble(&okY);
+                           if (!okX || !okY) return;
+
+                           QVariantMap ptData;
+                           ptData["point"] = QVariant::fromValue(QPointF(x, y));
+                           bus->publish(core::Events::POINT_ACQUIRED, ptData);
+                           qDebug() << "[UIManager] COORDINATE_INPUT parsed → ("
+                                    << x << "," << y << ")";
+                       });
+
         // ✅ Monitor user interactions for debugging/logging
         bus->subscribe(core::Events::POINT_ACQUIRED, this,
                        [](const QVariant& data) {
                            QVariantMap map = data.toMap();
-                           QVector2D point = map["point"].value<QVector2D>();
-                           qDebug() << "[UIManager] User clicked point:" << point.x() << point.y();
-                           // Could update coordinate display here
+                           // Alignment 模式發佈 QPointF（double）；Sketch 模式發佈 QVector2D（float）
+                           // 嘗試 QPointF 優先；若 QPointF 為零值且 QVector2D 有值，則改用 QVector2D
+                           QPointF   ptD = map["point"].value<QPointF>();
+                           QVector2D ptF = map["point"].value<QVector2D>();
+                           if (ptD.isNull() && !ptF.isNull())
+                               qDebug() << "[UIManager] Point acquired (sketch):"
+                                        << ptF.x() << ptF.y();
+                           else
+                               qDebug() << "[UIManager] Point acquired (alignment/TM2):"
+                                        << ptD.x() << ptD.y();
                        });
 
         // ── Extrude 建立 ─────────────────────────────────────────────

@@ -45,7 +45,8 @@ CommandResult AlignmentFixTangentCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            QVector2D pt = map["point"].value<QVector2D>();
+            // Alignment 模式下 CadView 發佈 QPointF（double，含 TM2 偏移）
+            QPointF pt = map["point"].value<QPointF>();
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -66,7 +67,7 @@ CommandResult AlignmentFixTangentCommand::execute(const CommandContext& context)
     return CommandResult::Success("Waiting for input");
 }
 
-void AlignmentFixTangentCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentFixTangentCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
 
@@ -79,7 +80,7 @@ void AlignmentFixTangentCommand::handlePointAcquired(const QVector2D& point)
 
         QVariantMap rb;
         rb["action"] = "clearAndAdd";
-        rb["point"]  = QVariant::fromValue(point);
+        rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
@@ -91,23 +92,23 @@ void AlignmentFixTangentCommand::handlePointAcquired(const QVector2D& point)
     }
 
     // ── Second click: commit segment ──────────────────────────────────
-    QPointF p1(m_startPoint.x(), m_startPoint.y());
-    QPointF p2(point.x(),        point.y());
+    QPointF p1 = m_startPoint;
+    QPointF p2 = point;
 
     int idx = m_alignDoc->horizontal()->addFixedTangent(p1, p2);
     m_alignDoc->horizontal()->solve();   // changed() → AlignmentRenderer::refresh()
 
     outputMessage(QString("Fixed Tangent #%1  (%2,%3) → (%4,%5)")
                       .arg(idx)
-                      .arg(p1.x(), 0, 'f', 2).arg(p1.y(), 0, 'f', 2)
-                      .arg(p2.x(), 0, 'f', 2).arg(p2.y(), 0, 'f', 2));
+                      .arg(p1.x(), 0, 'f', 3).arg(p1.y(), 0, 'f', 3)
+                      .arg(p2.x(), 0, 'f', 3).arg(p2.y(), 0, 'f', 3));
 
     // Chain: current end becomes new start (continuous mode)
     m_startPoint = point;
 
     QVariantMap rb;
     rb["action"] = "clearAndAdd";
-    rb["point"]  = QVariant::fromValue(point);
+    rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
     bus->publish("command.update-rubber-band", rb);
 
     bus->publish(Events::COMMAND_PROMPT,

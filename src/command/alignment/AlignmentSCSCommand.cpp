@@ -59,6 +59,8 @@
 #include "view/RubberBand.h"
 
 #include <QDebug>
+#include <QPointF>
+#include <QVector2D>
 #include <QtMath>
 #include <cmath>
 #include <limits>
@@ -175,7 +177,7 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map = data.toMap();
-                       QVector2D pt    = map["point"].value<QVector2D>();
+                       QPointF pt = map["point"].value<QPointF>(); // Alignment 模式發佈 QPointF（double，含 TM2 偏移）
                        QMetaObject::invokeMethod(this, [this, pt]() {
                            handlePointAcquired(pt);
                        }, Qt::QueuedConnection);
@@ -208,7 +210,7 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentSCSCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
 

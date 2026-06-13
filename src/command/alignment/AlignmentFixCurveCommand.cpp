@@ -57,7 +57,7 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            QVector2D pt    = map["point"].value<QVector2D>();
+            QPointF pt = map["point"].value<QPointF>(); // Alignment 模式發佈 QPointF（double，含 TM2 偏移）
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -82,7 +82,7 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
 
@@ -97,7 +97,7 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
 
         QVariantMap rb;
         rb["action"] = "clearAndAdd";
-        rb["point"]  = QVariant::fromValue(point);
+        rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
@@ -115,7 +115,7 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
 
         QVariantMap rb;
         rb["action"] = "addPoint";
-        rb["point"]  = QVariant::fromValue(point);
+        rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
@@ -140,23 +140,19 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
             return;
         }
 
-        // ── 建立 Fixed CircularArc ─────────────────────────────────────────
-        // center is already QPointF (double precision) from circumcircle()
-        QPointF arcStartF (m_startPoint.x(), m_startPoint.y());
-        QPointF arcEndF   (point.x(),        point.y());
-
+        // ── 建立 Fixed CircularArc（全部 double 精度，無截斷）─────────────────
         int idx = m_alignDoc->horizontal()->addFixedCurve(
-                      arcStartF, arcEndF, center, radius);
+                      m_startPoint, point, center, radius);
         m_alignDoc->horizontal()->solve();   // emit changed() → AlignmentRenderer::refresh()
 
         outputMessage(
             QString("Fixed Curve #%1  start(%2, %3) → end(%4, %5)  R=%6 m")
                 .arg(idx)
-                .arg(arcStartF.x(), 0, 'f', 3)
-                .arg(arcStartF.y(), 0, 'f', 3)
-                .arg(arcEndF.x(),   0, 'f', 3)
-                .arg(arcEndF.y(),   0, 'f', 3)
-                .arg(radius,        0, 'f', 3));
+                .arg(m_startPoint.x(), 0, 'f', 3)
+                .arg(m_startPoint.y(), 0, 'f', 3)
+                .arg(point.x(),        0, 'f', 3)
+                .arg(point.y(),        0, 'f', 3)
+                .arg(radius,           0, 'f', 3));
 
         m_isFinishing = true;
         Q_EMIT finished(CommandResult::Success("AlignmentFixCurve completed"));
@@ -207,9 +203,9 @@ void AlignmentFixCurveCommand::cleanup()
 //  三點共線時 det ≈ 0。
 // ────────────────────────────────────────────────────────────────────────────
 
-bool AlignmentFixCurveCommand::circumcircle(const QVector2D& p1,
-                                            const QVector2D& p2,
-                                            const QVector2D& p3,
+bool AlignmentFixCurveCommand::circumcircle(const QPointF& p1,
+                                            const QPointF& p2,
+                                            const QPointF& p3,
                                             QPointF&         outCenter,
                                             double&          outRadius)
 {
@@ -231,12 +227,12 @@ bool AlignmentFixCurveCommand::circumcircle(const QVector2D& p1,
     const double ux = (by * aa - ay * bb) / (2.0 * det);
     const double uy = (ax * bb - bx * aa) / (2.0 * det);
 
-    // Keep full double precision — do NOT downcast to float via QVector2D
-    const double cx = static_cast<double>(p1.x()) + ux;
-    const double cy = static_cast<double>(p1.y()) + uy;
+    // Full double precision — p1 is already QPointF(double)
+    const double cx = p1.x() + ux;
+    const double cy = p1.y() + uy;
 
     outCenter = QPointF(cx, cy);
-    outRadius = std::hypot(ux, uy);   // distance from p1 to center, in double
+    outRadius = std::hypot(ux, uy);
     return true;
 }
 
