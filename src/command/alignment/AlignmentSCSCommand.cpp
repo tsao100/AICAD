@@ -168,7 +168,7 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
 
     // SCS 預覽模式
     QVariantMap viewSetup;
-    viewSetup["mode"]           = "sketching";
+    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
     viewSetup["rubberBandMode"] = "scs";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -747,23 +747,17 @@ void AlignmentSCSCommand::updateRubberBandPreview()
     QVariantMap rb1;
     rb1["action"] = "clearAndAdd";
     rb1["mode"]   = "scs";
-    rb1["point"]  = QVariant::fromValue(
-        QVector2D(static_cast<float>(t1end.x()),
-                  static_cast<float>(t1end.y())));
+    rb1["point"]  = QVariant::fromValue(t1end);      // QPointF — TM2 精度
     bus->publish("command.update-rubber-band", rb1);
 
     QVariantMap rb2;
     rb2["action"] = "addPoint";
-    rb2["point"]  = QVariant::fromValue(
-        QVector2D(static_cast<float>(pi.x()),
-                  static_cast<float>(pi.y())));
+    rb2["point"]  = QVariant::fromValue(pi);          // QPointF — TM2 精度
     bus->publish("command.update-rubber-band", rb2);
 
     QVariantMap rb3;
     rb3["action"] = "setCurrentPoint";
-    rb3["point"]  = QVariant::fromValue(
-        QVector2D(static_cast<float>(t2start.x()),
-                  static_cast<float>(t2start.y())));
+    rb3["point"]  = QVariant::fromValue(t2start);    // QPointF — TM2 精度
     bus->publish("command.update-rubber-band", rb3);
 }
 

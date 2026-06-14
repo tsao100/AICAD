@@ -644,6 +644,38 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                QTimer::singleShot(50, [this]() {
                                    if (d->cadView) d->cadView->fitAll();
                                });
+                           } else if (mode == "navigation") {
+                               // Alignment 命令用此模式：
+                               // handlePointInput() 發佈 QPointF（double，含 TM2 偏移）
+                               d->cadView->setMode(view::InteractionMode::Navigation);
+
+                               // 設定 rubber band 模式（若有指定）
+                               QString rbMode = map["rubberBandMode"].toString();
+                               if (!rbMode.isEmpty() && d->cadView->rubberBand()) {
+                                   auto* rb = d->cadView->rubberBand();
+                                   if (rbMode == "line")
+                                       rb->setMode(view::RubberBandMode::Line);
+                                   else if (rbMode == "arc")
+                                       rb->setMode(view::RubberBandMode::Arc);
+                                   else if (rbMode == "scs")
+                                       rb->setMode(view::RubberBandMode::SCS);
+                                   rb->clearPoints();
+                                   rb->clear();
+                               }
+                           } else if (mode == "sketching") {
+                               // Sketch 命令用此模式（原有行為保留）
+                               d->cadView->setMode(view::InteractionMode::Sketching);
+
+                               QString rbMode = map["rubberBandMode"].toString();
+                               if (!rbMode.isEmpty() && d->cadView->rubberBand()) {
+                                   auto* rb = d->cadView->rubberBand();
+                                   if (rbMode == "line")
+                                       rb->setMode(view::RubberBandMode::Line);
+                                   else if (rbMode == "arc")
+                                       rb->setMode(view::RubberBandMode::Arc);
+                                   rb->clearPoints();
+                                   rb->clear();
+                               }
                            }
                        });
 
@@ -791,7 +823,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
-        // ── TM2 座標原點偏移：SetOriginCommand 發佈，UIManager 轉呼叫 CadView ──
+        // ── TM2 座標原點偏移：SetOriginCommand 發佈，UIManager 轉呼叫 CadView + RubberBand ──
         bus->subscribe("command.set-coordinate-offset", this,
                        [this](const QVariant& data) {
                            QVariantMap map = data.toMap();
@@ -799,6 +831,9 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            const double e = map["easting"].toDouble();
                            const double n = map["northing"].toDouble();
                            d->cadView->setCoordinateOffset(e, n);
+                           // RubberBand 也同步更新，確保 planeToWorld() 正確還原本地座標
+                           if (auto* rb = d->cadView->rubberBand())
+                               rb->setCoordinateOffset(e, n);
                            qDebug() << "[UIManager] setCoordinateOffset:"
                                     << "E=" << e << "N=" << n;
                        });
@@ -1524,6 +1559,20 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                             aDoc->fromJson(editJson);
                     }
                     d->alignmentDoc = aDoc;  // set active
+
+                    // ── 自動套用 TM2 座標原點預設偏移 ────────────────────────
+                    // 預設原點 E=248170.787, N=2652129.936
+                    // 使用者可隨時用 SO 命令覆寫。
+                    if (d->cadView) {
+                        constexpr double kDefaultE = 248170.787;
+                        constexpr double kDefaultN = 2652129.936;
+                        d->cadView->setCoordinateOffset(kDefaultE, kDefaultN);
+                        // RubberBand 同步，確保 planeToWorld() 還原正確本地座標
+                        if (auto* rb = d->cadView->rubberBand())
+                            rb->setCoordinateOffset(kDefaultE, kDefaultN);
+                        qDebug() << "[UIManager] TM2 default origin applied:"
+                                 << "E=" << kDefaultE << "N=" << kDefaultN;
+                    }
 
                     // ── 建立/更新 per-TCL renderer ────────────────────────────
                     view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);

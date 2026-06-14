@@ -49,7 +49,7 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
 
     // 要求 CadView 切換到弧線 rubber-band 模式
     QVariantMap viewSetup;
-    viewSetup["mode"]           = "sketching";
+    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
     viewSetup["rubberBandMode"] = "arc";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -97,7 +97,7 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 
         QVariantMap rb;
         rb["action"] = "clearAndAdd";
-        rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
+        rb["point"]  = QVariant::fromValue(point);   // QPointF — TM2 精度
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
@@ -115,7 +115,7 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 
         QVariantMap rb;
         rb["action"] = "addPoint";
-        rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
+        rb["point"]  = QVariant::fromValue(point);   // QPointF — TM2 精度
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,

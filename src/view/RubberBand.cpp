@@ -50,6 +50,10 @@ public:
     QPointF currentPoint;         // double 精度
     bool hasCurrentPoint;
 
+    // ── TM2 座標原點偏移 ──────────────────────────────────────────────────────
+    double coordOffsetEasting  = 0.0;  ///< 東向偏移（m），與 CadView 同步
+    double coordOffsetNorthing = 0.0;  ///< 北向偏移（m）
+
     // ── Spiral / SCS parameters ───────────────────────────────────────────────
     double radius        = 400.0;   ///< Circular arc radius [m]; +right, −left
     double spiralLength  = 100.0;   ///< Transition curve length [m] (L1 = L2 symmetric)
@@ -776,11 +780,18 @@ void RubberBand::updateArc() {
 }
 
 QVector3D RubberBand::planeToWorld(const QPointF& planePt) const {
-    // double → float 轉換在此發生（QVector3D 為 float）
-    // 視覺渲染可接受；提交到 AlignmentDocument 的值在 Command 層已保留 double
+    // TM2 絕對座標 → 本地模型座標（減去偏移）
+    // double → float 截斷在此發生（QVector3D 為 float），視覺渲染可接受
+    const float localU = static_cast<float>(planePt.x() - d->coordOffsetEasting);
+    const float localV = static_cast<float>(planePt.y() - d->coordOffsetNorthing);
     return d->plane->origin()
-         + d->plane->xAxis() * static_cast<float>(planePt.x())
-         + d->plane->yAxis() * static_cast<float>(planePt.y());
+         + d->plane->xAxis() * localU
+         + d->plane->yAxis() * localV;
+}
+
+void RubberBand::setCoordinateOffset(double easting, double northing) {
+    d->coordOffsetEasting  = easting;
+    d->coordOffsetNorthing = northing;
 }
 
 // ============================================================================

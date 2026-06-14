@@ -101,7 +101,7 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
 
     // 切換到 arc rubber-band 模式（初始無點，稍後更新）
     QVariantMap viewSetup;
-    viewSetup["mode"]           = "sketching";
+    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
     viewSetup["rubberBandMode"] = "arc";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -260,18 +260,14 @@ void AlignmentFloatCurveCommand::handleNumberInput(const QString& text)
 
         QVariantMap rb;
         rb["action"]      = "clearAndAdd";
-        rb["point"]       = QVariant::fromValue(
-            QVector2D(static_cast<float>(t1end.x()),
-                      static_cast<float>(t1end.y())));
+        rb["point"]       = QVariant::fromValue(t1end);   // QPointF — TM2 精度
         rb["radius"]      = m_radius;
         rb["mode"]        = "arc";
         bus->publish("command.update-rubber-band", rb);
 
         QVariantMap rb2;
         rb2["action"] = "addPoint";
-        rb2["point"]  = QVariant::fromValue(
-            QVector2D(static_cast<float>(pi.x()),
-                      static_cast<float>(pi.y())));
+        rb2["point"]  = QVariant::fromValue(pi);           // QPointF — TM2 精度
         bus->publish("command.update-rubber-band", rb2);
     }
 

@@ -37,7 +37,7 @@ CommandResult AlignmentFixTangentCommand::execute(const CommandContext& context)
 
     // Ask UIManager to activate Line rubber-band mode (same as LineCommand)
     QVariantMap viewSetup;
-    viewSetup["mode"]          = "sketching";
+    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
     viewSetup["rubberBandMode"] = "line";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -80,7 +80,7 @@ void AlignmentFixTangentCommand::handlePointAcquired(const QPointF& point)
 
         QVariantMap rb;
         rb["action"] = "clearAndAdd";
-        rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
+        rb["point"]  = QVariant::fromValue(point);   // QPointF — TM2 精度
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
@@ -108,7 +108,7 @@ void AlignmentFixTangentCommand::handlePointAcquired(const QPointF& point)
 
     QVariantMap rb;
     rb["action"] = "clearAndAdd";
-    rb["point"]  = QVariant::fromValue(QVector2D((float)point.x(), (float)point.y()));
+    rb["point"]  = QVariant::fromValue(point);   // QPointF — TM2 精度
     bus->publish("command.update-rubber-band", rb);
 
     bus->publish(Events::COMMAND_PROMPT,

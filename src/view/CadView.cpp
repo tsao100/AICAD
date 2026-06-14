@@ -1185,7 +1185,7 @@ void CadView::setCoordinateOffset(double easting, double northing) {
              << "E=" << easting << "N=" << northing;
 }
 void CadView::setGridEnabled(bool enabled) {
-        d->gridEnabled = enabled;
+    d->gridEnabled = enabled;
 
     if (d->grid) {
         if (enabled) {
@@ -1705,6 +1705,20 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     int x = event->x();
     int y = event->y();
 
+    {
+        auto* cmdMgr_nav = Application::instance()->commandManager();
+        const bool hasCmd_nav = cmdMgr_nav && cmdMgr_nav->hasActiveCommand();
+        // Navigation 模式 + 有 active command → 攔截左鍵，送入 handlePointInput
+        if (event->button() == Qt::LeftButton &&
+            d->mode == InteractionMode::Navigation && hasCmd_nav)
+        {
+            if (m_snapManager && m_snapManager->onMousePress(event->x(), event->y()))
+                goto navigation_fallthrough;
+            handlePointInput(event->pos());
+            goto navigation_fallthrough;
+        }
+    }
+
     if (event->button() == Qt::LeftButton &&
         (d->mode == InteractionMode::Sketching ||
          d->mode == InteractionMode::GetPoint  ||
@@ -1777,6 +1791,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         return;   // ← 已處理，不進入下面第二個 if 區塊
     }
 
+    navigation_fallthrough:
     if (!d->context.IsNull() && !d->view.IsNull()) {
 
         if (event->button() == Qt::LeftButton) {
@@ -2019,9 +2034,8 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     // 草圖模式：更新橡皮筋
     if (d->mode == InteractionMode::Sketching) {
         if (d->rubberBand) {
-            QPointF planePt;  // RubberBand 現在接受 QPointF
+            QPointF planePt;
 
-            // ✅ 優先使用 snap 鎖定座標
             if (m_snapManager && m_snapManager->isSnapActive()) {
                 auto pt2d = m_snapManager->snapPoint2D();
                 if (pt2d.has_value())
@@ -2034,6 +2048,18 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
                 planePt = QPointF(v.x(), v.y());
             }
 
+            d->rubberBand->setCurrentPoint(planePt);
+            d->rubberBand->update();
+        }
+    }
+
+    // Navigation 模式（Alignment 命令）：也更新橡皮筋，使用 double 精度版
+    if (d->mode == InteractionMode::Navigation) {
+        auto* cmdMgr = Application::instance()->commandManager();
+        const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
+        if (d->rubberBand && hasCmd) {
+            // screenToPlaneD() 含 TM2 偏移，與點擊時一致
+            QPointF planePt = screenToPlaneD(event->pos());
             d->rubberBand->setCurrentPoint(planePt);
             d->rubberBand->update();
         }

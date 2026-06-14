@@ -210,6 +210,17 @@ public:
      */
     bool hasCurrentPoint() const;
     
+    /**
+     * @brief 設定 TM2 座標原點偏移（公尺）
+     *
+     * RubberBand 收到的 addPoint / setCurrentPoint 座標為 TM2 絕對座標，
+     * planeToWorld() 需減去此偏移才能得到 OCCT 本地模型座標。
+     * 應與 CadView::setCoordinateOffset() 保持同步。
+     * @param easting  東向偏移（m）
+     * @param northing 北向偏移（m）
+     */
+    void setCoordinateOffset(double easting, double northing);
+
 Q_SIGNALS:
     /**
      * @brief 橡皮筋更新時發出

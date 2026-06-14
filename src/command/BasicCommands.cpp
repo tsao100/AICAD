@@ -20,6 +20,8 @@
 #include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
 #include "railway/RailwayAlignment.h"
+// ── Force-link alignment commands (REGISTER_COMMAND static init needs .obj) ──
+#include "command/alignment/SetOriginCommand.h"
 #include <QFileDialog>
 #include <QJsonObject>
 #include <QSettings>

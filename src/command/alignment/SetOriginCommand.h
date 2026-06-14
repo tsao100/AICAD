@@ -4,21 +4,9 @@
  * @file SetOriginCommand.h
  * @brief SETORIGIN (alias: SO) — 設定 TM2 二度分帶座標原點
  *
- * 使用者以命令列輸入一個 TM2 參考點（東向 E、北向 N），
- * 並在視圖上點選對應的模型點（用 screenToPlaneD() 取得模型座標），
- * 命令計算差值並呼叫 CadView::setCoordinateOffset()，
- * 使後續所有 Alignment 輸入座標自動套用 TM2 偏移。
- *
- * 互動流程：
- *   1. 使用者輸入 TM2 東向值（NUMBER_INPUT）
- *   2. 使用者輸入 TM2 北向值（NUMBER_INPUT）
- *   3. 使用者點選對應模型點（POINT_ACQUIRED，此時尚未套用偏移，
- *      故 CadView 發佈的是「原始模型座標」QPointF）
- *   4. 命令計算 offset = TM2 − 模型點，呼叫 setCoordinateOffset()
- *
- * 若使用者直接輸入兩個數字（以逗號或空白分隔），步驟 1 + 2 合併。
- *
- * @note 命令別名在 CommandAlias.cpp 中登記為 "SO"。
+ * 設計：模仿 AlignmentSCSCommand，只用 NUMBER_INPUT 接收所有文字輸入，
+ * 每步結束呼叫 waitForInput(Number)，避免 CommandLineManager 的
+ * m_expectedInputType 被提前清除的問題。
  */
 
 #include "command/Command.h"
@@ -27,6 +15,7 @@
 #include <QPointF>
 
 namespace aicad {
+namespace core { class EventBus; }
 namespace command {
 
 class SetOriginCommand : public Command
@@ -49,14 +38,14 @@ private:
     };
 
     void handleNumberInput(const QString& text);
-    void handlePointAcquired(const QPointF& point);
-    void handleCancelled();
+    void applyOffset(const QPointF& modelPt);
+    void promptModelPoint(core::EventBus* bus);
     void cleanup() override;
 
-    Step    m_step     = Step::WaitingForEasting;
-    double  m_easting  = 0.0;
-    double  m_northing = 0.0;
-    bool    m_isFinishing = false;
+    Step   m_step        = Step::WaitingForEasting;
+    double m_easting     = 0.0;
+    double m_northing    = 0.0;
+    bool   m_isFinishing = false;
 };
 
 REGISTER_COMMAND("setorigin", SetOriginCommand);
