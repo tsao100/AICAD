@@ -6,30 +6,45 @@
 #include "ui/UIManager.h"
 
 #include <QDebug>
-#include <QLineF>
 #include <QSet>
-#include <QUndoStack>
+#include <cmath>
 #include <Precision.hxx>
 
 namespace aicad::cad {
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ── file-local helpers ────────────────────────────────────────────────────────
 
 static QPointF toQPointF(const gp_Pnt& p) { return QPointF(p.X(), p.Y()); }
 static gp_Pnt  toGpPnt (const QPointF& p) { return gp_Pnt(p.x(), p.y(), 0.0); }
 
-/// Two-line intersection (infinite lines).  Returns true and sets `pt` on success.
-static bool lineIntersect(QPointF a1, QPointF a2,
-                          QPointF b1, QPointF b2,
-                          QPointF& pt)
+/** Azimuth of vector a→b, radians (Easting/Northing: atan2(dE, dN)). */
+static double azimuthOf(const QPointF& a, const QPointF& b)
 {
-    // Direction vectors
-    const double dx1 = a2.x() - a1.x(), dy1 = a2.y() - a1.y();
-    const double dx2 = b2.x() - b1.x(), dy2 = b2.y() - b1.y();
-    const double denom = dx1 * dy2 - dy1 * dx2;
-    if (std::abs(denom) < 1e-10) return false;  // parallel
-    const double t = ((b1.x()-a1.x())*dy2 - (b1.y()-a1.y())*dx2) / denom;
-    pt = QPointF(a1.x() + t*dx1, a1.y() + t*dy1);
+    return std::atan2(b.x() - a.x(), b.y() - a.y());
+}
+
+/**
+ * Infinite-line intersection by azimuth — identical to AlignmentSolver::lineIntersect.
+ *
+ * A + t·(sinAzA, cosAzA)  =  B + s·(sinAzB, cosAzB)
+ *
+ * Returns true and sets `pt` on success (non-parallel lines).
+ */
+static bool lineIntersectAz(const QPointF& A, double azA,
+                             const QPointF& B, double azB,
+                             QPointF& pt)
+{
+    const double sinA = std::sin(azA), cosA = std::cos(azA);
+    const double sinB = std::sin(azB), cosB = std::cos(azB);
+    const double det  = sinB * cosA - sinA * cosB;   // = sin(azB - azA)
+
+    if (std::abs(det) < 1e-9) return false;   // parallel
+
+    const double dx = B.x() - A.x();
+    const double dy = B.y() - A.y();
+    const double t  = (dx * (-cosB) - (-sinB) * dy) / det;
+
+    pt = QPointF(A.x() + t * sinA, A.y() + t * cosA);
     return true;
 }
 
@@ -42,6 +57,21 @@ AlignmentGripProvider::AlignmentGripProvider(railway::HorizontalAlignmentEdit* e
 }
 
 // ── computeGrips ──────────────────────────────────────────────────────────────
+//
+// For each unique (tangentIdxBefore=T0, tangentIdxAfter=T1) pair referenced
+// by any Floating element, emit exactly THREE grips:
+//
+//   ① T0.startPI  — outer end of the entry tangent           (Vertex)
+//   ② T1.endPI    — outer end of the exit  tangent           (Vertex)
+//   ③ IP          — intersection of lines T0 and T1          (Midpoint/triangle)
+//
+// Dragging ①: moves T0.startPI (keeps T0 direction, shortens/lengthens).
+// Dragging ②: moves T1.endPI   (keeps T1 direction, shortens/lengthens).
+// Dragging ③: moves T0.endPI + T1.startPI together → changes IP → curve updates.
+//
+// All other points (T0.endPI, T1.startPI, arc/spiral cut-points) are NOT grips.
+// One set of three grips per unique (T0,T1) pair — SCS groups share the same
+// pair and are deduplicated via QSet.
 
 QVector<GripPoint> AlignmentGripProvider::computeGrips() const
 {
@@ -50,117 +80,110 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
 
     const QVector<railway::EditableElement>& elems = m_edit->elements();
 
-    // ── 1. Collect unique tangent endpoint positions ─────────────────────────
-    //
-    // A Fixed Tangent contributes two editable points: startPI and endPI.
-    // Adjacent tangents share a common vertex — deduplicate by position.
-    //
-    // Key insight: for a sequence like  T0 → [SCS] → T1 → [SCS] → T2,
-    // T0.endPI and T1.startPI may be very close (solver connects them).
-    // We emit one grip per unique position.
-
-    struct TangentEndpoint {
-        QPointF pos;
-        int     tangentIdx;   // index of the tangent in m_elems
-        bool    isEnd;        // false = startPI, true = endPI
-    };
-
-    QVector<TangentEndpoint> endpoints;
-    constexpr double kMergeDist = 0.01;  // 1 cm — treat as same point
-
-    auto addEndpoint = [&](const QPointF& pos, int idx, bool isEnd) {
-        for (auto& ep : endpoints) {
-            if (QLineF(ep.pos, pos).length() < kMergeDist) return; // duplicate
-        }
-        endpoints.append({pos, idx, isEnd});
-    };
-
-    for (int i = 0; i < elems.size(); ++i) {
-        if (elems[i].type != railway::EditableElementType::Tangent) continue;
-        addEndpoint(elems[i].startPI, i, false);
-        addEndpoint(elems[i].endPI,   i, true);
-    }
-
-    // ── 2. Build GripPoints for tangent endpoints ────────────────────────────
-
-    for (const auto& ep : endpoints) {
-        GripPoint gp;
-        gp.id       = ep.isEnd
-                      ? QString("t_end_%1").arg(ep.tangentIdx)
-                      : QString("t_start_%1").arg(ep.tangentIdx);
-        gp.position = toGpPnt(ep.pos);
-        gp.type     = GripType::Vertex;
-        gp.enabled  = true;
-
-        const int  tidx  = ep.tangentIdx;
-        const bool isEnd = ep.isEnd;
-
-        gp.onDrag = [this, tidx, isEnd](const gp_Pnt& np, bool) {
-            if (isEnd)
-                m_edit->movePIDirect(tidx, toQPointF(np));       // moves endPI
-            else
-                m_edit->moveStartPIDirect(tidx, toQPointF(np)); // moves startPI
-            m_edit->solve();
-        };
-
-        grips.append(gp);
-    }
-
-    // ── 3. IP grips for Floating / SCS curves ────────────────────────────────
-    //
-    // Each Floating curve (CircularArc, SpiralIn) references two tangents via
-    // tangentIdxBefore / tangentIdxAfter.  The IP is the intersection of the
-    // infinite lines through those tangents.  Moving the IP moves both
-    // tangents' adjacent endpoints simultaneously, keeping the alignment smooth.
-
-    // Track which (before,after) pairs we've already emitted a grip for.
-    QSet<QPair<int,int>> emittedIPs;
+    QSet<QPair<int,int>> emitted;
+    QSet<QString>        emittedGripIds;   // prevent duplicate outer-end grips
 
     for (int i = 0; i < elems.size(); ++i) {
         const auto& el = elems[i];
-        if (el.tangentIdxBefore < 0 || el.tangentIdxAfter < 0) continue;
-        // Only emit once per (before, after) tangent pair
-        QPair<int,int> key(el.tangentIdxBefore, el.tangentIdxAfter);
-        if (emittedIPs.contains(key)) continue;
-        emittedIPs.insert(key);
 
-        const auto& tb = elems[el.tangentIdxBefore];
-        const auto& ta = elems[el.tangentIdxAfter];
+        // Only Floating elements carry the tangent pair that defines an IP.
+        if (el.mode != railway::ConstraintMode::Floating) continue;
 
-        if (tb.type != railway::EditableElementType::Tangent) continue;
-        if (ta.type != railway::EditableElementType::Tangent) continue;
+        const int b = el.tangentIdxBefore;
+        const int a = el.tangentIdxAfter;
+        if (b < 0 || a < 0 || b >= elems.size() || a >= elems.size()) continue;
+
+        const QPair<int,int> key(b, a);
+        if (emitted.contains(key)) continue;
+        emitted.insert(key);
+
+        const auto& T0 = elems[b];
+        const auto& T1 = elems[a];
+
+        if (T0.type != railway::EditableElementType::Tangent) continue;
+        if (T1.type != railway::EditableElementType::Tangent) continue;
+
+        // ── Compute IP ───────────────────────────────────────────────────────
+
+        const double azT0 = azimuthOf(T0.startPI, T0.endPI);
+        const double azT1 = azimuthOf(T1.startPI, T1.endPI);
 
         QPointF ip;
-        if (!lineIntersect(tb.startPI, tb.endPI, ta.startPI, ta.endPI, ip))
-            continue;  // parallel tangents — skip
+        if (!lineIntersectAz(T0.startPI, azT0, T1.startPI, azT1, ip)) {
+            qDebug() << "[AlignmentGripProvider] Tangents" << b << "&" << a
+                     << "are parallel — no IP grip";
+            continue;
+        }
 
-        GripPoint gp;
-        gp.id       = QString("ip_%1_%2").arg(el.tangentIdxBefore).arg(el.tangentIdxAfter);
-        gp.position = toGpPnt(ip);
-        gp.type     = GripType::Midpoint;   // triangle marker — visually distinct
-        gp.enabled  = true;
+        // ── Grip ①: T0.startPI ──────────────────────────────────────────────
 
-        const int bIdx = el.tangentIdxBefore;
-        const int aIdx = el.tangentIdxAfter;
+        {
+            const QString id = QString("t0start_%1").arg(b);
+            if (!emittedGripIds.contains(id)) {
+                emittedGripIds.insert(id);
+                GripPoint gp;
+                gp.id       = id;
+                gp.position = toGpPnt(T0.startPI);
+                gp.type     = GripType::Vertex;
+                gp.enabled  = true;
 
-        gp.onDrag = [this, bIdx, aIdx](const gp_Pnt& np, bool) {
-            const QVector<railway::EditableElement>& els = m_edit->elements();
-            if (bIdx >= els.size() || aIdx >= els.size()) return;
+                gp.onDrag = [this, b](const gp_Pnt& np, bool) {
+                    m_edit->moveStartPIDirect(b, toQPointF(np));
+                    m_edit->solve();
+                };
+                grips.append(gp);
+            }
+        }
 
-            const QPointF newIP = toQPointF(np);
-            const auto& tb2 = els[bIdx];
-            const auto& ta2 = els[aIdx];
+        // ── Grip ②: T1.endPI ────────────────────────────────────────────────
 
-            // Move the inner ends of the two adjacent tangents to the new IP.
-            // "Inner end" = endPI of tangentBefore, startPI of tangentAfter.
-            m_edit->movePIDirect(bIdx, newIP);        // moves tb.endPI
-            m_edit->moveStartPIDirect(aIdx, newIP);   // moves ta.startPI
-            m_edit->solve();
-        };
+        {
+            const QString id = QString("t1end_%1").arg(a);
+            if (!emittedGripIds.contains(id)) {
+                emittedGripIds.insert(id);
+                GripPoint gp;
+                gp.id       = id;
+                gp.position = toGpPnt(T1.endPI);
+                gp.type     = GripType::Vertex;
+                gp.enabled  = true;
 
-        grips.append(gp);
+                gp.onDrag = [this, a](const gp_Pnt& np, bool) {
+                    m_edit->movePIDirect(a, toQPointF(np));
+                    m_edit->solve();
+                };
+                grips.append(gp);
+            }
+        }
+
+        // ── Grip ③: IP ──────────────────────────────────────────────────────
+
+        {
+            GripPoint gp;
+            gp.id       = QString("ip_%1_%2").arg(b).arg(a);
+            gp.position = toGpPnt(ip);
+            gp.type     = GripType::Midpoint;   // triangle marker
+            gp.enabled  = true;
+
+            gp.onDrag = [this, b, a](const gp_Pnt& np, bool) {
+                const QPointF newIP = toQPointF(np);
+                // Move the inner ends of both tangents to the new IP.
+                // T0.endPI   → newIP  (entry tangent inner end)
+                // T1.startPI → newIP  (exit  tangent inner end)
+                m_edit->movePIDirect(b, newIP);
+                m_edit->moveStartPIDirect(a, newIP);
+                m_edit->solve();
+            };
+            grips.append(gp);
+        }
+
+        qDebug() << "[AlignmentGripProvider] IP group (T0=" << b << ", T1=" << a << ")"
+                 << "  T0.start=" << T0.startPI
+                 << "  IP="       << ip
+                 << "  T1.end="   << T1.endPI;
     }
 
+    qDebug() << "[AlignmentGripProvider] computeGrips:" << grips.size()
+             << "grips for" << emitted.size() << "IP group(s)";
     return grips;
 }
 
@@ -175,7 +198,7 @@ void AlignmentGripProvider::onGripDragBegin(const QString& gripId)
 
 void AlignmentGripProvider::onGripDrag(const QString&, const gp_Pnt&)
 {
-    // Handled entirely by onDrag lambdas in computeGrips()
+    // All movement handled by onDrag lambdas in computeGrips().
 }
 
 void AlignmentGripProvider::onGripDragEnd(const QString& gripId,
