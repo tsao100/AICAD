@@ -107,16 +107,27 @@
                         {
                             "centerX": 0,
                             "centerY": 0,
+<<<<<<< HEAD
                             "endX": -37.68344944494787,
                             "endY": 98.10564462998923,
                             "length": 491.0102509352227,
+=======
+                            "endX": -76.99099430301746,
+                            "endY": 9.031824094634146,
+                            "length": 402.4383778852075,
+>>>>>>> 039c6cf (TM2 dbg5.)
                             "mode": 0,
                             "radius": 0,
                             "solved": false,
                             "spiralType1": 0,
                             "spiralType2": 0,
+<<<<<<< HEAD
                             "startX": -288.52612229105387,
                             "startY": -323.995077950406,
+=======
+                            "startX": -275.89559738391796,
+                            "startY": -340.81615270115424,
+>>>>>>> 039c6cf (TM2 dbg5.)
                             "tangentIdxAfter": -1,
                             "tangentIdxBefore": -1,
                             "type": 0
@@ -124,9 +135,15 @@
                         {
                             "centerX": 0,
                             "centerY": 0,
+<<<<<<< HEAD
                             "endX": 360.23966611413596,
                             "endY": 197.83827359289884,
                             "length": 467.52165802382876,
+=======
+                            "endX": 318.63826847161937,
+                            "endY": 104.4623493412775,
+                            "length": 406.9760419391452,
+>>>>>>> 039c6cf (TM2 dbg5.)
                             "mode": 0,
                             "radius": 0,
                             "solved": false,
@@ -263,16 +280,27 @@
             "horizontal": {
                 "rawPoints": [
                     {
+<<<<<<< HEAD
                         "azimuth": 0.5361971467565664,
+=======
+                        "azimuth": 0.5169702608219432,
+>>>>>>> 039c6cf (TM2 dbg5.)
                         "cant": 0,
                         "chainage": 0,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
+<<<<<<< HEAD
                         "easting": -288.52612229105387,
                         "gaugeWidening": 0,
                         "length": 289.02190854543096,
                         "northing": -323.995077950406,
+=======
+                        "easting": -275.89559738391796,
+                        "gaugeWidening": 0,
+                        "length": 247.4150578245071,
+                        "northing": -340.81615270115424,
+>>>>>>> 039c6cf (TM2 dbg5.)
                         "plat": "",
                         "radius": 0,
                         "real1": 0,
@@ -284,6 +312,7 @@
                         "upDown": ""
                     },
                     {
+<<<<<<< HEAD
                         "azimuth": 0.5361971467565664,
                         "cant": 0,
                         "chainage": 289.02190854543096,
@@ -294,6 +323,18 @@
                         "gaugeWidening": 0,
                         "length": 55,
                         "northing": -75.5351808174521,
+=======
+                        "azimuth": 0.5169702608219432,
+                        "cant": 0,
+                        "chainage": 247.4150578245071,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -153.61105252657092,
+                        "gaugeWidening": 0,
+                        "length": 50,
+                        "northing": -125.73314331330027,
+>>>>>>> 039c6cf (TM2 dbg5.)
                         "plat": "",
                         "radius": 300,
                         "real1": 0,
@@ -305,6 +346,7 @@
                         "upDown": ""
                     },
                     {
+<<<<<<< HEAD
                         "azimuth": 0.627863813423233,
                         "cant": 0,
                         "chainage": 344.02190854543096,
@@ -315,6 +357,18 @@
                         "gaugeWidening": 0,
                         "length": 150.472312785802,
                         "northing": -29.151754635843446,
+=======
+                        "azimuth": 0.6003035941552766,
+                        "cant": 0,
+                        "chainage": 297.41505782450713,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": -127.70898767311172,
+                        "gaugeWidening": 0,
+                        "length": 195.1406233284926,
+                        "northing": -82.98340372753641,
+>>>>>>> 039c6cf (TM2 dbg5.)
                         "plat": "",
                         "radius": 300,
                         "real1": 0,
@@ -326,6 +380,7 @@
                         "upDown": ""
                     },
                     {
+<<<<<<< HEAD
                         "azimuth": 1.1294381893759065,
                         "cant": 0,
                         "chainage": 494.49422133123295,
@@ -336,6 +391,18 @@
                         "gaugeWidening": 0,
                         "length": 55,
                         "northing": 65.87475350303147,
+=======
+                        "azimuth": 1.2507723385835854,
+                        "cant": 0,
+                        "chainage": 492.55568115299974,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": 25.46345944793339,
+                        "gaugeWidening": 0,
+                        "length": 50,
+                        "northing": 32.31705351693466,
+>>>>>>> 039c6cf (TM2 dbg5.)
                         "plat": "",
                         "radius": 300,
                         "real1": 0,
@@ -347,6 +414,7 @@
                         "upDown": ""
                     },
                     {
+<<<<<<< HEAD
                         "azimuth": 1.221104856042573,
                         "cant": 0,
                         "chainage": 549.4942213312329,
@@ -365,6 +433,18 @@
                         "length": 325.61417644301275,
 >>>>>>> 2224441 (H Alignment grips dbg1.)
                         "northing": 86.28026251566297,
+=======
+                        "azimuth": 1.3341056719169186,
+                        "cant": 0,
+                        "chainage": 542.5556811529998,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 73.71016622785817,
+                        "gaugeWidening": 0,
+                        "length": 251.95272187844475,
+                        "northing": 45.38275224357731,
+>>>>>>> 039c6cf (TM2 dbg5.)
                         "plat": "",
                         "radius": 0,
                         "real1": 0,
@@ -376,6 +456,7 @@
                         "upDown": ""
                     },
                     {
+<<<<<<< HEAD
                         "azimuth": 1.221104856042573,
                         "cant": 0,
 <<<<<<< HEAD
@@ -394,6 +475,102 @@
                         "gaugeWidening": 0,
                         "length": 0,
                         "northing": 197.83827359289884,
+=======
+                        "azimuth": 0.5169702608219432,
+                        "cant": 0,
+                        "chainage": 794.5084030314446,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -153.61105252657092,
+                        "gaugeWidening": 0,
+                        "length": 50,
+                        "northing": -125.73314331330027,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.6003035941552766,
+                        "cant": 0,
+                        "chainage": 844.5084030314446,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": -127.70898767311172,
+                        "gaugeWidening": 0,
+                        "length": 195.1406233284926,
+                        "northing": -82.98340372753641,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "SC",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.2507723385835854,
+                        "cant": 0,
+                        "chainage": 1039.6490263599371,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": 25.46345944793339,
+                        "gaugeWidening": 0,
+                        "length": 50,
+                        "northing": 32.31705351693466,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "CS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.3341056719169186,
+                        "cant": 0,
+                        "chainage": 1089.6490263599371,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 73.71016622785817,
+                        "gaugeWidening": 0,
+                        "length": 251.95272187844475,
+                        "northing": 45.38275224357731,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.3341056719169186,
+                        "cant": 0,
+                        "chainage": 1341.6017482383818,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 318.63826847161937,
+                        "gaugeWidening": 0,
+                        "length": 0,
+                        "northing": 104.4623493412775,
+>>>>>>> 039c6cf (TM2 dbg5.)
                         "plat": "",
                         "radius": 0,
                         "real1": 0,
@@ -428,6 +605,7 @@
                         "lvc": 0,
                         "mo": 0,
                         "pviElevation": 0
+<<<<<<< HEAD
                     }
                 ]
             }
@@ -693,6 +871,8 @@
                         "lvc": 0,
                         "mo": 0,
                         "pviElevation": 0
+=======
+>>>>>>> 039c6cf (TM2 dbg5.)
                     }
                 ]
             }
