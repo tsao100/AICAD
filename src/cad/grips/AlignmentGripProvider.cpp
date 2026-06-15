@@ -17,33 +17,22 @@ namespace aicad::cad {
 static QPointF toQPointF(const gp_Pnt& p) { return QPointF(p.X(), p.Y()); }
 static gp_Pnt  toGpPnt (const QPointF& p) { return gp_Pnt(p.x(), p.y(), 0.0); }
 
-/** Azimuth of vector a→b, radians (Easting/Northing: atan2(dE, dN)). */
 static double azimuthOf(const QPointF& a, const QPointF& b)
 {
     return std::atan2(b.x() - a.x(), b.y() - a.y());
 }
 
-/**
- * Infinite-line intersection by azimuth — identical to AlignmentSolver::lineIntersect.
- *
- * A + t·(sinAzA, cosAzA)  =  B + s·(sinAzB, cosAzB)
- *
- * Returns true and sets `pt` on success (non-parallel lines).
- */
+// Identical to AlignmentSolver::lineIntersect (azimuth-based).
 static bool lineIntersectAz(const QPointF& A, double azA,
                              const QPointF& B, double azB,
                              QPointF& pt)
 {
     const double sinA = std::sin(azA), cosA = std::cos(azA);
     const double sinB = std::sin(azB), cosB = std::cos(azB);
-    const double det  = sinB * cosA - sinA * cosB;   // = sin(azB - azA)
-
-    if (std::abs(det) < 1e-9) return false;   // parallel
-
-    const double dx = B.x() - A.x();
-    const double dy = B.y() - A.y();
+    const double det  = sinB * cosA - sinA * cosB;
+    if (std::abs(det) < 1e-9) return false;
+    const double dx = B.x() - A.x(), dy = B.y() - A.y();
     const double t  = (dx * (-cosB) - (-sinB) * dy) / det;
-
     pt = QPointF(A.x() + t * sinA, A.y() + t * cosA);
     return true;
 }
@@ -58,20 +47,19 @@ AlignmentGripProvider::AlignmentGripProvider(railway::HorizontalAlignmentEdit* e
 
 // ── computeGrips ──────────────────────────────────────────────────────────────
 //
-// For each unique (tangentIdxBefore=T0, tangentIdxAfter=T1) pair referenced
-// by any Floating element, emit exactly THREE grips:
+// For a chained alignment  T0 → [SCS1] → T1 → [SCS2] → T2 → …
+// we want exactly these grips:
 //
-//   ① T0.startPI  — outer end of the entry tangent           (Vertex)
-//   ② T1.endPI    — outer end of the exit  tangent           (Vertex)
-//   ③ IP          — intersection of lines T0 and T1          (Midpoint/triangle)
+//   • One Vertex grip at each outer end:
+//       T0.startPI  (T0 is not anyone's tangentAfter)
+//       Tn.endPI    (Tn is not anyone's tangentBefore)
 //
-// Dragging ①: moves T0.startPI (keeps T0 direction, shortens/lengthens).
-// Dragging ②: moves T1.endPI   (keeps T1 direction, shortens/lengthens).
-// Dragging ③: moves T0.endPI + T1.startPI together → changes IP → curve updates.
+//   • One Midpoint (triangle) grip at each IP:
+//       IP_k = intersection of infinite lines through T_before and T_after
+//       Moving IP_k → sets T_before.endPI = T_after.startPI = newIP
 //
-// All other points (T0.endPI, T1.startPI, arc/spiral cut-points) are NOT grips.
-// One set of three grips per unique (T0,T1) pair — SCS groups share the same
-// pair and are deduplicated via QSet.
+// No other grips are emitted.  This prevents duplicate/phantom grips
+// appearing after a drag because each editable point has exactly one grip.
 
 QVector<GripPoint> AlignmentGripProvider::computeGrips() const
 {
@@ -80,110 +68,125 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
 
     const QVector<railway::EditableElement>& elems = m_edit->elements();
 
-    QSet<QPair<int,int>> emitted;
-    QSet<QString>        emittedGripIds;   // prevent duplicate outer-end grips
+    // ── Pass 1: collect all unique (tangentBefore, tangentAfter) IP groups ───
 
-    for (int i = 0; i < elems.size(); ++i) {
-        const auto& el = elems[i];
+    // ip_groups[k] = {bIdx, aIdx}
+    struct IPGroup { int b; int a; };
+    QVector<IPGroup> groups;
+    QSet<QPair<int,int>> seen;
 
-        // Only Floating elements carry the tangent pair that defines an IP.
+    for (const auto& el : elems) {
         if (el.mode != railway::ConstraintMode::Floating) continue;
-
         const int b = el.tangentIdxBefore;
         const int a = el.tangentIdxAfter;
         if (b < 0 || a < 0 || b >= elems.size() || a >= elems.size()) continue;
-
         const QPair<int,int> key(b, a);
-        if (emitted.contains(key)) continue;
-        emitted.insert(key);
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+        groups.append({b, a});
+    }
 
-        const auto& T0 = elems[b];
-        const auto& T1 = elems[a];
+    if (groups.isEmpty()) return grips;
+
+    // ── Pass 2: determine which tangent indices appear as "before" vs "after" ─
+    //
+    // A tangent that appears as tangentAfter (a) in some group has its
+    // startPI as the "inner end" of that group's IP → do NOT emit a Grip①
+    // for that tangent's startPI.
+    //
+    // A tangent that appears as tangentBefore (b) in some group has its
+    // endPI as the "inner end" → do NOT emit a Grip② for that tangent's endPI.
+
+    QSet<int> isBefore;   // tangent indices used as tangentBefore in any group
+    QSet<int> isAfter;    // tangent indices used as tangentAfter  in any group
+
+    for (const auto& g : groups) {
+        isBefore.insert(g.b);
+        isAfter .insert(g.a);
+    }
+
+    // ── Pass 3: emit grips ────────────────────────────────────────────────────
+
+    QSet<int> emittedOuterStart;  // bIdx already emitted as Grip①
+    QSet<int> emittedOuterEnd;    // aIdx already emitted as Grip②
+
+    for (const auto& g : groups) {
+        const auto& T0 = elems[g.b];
+        const auto& T1 = elems[g.a];
 
         if (T0.type != railway::EditableElementType::Tangent) continue;
         if (T1.type != railway::EditableElementType::Tangent) continue;
 
-        // ── Compute IP ───────────────────────────────────────────────────────
+        // ── Grip ①: T0.startPI  (only if T0 is not anyone's tangentAfter) ──
+
+        if (!isAfter.contains(g.b) && !emittedOuterStart.contains(g.b)) {
+            emittedOuterStart.insert(g.b);
+            GripPoint gp;
+            gp.id       = QString("outer_s_%1").arg(g.b);
+            gp.position = toGpPnt(T0.startPI);
+            gp.type     = GripType::Vertex;
+            gp.enabled  = true;
+            const int bi = g.b;
+            gp.onDrag = [this, bi](const gp_Pnt& np, bool) {
+                m_edit->moveStartPIDirect(bi, toQPointF(np));
+                m_edit->solve();
+            };
+            grips.append(gp);
+        }
+
+        // ── Grip ②: T1.endPI  (only if T1 is not anyone's tangentBefore) ───
+
+        if (!isBefore.contains(g.a) && !emittedOuterEnd.contains(g.a)) {
+            emittedOuterEnd.insert(g.a);
+            GripPoint gp;
+            gp.id       = QString("outer_e_%1").arg(g.a);
+            gp.position = toGpPnt(T1.endPI);
+            gp.type     = GripType::Vertex;
+            gp.enabled  = true;
+            const int ai = g.a;
+            gp.onDrag = [this, ai](const gp_Pnt& np, bool) {
+                m_edit->movePIDirect(ai, toQPointF(np));
+                m_edit->solve();
+            };
+            grips.append(gp);
+        }
+
+        // ── Grip ③: IP = intersection of infinite lines T0 and T1 ───────────
 
         const double azT0 = azimuthOf(T0.startPI, T0.endPI);
         const double azT1 = azimuthOf(T1.startPI, T1.endPI);
 
         QPointF ip;
         if (!lineIntersectAz(T0.startPI, azT0, T1.startPI, azT1, ip)) {
-            qDebug() << "[AlignmentGripProvider] Tangents" << b << "&" << a
-                     << "are parallel — no IP grip";
+            qDebug() << "[AlignmentGripProvider] T0" << g.b << "& T1" << g.a
+                     << "parallel — no IP grip";
             continue;
         }
 
-        // ── Grip ①: T0.startPI ──────────────────────────────────────────────
-
-        {
-            const QString id = QString("t0start_%1").arg(b);
-            if (!emittedGripIds.contains(id)) {
-                emittedGripIds.insert(id);
-                GripPoint gp;
-                gp.id       = id;
-                gp.position = toGpPnt(T0.startPI);
-                gp.type     = GripType::Vertex;
-                gp.enabled  = true;
-
-                gp.onDrag = [this, b](const gp_Pnt& np, bool) {
-                    m_edit->moveStartPIDirect(b, toQPointF(np));
-                    m_edit->solve();
-                };
-                grips.append(gp);
-            }
-        }
-
-        // ── Grip ②: T1.endPI ────────────────────────────────────────────────
-
-        {
-            const QString id = QString("t1end_%1").arg(a);
-            if (!emittedGripIds.contains(id)) {
-                emittedGripIds.insert(id);
-                GripPoint gp;
-                gp.id       = id;
-                gp.position = toGpPnt(T1.endPI);
-                gp.type     = GripType::Vertex;
-                gp.enabled  = true;
-
-                gp.onDrag = [this, a](const gp_Pnt& np, bool) {
-                    m_edit->movePIDirect(a, toQPointF(np));
-                    m_edit->solve();
-                };
-                grips.append(gp);
-            }
-        }
-
-        // ── Grip ③: IP ──────────────────────────────────────────────────────
-
         {
             GripPoint gp;
-            gp.id       = QString("ip_%1_%2").arg(b).arg(a);
+            gp.id       = QString("ip_%1_%2").arg(g.b).arg(g.a);
             gp.position = toGpPnt(ip);
-            gp.type     = GripType::Midpoint;   // triangle marker
+            gp.type     = GripType::Midpoint;
             gp.enabled  = true;
-
-            gp.onDrag = [this, b, a](const gp_Pnt& np, bool) {
+            const int bi = g.b, ai = g.a;
+            gp.onDrag = [this, bi, ai](const gp_Pnt& np, bool) {
                 const QPointF newIP = toQPointF(np);
-                // Move the inner ends of both tangents to the new IP.
-                // T0.endPI   → newIP  (entry tangent inner end)
-                // T1.startPI → newIP  (exit  tangent inner end)
-                m_edit->movePIDirect(b, newIP);
-                m_edit->moveStartPIDirect(a, newIP);
+                m_edit->movePIDirect      (bi, newIP);   // T0.endPI   → newIP
+                m_edit->moveStartPIDirect (ai, newIP);   // T1.startPI → newIP
                 m_edit->solve();
             };
             grips.append(gp);
         }
 
-        qDebug() << "[AlignmentGripProvider] IP group (T0=" << b << ", T1=" << a << ")"
-                 << "  T0.start=" << T0.startPI
-                 << "  IP="       << ip
-                 << "  T1.end="   << T1.endPI;
+        qDebug() << "[AlignmentGripProvider] group(T0=" << g.b << ",T1=" << g.a << ")"
+                 << " T0.start=" << T0.startPI
+                 << " IP=" << ip
+                 << " T1.end=" << T1.endPI;
     }
 
     qDebug() << "[AlignmentGripProvider] computeGrips:" << grips.size()
-             << "grips for" << emitted.size() << "IP group(s)";
+             << "grips," << groups.size() << "IP group(s)";
     return grips;
 }
 
