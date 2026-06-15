@@ -14,6 +14,7 @@
 #include "command/alignment/AlignmentFixCurveCommand.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
+#include "view/CadView.h"
 #include <QDebug>
 #include <cmath>
 
@@ -44,6 +45,12 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
 
     m_pickState   = PickState::WaitingForStart;
     m_isFinishing = false;
+
+    // ── 取得 TM2 座標偏移 ─────────────────────────────────────────────────
+    if (context.cadView) {
+        m_coordOffsetEasting  = context.cadView->coordinateOffsetEasting();
+        m_coordOffsetNorthing = context.cadView->coordinateOffsetNorthing();
+    }
 
     EventBus* bus = Application::instance()->eventBus();
 
@@ -88,21 +95,25 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 
     EventBus* bus = Application::instance()->eventBus();
 
+    // point 是 TM2 絕對座標；AlignmentDocument 儲存本地模型座標 → 需還原
+    const QPointF localPt(point.x() - m_coordOffsetEasting,
+                          point.y() - m_coordOffsetNorthing);
+
     switch (m_pickState) {
 
     // ── Step 1：起點 ─────────────────────────────────────────────────────────
     case PickState::WaitingForStart: {
-        m_startPoint = point;
+        m_startPoint = localPt;   // 儲存本地座標
         m_pickState  = PickState::WaitingForMid;
 
         QVariantMap rb;
         rb["action"] = "clearAndAdd";
-        rb["point"]  = QVariant::fromValue(point);   // QPointF — TM2 精度
+        rb["point"]  = QVariant::fromValue(point);   // rubber band 用 TM2
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
                      tr("Specify a point ON the arc:"));
-        outputMessage(QString("Start (%1, %2) — Specify a point on the arc:")
+        outputMessage(QString("Start (E=%1, N=%2) — Specify a point on the arc:")
                           .arg(point.x(), 0, 'f', 3)
                           .arg(point.y(), 0, 'f', 3));
         break;
@@ -110,17 +121,17 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 
     // ── Step 2：弧上點 ───────────────────────────────────────────────────────
     case PickState::WaitingForMid: {
-        m_midPoint  = point;
+        m_midPoint  = localPt;   // 儲存本地座標
         m_pickState = PickState::WaitingForEnd;
 
         QVariantMap rb;
         rb["action"] = "addPoint";
-        rb["point"]  = QVariant::fromValue(point);   // QPointF — TM2 精度
+        rb["point"]  = QVariant::fromValue(point);   // rubber band 用 TM2
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
                      tr("Specify arc END point:"));
-        outputMessage(QString("Mid (%1, %2) — Specify arc END point:")
+        outputMessage(QString("Mid (E=%1, N=%2) — Specify arc END point:")
                           .arg(point.x(), 0, 'f', 3)
                           .arg(point.y(), 0, 'f', 3));
         break;
@@ -131,7 +142,7 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
         QPointF center;
         double  radius = 0.0;
 
-        if (!circumcircle(m_startPoint, m_midPoint, point, center, radius)) {
+        if (!circumcircle(m_startPoint, m_midPoint, localPt, center, radius)) {
             outputMessage("Error: The three points are collinear — "
                           "please specify a different end point.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -142,7 +153,7 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 
         // ── 建立 Fixed CircularArc（全部 double 精度，無截斷）─────────────────
         int idx = m_alignDoc->horizontal()->addFixedCurve(
-                      m_startPoint, point, center, radius);
+                      m_startPoint, localPt, center, radius);
         m_alignDoc->horizontal()->solve();   // emit changed() → AlignmentRenderer::refresh()
 
         outputMessage(

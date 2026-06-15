@@ -55,6 +55,7 @@
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
+#include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
 #include "view/RubberBand.h"
 
@@ -164,6 +165,12 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
     m_type1       = SpiralType::Clothoid;
     m_type2       = SpiralType::Clothoid;
 
+    // ── 取得 TM2 座標偏移 ────────────────────────────────────────────────
+    if (context.cadView) {
+        m_coordOffsetEasting  = context.cadView->coordinateOffsetEasting();
+        m_coordOffsetNorthing = context.cadView->coordinateOffsetNorthing();
+    }
+
     EventBus* bus = Application::instance()->eventBus();
 
     // SCS 預覽模式
@@ -220,8 +227,11 @@ void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
 
         // ── Step 1：選入切線 ──────────────────────────────────────────────────────
     case Step::PickEntryTangent: {
+        // point 是 TM2 絕對座標；elements 是本地模型座標 → 先還原
+        const QPointF localPt(point.x() - m_coordOffsetEasting,
+                              point.y() - m_coordOffsetNorthing);
         int idx = AlignmentFloatCurveCommand::nearestTangentIndex(
-            point, m_alignDoc->horizontal());
+            localPt, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found — click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -238,8 +248,10 @@ void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
 
         // ── Step 2：選出切線 ──────────────────────────────────────────────────────
     case Step::PickExitTangent: {
+        const QPointF localPt(point.x() - m_coordOffsetEasting,
+                              point.y() - m_coordOffsetNorthing);
         int idx = AlignmentFloatCurveCommand::nearestTangentIndex(
-            point, m_alignDoc->horizontal());
+            localPt, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found — click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,

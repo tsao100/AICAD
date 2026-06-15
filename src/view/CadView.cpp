@@ -53,6 +53,9 @@
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
+#include <AIS_Shape.hxx>
 #include <Geom_Surface.hxx>
 #include <Geom_Plane.hxx>
 #include <Graphic3d_ClipPlane.hxx>
@@ -938,6 +941,47 @@ void CadView::fitAll() {
         return;
     }
 
+    // ── 如果有 overlay 物件（alignment 幾何），計算其包圍盒後設定視圖範圍 ──
+    // 純 FitAll() 有時在 TM2 大座標環境下無法正確框住 alignment 幾何，
+    // 因此先手動計算 overlay 的 2D 包圍盒，再用 SetWindow 設定。
+    if (!d->overlayObjects.isEmpty()) {
+        double xMin =  std::numeric_limits<double>::max();
+        double xMax = -std::numeric_limits<double>::max();
+        double yMin =  std::numeric_limits<double>::max();
+        double yMax = -std::numeric_limits<double>::max();
+        bool   hasBox = false;
+
+        for (const auto& entry : d->overlayObjects) {
+            if (entry.obj.IsNull()) continue;
+            auto aisShape = Handle(AIS_Shape)::DownCast(entry.obj);
+            if (aisShape.IsNull() || aisShape->Shape().IsNull()) continue;
+            Bnd_Box bbox;
+            try {
+                BRepBndLib::Add(aisShape->Shape(), bbox);
+                if (!bbox.IsVoid()) {
+                    double x1, y1, z1, x2, y2, z2;
+                    bbox.Get(x1, y1, z1, x2, y2, z2);
+                    xMin = std::min(xMin, x1);  xMax = std::max(xMax, x2);
+                    yMin = std::min(yMin, y1);  yMax = std::max(yMax, y2);
+                    hasBox = true;
+                }
+            } catch (...) {}
+        }
+
+        if (hasBox && (xMax > xMin || yMax > yMin)) {
+            // 加上 10% 邊界
+            const double mx = (xMax - xMin) * 0.1 + 1.0;
+            const double my = (yMax - yMin) * 0.1 + 1.0;
+            Bnd_Box fitBox;
+            fitBox.Update(xMin - mx, yMin - my, -1.0,
+                          xMax + mx, yMax + my,  1.0);
+            d->view->FitAll(fitBox, 0.1);
+            d->view->ZFitAll();
+            update();
+            return;
+        }
+    }
+
     d->view->FitAll();
     d->view->ZFitAll();
     update();
@@ -1183,6 +1227,14 @@ void CadView::setCoordinateOffset(double easting, double northing) {
     d->coordOffsetNorthing = northing;
     qDebug() << "[CadView] TM2 coordinate offset set:"
              << "E=" << easting << "N=" << northing;
+}
+
+double CadView::coordinateOffsetEasting() const {
+    return d->coordOffsetEasting;
+}
+
+double CadView::coordinateOffsetNorthing() const {
+    return d->coordOffsetNorthing;
 }
 void CadView::setGridEnabled(bool enabled) {
     d->gridEnabled = enabled;

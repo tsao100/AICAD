@@ -120,6 +120,10 @@ private:
     int    m_idx1    = -1;     ///< 入切線 EditableElement index
     int    m_idx2    = -1;     ///< 出切線 EditableElement index
     double m_radius  = 0.0;   ///< 圓弧半徑 [m]
+
+    // TM2 座標偏移（從 CommandContext 取得，nearestTangentIndex 前還原座標用）
+    double m_coordOffsetEasting  = 0.0;
+    double m_coordOffsetNorthing = 0.0;
     double m_L1      = 0.0;   ///< 入螺旋長度 L1 [m]
     double m_L2      = 0.0;   ///< 出螺旋長度 L2 [m]
 

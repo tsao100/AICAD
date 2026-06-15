@@ -40,6 +40,7 @@
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
+#include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
 
 #include <QDebug>
@@ -96,6 +97,12 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
     m_idx1        = -1;
     m_idx2        = -1;
     m_radius      = 0.0;
+
+    // ── 取得 TM2 座標偏移（用於 nearestTangentIndex 前的座標還原）──────────
+    if (context.cadView) {
+        m_coordOffsetEasting  = context.cadView->coordinateOffsetEasting();
+        m_coordOffsetNorthing = context.cadView->coordinateOffsetNorthing();
+    }
 
     EventBus* bus = Application::instance()->eventBus();
 
@@ -156,7 +163,10 @@ void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
 
     // ── Step 1：選第一條切線 ─────────────────────────────────────────────────
     case Step::PickFirstTangent: {
-        int idx = nearestTangentIndex(point, m_alignDoc->horizontal());
+        // point 是 TM2 絕對座標；elements 是本地模型座標 → 需先還原
+        const QPointF localPt(point.x() - m_coordOffsetEasting,
+                              point.y() - m_coordOffsetNorthing);
+        int idx = nearestTangentIndex(localPt, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found near that point — please click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -177,7 +187,9 @@ void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
 
     // ── Step 2：選第二條切線 ─────────────────────────────────────────────────
     case Step::PickSecondTangent: {
-        int idx = nearestTangentIndex(point, m_alignDoc->horizontal());
+        const QPointF localPt(point.x() - m_coordOffsetEasting,
+                              point.y() - m_coordOffsetNorthing);
+        int idx = nearestTangentIndex(localPt, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found — please click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,

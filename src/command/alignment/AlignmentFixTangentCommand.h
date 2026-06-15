@@ -41,6 +41,10 @@ private:
     QPointF   m_startPoint;
     bool      m_hasStartPoint = false;
     bool      m_isFinishing   = false;
+
+    // TM2 座標偏移
+    double m_coordOffsetEasting  = 0.0;
+    double m_coordOffsetNorthing = 0.0;
 };
 
 REGISTER_COMMAND("alignmentfixtangent", AlignmentFixTangentCommand);

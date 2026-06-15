@@ -36,15 +36,15 @@ namespace view {
 //  Helpers
 // ============================================================================
 
-namespace {
-
-/// Convert QPointF (Easting, Northing) to a flat gp_Pnt (Z = 0).
-inline gp_Pnt toOCCT(const QPointF& p)
+/// Convert QPointF (TM2 Easting/Northing) to OCCT local model coordinates.
+/// Subtracts the renderer's coordinate offset so that TM2 absolute coords
+/// map to the correct OCCT world position near the model origin.
+gp_Pnt AlignmentRenderer::toOCCT(const QPointF& p) const
 {
-    return gp_Pnt(p.x(), p.y(), 0.0);
+    return gp_Pnt(p.x() - m_coordOffsetEasting,
+                  p.y() - m_coordOffsetNorthing,
+                  0.0);
 }
-
-} // anonymous namespace
 
 // ============================================================================
 //  Ctor / dtor
@@ -130,6 +130,13 @@ void AlignmentRenderer::clearOverlays()
         if (m_cadView) m_cadView->removeOverlayAIS(obj);
     m_overlays.clear();
     if (m_cadView) m_cadView->refreshView();
+}
+
+void AlignmentRenderer::setCoordinateOffset(double easting, double northing)
+{
+    m_coordOffsetEasting  = easting;
+    m_coordOffsetNorthing = northing;
+    refresh();   // 偏移改變後立即重新渲染
 }
 
 

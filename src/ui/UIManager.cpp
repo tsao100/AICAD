@@ -823,7 +823,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
-        // ── TM2 座標原點偏移：SetOriginCommand 發佈，UIManager 轉呼叫 CadView + RubberBand ──
+        // ── TM2 座標原點偏移：SetOriginCommand 發佈，UIManager 轉呼叫 CadView + RubberBand + AlignmentRenderer ──
         bus->subscribe("command.set-coordinate-offset", this,
                        [this](const QVariant& data) {
                            QVariantMap map = data.toMap();
@@ -831,9 +831,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            const double e = map["easting"].toDouble();
                            const double n = map["northing"].toDouble();
                            d->cadView->setCoordinateOffset(e, n);
-                           // RubberBand 也同步更新，確保 planeToWorld() 正確還原本地座標
                            if (auto* rb = d->cadView->rubberBand())
                                rb->setCoordinateOffset(e, n);
+                           for (auto* r : d->tclRenderers)
+                               r->setCoordinateOffset(e, n);
                            qDebug() << "[UIManager] setCoordinateOffset:"
                                     << "E=" << e << "N=" << n;
                        });
@@ -1567,7 +1568,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         constexpr double kDefaultE = 248170.787;
                         constexpr double kDefaultN = 2652129.936;
                         d->cadView->setCoordinateOffset(kDefaultE, kDefaultN);
-                        // RubberBand 同步，確保 planeToWorld() 還原正確本地座標
                         if (auto* rb = d->cadView->rubberBand())
                             rb->setCoordinateOffset(kDefaultE, kDefaultN);
                         qDebug() << "[UIManager] TM2 default origin applied:"
@@ -1582,6 +1582,12 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                 &railway::HorizontalAlignmentEdit::changed,
                                 r, &view::AlignmentRenderer::refresh);
                         d->tclRenderers.insert(tclId, r);
+                    }
+                    // ── 套用 TM2 偏移到 renderer（toOCCT 需要減去偏移）────────
+                    {
+                        constexpr double kDefaultE = 248170.787;
+                        constexpr double kDefaultN = 2652129.936;
+                        r->setCoordinateOffset(kDefaultE, kDefaultN);
                     }
                     // Sync solved rawPoints to TCL for PLAN DEV
                     const railway::HorizontalAlignment* ha = aDoc->horizontal()->result();

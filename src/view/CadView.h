@@ -229,6 +229,11 @@ public:
      */
     void setCoordinateOffset(double easting, double northing);
 
+    /// 取得目前 TM2 東向偏移（供 Command 還原本地座標用）
+    double coordinateOffsetEasting()  const;
+    /// 取得目前 TM2 北向偏移
+    double coordinateOffsetNorthing() const;
+
     /**
      * @brief 啟用/停用網格顯示
      * @param enabled 是否啟用
