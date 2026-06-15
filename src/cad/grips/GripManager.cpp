@@ -169,23 +169,47 @@ void GripManager::refreshGrips()
 // ── Hit Test ─────────────────────────────────────────────────────────
 QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double /*unused*/) const
 {
-    // 計算目前 zoom 下 12 像素對應的世界單位距離
-    double pixThreshold = 12.0;
-    double worldThreshold = pixThreshold;   // fallback
+    // Compute the world-space distance that corresponds to `pixThreshold` screen
+    // pixels at the Z=0 plane — the same plane used by GripEventFilter::screenToWorld.
+    //
+    // Strategy: project two screen points (0,0) and (pixThreshold,0) onto Z=0
+    // using the same ray-plane intersection used in screenToWorld, then measure
+    // the distance between the two resulting world points.
+
+    const double pixThreshold = 12.0;
+    double worldThreshold = 1.0;   // safe fallback (1 m)
 
     if (!m_view.IsNull()) {
-        // V3d_View::Convert(pixSize) → world size
-        double wx1, wy1, wz1, wx2, wy2, wz2;
-        m_view->Convert(0, 0, wx1, wy1, wz1);
-        m_view->Convert((int)pixThreshold, 0, wx2, wy2, wz2);
-        worldThreshold = gp_Pnt(wx1,wy1,wz1).Distance(gp_Pnt(wx2,wy2,wz2));
+        auto projectToZ0 = [&](int sx, int sy) -> gp_Pnt {
+            double px, py, pz, dx, dy, dz;
+            m_view->ProjReferenceAxe(sx, sy, px, py, pz, dx, dy, dz);
+            // Ray: P(t) = (px,py,pz) + t*(dx,dy,dz).  Intersect Z=0: pz + t*dz = 0
+            if (std::abs(dz) > 1e-10) {
+                double t = -pz / dz;
+                return gp_Pnt(px + t * dx, py + t * dy, 0.0);
+            }
+            // Ray parallel to Z=0 — fall back to near-plane point
+            return gp_Pnt(px, py, pz);
+        };
+
+        gp_Pnt w0 = projectToZ0(0, 0);
+        gp_Pnt w1 = projectToZ0((int)pixThreshold, 0);
+        double d  = w0.Distance(w1);
+        if (d > 1e-10) worldThreshold = d;
     }
 
     QString best;
     double  bestDist = worldThreshold;
+
+    qDebug() << "[GripManager] hitTestGrip: worldPos=(" << worldPos.X() << worldPos.Y() << worldPos.Z()
+             << ") threshold=" << worldThreshold << "grips=" << m_grips.size();
+
     for (const GripPoint& gp : m_grips) {
         if (!gp.enabled) continue;
         double d = worldPos.Distance(gp.position);
+        qDebug() << "  grip" << gp.id
+                 << "pos=(" << gp.position.X() << gp.position.Y() << gp.position.Z() << ")"
+                 << "dist=" << d;
         if (d < bestDist) { bestDist = d; best = gp.id; }
     }
     return best;
@@ -301,7 +325,10 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
 
 bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int sx, int sy)
 {
-    if (m_handles.isEmpty()) return false;
+    if (m_handles.isEmpty()) {
+        qDebug() << "[GripManager] mousePressEvent: m_handles is EMPTY — no grips displayed";
+        return false;
+    }
 
     // ── 狀態一：尚未選取 grip，嘗試 hit test ───────────────────
     if (!m_gripSelected) {
