@@ -27,6 +27,7 @@ class OSnapManager;
 // 前向宣告
 namespace cad {
 class Document;
+class Sketch;
 class Plane;
 class GripManager;
 }
@@ -259,6 +260,13 @@ public:
     QStringList selectedGeomUuids() const;
 
     void clearSketchGeomSelection();
+
+    /// 在草圖模式下顯示 X 軸 / Y 軸 / 原點（可選取，供束制使用）
+    /// 由 UIManager::onSketchEditStarted 呼叫。
+    void showSketchAxes(cad::Sketch* sketch);
+
+    /// 移除草圖軸 AIS（離開草圖模式時呼叫）
+    void hideSketchAxes();
 
     QJsonObject saveViewState() const;
     void restoreViewState(const QJsonObject& state);

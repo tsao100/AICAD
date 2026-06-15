@@ -644,11 +644,25 @@ void SketchPanel::onConstraintReadyFromSession(
     using CT = cad::ConstraintType;
     using GH = cad::GeomHandle;
 
+    // ── 草圖平面參考幾何 UUID 正規化 ────────────────────────────────────────
+    // CadView 顯示的軸 AIS 使用虛擬 UUID（"sketch_xaxis:<id>"）。
+    // 在套用約束前，將其轉換成 Sketch 內真實的幾何 UUID。
+    auto resolveAxisUuid = [this](const QString& u) -> QString {
+        QString skId = m_sketch->id();
+        if (u == "sketch_xaxis:"  + skId) return m_sketch->xAxisGeomUuid();
+        if (u == "sketch_yaxis:"  + skId) return m_sketch->yAxisGeomUuid();
+        if (u == "sketch_origin:" + skId) return m_sketch->originPointUuid();
+        return u;
+    };
+    // 正規化 refs 副本（保留 handle，只替換 geomUuid）
+    QList<cad::GeomRef> resolvedRefs;
+    for (const auto& r : refs)
+        resolvedRefs.append(cad::GeomRef(resolveAxisUuid(r.geomUuid), r.handle));
+
     // ── 幾何約束：直接呼叫語意化的 Sketch 方法 ────────────────────────────
-    // 這些方法內部使用正確的 makeXxx 工廠，solver 可正確識別 refs
-    auto uuid0 = refs.size() > 0 ? refs[0].geomUuid : QString();
-    auto uuid1 = refs.size() > 1 ? refs[1].geomUuid : QString();
-    auto uuid2 = refs.size() > 2 ? refs[2].geomUuid : QString();
+    auto uuid0 = resolvedRefs.size() > 0 ? resolvedRefs[0].geomUuid : QString();
+    auto uuid1 = resolvedRefs.size() > 1 ? resolvedRefs[1].geomUuid : QString();
+    auto uuid2 = resolvedRefs.size() > 2 ? resolvedRefs[2].geomUuid : QString();
 
     QString constraintUuid;
     bool isDimensional = false;

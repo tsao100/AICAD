@@ -372,6 +372,13 @@ public:
     QString constrainEqualRadius(const QString& lineA, const QString& lineB);
     QString constrainConcentric(const QString& geomA, const QString& geomB);
     QString constrainFixed(const QString& geomUuid);
+
+    // ── 草圖平面參考幾何（X 軸 / Y 軸 / 原點）─────────────────────────────
+    // 這些幾何在第一次呼叫時 lazy-init，屬於 Fixed 參考幾何（不可移動）。
+    // AIS 層用 "sketch_xaxis:<id>" 等 UUID 顯示；約束解析時用這裡的真實 UUID。
+    QString xAxisGeomUuid();    ///< Sketch 內 X 軸 SketchLine 的 UUID
+    QString yAxisGeomUuid();    ///< Sketch 內 Y 軸 SketchLine 的 UUID
+    QString originPointUuid();  ///< Sketch 內原點 SketchPoint 的 UUID
     QString constrainDistance(const GeomRef& a, const GeomRef& b, double dist);
     QString constrainRadius(const QString& geomUuid, double radius);
     QString constrainRadius(const GeomRef& ref, double radius);
@@ -450,6 +457,11 @@ private:
     ConstraintSolver        m_solver;
     Handle(AIS_InteractiveContext) m_aisContext;
     aicad::core::ParameterStore*  m_parameterStore = nullptr;
+
+    // 草圖平面參考幾何 UUID（lazy-init，初次存取時建立）
+    QString m_xAxisGeomUuid;
+    QString m_yAxisGeomUuid;
+    QString m_originPointUuid;
 
     void applyConstructionStyle(Handle(AIS_Shape)& shape, GeomRole role);
 };

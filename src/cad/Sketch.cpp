@@ -1183,6 +1183,85 @@ QString Sketch::constrainRadius(const GeomRef& ref, double radius) {
     return addConstraint(c);
 }
 
+// ── 草圖平面參考幾何（X 軸 / Y 軸 / 原點）lazy-init ──────────────────────
+// 這三個幾何在第一次被請求時建立，以「Fixed」約束固定位置。
+// GeomRole::Construction 使它們不出現在普通幾何清單（未來可過濾）。
+
+QString Sketch::xAxisGeomUuid()
+{
+    if (!m_xAxisGeomUuid.isEmpty()) return m_xAxisGeomUuid;
+
+    // 建立 X 軸線段：從 (-200, 0) 到 (200, 0)（2D 草圖座標）
+    auto* sp0 = new SketchPoint(QVector2D(-200.0f, 0.0f), GeomRole::Construction);
+    auto* sp1 = new SketchPoint(QVector2D( 200.0f, 0.0f), GeomRole::Construction);
+    auto* line = new SketchLine(GeomRole::Construction);
+    line->startUuid = sp0->uuid;
+    line->endUuid   = sp1->uuid;
+    line->points    = { QVector2D(-200.0f, 0.0f), QVector2D(200.0f, 0.0f) };
+
+    // 直接插入（不觸發 solve/rebuild，避免遞迴）
+    m_geometries.append(sp0);
+    m_geometries.append(sp1);
+    m_geometries.append(line);
+
+    // Fixed 約束：鎖住兩端點
+    for (auto* sp : { sp0, sp1 }) {
+        SketchConstraint c;
+        c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        c.type  = ConstraintType::Fixed;
+        c.refs  = { GeomRef(sp->uuid, GeomHandle::WholeGeom) };
+        m_constraints.append(c);
+    }
+
+    m_xAxisGeomUuid = line->uuid;
+    return m_xAxisGeomUuid;
+}
+
+QString Sketch::yAxisGeomUuid()
+{
+    if (!m_yAxisGeomUuid.isEmpty()) return m_yAxisGeomUuid;
+
+    auto* sp0 = new SketchPoint(QVector2D(0.0f, -200.0f), GeomRole::Construction);
+    auto* sp1 = new SketchPoint(QVector2D(0.0f,  200.0f), GeomRole::Construction);
+    auto* line = new SketchLine(GeomRole::Construction);
+    line->startUuid = sp0->uuid;
+    line->endUuid   = sp1->uuid;
+    line->points    = { QVector2D(0.0f, -200.0f), QVector2D(0.0f, 200.0f) };
+
+    m_geometries.append(sp0);
+    m_geometries.append(sp1);
+    m_geometries.append(line);
+
+    for (auto* sp : { sp0, sp1 }) {
+        SketchConstraint c;
+        c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        c.type  = ConstraintType::Fixed;
+        c.refs  = { GeomRef(sp->uuid, GeomHandle::WholeGeom) };
+        m_constraints.append(c);
+    }
+
+    m_yAxisGeomUuid = line->uuid;
+    return m_yAxisGeomUuid;
+}
+
+QString Sketch::originPointUuid()
+{
+    if (!m_originPointUuid.isEmpty()) return m_originPointUuid;
+
+    auto* sp = new SketchPoint(QVector2D(0.0f, 0.0f), GeomRole::Construction);
+
+    m_geometries.append(sp);
+
+    SketchConstraint c;
+    c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type  = ConstraintType::Fixed;
+    c.refs  = { GeomRef(sp->uuid, GeomHandle::WholeGeom) };
+    m_constraints.append(c);
+
+    m_originPointUuid = sp->uuid;
+    return m_originPointUuid;
+}
+
 // 固定某個端點的 X 座標
 QString Sketch::constrainFixedX(const GeomRef& point, double x) {
     SketchConstraint c;

@@ -229,6 +229,7 @@ SOURCES += \
     src/cad/sketch/ConstraintSolver.cpp \
     src/cad/sketch/ConstraintSymbolAIS.cpp \
     src/cad/sketch/DimensionLineAIS.cpp \
+    src/cad/sketch/SketchAxisAIS.cpp \
     src/cad/sketch/SketchConstraint.cpp \
     src/cad/sketch/SketchLoopFinder.cpp \
     src/cad/sketch/SketchPointAIS.cpp \
@@ -352,6 +353,7 @@ HEADERS += \
     src/cad/sketch/ConstraintSolver.h \
     src/cad/sketch/ConstraintSymbolAIS.h \
     src/cad/sketch/DimensionLineAIS.h \
+    src/cad/sketch/SketchAxisAIS.h \
     src/cad/sketch/SketchConstraint.h \
     src/cad/sketch/SketchLoopFinder.h \
     src/cad/sketch/SketchPointAIS.h \

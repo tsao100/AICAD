@@ -2689,6 +2689,10 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         pp->raise();
     }
 
+    // 顯示草圖平面的 X 軸、Y 軸、原點（可供束制選取）
+    if (d->cadView)
+        d->cadView->showSketchAxes(sketch);
+
     bus->publish(core::Events::SKETCH_ENTERED, QVariant::fromValue(sketch));
     bus->publish("sketch.editStarted", QVariant::fromValue(sketch));
 }
@@ -2698,6 +2702,10 @@ void UIManager::onSketchEditEnded()
     m_currentActiveSketch = nullptr;
 
     auto* bus = core::Application::instance()->eventBus();
+
+    // 移除草圖平面參考幾何（X 軸 / Y 軸 / 原點）
+    if (d->cadView)
+        d->cadView->hideSketchAxes();
 
     // SketchPanel + overlay 清除
     if (d->sketchPanel) {

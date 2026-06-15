@@ -27,6 +27,7 @@
 
 #include "cad/sketch/DimensionLineAIS.h"
 #include "cad/sketch/SketchConstraint.h"
+#include "cad/sketch/SketchAxisAIS.h"
 
 #include <QDebug>
 #include <QTimer>
@@ -130,6 +131,11 @@ public:
     bool commandInProgress = false;
     bool isDisplayingAllFeatures = false;
     bool constraintPickActive = false;  ///< pickSession 等待選取中（GetGeom 但 command 已 finished）
+
+    // ── 草圖平面參考幾何 AIS（X 軸 / Y 軸 / 原點）────────────────────────
+    Handle(cad::SketchAxisAIS)   sketchXAxisAIS;
+    Handle(cad::SketchAxisAIS)   sketchYAxisAIS;
+    Handle(cad::SketchOriginAIS) sketchOriginAIS;
 
     QList<OverlayEntry> overlayObjects;
     QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
@@ -667,6 +673,76 @@ void CadView::clearSketchGeomSelection()
         bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
 }
 
+void CadView::showSketchAxes(cad::Sketch* sketch)
+{
+    if (!sketch || !sketch->plane() || d->context.IsNull()) return;
+
+    // 先移除舊的
+    hideSketchAxes();
+
+    auto* plane = sketch->plane();
+    QVector3D o  = plane->origin();
+    QVector3D xa = plane->xAxis();
+    QVector3D ya = plane->yAxis();
+    QVector3D n  = plane->normal();
+
+    gp_Pnt origin(o.x(), o.y(), o.z());
+    gp_Dir normDir(n.x(), n.y(), n.z());
+    gp_Dir xDir(xa.x(), xa.y(), xa.z());
+    gp_Ax3 ax3(origin, normDir, xDir);
+
+    // 軸長：視草圖大小而定（暫定 200mm；之後可改為自動適應）
+    double halfLen = 200.0;
+    double origSize = halfLen * 0.06;   // 原點十字大小
+
+    QString skUuid = sketch->id();
+
+    // 建立三個 AIS 物件
+    d->sketchXAxisAIS   = new cad::SketchAxisAIS(ax3, halfLen,
+                              cad::SketchAxisAIS::AxisType::X,
+                              "sketch_xaxis:" + skUuid);
+    d->sketchYAxisAIS   = new cad::SketchAxisAIS(ax3, halfLen,
+                              cad::SketchAxisAIS::AxisType::Y,
+                              "sketch_yaxis:" + skUuid);
+    d->sketchOriginAIS  = new cad::SketchOriginAIS(ax3, origSize,
+                              "sketch_origin:" + skUuid);
+
+    // 登記到 aisToGeomUuid（供 selectedGeomUuids() 使用）
+    d->aisToGeomUuid[d->sketchXAxisAIS.get()]  = "sketch_xaxis:"  + skUuid;
+    d->aisToGeomUuid[d->sketchYAxisAIS.get()]  = "sketch_yaxis:"  + skUuid;
+    d->aisToGeomUuid[d->sketchOriginAIS.get()] = "sketch_origin:" + skUuid;
+
+    // Display（先不選取、不高亮，僅用 display mode 0）
+    d->context->Display(d->sketchXAxisAIS,  0, 0, Standard_False);
+    d->context->Display(d->sketchYAxisAIS,  0, 0, Standard_False);
+    d->context->Display(d->sketchOriginAIS, 0, 0, Standard_False);
+
+    // 啟用選取（selection mode 0）
+    d->context->Activate(d->sketchXAxisAIS,  0, Standard_False);
+    d->context->Activate(d->sketchYAxisAIS,  0, Standard_False);
+    d->context->Activate(d->sketchOriginAIS, 0, Standard_False);
+
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::hideSketchAxes()
+{
+    if (d->context.IsNull()) return;
+
+    auto remove = [&](auto& handle) {
+        if (!handle.IsNull()) {
+            d->aisToGeomUuid.remove(handle.get());
+            d->context->Remove(handle, Standard_False);
+            handle.Nullify();
+        }
+    };
+    remove(d->sketchXAxisAIS);
+    remove(d->sketchYAxisAIS);
+    remove(d->sketchOriginAIS);
+
+    d->context->UpdateCurrentViewer();
+}
+
 void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
     d->gripManager = mgr;
     d->gripFilter  = filter;
@@ -732,6 +808,8 @@ void CadView::setConstraintPickActive(bool active)
 }
 
 void CadView::setMode(InteractionMode mode) {
+        return;
+    }
 
     // GetGeom 模式：關閉 OSnap，讓 OCCT DetectedInteractive 決定選取幾何
     // 避免 OSnap 攔截點擊（snapConfirmed 只發 POINT_ACQUIRED，無 geomUuid）

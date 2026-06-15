@@ -26,6 +26,29 @@ using namespace cad;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 輔助函式
+
+/// 將 CadView 軸 AIS 的虛擬 UUID 轉換為 Sketch 內真實的幾何 UUID。
+/// 當使用者選取 X 軸 / Y 軸 / 原點時，ctx.args 含有
+/// "sketch_xaxis:<sketchId>" 等字串，需在此正規化後才能套用約束。
+static QString resolveAxisUuid(Sketch* sketch, const QString& uuid)
+{
+    if (!sketch) return uuid;
+    const QString skId = sketch->id();
+    if (uuid == "sketch_xaxis:"  + skId) return sketch->xAxisGeomUuid();
+    if (uuid == "sketch_yaxis:"  + skId) return sketch->yAxisGeomUuid();
+    if (uuid == "sketch_origin:" + skId) return sketch->originPointUuid();
+    return uuid;
+}
+
+/// 批次正規化 args 中所有 UUID
+static QStringList resolveAxisUuids(Sketch* sketch, const QStringList& args)
+{
+    QStringList out;
+    out.reserve(args.size());
+    for (const QString& a : args)
+        out << resolveAxisUuid(sketch, a);
+    return out;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 void reportSolveResult(const SolveResult& result,
@@ -100,8 +123,10 @@ CommandResult GeomConstraintCommand::execute(const CommandContext& ctx)
 
     // ── 模式 A：直接帶 UUID 參數 ────────────────────────────────────────────
     if (!ctx.args.isEmpty() && ctx.args.size() >= m_requiredSel) {
+        // 正規化軸/原點的虛擬 UUID → Sketch 真實幾何 UUID
+        QStringList resolvedArgs = resolveAxisUuids(sk, ctx.args);
         int dofBefore = sk->degreesOfFreedom();
-        QString uuid  = applyConstraint(sk, ctx.args);
+        QString uuid  = applyConstraint(sk, resolvedArgs);
         if (uuid.isEmpty()) {
             return CommandResult::Failure(
                 QString("Failed to apply %1 constraint. Check UUIDs.").arg(name()));
