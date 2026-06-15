@@ -27,6 +27,7 @@
 #include <Quantity_Color.hxx>
 
 #include <QDebug>
+#include <QTimer>
 #include <cmath>
 
 namespace aicad {
@@ -145,6 +146,8 @@ void AlignmentRenderer::refresh()
 {
     if (!m_cadView) return;
 
+    const bool hadOverlays = !m_overlays.isEmpty();
+
     // ── 1. Clear previously displayed geometry overlays ──────────────────────
     for (const auto& obj : m_overlays)
         m_cadView->removeOverlayAIS(obj);
@@ -185,6 +188,14 @@ void AlignmentRenderer::refresh()
     }
 
     m_cadView->refreshView();
+
+    // ── 4. 第一次加入幾何時（之前 overlays 為空），自動 fitAll 讓使用者看到結果 ──
+    // 後續 refresh 不再自動縮放，避免干擾使用者的視角。
+    if (!hadOverlays && !m_overlays.isEmpty()) {
+        QTimer::singleShot(50, m_cadView, [this]() {
+            if (m_cadView) m_cadView->fitAll();
+        });
+    }
 }
 
 // ============================================================================
@@ -323,7 +334,11 @@ void AlignmentRenderer::buildPIGrips()
     constexpr double kR = 2.0;
 
     for (const railway::AlignmentPoint& pt : rawPts) {
-        gp_Pnt centre(pt.easting, pt.northing, 0.0);
+        // rawPoints 的 easting/northing 是 TM2 絕對座標；
+        // OCCT world 座標是本地模型座標，需減去 TM2 偏移
+        const double localX = pt.easting  - m_coordOffsetEasting;
+        const double localY = pt.northing - m_coordOffsetNorthing;
+        gp_Pnt centre(localX, localY, 0.0);
         BRepPrimAPI_MakeSphere mkSphere(centre, kR);
         if (!mkSphere.IsDone()) continue;
 

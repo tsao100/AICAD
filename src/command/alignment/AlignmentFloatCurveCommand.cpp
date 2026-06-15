@@ -261,25 +261,28 @@ void AlignmentFloatCurveCommand::handleNumberInput(const QString& text)
     if (m_idx1 >= 0 && m_idx1 < elems.size() &&
         m_idx2 >= 0 && m_idx2 < elems.size())
     {
-        // 以兩條切線的端點作為弧預覽的控制點：
-        //   points[0] = tangent1 的 endPI（切線尾端，接近 PI 側）
-        //   points[1] = 兩切線的「目視交叉點」估算（此處用中點近似）
-        //   currentPoint = tangent2 的 startPI
+        // t1end / t2start / pi 是本地模型座標（已減去偏移的座標）
+        // RubberBand::planeToWorld() 會再減去 coordOffset，
+        // 因此傳入時必須先加回 offset，讓 planeToWorld() 減完後還原成本地座標
         const QPointF& t1end   = elems[m_idx1].endPI;
         const QPointF& t2start = elems[m_idx2].startPI;
-        QPointF        pi      = QPointF((t1end.x() + t2start.x()) * 0.5,
-                                          (t1end.y() + t2start.y()) * 0.5);
+        const QPointF  pi((t1end.x() + t2start.x()) * 0.5,
+                          (t1end.y() + t2start.y()) * 0.5);
+
+        // 本地座標 + offset = TM2 絕對座標（RubberBand 期待的輸入）
+        const QPointF t1endTM2  (t1end.x()  + m_coordOffsetEasting, t1end.y()  + m_coordOffsetNorthing);
+        const QPointF piTM2     (pi.x()     + m_coordOffsetEasting, pi.y()     + m_coordOffsetNorthing);
 
         QVariantMap rb;
         rb["action"]      = "clearAndAdd";
-        rb["point"]       = QVariant::fromValue(t1end);   // QPointF — TM2 精度
+        rb["point"]       = QVariant::fromValue(t1endTM2);
         rb["radius"]      = m_radius;
         rb["mode"]        = "arc";
         bus->publish("command.update-rubber-band", rb);
 
         QVariantMap rb2;
         rb2["action"] = "addPoint";
-        rb2["point"]  = QVariant::fromValue(pi);           // QPointF — TM2 精度
+        rb2["point"]  = QVariant::fromValue(piTM2);
         bus->publish("command.update-rubber-band", rb2);
     }
 

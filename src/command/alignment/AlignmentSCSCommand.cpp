@@ -738,11 +738,18 @@ void AlignmentSCSCommand::updateRubberBandPreview()
     const auto& elems = m_alignDoc->horizontal()->elements();
     if (m_idx1 >= elems.size() || m_idx2 >= elems.size()) return;
 
+    // t1end / t2start / pi 是本地模型座標
+    // RubberBand::planeToWorld() 會減去 coordOffset，
+    // 因此傳入前必須先加回 offset（本地座標 + offset = TM2 絕對座標）
     const QPointF& t1end   = elems[m_idx1].endPI;
     const QPointF& t2start = elems[m_idx2].startPI;
     const QPointF  pi(
         (t1end.x() + t2start.x()) * 0.5,
         (t1end.y() + t2start.y()) * 0.5);
+
+    const QPointF t1endTM2 (t1end.x()  + m_coordOffsetEasting, t1end.y()  + m_coordOffsetNorthing);
+    const QPointF piTM2    (pi.x()     + m_coordOffsetEasting, pi.y()     + m_coordOffsetNorthing);
+    const QPointF t2startTM2(t2start.x()+ m_coordOffsetEasting, t2start.y()+ m_coordOffsetNorthing);
 
     EventBus* bus = Application::instance()->eventBus();
 
@@ -759,17 +766,17 @@ void AlignmentSCSCommand::updateRubberBandPreview()
     QVariantMap rb1;
     rb1["action"] = "clearAndAdd";
     rb1["mode"]   = "scs";
-    rb1["point"]  = QVariant::fromValue(t1end);      // QPointF — TM2 精度
+    rb1["point"]  = QVariant::fromValue(t1endTM2);
     bus->publish("command.update-rubber-band", rb1);
 
     QVariantMap rb2;
     rb2["action"] = "addPoint";
-    rb2["point"]  = QVariant::fromValue(pi);          // QPointF — TM2 精度
+    rb2["point"]  = QVariant::fromValue(piTM2);
     bus->publish("command.update-rubber-band", rb2);
 
     QVariantMap rb3;
     rb3["action"] = "setCurrentPoint";
-    rb3["point"]  = QVariant::fromValue(t2start);    // QPointF — TM2 精度
+    rb3["point"]  = QVariant::fromValue(t2startTM2);
     bus->publish("command.update-rubber-band", rb3);
 }
 

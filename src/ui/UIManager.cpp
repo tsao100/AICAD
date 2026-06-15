@@ -1870,6 +1870,20 @@ void UIManager::connectCommandLineEvents() {
                            tr("輸入指令或 LISP..."));
                    });
 
+    // ── Alignment command 完成後清理 rubber band，視圖恢復 Navigation ────────
+    bus->subscribe(core::Events::COMMAND_EXECUTED, this,
+                   [this](const QVariant& /*cmdName*/) {
+                       if (!d->cadView) return;
+                       // 若在 Navigation 模式（alignment command 用）→ 清除 rubber band
+                       if (d->cadView->mode() == view::InteractionMode::Navigation) {
+                           if (auto* rb = d->cadView->rubberBand()) {
+                               rb->clearPoints();
+                               rb->clear();
+                           }
+                           // 保持 Navigation 模式，使用者可繼續操作視圖
+                       }
+                   });
+
     // ── 命令一般訊息（Info / Success）──────────────────────────────
     bus->subscribe(core::Events::COMMAND_LOG, this,
                    [this](const QVariant& v) {

@@ -941,9 +941,9 @@ void CadView::fitAll() {
         return;
     }
 
-    // ── 如果有 overlay 物件（alignment 幾何），計算其包圍盒後設定視圖範圍 ──
-    // 純 FitAll() 有時在 TM2 大座標環境下無法正確框住 alignment 幾何，
-    // 因此先手動計算 overlay 的 2D 包圍盒，再用 SetWindow 設定。
+    // ── 若有 overlay 幾何（alignment），計算 2D 包圍盒後手動設定視圖中心和縮放 ──
+    // 直接呼叫 FitAll() 在 TM2 環境下有時無法正確框住 alignment 幾何，
+    // 因此計算 AIS_Shape overlay 的 XY 包圍盒後用 camera 設定。
     if (!d->overlayObjects.isEmpty()) {
         double xMin =  std::numeric_limits<double>::max();
         double xMax = -std::numeric_limits<double>::max();
@@ -969,13 +969,15 @@ void CadView::fitAll() {
         }
 
         if (hasBox && (xMax > xMin || yMax > yMin)) {
-            // 加上 10% 邊界
-            const double mx = (xMax - xMin) * 0.1 + 1.0;
-            const double my = (yMax - yMin) * 0.1 + 1.0;
-            Bnd_Box fitBox;
-            fitBox.Update(xMin - mx, yMin - my, -1.0,
-                          xMax + mx, yMax + my,  1.0);
-            d->view->FitAll(fitBox, 0.1);
+            // 加上 15% 邊界
+            const double margin = std::max((xMax - xMin), (yMax - yMin)) * 0.15 + 1.0;
+            const double cx = (xMin + xMax) * 0.5;
+            const double cy = (yMin + yMax) * 0.5;
+
+            // 用 camera 直接設定視角中心和縮放
+            d->view->SetCenter(cx, cy);
+            d->view->FitAll(xMin - margin, yMin - margin,
+                            xMax + margin, yMax + margin);
             d->view->ZFitAll();
             update();
             return;
