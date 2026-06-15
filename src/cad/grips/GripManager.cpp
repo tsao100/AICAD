@@ -3,6 +3,10 @@
 #include "SketchGripProvider.h"
 #include <QDebug>
 #include <cmath>
+#include <IntAna_IntConicQuad.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Lin.hxx>
+#include <Precision.hxx>
 
 namespace aicad::cad {
 
@@ -169,47 +173,52 @@ void GripManager::refreshGrips()
 // ── Hit Test ─────────────────────────────────────────────────────────
 QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double /*unused*/) const
 {
-    // Compute the world-space distance that corresponds to `pixThreshold` screen
-    // pixels at the Z=0 plane — the same plane used by GripEventFilter::screenToWorld.
-    //
-    // Strategy: project two screen points (0,0) and (pixThreshold,0) onto Z=0
-    // using the same ray-plane intersection used in screenToWorld, then measure
-    // the distance between the two resulting world points.
-
+    // Compute worldThreshold = world distance for pixThreshold pixels at Z=0,
+    // using the same ray-plane method as GripEventFilter::screenToWorld.
     const double pixThreshold = 12.0;
-    double worldThreshold = 1.0;   // safe fallback (1 m)
+    double worldThreshold = 50.0;   // fallback
 
     if (!m_view.IsNull()) {
         auto projectToZ0 = [&](int sx, int sy) -> gp_Pnt {
-            double px, py, pz, dx, dy, dz;
-            m_view->ProjReferenceAxe(sx, sy, px, py, pz, dx, dy, dz);
-            // Ray: P(t) = (px,py,pz) + t*(dx,dy,dz).  Intersect Z=0: pz + t*dz = 0
-            if (std::abs(dz) > 1e-10) {
-                double t = -pz / dz;
-                return gp_Pnt(px + t * dx, py + t * dy, 0.0);
+            Standard_Real Xeye,Yeye,Zeye, Xproj,Yproj,Zproj, Xv,Yv,Zv;
+            m_view->Eye (Xeye,  Yeye,  Zeye);
+            m_view->Proj(Xproj, Yproj, Zproj);
+            m_view->Convert(sx, sy, Xv, Yv, Zv);
+
+            gp_Pnt  rayStart;
+            gp_Dir  rayDir;
+            if (m_view->Camera()->IsOrthographic()) {
+                rayStart = gp_Pnt(Xv,Yv,Zv);
+                rayDir   = gp_Dir(Xproj,Yproj,Zproj);
+            } else {
+                rayStart = gp_Pnt(Xeye,Yeye,Zeye);
+                gp_Vec v(rayStart, gp_Pnt(Xv,Yv,Zv));
+                rayDir = v.Magnitude() > Precision::Confusion()
+                         ? gp_Dir(v) : gp_Dir(Xproj,Yproj,Zproj);
             }
-            // Ray parallel to Z=0 — fall back to near-plane point
-            return gp_Pnt(px, py, pz);
+
+            gp_Pln plane(gp_Pnt(0,0,0), gp_Dir(0,0,1));
+            IntAna_IntConicQuad inter(gp_Lin(rayStart,rayDir), plane, Precision::Angular());
+            if (inter.IsDone() && inter.NbPoints() > 0)
+                return inter.Point(1);
+            return gp_Pnt(Xv,Yv,0.0);
         };
 
         gp_Pnt w0 = projectToZ0(0, 0);
         gp_Pnt w1 = projectToZ0((int)pixThreshold, 0);
         double d  = w0.Distance(w1);
-        if (d > 1e-10) worldThreshold = d;
+        if (d > 1e-6) worldThreshold = d;
     }
+
+    qDebug() << "[GripManager] hitTestGrip worldPos=("
+             << worldPos.X() << worldPos.Y() << worldPos.Z()
+             << ") threshold=" << worldThreshold;
 
     QString best;
     double  bestDist = worldThreshold;
-
-    qDebug() << "[GripManager] hitTestGrip: worldPos=(" << worldPos.X() << worldPos.Y() << worldPos.Z()
-             << ") threshold=" << worldThreshold << "grips=" << m_grips.size();
-
     for (const GripPoint& gp : m_grips) {
         if (!gp.enabled) continue;
         double d = worldPos.Distance(gp.position);
-        qDebug() << "  grip" << gp.id
-                 << "pos=(" << gp.position.X() << gp.position.Y() << gp.position.Z() << ")"
-                 << "dist=" << d;
         if (d < bestDist) { bestDist = d; best = gp.id; }
     }
     return best;

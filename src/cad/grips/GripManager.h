@@ -10,6 +10,7 @@
 #include <QMap>
 #include <QVector>
 #include <AIS_InteractiveContext.hxx>
+#include <V3d_View.hxx>
 
 namespace aicad::cad {
 
