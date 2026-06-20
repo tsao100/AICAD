@@ -1191,20 +1191,20 @@ QString Sketch::xAxisGeomUuid()
 {
     if (!m_xAxisGeomUuid.isEmpty()) return m_xAxisGeomUuid;
 
-    // 建立 X 軸線段：從 (-200, 0) 到 (200, 0)（2D 草圖座標）
-    auto* sp0 = new SketchPoint(QVector2D(-200.0f, 0.0f), GeomRole::Construction);
-    auto* sp1 = new SketchPoint(QVector2D( 200.0f, 0.0f), GeomRole::Construction);
-    auto* line = new SketchLine(GeomRole::Construction);
+    const QVector2D p0(-200.0f, 0.0f);
+    const QVector2D p1( 200.0f, 0.0f);
+
+    auto* sp0  = new SketchPoint(p0, SketchPoint::Origin::Explicit, GeomRole::Construction);
+    auto* sp1  = new SketchPoint(p1, SketchPoint::Origin::Explicit, GeomRole::Construction);
+    auto* line = new SketchLine(p0, p1, GeomRole::Construction);
     line->startUuid = sp0->uuid;
     line->endUuid   = sp1->uuid;
-    line->points    = { QVector2D(-200.0f, 0.0f), QVector2D(200.0f, 0.0f) };
 
-    // 直接插入（不觸發 solve/rebuild，避免遞迴）
     m_geometries.append(sp0);
     m_geometries.append(sp1);
     m_geometries.append(line);
 
-    // Fixed 約束：鎖住兩端點
+    // Fixed 約束鎖住兩端點，使軸線不可移動
     for (auto* sp : { sp0, sp1 }) {
         SketchConstraint c;
         c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -1221,12 +1221,14 @@ QString Sketch::yAxisGeomUuid()
 {
     if (!m_yAxisGeomUuid.isEmpty()) return m_yAxisGeomUuid;
 
-    auto* sp0 = new SketchPoint(QVector2D(0.0f, -200.0f), GeomRole::Construction);
-    auto* sp1 = new SketchPoint(QVector2D(0.0f,  200.0f), GeomRole::Construction);
-    auto* line = new SketchLine(GeomRole::Construction);
+    const QVector2D p0(0.0f, -200.0f);
+    const QVector2D p1(0.0f,  200.0f);
+
+    auto* sp0  = new SketchPoint(p0, SketchPoint::Origin::Explicit, GeomRole::Construction);
+    auto* sp1  = new SketchPoint(p1, SketchPoint::Origin::Explicit, GeomRole::Construction);
+    auto* line = new SketchLine(p0, p1, GeomRole::Construction);
     line->startUuid = sp0->uuid;
     line->endUuid   = sp1->uuid;
-    line->points    = { QVector2D(0.0f, -200.0f), QVector2D(0.0f, 200.0f) };
 
     m_geometries.append(sp0);
     m_geometries.append(sp1);
@@ -1248,8 +1250,9 @@ QString Sketch::originPointUuid()
 {
     if (!m_originPointUuid.isEmpty()) return m_originPointUuid;
 
-    auto* sp = new SketchPoint(QVector2D(0.0f, 0.0f), GeomRole::Construction);
-
+    auto* sp = new SketchPoint(QVector2D(0.0f, 0.0f),
+                               SketchPoint::Origin::Explicit,
+                               GeomRole::Construction);
     m_geometries.append(sp);
 
     SketchConstraint c;

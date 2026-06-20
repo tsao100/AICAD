@@ -284,15 +284,20 @@ void UIManager::initGripSystem()
 
     // ── F) Sketch 進入 → 完整啟動（Grips / OSnap / Selection） ──
     bus->subscribe(core::Events::SKETCH_ENTERED, this,
-                   [this](const QVariant&) {
+                   [this](const QVariant& v) {
                        // Selection mode → Sketching（允許幾何選取）
                        if (d->cadView)
                            d->cadView->setMode(view::InteractionMode::Sketching);
                        // Grip Filter 啟動
                        if (d->gripFilter) d->gripFilter->setEnabled(true);
-                       // 此時 GripManager 的 provider 由 selection.featureSelected 設定
-                       if (d->cadView){
-                           d->cadView->displayAllFeatures();      // ← ADD
+                       // displayAllFeatures 會 RemoveAll，因此之後必須重新顯示草圖軸
+                       if (d->cadView) {
+                           d->cadView->displayAllFeatures();
+                           // 重新顯示 X 軸 / Y 軸 / 原點
+                           // (displayAllFeatures 內的 RemoveAll 會清掉它們)
+                           cad::Sketch* sk = v.value<cad::Sketch*>();
+                           if (!sk) sk = m_currentActiveSketch;
+                           if (sk) d->cadView->showSketchAxes(sk);
                        }
                    });
 
@@ -2041,31 +2046,26 @@ void UIManager::setupSketchPanel()
         d->sketchPanel->setPickSession(d->pickSession);
     }
 
-    // Phase 7：pickSession 收齊選取 → 委派給 SketchPanel::onConstraintReadyFromSession
-    // SketchPanel 負責呼叫 Sketch API、求解、UI 更新 (Phase 6)
+    // Phase 7：pickSession 收齊選取 → SketchPanel::onConstraintReadyFromSession
+    // 已由 SketchPanel::enterSketchMode() 直接連接（Qt::UniqueConnection）。
+    // 此處只負責收尾：清除 constraintPickActive flag、切回 Sketching 模式、更新狀態列。
+    // 注意：不可在此重複呼叫 onConstraintReadyFromSession，否則約束會被處理兩次
+    // （重複加入/重複報錯），這是先前 "COI: 找不到對應幾何元素" 重複出現兩次的原因。
     connect(d->pickSession, &cad::ConstraintPickSession::constraintReady,
             this, [this](QList<cad::GeomRef> refs,
                          double value, QString paramExpr,
                          bool driving, cad::ConstraintType type) {
-        if (d->sketchPanel) {
-            // 委派 SketchPanel 處理（Phase 6 slot）
-            QMetaObject::invokeMethod(d->sketchPanel,
-                "onConstraintReadyFromSession",
-                Qt::DirectConnection,
-                Q_ARG(QList<cad::GeomRef>, refs),
-                Q_ARG(double, value),
-                Q_ARG(QString, paramExpr),
-                Q_ARG(bool, driving),
-                Q_ARG(cad::ConstraintType, type));
-        } else {
-            // Fallback：直接處理
+        // 正常路徑：SketchPanel 已直接連接 constraintReady → onConstraintReadyFromSession，
+        // 此處不重複呼叫。只有當 sketchPanel 不存在時才走 fallback。
+        if (!d->sketchPanel) {
             auto* sketch = core::Application::instance()->activeSketch();
-            if (!sketch) return;
-            cad::SketchConstraint c;
-            c.type = type; c.refs = refs; c.value = value;
-            c.paramExpr = paramExpr; c.driving = driving;
-            sketch->addConstraint(c);
-            sketch->solveConstraints();
+            if (sketch) {
+                cad::SketchConstraint c;
+                c.type = type; c.refs = refs; c.value = value;
+                c.paramExpr = paramExpr; c.driving = driving;
+                sketch->addConstraint(c);
+                sketch->solveConstraints();
+            }
         }
         // 清除 constraintPickActive flag，切回 Sketching 模式
         if (d->cadView) {

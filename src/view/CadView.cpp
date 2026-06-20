@@ -133,9 +133,10 @@ public:
     bool constraintPickActive = false;  ///< pickSession 等待選取中（GetGeom 但 command 已 finished）
 
     // ── 草圖平面參考幾何 AIS（X 軸 / Y 軸 / 原點）────────────────────────
-    Handle(cad::SketchAxisAIS)   sketchXAxisAIS;
-    Handle(cad::SketchAxisAIS)   sketchYAxisAIS;
-    Handle(cad::SketchOriginAIS) sketchOriginAIS;
+    // 用 AIS_Shape 基底型別儲存（SketchAxisAIS/SketchOriginAIS 繼承 AIS_Shape）
+    Handle(AIS_Shape) sketchXAxisAIS;
+    Handle(AIS_Shape) sketchYAxisAIS;
+    Handle(AIS_Shape) sketchOriginAIS;
 
     QList<OverlayEntry> overlayObjects;
     QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
@@ -654,11 +655,12 @@ QStringList CadView::selectedGeomUuids() const
          d->context->MoreSelected();
          d->context->NextSelected())
     {
-        Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
-            d->context->SelectedInteractive());
-        if (s.IsNull()) continue;
+        // 使用 AIS_InteractiveObject（不限於 AIS_Shape），
+        // 讓 SketchAxisAIS / SketchOriginAIS 也能被識別
+        Handle(AIS_InteractiveObject) obj = d->context->SelectedInteractive();
+        if (obj.IsNull()) continue;
 
-        QString uuid = d->aisToGeomUuid.value(s.get());  // ← 直接取 UUID
+        QString uuid = d->aisToGeomUuid.value(obj.get());
         if (!uuid.isEmpty())
             result << uuid;
     }
@@ -708,19 +710,29 @@ void CadView::showSketchAxes(cad::Sketch* sketch)
                               "sketch_origin:" + skUuid);
 
     // 登記到 aisToGeomUuid（供 selectedGeomUuids() 使用）
-    d->aisToGeomUuid[d->sketchXAxisAIS.get()]  = "sketch_xaxis:"  + skUuid;
-    d->aisToGeomUuid[d->sketchYAxisAIS.get()]  = "sketch_yaxis:"  + skUuid;
-    d->aisToGeomUuid[d->sketchOriginAIS.get()] = "sketch_origin:" + skUuid;
+    d->aisToGeomUuid[static_cast<AIS_InteractiveObject*>(d->sketchXAxisAIS.get())]
+        = "sketch_xaxis:"  + skUuid;
+    d->aisToGeomUuid[static_cast<AIS_InteractiveObject*>(d->sketchYAxisAIS.get())]
+        = "sketch_yaxis:"  + skUuid;
+    d->aisToGeomUuid[static_cast<AIS_InteractiveObject*>(d->sketchOriginAIS.get())]
+        = "sketch_origin:" + skUuid;
 
-    // Display（先不選取、不高亮，僅用 display mode 0）
-    d->context->Display(d->sketchXAxisAIS,  0, 0, Standard_False);
-    d->context->Display(d->sketchYAxisAIS,  0, 0, Standard_False);
-    d->context->Display(d->sketchOriginAIS, 0, 0, Standard_False);
+    // Display + Activate（與 SketchPointAIS 一致的標準模式：
+    // 兩參數 Display，再單獨呼叫 Activate 啟用 selection mode 0）
+    d->context->Display(d->sketchXAxisAIS,  Standard_False);
+    d->context->Display(d->sketchYAxisAIS,  Standard_False);
+    d->context->Display(d->sketchOriginAIS, Standard_False);
 
-    // 啟用選取（selection mode 0）
     d->context->Activate(d->sketchXAxisAIS,  0, Standard_False);
     d->context->Activate(d->sketchYAxisAIS,  0, Standard_False);
     d->context->Activate(d->sketchOriginAIS, 0, Standard_False);
+
+    // 放寬選取容差（必須透過 context 呼叫，且在 Activate 之後，
+    // 這時 selection mode 0 對應的 SelectMgr_Selection 已存在）：
+    // 軸線稍寬方便點擊細線，原點更寬方便點擊單點。
+    d->context->SetSelectionSensitivity(d->sketchXAxisAIS,  0, 4.0);
+    d->context->SetSelectionSensitivity(d->sketchYAxisAIS,  0, 4.0);
+    d->context->SetSelectionSensitivity(d->sketchOriginAIS, 0, 8.0);
 
     d->context->UpdateCurrentViewer();
 }
@@ -731,7 +743,8 @@ void CadView::hideSketchAxes()
 
     auto remove = [&](auto& handle) {
         if (!handle.IsNull()) {
-            d->aisToGeomUuid.remove(handle.get());
+            d->aisToGeomUuid.remove(
+                static_cast<AIS_InteractiveObject*>(handle.get()));
             d->context->Remove(handle, Standard_False);
             handle.Nullify();
         }
@@ -808,6 +821,7 @@ void CadView::setConstraintPickActive(bool active)
 }
 
 void CadView::setMode(InteractionMode mode) {
+    if (d->mode == mode) {
         return;
     }
 
@@ -917,6 +931,20 @@ void CadView::displayAllFeatures() {
     d->context->Display(d->viewCube, Standard_False);
     d->aisToFeatureId.clear();  // ✅ 全部重建
 
+    // ── 立即重新顯示草圖平面參考幾何（X 軸 / Y 軸 / 原點）──────────────────
+    // RemoveAll 會把它們整個移出 context，包括內部 SelectMgr_Selection 狀態，
+    // 必須緊接著重建，避免後續流程中軸/原點處於「視覺可見但選取已失效」狀態。
+    auto redisplayAxis = [&](auto& handle, double sensitivity) {
+        if (!handle.IsNull()) {
+            d->context->Display(handle, Standard_False);
+            d->context->Activate(handle, 0, Standard_False);
+            d->context->SetSelectionSensitivity(handle, 0, sensitivity);
+        }
+    };
+    redisplayAxis(d->sketchXAxisAIS,  4.0);
+    redisplayAxis(d->sketchYAxisAIS,  4.0);
+    redisplayAxis(d->sketchOriginAIS, 8.0);
+
     for (Feature* feature : d->document->features()) {
         if (!feature) continue;
 
@@ -981,6 +1009,7 @@ void CadView::displayAllFeatures() {
     if (!d->overlayObjects.isEmpty())
         d->context->UpdateCurrentViewer();
 
+    d->context->UpdateCurrentViewer();
     d->isDisplayingAllFeatures = false;
 }
 

@@ -711,15 +711,23 @@ void SketchPanel::onConstraintReadyFromSession(
     // ── Coincident：需要智慧端點配對 ────────────────────────────────────────
     case CT::Coincident: {
         // 若 refs 已帶有明確的 handle（OSnap 鎖定端點），直接用
-        bool aHasHandle = (refs[0].handle != GH::WholeGeom);
-        bool bHasHandle = refs.size() > 1 && (refs[1].handle != GH::WholeGeom);
+        // 注意：用 resolvedRefs（已正規化軸/原點 UUID），避免 constrainCoincident
+        // 收到虛擬 UUID "sketch_origin:<id>" 而導致 solver 找不到對應幾何。
+        bool aHasHandle = (resolvedRefs[0].handle != GH::WholeGeom);
+        bool bHasHandle = resolvedRefs.size() > 1 && (resolvedRefs[1].handle != GH::WholeGeom);
+
+        qDebug() << "[Coincident] uuid0=" << uuid0 << "handle0=" << (int)resolvedRefs[0].handle
+                 << "uuid1=" << uuid1 << "handle1=" << (resolvedRefs.size()>1 ? (int)resolvedRefs[1].handle : -1);
+
         if (aHasHandle && bHasHandle) {
-            constraintUuid = m_sketch->constrainCoincident(refs[0], refs[1]);
+            constraintUuid = m_sketch->constrainCoincident(resolvedRefs[0], resolvedRefs[1]);
         } else {
             // WholeGeom：找最近端點對
             auto* gA = m_sketch->findGeometry(uuid0);
             auto* gB = m_sketch->findGeometry(uuid1);
             if (!gA || !gB) {
+                qDebug() << "[Coincident] gA=" << (void*)gA << "gB=" << (void*)gB
+                         << "geomCount=" << m_sketch->geometryCount();
                 if (cmdMgr) cmdMgr->printError("COI: 找不到對應幾何元素");
                 return;
             }
