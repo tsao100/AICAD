@@ -19,7 +19,6 @@
 #include "view/RubberBand.h"
 #include "view/ViewGrid.h"      // ✅ 添加
 #include <QShortcut>
-#include <QRegularExpression>
 #include "CommandLineWidget.h"
 #include "CommandInputEdit.h"
 #include "TransientCommandHistory.h"
@@ -648,38 +647,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                QTimer::singleShot(50, [this]() {
                                    if (d->cadView) d->cadView->fitAll();
                                });
-                           } else if (mode == "navigation") {
-                               // Alignment 命令用此模式：
-                               // handlePointInput() 發佈 QPointF（double，含 TM2 偏移）
-                               d->cadView->setMode(view::InteractionMode::Navigation);
-
-                               // 設定 rubber band 模式（若有指定）
-                               QString rbMode = map["rubberBandMode"].toString();
-                               if (!rbMode.isEmpty() && d->cadView->rubberBand()) {
-                                   auto* rb = d->cadView->rubberBand();
-                                   if (rbMode == "line")
-                                       rb->setMode(view::RubberBandMode::Line);
-                                   else if (rbMode == "arc")
-                                       rb->setMode(view::RubberBandMode::Arc);
-                                   else if (rbMode == "scs")
-                                       rb->setMode(view::RubberBandMode::SCS);
-                                   rb->clearPoints();
-                                   rb->clear();
-                               }
-                           } else if (mode == "sketching") {
-                               // Sketch 命令用此模式（原有行為保留）
-                               d->cadView->setMode(view::InteractionMode::Sketching);
-
-                               QString rbMode = map["rubberBandMode"].toString();
-                               if (!rbMode.isEmpty() && d->cadView->rubberBand()) {
-                                   auto* rb = d->cadView->rubberBand();
-                                   if (rbMode == "line")
-                                       rb->setMode(view::RubberBandMode::Line);
-                                   else if (rbMode == "arc")
-                                       rb->setMode(view::RubberBandMode::Arc);
-                                   rb->clearPoints();
-                                   rb->clear();
-                               }
                            }
                        });
 
@@ -785,30 +752,16 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                }
                            } else if (action == "clearAndAdd") {
                                rb->clearPoints();
-                               // 命令發佈 QPointF（Alignment）或 QVector2D（Sketch）
-                               // 優先嘗試 QPointF；若為 null 則 fallback 到 QVector2D
-                               QPointF ptD = map["point"].value<QPointF>();
-                               if (ptD.isNull()) {
-                                   QVector2D ptF = map["point"].value<QVector2D>();
-                                   ptD = QPointF(ptF.x(), ptF.y());
-                               }
-                               rb->addPoint(ptD);
+                               QVector2D pt = map["point"].value<QVector2D>();
+                               rb->addPoint(pt);
                                rb->update();
                            } else if (action == "addPoint") {
-                               QPointF ptD = map["point"].value<QPointF>();
-                               if (ptD.isNull()) {
-                                   QVector2D ptF = map["point"].value<QVector2D>();
-                                   ptD = QPointF(ptF.x(), ptF.y());
-                               }
-                               rb->addPoint(ptD);
+                               QVector2D pt = map["point"].value<QVector2D>();
+                               rb->addPoint(pt);
                                rb->update();
                            } else if (action == "setCurrentPoint") {
-                               QPointF ptD = map["point"].value<QPointF>();
-                               if (ptD.isNull()) {
-                                   QVector2D ptF = map["point"].value<QVector2D>();
-                                   ptD = QPointF(ptF.x(), ptF.y());
-                               }
-                               rb->setCurrentPoint(ptD);
+                               QVector2D pt = map["point"].value<QVector2D>();
+                               rb->setCurrentPoint(pt);
                                rb->update();
                            } else if (action == "clear") {
                                rb->clearPoints();
@@ -827,61 +780,13 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
-        // ── TM2 座標原點偏移：SetOriginCommand 發佈，UIManager 轉呼叫 CadView + RubberBand + AlignmentRenderer ──
-        bus->subscribe("command.set-coordinate-offset", this,
-                       [this](const QVariant& data) {
-                           QVariantMap map = data.toMap();
-                           if (!d->cadView) return;
-                           const double e = map["easting"].toDouble();
-                           const double n = map["northing"].toDouble();
-                           d->cadView->setCoordinateOffset(e, n);
-                           if (auto* rb = d->cadView->rubberBand())
-                               rb->setCoordinateOffset(e, n);
-                           for (auto* r : d->tclRenderers)
-                               r->setCoordinateOffset(e, n);
-                           qDebug() << "[UIManager] setCoordinateOffset:"
-                                    << "E=" << e << "N=" << n;
-                       });
-
-        // ── Task B.2：COORDINATE_INPUT → 解析 "X,Y" 或 "X Y" 格式（支援 TM2 大數字）──
-        // 命令列輸入 InputType::Point 時，CommandLineManager 發佈 COORDINATE_INPUT。
-        // 此處解析成 QPointF（double）並重新發佈 POINT_ACQUIRED，
-        // 與 Alignment 命令期待的格式相同。
-        bus->subscribe(core::Events::COORDINATE_INPUT, this,
-                       [this, bus](const QVariant& data) {   // ← 明確捕捉 bus（Qt6 需要）
-                           const QString text = data.toString().trimmed();
-                           // 支援逗號或空白分隔："2650000,200000" / "2650000 200000"
-                           // Qt6 已移除 QRegExp，改用 QRegularExpression
-                           const QStringList parts = text.split(
-                               QRegularExpression(QString("[,\\s]+")),
-                               Qt::SkipEmptyParts);
-                           if (parts.size() < 2) return;   // 格式不符，不處理
-                           bool okX = false, okY = false;
-                           const double x = parts[0].toDouble(&okX);
-                           const double y = parts[1].toDouble(&okY);
-                           if (!okX || !okY) return;
-
-                           QVariantMap ptData;
-                           ptData["point"] = QVariant::fromValue(QPointF(x, y));
-                           bus->publish(core::Events::POINT_ACQUIRED, ptData);
-                           qDebug() << "[UIManager] COORDINATE_INPUT parsed → ("
-                                    << x << "," << y << ")";
-                       });
-
         // ✅ Monitor user interactions for debugging/logging
         bus->subscribe(core::Events::POINT_ACQUIRED, this,
                        [](const QVariant& data) {
                            QVariantMap map = data.toMap();
-                           // Alignment 模式發佈 QPointF（double）；Sketch 模式發佈 QVector2D（float）
-                           // 嘗試 QPointF 優先；若 QPointF 為零值且 QVector2D 有值，則改用 QVector2D
-                           QPointF   ptD = map["point"].value<QPointF>();
-                           QVector2D ptF = map["point"].value<QVector2D>();
-                           if (ptD.isNull() && !ptF.isNull())
-                               qDebug() << "[UIManager] Point acquired (sketch):"
-                                        << ptF.x() << ptF.y();
-                           else
-                               qDebug() << "[UIManager] Point acquired (alignment/TM2):"
-                                        << ptD.x() << ptD.y();
+                           QVector2D point = map["point"].value<QVector2D>();
+                           qDebug() << "[UIManager] User clicked point:" << point.x() << point.y();
+                           // Could update coordinate display here
                        });
 
         // ── Extrude 建立 ─────────────────────────────────────────────
@@ -1565,19 +1470,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     }
                     d->alignmentDoc = aDoc;  // set active
 
-                    // ── 自動套用 TM2 座標原點預設偏移 ────────────────────────
-                    // 預設原點 E=248170.787, N=2652129.936
-                    // 使用者可隨時用 SO 命令覆寫。
-                    if (d->cadView) {
-                        constexpr double kDefaultE = 248170.787;
-                        constexpr double kDefaultN = 2652129.936;
-                        d->cadView->setCoordinateOffset(kDefaultE, kDefaultN);
-                        if (auto* rb = d->cadView->rubberBand())
-                            rb->setCoordinateOffset(kDefaultE, kDefaultN);
-                        qDebug() << "[UIManager] TM2 default origin applied:"
-                                 << "E=" << kDefaultE << "N=" << kDefaultN;
-                    }
-
                     // ── 建立/更新 per-TCL renderer ────────────────────────────
                     view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
                     if (!r) {
@@ -1586,12 +1478,6 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                 &railway::HorizontalAlignmentEdit::changed,
                                 r, &view::AlignmentRenderer::refresh);
                         d->tclRenderers.insert(tclId, r);
-                    }
-                    // ── 套用 TM2 偏移到 renderer（toOCCT 需要減去偏移）────────
-                    {
-                        constexpr double kDefaultE = 248170.787;
-                        constexpr double kDefaultN = 2652129.936;
-                        r->setCoordinateOffset(kDefaultE, kDefaultN);
                     }
                     // Sync solved rawPoints to TCL for PLAN DEV
                     const railway::HorizontalAlignment* ha = aDoc->horizontal()->result();
@@ -1872,20 +1758,6 @@ void UIManager::connectCommandLineEvents() {
                        d->commandLine->clearCommandOptions();
                        d->commandLine->inputEdit()->setPlaceholderText(
                            tr("輸入指令或 LISP..."));
-                   });
-
-    // ── Alignment command 完成後清理 rubber band，視圖恢復 Navigation ────────
-    bus->subscribe(core::Events::COMMAND_EXECUTED, this,
-                   [this](const QVariant& /*cmdName*/) {
-                       if (!d->cadView) return;
-                       // 若在 Navigation 模式（alignment command 用）→ 清除 rubber band
-                       if (d->cadView->mode() == view::InteractionMode::Navigation) {
-                           if (auto* rb = d->cadView->rubberBand()) {
-                               rb->clearPoints();
-                               rb->clear();
-                           }
-                           // 保持 Navigation 模式，使用者可繼續操作視圖
-                       }
                    });
 
     // ── 命令一般訊息（Info / Success）──────────────────────────────

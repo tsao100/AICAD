@@ -23,12 +23,6 @@ GripEventFilter::GripEventFilter(cad::GripManager* mgr,
     , m_view(view)
 {}
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-=======
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
-<<<<<<< HEAD
 // ---------------------------------------------------------------------------
 // screenToWorld
 //
@@ -43,121 +37,66 @@ GripEventFilter::GripEventFilter(cad::GripManager* mgr,
 //   • Perspective:  ray origin = Eye,            ray dir = Eye→Convert(pixel)
 // ---------------------------------------------------------------------------
 
-<<<<<<< HEAD
->>>>>>> 56324d0 (H Alignment grips dbg1.)
-=======
-=======
->>>>>>> 2604ab0 (H Alignment grips dbg1.)
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
 gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
 {
-    // Project screen ray onto a plane.
-    // For alignment editing (no sketch plane) the geometry lives at Z = 0.
-    // For sketch editing, project onto the sketch plane.
+    if (m_view.IsNull()) return gp_Pnt(0, 0, 0);
 
-    double px, py, pz, dx, dy, dz;
-    m_view->ProjReferenceAxe(x, y, px, py, pz, dx, dy, dz);
+    // ── 1. Build pick ray ────────────────────────────────────────────────────
 
-    gp_Pnt rayOrigin(px, py, pz);
-    gp_Dir rayDir(dx, dy, dz);
+    Standard_Real Xeye, Yeye, Zeye;
+    Standard_Real Xproj, Yproj, Zproj;
+    m_view->Eye (Xeye,  Yeye,  Zeye);
+    m_view->Proj(Xproj, Yproj, Zproj);
 
-    gp_Pnt planeOrigin;
-    gp_Dir planeNormal;
+    Standard_Real Xv, Yv, Zv;
+    m_view->Convert(x, y, Xv, Yv, Zv);   // point on view plane (world coords)
+    gp_Pnt screenPt(Xv, Yv, Zv);
 
-    if (m_sketchPlane) {
-        QVector3D qOrigin = m_sketchPlane->origin();
-        QVector3D qNormal = m_sketchPlane->normal();
-        planeOrigin = gp_Pnt(qOrigin.x(), qOrigin.y(), qOrigin.z());
-        planeNormal = gp_Dir(qNormal.x(), qNormal.y(), qNormal.z());
+    gp_Pnt  rayStart;
+    gp_Dir  rayDir;
+
+    if (m_view->Camera()->IsOrthographic()) {
+        // Orthographic: all rays are parallel to the projection direction.
+        rayStart = screenPt;
+        rayDir   = gp_Dir(Xproj, Yproj, Zproj);
     } else {
-        // Alignment grips live at Z = 0 (XY world plane)
-        planeOrigin = gp_Pnt(0.0, 0.0, 0.0);
-        planeNormal = gp_Dir(0.0, 0.0, 1.0);
+        // Perspective: ray from eye through the screen point.
+        rayStart = gp_Pnt(Xeye, Yeye, Zeye);
+        gp_Vec v(rayStart, screenPt);
+        if (v.Magnitude() < Precision::Confusion())
+            rayDir = gp_Dir(Xproj, Yproj, Zproj);
+        else
+            rayDir = gp_Dir(v);
     }
 
-    // Ray-plane intersection: t = (planeOrigin - rayOrigin) · normal / (rayDir · normal)
-    gp_Vec toPlane(rayOrigin, planeOrigin);
-    double denom = rayDir.XYZ().Dot(planeNormal.XYZ());
+    // ── 2. Choose target plane ───────────────────────────────────────────────
 
-    if (std::abs(denom) < 1e-10) {
-        // Ray parallel to plane — fallback to view-plane point
-        double wx, wy, wz;
-        m_view->Convert(x, y, wx, wy, wz);
-        return gp_Pnt(wx, wy, wz);
+    gp_Pln plane;
+    if (m_sketchPlane) {
+        QVector3D qO = m_sketchPlane->origin();
+        QVector3D qN = m_sketchPlane->normal();
+        plane = gp_Pln(gp_Pnt(qO.x(), qO.y(), qO.z()),
+                       gp_Dir(qN.x(), qN.y(), qN.z()));
+    } else {
+        // Alignment geometry lives at Z = 0.
+        plane = gp_Pln(gp_Pnt(0,0,0), gp_Dir(0,0,1));
     }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-=======
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
+    // ── 3. Ray-plane intersection ────────────────────────────────────────────
+
+    gp_Lin pickLine(rayStart, rayDir);
+    IntAna_IntConicQuad intersect(pickLine, plane, Precision::Angular());
+
+    if (intersect.IsDone() && intersect.NbPoints() > 0) {
+        return intersect.Point(1);
+    }
+
     // ── 4. Fallback: project screen point onto plane along Z ─────────────────
     // (ray nearly parallel to plane — very unusual for plan-view alignment)
     if (!m_sketchPlane) {
         return gp_Pnt(Xv, Yv, 0.0);   // clamp Z=0
     }
     return screenPt;
-=======
-gp_Pnt GripEventFilter::screenToWorld(int x, int y) const
-{
-    // Project screen ray onto a plane.
-    // For alignment editing (no sketch plane) the geometry lives at Z = 0.
-    // For sketch editing, project onto the sketch plane.
-
-    double px, py, pz, dx, dy, dz;
-    m_view->ProjReferenceAxe(x, y, px, py, pz, dx, dy, dz);
-
-    gp_Pnt rayOrigin(px, py, pz);
-    gp_Dir rayDir(dx, dy, dz);
-
-    gp_Pnt planeOrigin;
-    gp_Dir planeNormal;
-
-    if (m_sketchPlane) {
-        QVector3D qOrigin = m_sketchPlane->origin();
-        QVector3D qNormal = m_sketchPlane->normal();
-        planeOrigin = gp_Pnt(qOrigin.x(), qOrigin.y(), qOrigin.z());
-        planeNormal = gp_Dir(qNormal.x(), qNormal.y(), qNormal.z());
-    } else {
-        // Alignment grips live at Z = 0 (XY world plane)
-        planeOrigin = gp_Pnt(0.0, 0.0, 0.0);
-        planeNormal = gp_Dir(0.0, 0.0, 1.0);
-    }
-
-    // Ray-plane intersection: t = (planeOrigin - rayOrigin) · normal / (rayDir · normal)
-    gp_Vec toPlane(rayOrigin, planeOrigin);
-    double denom = rayDir.XYZ().Dot(planeNormal.XYZ());
-
-    if (std::abs(denom) < 1e-10) {
-        // Ray parallel to plane — fallback to view-plane point
-        double wx, wy, wz;
-        m_view->Convert(x, y, wx, wy, wz);
-        return gp_Pnt(wx, wy, wz);
-    }
-
-<<<<<<< HEAD
->>>>>>> 56324d0 (H Alignment grips dbg1.)
-=======
-=======
->>>>>>> 2604ab0 (H Alignment grips dbg1.)
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
-    double t = toPlane.XYZ().Dot(planeNormal.XYZ()) / denom;
-
-    return gp_Pnt(
-        rayOrigin.X() + rayDir.X() * t,
-        rayOrigin.Y() + rayDir.Y() * t,
-        rayOrigin.Z() + rayDir.Z() * t
-    );
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 6bc721d (H Alignment grips dbg1.)
->>>>>>> 56324d0 (H Alignment grips dbg1.)
-=======
->>>>>>> 6bc721d (H Alignment grips dbg1.)
-=======
->>>>>>> 2604ab0 (H Alignment grips dbg1.)
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
 }
 
 bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
@@ -183,23 +122,6 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
 
         bool handled = m_gripManager->mouseMoveEvent(wp, px, py);
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-        // Hover 事件發布
-=======
-=======
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
-<<<<<<< HEAD
-=======
-        // Hover 事件發布
->>>>>>> 6bc721d (H Alignment grips dbg1.)
-<<<<<<< HEAD
->>>>>>> 56324d0 (H Alignment grips dbg1.)
-=======
-=======
-        // Hover 事件發布
->>>>>>> 2604ab0 (H Alignment grips dbg1.)
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
         bool wasHovered = m_lastHovered;
         if (handled != wasHovered) {
             auto* bus = core::Application::instance()->eventBus();

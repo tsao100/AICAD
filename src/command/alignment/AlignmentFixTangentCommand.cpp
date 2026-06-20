@@ -11,7 +11,6 @@
 #include "command/alignment/AlignmentFixTangentCommand.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
-#include "view/CadView.h"
 #include <QDebug>
 
 using namespace aicad::core;
@@ -34,17 +33,11 @@ CommandResult AlignmentFixTangentCommand::execute(const CommandContext& context)
     m_hasStartPoint = false;
     m_isFinishing   = false;
 
-    // ── 取得 TM2 座標偏移 ─────────────────────────────────────────────────
-    if (context.cadView) {
-        m_coordOffsetEasting  = context.cadView->coordinateOffsetEasting();
-        m_coordOffsetNorthing = context.cadView->coordinateOffsetNorthing();
-    }
-
     EventBus* bus = Application::instance()->eventBus();
 
     // Ask UIManager to activate Line rubber-band mode (same as LineCommand)
     QVariantMap viewSetup;
-    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
+    viewSetup["mode"]          = "sketching";
     viewSetup["rubberBandMode"] = "line";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -52,8 +45,7 @@ CommandResult AlignmentFixTangentCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            // Alignment 模式下 CadView 發佈 QPointF（double，含 TM2 偏移）
-            QPointF pt = map["point"].value<QPointF>();
+            QVector2D pt = map["point"].value<QVector2D>();
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -74,59 +66,53 @@ CommandResult AlignmentFixTangentCommand::execute(const CommandContext& context)
     return CommandResult::Success("Waiting for input");
 }
 
-void AlignmentFixTangentCommand::handlePointAcquired(const QPointF& point)
+void AlignmentFixTangentCommand::handlePointAcquired(const QVector2D& point)
 {
     if (m_isFinishing) return;
 
     EventBus* bus = Application::instance()->eventBus();
 
-    // point 是 TM2 絕對座標；AlignmentDocument 儲存本地模型座標
-    // 兩者差值為 TM2 偏移，需還原
-    const QPointF localPt(point.x() - m_coordOffsetEasting,
-                          point.y() - m_coordOffsetNorthing);
-
     if (!m_hasStartPoint) {
         // ── First click: anchor rubber band ───────────────────────────
-        m_startPoint    = localPt;   // 儲存本地座標
+        m_startPoint    = point;
         m_hasStartPoint = true;
 
         QVariantMap rb;
         rb["action"] = "clearAndAdd";
-        rb["point"]  = QVariant::fromValue(point);   // rubber band 用 TM2（planeToWorld 會減偏移）
+        rb["point"]  = QVariant::fromValue(point);
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
                      tr("Specify end point [Right-click to finish]:"));
-        outputMessage(QString("Start (E=%1, N=%2) — Specify end point:")
+        outputMessage(QString("Start (%1, %2) — Specify end point:")
                           .arg(point.x(), 0, 'f', 3)
                           .arg(point.y(), 0, 'f', 3));
         return;
     }
 
     // ── Second click: commit segment ──────────────────────────────────
-    const QPointF p1 = m_startPoint;   // 本地座標
-    const QPointF p2 = localPt;        // 本地座標
+    QPointF p1(m_startPoint.x(), m_startPoint.y());
+    QPointF p2(point.x(),        point.y());
 
     int idx = m_alignDoc->horizontal()->addFixedTangent(p1, p2);
     m_alignDoc->horizontal()->solve();   // changed() → AlignmentRenderer::refresh()
 
     outputMessage(QString("Fixed Tangent #%1  (%2,%3) → (%4,%5)")
                       .arg(idx)
-                      .arg(p1.x(), 0, 'f', 3).arg(p1.y(), 0, 'f', 3)
-                      .arg(p2.x(), 0, 'f', 3).arg(p2.y(), 0, 'f', 3));
+                      .arg(p1.x(), 0, 'f', 2).arg(p1.y(), 0, 'f', 2)
+                      .arg(p2.x(), 0, 'f', 2).arg(p2.y(), 0, 'f', 2));
 
-    // Chain: current end becomes new start
-    m_startPoint = localPt;   // 儲存本地座標
+    // Chain: current end becomes new start (continuous mode)
+    m_startPoint = point;
 
     QVariantMap rb;
     rb["action"] = "clearAndAdd";
-    rb["point"]  = QVariant::fromValue(point);   // rubber band 用 TM2
+    rb["point"]  = QVariant::fromValue(point);
     bus->publish("command.update-rubber-band", rb);
 
     bus->publish(Events::COMMAND_PROMPT,
                  tr("Specify next end point [Right-click to finish]:"));
 }
-
 
 void AlignmentFixTangentCommand::handleCancelled()
 {

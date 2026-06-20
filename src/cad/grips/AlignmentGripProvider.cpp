@@ -75,12 +75,6 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
     QVector<IPGroup> groups;
     QSet<QPair<int,int>> seen;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-=======
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
-<<<<<<< HEAD
     for (const auto& el : elems) {
         if (el.mode != railway::ConstraintMode::Floating) continue;
         const int b = el.tangentIdxBefore;
@@ -90,78 +84,6 @@ QVector<GripPoint> AlignmentGripProvider::computeGrips() const
         if (seen.contains(key)) continue;
         seen.insert(key);
         groups.append({b, a});
-=======
-<<<<<<< HEAD
->>>>>>> 56324d0 (H Alignment grips dbg1.)
-=======
-=======
->>>>>>> 2604ab0 (H Alignment grips dbg1.)
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
-            gp.onDrag = [this, i](const gp_Pnt& np, bool /*snapped*/) {
-                m_edit->moveStartPI(i, toQPointF(np));
-                m_edit->solve();  // → changed() → AlignmentRenderer::refresh()
-            };
-
-            grips.append(gp);
-        }
-
-        // 每個元素的 endPI（對 Tangent：切線遠端；對 Arc：不額外加，
-        // 因為 Fixed Arc 只有 startPI = 圓心；Floating 元素 endPI 由 solver 管理）
-        // 僅對 Fixed Tangent 加 endPI grip，避免冗餘。
-        if (el.type == railway::EditableElementType::Tangent &&
-            el.mode == railway::ConstraintMode::Fixed)
-        {
-            GripPoint gp;
-            gp.id       = QString("align_e%1").arg(i);
-            gp.position = gp_Pnt(el.endPI.x(), el.endPI.y(), 0.0);
-            gp.type     = GripType::Vertex;
-            gp.enabled  = true;
-
-            gp.onDrag = [this, i](const gp_Pnt& np, bool /*snapped*/) {
-                // movePI(i) 對 Tangent 更新 endPI（見 AlignmentDocument.cpp 的實作）
-                m_edit->movePI(i, toQPointF(np));
-                m_edit->solve();
-            };
-
-            grips.append(gp);
-        }
-
-        // ── Float / Free 元素的幾何中心點 Grip（三角形，GripType::Midpoint）──
-        if (el.mode == railway::ConstraintMode::Floating ||
-            el.mode == railway::ConstraintMode::Free)
-        {
-            QPointF mid = (el.startPI + el.endPI) * 0.5;
-            GripPoint gp;
-            gp.id       = QString("align_m%1").arg(i);
-            gp.position = gp_Pnt(mid.x(), mid.y(), 0.0);
-            gp.type     = GripType::Midpoint;   // 渲染為三角形
-            gp.enabled  = true;
-
-            gp.onDrag = [this, i](const gp_Pnt& np, bool /*snapped*/) {
-                // Floating/Free 元素：平移中心點 = 移動 startPI（solver 重算 endPI）
-                const QVector<railway::EditableElement>& els = m_edit->elements();
-                if (i >= els.size()) return;
-
-                const railway::EditableElement& cur = els[i];
-                QPointF oldMid = (cur.startPI + cur.endPI) * 0.5;
-                QPointF delta  = toQPointF(np) - oldMid;
-
-                m_edit->moveStartPI(i, cur.startPI + delta);
-                m_edit->solve();
-            };
-
-            grips.append(gp);
-        }
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 6bc721d (H Alignment grips dbg1.)
->>>>>>> 56324d0 (H Alignment grips dbg1.)
-=======
->>>>>>> 6bc721d (H Alignment grips dbg1.)
-=======
->>>>>>> 2604ab0 (H Alignment grips dbg1.)
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
     }
 
     if (groups.isEmpty()) return grips;

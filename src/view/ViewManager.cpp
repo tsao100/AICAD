@@ -13,8 +13,6 @@
 #include "core/EventBus.h"
 #include "cad/Plane.h"
 #include "cad/PlaneManager.h"
-#include <QPointF>
-#include <QVector2D>
 #include "cad/Sketch.h"
 #include <QDebug>
 #include <QVector>
@@ -163,24 +161,14 @@ ViewManager::ViewManager(QObject* parent)
                     rubber->clear();
 
                     if (update.contains("point")) {
-                        // RubberBand::addPoint 現在接受 QPointF（double）
-                        // 嘗試 QPointF 優先；fallback QVector2D
-                        QPointF ptD = update["point"].value<QPointF>();
-                        if (ptD.isNull()) {
-                            QVector2D ptF = update["point"].value<QVector2D>();
-                            ptD = QPointF(ptF.x(), ptF.y());
-                        }
-                        rubber->addPoint(ptD);
+                        QVector2D point = update["point"].value<QVector2D>();
+                        rubber->addPoint(point);
                     }
                     rubber->update();   // ✅ 新增：立即重繪
                 } else if (action == "addPoint") {
                     if (update.contains("point")) {
-                        QPointF ptD = update["point"].value<QPointF>();
-                        if (ptD.isNull()) {
-                            QVector2D ptF = update["point"].value<QVector2D>();
-                            ptD = QPointF(ptF.x(), ptF.y());
-                        }
-                        rubber->addPoint(ptD);
+                        QVector2D point = update["point"].value<QVector2D>();
+                        rubber->addPoint(point);
                     }
                 } else if (action == "clear") {
                     rubber->clearPoints();

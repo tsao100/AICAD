@@ -53,9 +53,6 @@
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
-#include <Bnd_Box.hxx>
-#include <BRepBndLib.hxx>
-#include <AIS_Shape.hxx>
 #include <Geom_Surface.hxx>
 #include <Geom_Plane.hxx>
 #include <Graphic3d_ClipPlane.hxx>
@@ -136,10 +133,6 @@ public:
     QList<OverlayEntry> overlayObjects;
     QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
     QVector2D            dimPreviewMousePt; // GDIM: 目前滑鼠草圖座標（overlay 更新用）
-
-    // ── TM2 大座標偏移 ───────────────────────────────────────────────────────
-    double coordOffsetEasting  = 0.0;   ///< TM2 東向原點偏移（公尺）
-    double coordOffsetNorthing = 0.0;   ///< TM2 北向原點偏移（公尺）
 
     // ── 尺寸線拖曳狀態 ──────────────────────────────────────────────────────
     QString              dragDimUuid;        ///< 正在拖曳的約束 UUID（空 = 無拖曳）
@@ -369,26 +362,16 @@ void CadView::initializeViewer() {
                 auto* bus = aicad::core::Application::instance()->eventBus();
                 if (!bus) return;
 
-                const bool isSketching = (d->mode == InteractionMode::Sketching);
-
                 // ✅ 用 snapPoint2D() 取草圖平面座標，格式與 Command 期待一致
                 std::optional<QVector2D> pt2d = m_snapManager->snapPoint2D();
-                QVector2D planePtF = pt2d.has_value()
-                                         ? pt2d.value()
-                                         : screenToPlane(mapFromGlobal(QCursor::pos()));
+                QVector2D planePt = pt2d.has_value()
+                                        ? pt2d.value()
+                                        : screenToPlane(mapFromGlobal(QCursor::pos()));
 
                 QVariantMap data;
-                if (isSketching) {
-                    // Sketch 模式：發佈 QVector2D（float）
-                    data["point"] = QVariant::fromValue(planePtF);
-                } else {
-                    // Alignment 模式：發佈 QPointF（double，含 TM2 偏移）
-                    QPointF planePtD((double)planePtF.x() + d->coordOffsetEasting,
-                                    (double)planePtF.y() + d->coordOffsetNorthing);
-                    data["point"] = QVariant::fromValue(planePtD);
-                }
+                data["point"] = QVariant::fromValue(planePt);
                 bus->publish(core::Events::POINT_ACQUIRED, data);  // ✅ Command 系統能收到
-                Q_EMIT pointAcquired(planePtF);
+                Q_EMIT pointAcquired(planePt);
             });
 
     qDebug() << "[CadView] OSnapManager initialized";
@@ -941,49 +924,6 @@ void CadView::fitAll() {
         return;
     }
 
-    // ── 若有 overlay 幾何（alignment），計算 2D 包圍盒後手動設定視圖中心和縮放 ──
-    // 直接呼叫 FitAll() 在 TM2 環境下有時無法正確框住 alignment 幾何，
-    // 因此計算 AIS_Shape overlay 的 XY 包圍盒後用 camera 設定。
-    if (!d->overlayObjects.isEmpty()) {
-        double xMin =  std::numeric_limits<double>::max();
-        double xMax = -std::numeric_limits<double>::max();
-        double yMin =  std::numeric_limits<double>::max();
-        double yMax = -std::numeric_limits<double>::max();
-        bool   hasBox = false;
-
-        for (const auto& entry : d->overlayObjects) {
-            if (entry.obj.IsNull()) continue;
-            auto aisShape = Handle(AIS_Shape)::DownCast(entry.obj);
-            if (aisShape.IsNull() || aisShape->Shape().IsNull()) continue;
-            Bnd_Box bbox;
-            try {
-                BRepBndLib::Add(aisShape->Shape(), bbox);
-                if (!bbox.IsVoid()) {
-                    double x1, y1, z1, x2, y2, z2;
-                    bbox.Get(x1, y1, z1, x2, y2, z2);
-                    xMin = std::min(xMin, x1);  xMax = std::max(xMax, x2);
-                    yMin = std::min(yMin, y1);  yMax = std::max(yMax, y2);
-                    hasBox = true;
-                }
-            } catch (...) {}
-        }
-
-        if (hasBox && (xMax > xMin || yMax > yMin)) {
-            // 加上 15% 邊界
-            const double margin = std::max((xMax - xMin), (yMax - yMin)) * 0.15 + 1.0;
-            const double cx = (xMin + xMax) * 0.5;
-            const double cy = (yMin + yMax) * 0.5;
-
-            // 用 camera 直接設定視角中心和縮放
-            d->view->SetCenter(cx, cy);
-            d->view->FitAll(xMin - margin, yMin - margin,
-                            xMax + margin, yMax + margin);
-            d->view->ZFitAll();
-            update();
-            return;
-        }
-    }
-
     d->view->FitAll();
     d->view->ZFitAll();
     update();
@@ -1132,112 +1072,6 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
     return QVector2D(0, 0);
 }
 
-// ── screenToPlaneD：double 精度版，供 Alignment / Navigation 模式使用 ───────
-QPointF CadView::screenToPlaneD(const QPoint& screenPos) const {
-    if (d->view.IsNull()) {
-        return QPointF(0.0, 0.0);
-    }
-
-    Standard_Integer xp, yp;
-    qtToOCCT(screenPos, xp, yp);
-
-    cad::Plane* plane;
-    cad::PlaneManager* manager = cad::PlaneManager::instance();
-
-    switch (d->viewType) {
-    case ViewType::Top:
-    case ViewType::Bottom:
-        plane = manager->xyPlane();
-        break;
-    case ViewType::Front:
-    case ViewType::Back:
-        plane = manager->xzPlane();
-        break;
-    case ViewType::Right:
-    case ViewType::Left:
-        plane = manager->yzPlane();
-        break;
-    default:
-        plane = manager->xyPlane();
-        break;
-    }
-
-    gp_Pln gpPlane(
-        gp_Pnt(plane->origin().x(), plane->origin().y(), plane->origin().z()),
-        gp_Dir(plane->normal().x(), plane->normal().y(), plane->normal().z())
-        );
-
-    Standard_Real Xeye, Yeye, Zeye;
-    Standard_Real Xproj, Yproj, Zproj;
-    d->view->Eye(Xeye, Yeye, Zeye);
-    d->view->Proj(Xproj, Yproj, Zproj);
-
-    gp_Pnt eyePoint(Xeye, Yeye, Zeye);
-    gp_Dir projDir(Xproj, Yproj, Zproj);
-
-    Standard_Real Xv, Yv, Zv;
-    d->view->Convert(xp, yp, Xv, Yv, Zv);
-    gp_Pnt screenPoint3D(Xv, Yv, Zv);
-
-    gp_Pnt rayStart;
-    gp_Dir rayDir;
-
-    if (d->view->Camera()->IsOrthographic()) {
-        rayStart = screenPoint3D;
-        rayDir = projDir;
-    } else {
-        rayStart = eyePoint;
-        gp_Vec direction(eyePoint, screenPoint3D);
-        if (direction.Magnitude() < Precision::Confusion()) {
-            rayDir = projDir;
-        } else {
-            rayDir = gp_Dir(direction);
-        }
-    }
-
-    gp_Lin pickLine(rayStart, rayDir);
-
-    IntAna_IntConicQuad intersection(pickLine, gpPlane, Precision::Angular());
-
-    if (intersection.IsDone() && intersection.NbPoints() > 0) {
-        gp_Pnt intersectPnt = intersection.Point(1);
-
-        // ── double 精度投影（避免 QVector3D float 截斷） ─────────────────────
-        double wx = intersectPnt.X() - (double)plane->origin().x();
-        double wy = intersectPnt.Y() - (double)plane->origin().y();
-        double wz = intersectPnt.Z() - (double)plane->origin().z();
-
-        double u = wx * (double)plane->xAxis().x()
-                 + wy * (double)plane->xAxis().y()
-                 + wz * (double)plane->xAxis().z()
-                 + d->coordOffsetEasting;
-
-        double v = wx * (double)plane->yAxis().x()
-                 + wy * (double)plane->yAxis().y()
-                 + wz * (double)plane->yAxis().z()
-                 + d->coordOffsetNorthing;
-
-        return QPointF(u, v);
-    }
-
-    return QPointF(0.0, 0.0);
-}
-
-// ── setCoordinateOffset：設定 TM2 二度分帶座標原點 ──────────────────────────
-void CadView::setCoordinateOffset(double easting, double northing) {
-    d->coordOffsetEasting  = easting;
-    d->coordOffsetNorthing = northing;
-    qDebug() << "[CadView] TM2 coordinate offset set:"
-             << "E=" << easting << "N=" << northing;
-}
-
-double CadView::coordinateOffsetEasting() const {
-    return d->coordOffsetEasting;
-}
-
-double CadView::coordinateOffsetNorthing() const {
-    return d->coordOffsetNorthing;
-}
 void CadView::setGridEnabled(bool enabled) {
     d->gridEnabled = enabled;
 
@@ -1507,21 +1341,7 @@ void CadView::updateProjection() {
 }
 
 void CadView::handlePointInput(const QPoint& screenPos) {
-    // ── 模式分支：Sketch 使用 float 版（QVector2D），其餘使用 double 版（QPointF） ──
-    //    Alignment 命令在 Navigation/GetPoint/GetGeom 模式下需要 TM2 大座標精度。
-    //    Sketch 座標通常在原點附近（local coord），float 精度已足夠。
-    const bool isSketching = (d->mode == InteractionMode::Sketching);
-
-    QVector2D planePtF;   // Sketch 用（float）
-    QPointF   planePtD;   // Alignment 用（double，含 TM2 偏移）
-
-    if (isSketching) {
-        planePtF = screenToPlane(screenPos);
-    } else {
-        planePtD = screenToPlaneD(screenPos);
-        // 為相容性保留 float 版（用於舊 signal emit）
-        planePtF = QVector2D((float)planePtD.x(), (float)planePtD.y());
-    }
+    QVector2D planePt = screenToPlane(screenPos);
 
     // 從 OSnapManager 取得目前鎖定的 snap 候選（含 geomUuid / geomHandle）
     QString geomUuid;
@@ -1532,14 +1352,8 @@ void CadView::handlePointInput(const QPoint& screenPos) {
             geomUuid   = snap->geomUuid;
             geomHandle = snap->geomHandle;
             // 若 snap 鎖定點存在，以 snap 的 planePoint 取代原始螢幕投影
-            if (!snap->planePoint.isNull()) {
-                planePtF = snap->planePoint;
-                if (!isSketching) {
-                    // snap 座標加上 TM2 偏移
-                    planePtD = QPointF((double)planePtF.x() + d->coordOffsetEasting,
-                                      (double)planePtF.y() + d->coordOffsetNorthing);
-                }
-            }
+            if (!snap->planePoint.isNull())
+                planePt = snap->planePoint;
         }
     }
     // Snap 未偵測到幾何時，回退到 OCC DetectedInteractive
@@ -1558,13 +1372,7 @@ void CadView::handlePointInput(const QPoint& screenPos) {
     auto* bus = core::Application::instance()->eventBus();
     if (bus) {
         QVariantMap data;
-        if (isSketching) {
-            // Sketch 模式：發佈 QVector2D（float），與舊 command 相容
-            data["point"]      = QVariant::fromValue(planePtF);
-        } else {
-            // Alignment / Navigation 模式：發佈 QPointF（double，含 TM2 偏移）
-            data["point"]      = QVariant::fromValue(planePtD);
-        }
+        data["point"]      = QVariant::fromValue(planePt);
         data["geomUuid"]   = geomUuid;
         data["geomHandle"] = geomHandle;
         bus->publish(core::Events::POINT_ACQUIRED, data);
@@ -1574,24 +1382,18 @@ void CadView::handlePointInput(const QPoint& screenPos) {
             QVariantMap geomData;
             geomData["geomUuid"] = geomUuid;
             geomData["handle"]   = geomHandle;   // ← "handle" 與 onGeomPicked 一致
-            geomData["point"]    = isSketching ? QVariant::fromValue(planePtF)
-                                                : QVariant::fromValue(planePtD);
+            geomData["point"]    = QVariant::fromValue(planePt);
             bus->publish(core::Events::GEOM_PICKED, geomData);
         }
     }
 
-    if (isSketching) {
-        qDebug() << "[CadView] Point acquired (sketch):" << planePtF.x() << "," << planePtF.y()
-                 << "geomUuid:" << geomUuid << "handle:" << geomHandle;
-    } else {
-        qDebug() << "[CadView] Point acquired (alignment, TM2):" << planePtD.x() << "," << planePtD.y()
-                 << "geomUuid:" << geomUuid << "handle:" << geomHandle;
-    }
+    qDebug() << "[CadView] Point acquired:" << planePt.x() << "," << planePt.y()
+             << "geomUuid:" << geomUuid << "handle:" << geomHandle;
 
-    // 舊 signal（向下相容，使用 float 版）
-    Q_EMIT pointAcquired(planePtF);
+    // 舊 signal（向下相容）
+    Q_EMIT pointAcquired(planePt);
     // 新 signal（帶 GeomRef 資訊）
-    Q_EMIT geomRefPicked(planePtF, geomUuid, geomHandle);
+    Q_EMIT geomRefPicked(planePt, geomUuid, geomHandle);
 }
 
 void CadView::handleObjectSelection(const QPoint& screenPos) {
@@ -1759,20 +1561,6 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     int x = event->x();
     int y = event->y();
 
-    {
-        auto* cmdMgr_nav = Application::instance()->commandManager();
-        const bool hasCmd_nav = cmdMgr_nav && cmdMgr_nav->hasActiveCommand();
-        // Navigation 模式 + 有 active command → 攔截左鍵，送入 handlePointInput
-        if (event->button() == Qt::LeftButton &&
-            d->mode == InteractionMode::Navigation && hasCmd_nav)
-        {
-            if (m_snapManager && m_snapManager->onMousePress(event->x(), event->y()))
-                goto navigation_fallthrough;
-            handlePointInput(event->pos());
-            goto navigation_fallthrough;
-        }
-    }
-
     if (event->button() == Qt::LeftButton &&
         (d->mode == InteractionMode::Sketching ||
          d->mode == InteractionMode::GetPoint  ||
@@ -1855,7 +1643,6 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         return;   // ← 已處理，不進入下面第二個 if 區塊
     }
 
-    navigation_fallthrough:
     if (!d->context.IsNull() && !d->view.IsNull()) {
 
         if (event->button() == Qt::LeftButton) {
@@ -2110,32 +1897,17 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     // 草圖模式：更新橡皮筋
     if (d->mode == InteractionMode::Sketching) {
         if (d->rubberBand) {
-            QPointF planePt;
+            QVector2D planePt;
 
+            // ✅ 優先使用 snap 鎖定座標
             if (m_snapManager && m_snapManager->isSnapActive()) {
                 auto pt2d = m_snapManager->snapPoint2D();
-                if (pt2d.has_value())
-                    planePt = QPointF(pt2d.value().x(), pt2d.value().y());
-                else
-                    planePt = QPointF(screenToPlane(event->pos()).x(),
-                                      screenToPlane(event->pos()).y());
+                planePt = pt2d.has_value() ? pt2d.value()
+                                           : screenToPlane(event->pos());
             } else {
-                QVector2D v = screenToPlane(event->pos());
-                planePt = QPointF(v.x(), v.y());
+                planePt = screenToPlane(event->pos());
             }
 
-            d->rubberBand->setCurrentPoint(planePt);
-            d->rubberBand->update();
-        }
-    }
-
-    // Navigation 模式（Alignment 命令）：也更新橡皮筋，使用 double 精度版
-    if (d->mode == InteractionMode::Navigation) {
-        auto* cmdMgr = Application::instance()->commandManager();
-        const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
-        if (d->rubberBand && hasCmd) {
-            // screenToPlaneD() 含 TM2 偏移，與點擊時一致
-            QPointF planePt = screenToPlaneD(event->pos());
             d->rubberBand->setCurrentPoint(planePt);
             d->rubberBand->update();
         }

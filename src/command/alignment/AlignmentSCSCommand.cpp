@@ -55,13 +55,10 @@
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
-#include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
 #include "view/RubberBand.h"
 
 #include <QDebug>
-#include <QPointF>
-#include <QVector2D>
 #include <QtMath>
 #include <cmath>
 #include <limits>
@@ -165,17 +162,11 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
     m_type1       = SpiralType::Clothoid;
     m_type2       = SpiralType::Clothoid;
 
-    // ── 取得 TM2 座標偏移 ────────────────────────────────────────────────
-    if (context.cadView) {
-        m_coordOffsetEasting  = context.cadView->coordinateOffsetEasting();
-        m_coordOffsetNorthing = context.cadView->coordinateOffsetNorthing();
-    }
-
     EventBus* bus = Application::instance()->eventBus();
 
     // SCS 預覽模式
     QVariantMap viewSetup;
-    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
+    viewSetup["mode"]           = "sketching";
     viewSetup["rubberBandMode"] = "scs";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -184,7 +175,7 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map = data.toMap();
-                       QPointF pt = map["point"].value<QPointF>(); // Alignment 模式發佈 QPointF（double，含 TM2 偏移）
+                       QVector2D pt    = map["point"].value<QVector2D>();
                        QMetaObject::invokeMethod(this, [this, pt]() {
                            handlePointAcquired(pt);
                        }, Qt::QueuedConnection);
@@ -217,7 +208,7 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
+void AlignmentSCSCommand::handlePointAcquired(const QVector2D& point)
 {
     if (m_isFinishing) return;
 
@@ -227,11 +218,8 @@ void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
 
         // ── Step 1：選入切線 ──────────────────────────────────────────────────────
     case Step::PickEntryTangent: {
-        // point 是 TM2 絕對座標；elements 是本地模型座標 → 先還原
-        const QPointF localPt(point.x() - m_coordOffsetEasting,
-                              point.y() - m_coordOffsetNorthing);
         int idx = AlignmentFloatCurveCommand::nearestTangentIndex(
-            localPt, m_alignDoc->horizontal());
+            point, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found — click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -248,10 +236,8 @@ void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
 
         // ── Step 2：選出切線 ──────────────────────────────────────────────────────
     case Step::PickExitTangent: {
-        const QPointF localPt(point.x() - m_coordOffsetEasting,
-                              point.y() - m_coordOffsetNorthing);
         int idx = AlignmentFloatCurveCommand::nearestTangentIndex(
-            localPt, m_alignDoc->horizontal());
+            point, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found — click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -738,18 +724,11 @@ void AlignmentSCSCommand::updateRubberBandPreview()
     const auto& elems = m_alignDoc->horizontal()->elements();
     if (m_idx1 >= elems.size() || m_idx2 >= elems.size()) return;
 
-    // t1end / t2start / pi 是本地模型座標
-    // RubberBand::planeToWorld() 會減去 coordOffset，
-    // 因此傳入前必須先加回 offset（本地座標 + offset = TM2 絕對座標）
     const QPointF& t1end   = elems[m_idx1].endPI;
     const QPointF& t2start = elems[m_idx2].startPI;
     const QPointF  pi(
         (t1end.x() + t2start.x()) * 0.5,
         (t1end.y() + t2start.y()) * 0.5);
-
-    const QPointF t1endTM2 (t1end.x()  + m_coordOffsetEasting, t1end.y()  + m_coordOffsetNorthing);
-    const QPointF piTM2    (pi.x()     + m_coordOffsetEasting, pi.y()     + m_coordOffsetNorthing);
-    const QPointF t2startTM2(t2start.x()+ m_coordOffsetEasting, t2start.y()+ m_coordOffsetNorthing);
 
     EventBus* bus = Application::instance()->eventBus();
 
@@ -766,17 +745,23 @@ void AlignmentSCSCommand::updateRubberBandPreview()
     QVariantMap rb1;
     rb1["action"] = "clearAndAdd";
     rb1["mode"]   = "scs";
-    rb1["point"]  = QVariant::fromValue(t1endTM2);
+    rb1["point"]  = QVariant::fromValue(
+        QVector2D(static_cast<float>(t1end.x()),
+                  static_cast<float>(t1end.y())));
     bus->publish("command.update-rubber-band", rb1);
 
     QVariantMap rb2;
     rb2["action"] = "addPoint";
-    rb2["point"]  = QVariant::fromValue(piTM2);
+    rb2["point"]  = QVariant::fromValue(
+        QVector2D(static_cast<float>(pi.x()),
+                  static_cast<float>(pi.y())));
     bus->publish("command.update-rubber-band", rb2);
 
     QVariantMap rb3;
     rb3["action"] = "setCurrentPoint";
-    rb3["point"]  = QVariant::fromValue(t2startTM2);
+    rb3["point"]  = QVariant::fromValue(
+        QVector2D(static_cast<float>(t2start.x()),
+                  static_cast<float>(t2start.y())));
     bus->publish("command.update-rubber-band", rb3);
 }
 

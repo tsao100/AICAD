@@ -40,13 +40,10 @@
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
-#include "view/CadView.h"
 #include "railway/AlignmentDocument.h"
 
 #include <QDebug>
 #include <QLineF>
-#include <QPointF>
-#include <QVector2D>
 #include <QtMath>
 #include <cmath>
 #include <limits>
@@ -98,17 +95,11 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
     m_idx2        = -1;
     m_radius      = 0.0;
 
-    // ── 取得 TM2 座標偏移（用於 nearestTangentIndex 前的座標還原）──────────
-    if (context.cadView) {
-        m_coordOffsetEasting  = context.cadView->coordinateOffsetEasting();
-        m_coordOffsetNorthing = context.cadView->coordinateOffsetNorthing();
-    }
-
     EventBus* bus = Application::instance()->eventBus();
 
     // 切換到 arc rubber-band 模式（初始無點，稍後更新）
     QVariantMap viewSetup;
-    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
+    viewSetup["mode"]           = "sketching";
     viewSetup["rubberBandMode"] = "arc";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -118,7 +109,7 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            QPointF pt = map["point"].value<QPointF>(); // Alignment 模式發佈 QPointF（double，含 TM2 偏移）
+            QVector2D pt    = map["point"].value<QVector2D>();
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -153,7 +144,7 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
+void AlignmentFloatCurveCommand::handlePointAcquired(const QVector2D& point)
 {
     if (m_isFinishing) return;
 
@@ -163,10 +154,7 @@ void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
 
     // ── Step 1：選第一條切線 ─────────────────────────────────────────────────
     case Step::PickFirstTangent: {
-        // point 是 TM2 絕對座標；elements 是本地模型座標 → 需先還原
-        const QPointF localPt(point.x() - m_coordOffsetEasting,
-                              point.y() - m_coordOffsetNorthing);
-        int idx = nearestTangentIndex(localPt, m_alignDoc->horizontal());
+        int idx = nearestTangentIndex(point, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found near that point — please click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -187,9 +175,7 @@ void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
 
     // ── Step 2：選第二條切線 ─────────────────────────────────────────────────
     case Step::PickSecondTangent: {
-        const QPointF localPt(point.x() - m_coordOffsetEasting,
-                              point.y() - m_coordOffsetNorthing);
-        int idx = nearestTangentIndex(localPt, m_alignDoc->horizontal());
+        int idx = nearestTangentIndex(point, m_alignDoc->horizontal());
         if (idx < 0) {
             outputMessage("No tangent found — please click closer to a tangent line.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -261,28 +247,29 @@ void AlignmentFloatCurveCommand::handleNumberInput(const QString& text)
     if (m_idx1 >= 0 && m_idx1 < elems.size() &&
         m_idx2 >= 0 && m_idx2 < elems.size())
     {
-        // t1end / t2start / pi 是本地模型座標（已減去偏移的座標）
-        // RubberBand::planeToWorld() 會再減去 coordOffset，
-        // 因此傳入時必須先加回 offset，讓 planeToWorld() 減完後還原成本地座標
+        // 以兩條切線的端點作為弧預覽的控制點：
+        //   points[0] = tangent1 的 endPI（切線尾端，接近 PI 側）
+        //   points[1] = 兩切線的「目視交叉點」估算（此處用中點近似）
+        //   currentPoint = tangent2 的 startPI
         const QPointF& t1end   = elems[m_idx1].endPI;
         const QPointF& t2start = elems[m_idx2].startPI;
-        const QPointF  pi((t1end.x() + t2start.x()) * 0.5,
-                          (t1end.y() + t2start.y()) * 0.5);
-
-        // 本地座標 + offset = TM2 絕對座標（RubberBand 期待的輸入）
-        const QPointF t1endTM2  (t1end.x()  + m_coordOffsetEasting, t1end.y()  + m_coordOffsetNorthing);
-        const QPointF piTM2     (pi.x()     + m_coordOffsetEasting, pi.y()     + m_coordOffsetNorthing);
+        QPointF        pi      = QPointF((t1end.x() + t2start.x()) * 0.5,
+                                          (t1end.y() + t2start.y()) * 0.5);
 
         QVariantMap rb;
         rb["action"]      = "clearAndAdd";
-        rb["point"]       = QVariant::fromValue(t1endTM2);
+        rb["point"]       = QVariant::fromValue(
+            QVector2D(static_cast<float>(t1end.x()),
+                      static_cast<float>(t1end.y())));
         rb["radius"]      = m_radius;
         rb["mode"]        = "arc";
         bus->publish("command.update-rubber-band", rb);
 
         QVariantMap rb2;
         rb2["action"] = "addPoint";
-        rb2["point"]  = QVariant::fromValue(piTM2);
+        rb2["point"]  = QVariant::fromValue(
+            QVector2D(static_cast<float>(pi.x()),
+                      static_cast<float>(pi.y())));
         bus->publish("command.update-rubber-band", rb2);
     }
 
@@ -412,7 +399,7 @@ void AlignmentFloatCurveCommand::highlightTangent(int elemIdx)
 // ────────────────────────────────────────────────────────────────────────────
 
 int AlignmentFloatCurveCommand::nearestTangentIndex(
-    const QPointF&                          clickPt,
+    const QVector2D&                        clickPt,
     const railway::HorizontalAlignmentEdit* edit)
 {
     if (!edit) return -1;
@@ -433,9 +420,8 @@ int AlignmentFloatCurveCommand::nearestTangentIndex(
         const double bx = e.endPI.x();
         const double by = e.endPI.y();
 
-        // clickPt 本身已是 QPointF(double)，不需 static_cast
-        const double px = clickPt.x();
-        const double py = clickPt.y();
+        const double px = static_cast<double>(clickPt.x());
+        const double py = static_cast<double>(clickPt.y());
 
         // AB 向量
         const double abx = bx - ax;

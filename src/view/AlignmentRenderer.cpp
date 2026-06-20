@@ -27,7 +27,6 @@
 #include <Quantity_Color.hxx>
 
 #include <QDebug>
-#include <QTimer>
 #include <cmath>
 
 namespace aicad {
@@ -37,15 +36,15 @@ namespace view {
 //  Helpers
 // ============================================================================
 
-/// Convert QPointF (TM2 Easting/Northing) to OCCT local model coordinates.
-/// Subtracts the renderer's coordinate offset so that TM2 absolute coords
-/// map to the correct OCCT world position near the model origin.
-gp_Pnt AlignmentRenderer::toOCCT(const QPointF& p) const
+namespace {
+
+/// Convert QPointF (Easting, Northing) to a flat gp_Pnt (Z = 0).
+inline gp_Pnt toOCCT(const QPointF& p)
 {
-    return gp_Pnt(p.x() - m_coordOffsetEasting,
-                  p.y() - m_coordOffsetNorthing,
-                  0.0);
+    return gp_Pnt(p.x(), p.y(), 0.0);
 }
+
+} // anonymous namespace
 
 // ============================================================================
 //  Ctor / dtor
@@ -133,20 +132,11 @@ void AlignmentRenderer::clearOverlays()
     if (m_cadView) m_cadView->refreshView();
 }
 
-void AlignmentRenderer::setCoordinateOffset(double easting, double northing)
-{
-    m_coordOffsetEasting  = easting;
-    m_coordOffsetNorthing = northing;
-    refresh();   // 偏移改變後立即重新渲染
-}
-
 
 
 void AlignmentRenderer::refresh()
 {
     if (!m_cadView) return;
-
-    const bool hadOverlays = !m_overlays.isEmpty();
 
     // ── 1. Clear previously displayed geometry overlays ──────────────────────
     for (const auto& obj : m_overlays)
@@ -177,24 +167,7 @@ void AlignmentRenderer::refresh()
 
         if (shape.IsNull()) continue;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-        m_cadView->addOverlayAIS(shape, {1});   // mode 1 = 可被 OCCT 選取偵測
-=======
-=======
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
-<<<<<<< HEAD
         m_cadView->addOverlayAIS(shape, {0});   // mode 0 = whole-shape hit test
-=======
-        m_cadView->addOverlayAIS(shape, {1});   // mode 1 = 可被 OCCT 選取偵測
->>>>>>> 6bc721d (H Alignment grips dbg1.)
-<<<<<<< HEAD
->>>>>>> 56324d0 (H Alignment grips dbg1.)
-=======
-=======
-        m_cadView->addOverlayAIS(shape, {1});   // mode 1 = 可被 OCCT 選取偵測
->>>>>>> 2604ab0 (H Alignment grips dbg1.)
->>>>>>> 20d6d81 (H Alignment grips dbg1.)
         m_overlays.append(shape);
     }
 
@@ -205,14 +178,6 @@ void AlignmentRenderer::refresh()
     }
 
     m_cadView->refreshView();
-
-    // ── 4. 第一次加入幾何時（之前 overlays 為空），自動 fitAll 讓使用者看到結果 ──
-    // 後續 refresh 不再自動縮放，避免干擾使用者的視角。
-    if (!hadOverlays && !m_overlays.isEmpty()) {
-        QTimer::singleShot(50, m_cadView, [this]() {
-            if (m_cadView) m_cadView->fitAll();
-        });
-    }
 }
 
 // ============================================================================
@@ -351,11 +316,7 @@ void AlignmentRenderer::buildPIGrips()
     constexpr double kR = 2.0;
 
     for (const railway::AlignmentPoint& pt : rawPts) {
-        // rawPoints 的 easting/northing 是 TM2 絕對座標；
-        // OCCT world 座標是本地模型座標，需減去 TM2 偏移
-        const double localX = pt.easting  - m_coordOffsetEasting;
-        const double localY = pt.northing - m_coordOffsetNorthing;
-        gp_Pnt centre(localX, localY, 0.0);
+        gp_Pnt centre(pt.easting, pt.northing, 0.0);
         BRepPrimAPI_MakeSphere mkSphere(centre, kR);
         if (!mkSphere.IsDone()) continue;
 

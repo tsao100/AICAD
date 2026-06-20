@@ -27,7 +27,7 @@
 
 #include "command/alignment/AlignmentCommandBase.h"
 #include "command/CommandFactory.h"
-#include <QPointF>
+#include <QVector2D>
 
 namespace aicad {
 namespace command {
@@ -49,16 +49,11 @@ public:
      * @brief 在 edit 的 EditableElement 列表中，找出距離 clickPt 最近的
      *        TangentElement，回傳其 index；找不到時回傳 -1。
      *
-     * @param clickPt  本地模型座標（已減去 TM2 偏移）
-     * @param edit     HorizontalAlignmentEdit
+     * 距離定義：點到線段（startPI → endPI）的最短歐幾里得距離。
      */
     static int nearestTangentIndex(
-        const QPointF&                              clickPt,
+        const QVector2D&                            clickPt,
         const railway::HorizontalAlignmentEdit*     edit);
-
-    // TM2 座標偏移（從 CommandContext 取得，用於 nearestTangentIndex 前的座標轉換）
-    double m_coordOffsetEasting  = 0.0;
-    double m_coordOffsetNorthing = 0.0;
 
 private:
     // ── 命令狀態機 ───────────────────────────────────────────────────────────
@@ -69,7 +64,7 @@ private:
         WaitingForConfirm   ///< Radius 已取得，顯示預覽，等待 Enter 或下一個點
     };
 
-    void handlePointAcquired(const QPointF& point);
+    void handlePointAcquired(const QVector2D& point);
     void handleNumberInput(const QString& text);
     void handleCancelled();
     void commitCurve();

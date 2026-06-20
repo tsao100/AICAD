@@ -14,7 +14,6 @@
 #include "command/alignment/AlignmentFixCurveCommand.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
-#include "view/CadView.h"
 #include <QDebug>
 #include <cmath>
 
@@ -46,17 +45,11 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
     m_pickState   = PickState::WaitingForStart;
     m_isFinishing = false;
 
-    // ── 取得 TM2 座標偏移 ─────────────────────────────────────────────────
-    if (context.cadView) {
-        m_coordOffsetEasting  = context.cadView->coordinateOffsetEasting();
-        m_coordOffsetNorthing = context.cadView->coordinateOffsetNorthing();
-    }
-
     EventBus* bus = Application::instance()->eventBus();
 
     // 要求 CadView 切換到弧線 rubber-band 模式
     QVariantMap viewSetup;
-    viewSetup["mode"] = "navigation"; // Alignment 命令用 Navigation 模式，POINT_ACQUIRED 發佈 QPointF（含 TM2 偏移）
+    viewSetup["mode"]           = "sketching";
     viewSetup["rubberBandMode"] = "arc";
     bus->publish("command.request-view-setup", viewSetup);
 
@@ -64,7 +57,7 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            QPointF pt = map["point"].value<QPointF>(); // Alignment 模式發佈 QPointF（double，含 TM2 偏移）
+            QVector2D pt    = map["point"].value<QVector2D>();
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -89,31 +82,27 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
+void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
 {
     if (m_isFinishing) return;
 
     EventBus* bus = Application::instance()->eventBus();
 
-    // point 是 TM2 絕對座標；AlignmentDocument 儲存本地模型座標 → 需還原
-    const QPointF localPt(point.x() - m_coordOffsetEasting,
-                          point.y() - m_coordOffsetNorthing);
-
     switch (m_pickState) {
 
     // ── Step 1：起點 ─────────────────────────────────────────────────────────
     case PickState::WaitingForStart: {
-        m_startPoint = localPt;   // 儲存本地座標
+        m_startPoint = point;
         m_pickState  = PickState::WaitingForMid;
 
         QVariantMap rb;
         rb["action"] = "clearAndAdd";
-        rb["point"]  = QVariant::fromValue(point);   // rubber band 用 TM2
+        rb["point"]  = QVariant::fromValue(point);
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
                      tr("Specify a point ON the arc:"));
-        outputMessage(QString("Start (E=%1, N=%2) — Specify a point on the arc:")
+        outputMessage(QString("Start (%1, %2) — Specify a point on the arc:")
                           .arg(point.x(), 0, 'f', 3)
                           .arg(point.y(), 0, 'f', 3));
         break;
@@ -121,17 +110,17 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 
     // ── Step 2：弧上點 ───────────────────────────────────────────────────────
     case PickState::WaitingForMid: {
-        m_midPoint  = localPt;   // 儲存本地座標
+        m_midPoint  = point;
         m_pickState = PickState::WaitingForEnd;
 
         QVariantMap rb;
         rb["action"] = "addPoint";
-        rb["point"]  = QVariant::fromValue(point);   // rubber band 用 TM2
+        rb["point"]  = QVariant::fromValue(point);
         bus->publish("command.update-rubber-band", rb);
 
         bus->publish(Events::COMMAND_PROMPT,
                      tr("Specify arc END point:"));
-        outputMessage(QString("Mid (E=%1, N=%2) — Specify arc END point:")
+        outputMessage(QString("Mid (%1, %2) — Specify arc END point:")
                           .arg(point.x(), 0, 'f', 3)
                           .arg(point.y(), 0, 'f', 3));
         break;
@@ -142,7 +131,7 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
         QPointF center;
         double  radius = 0.0;
 
-        if (!circumcircle(m_startPoint, m_midPoint, localPt, center, radius)) {
+        if (!circumcircle(m_startPoint, m_midPoint, point, center, radius)) {
             outputMessage("Error: The three points are collinear — "
                           "please specify a different end point.");
             bus->publish(Events::COMMAND_PROMPT,
@@ -151,19 +140,23 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
             return;
         }
 
-        // ── 建立 Fixed CircularArc（全部 double 精度，無截斷）─────────────────
+        // ── 建立 Fixed CircularArc ─────────────────────────────────────────
+        // center is already QPointF (double precision) from circumcircle()
+        QPointF arcStartF (m_startPoint.x(), m_startPoint.y());
+        QPointF arcEndF   (point.x(),        point.y());
+
         int idx = m_alignDoc->horizontal()->addFixedCurve(
-                      m_startPoint, localPt, center, radius);
+                      arcStartF, arcEndF, center, radius);
         m_alignDoc->horizontal()->solve();   // emit changed() → AlignmentRenderer::refresh()
 
         outputMessage(
             QString("Fixed Curve #%1  start(%2, %3) → end(%4, %5)  R=%6 m")
                 .arg(idx)
-                .arg(m_startPoint.x(), 0, 'f', 3)
-                .arg(m_startPoint.y(), 0, 'f', 3)
-                .arg(point.x(),        0, 'f', 3)
-                .arg(point.y(),        0, 'f', 3)
-                .arg(radius,           0, 'f', 3));
+                .arg(arcStartF.x(), 0, 'f', 3)
+                .arg(arcStartF.y(), 0, 'f', 3)
+                .arg(arcEndF.x(),   0, 'f', 3)
+                .arg(arcEndF.y(),   0, 'f', 3)
+                .arg(radius,        0, 'f', 3));
 
         m_isFinishing = true;
         Q_EMIT finished(CommandResult::Success("AlignmentFixCurve completed"));
@@ -214,9 +207,9 @@ void AlignmentFixCurveCommand::cleanup()
 //  三點共線時 det ≈ 0。
 // ────────────────────────────────────────────────────────────────────────────
 
-bool AlignmentFixCurveCommand::circumcircle(const QPointF& p1,
-                                            const QPointF& p2,
-                                            const QPointF& p3,
+bool AlignmentFixCurveCommand::circumcircle(const QVector2D& p1,
+                                            const QVector2D& p2,
+                                            const QVector2D& p3,
                                             QPointF&         outCenter,
                                             double&          outRadius)
 {
@@ -238,12 +231,12 @@ bool AlignmentFixCurveCommand::circumcircle(const QPointF& p1,
     const double ux = (by * aa - ay * bb) / (2.0 * det);
     const double uy = (ax * bb - bx * aa) / (2.0 * det);
 
-    // Full double precision — p1 is already QPointF(double)
-    const double cx = p1.x() + ux;
-    const double cy = p1.y() + uy;
+    // Keep full double precision — do NOT downcast to float via QVector2D
+    const double cx = static_cast<double>(p1.x()) + ux;
+    const double cy = static_cast<double>(p1.y()) + uy;
 
     outCenter = QPointF(cx, cy);
-    outRadius = std::hypot(ux, uy);
+    outRadius = std::hypot(ux, uy);   // distance from p1 to center, in double
     return true;
 }
 

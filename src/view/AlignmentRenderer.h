@@ -2,11 +2,9 @@
 
 #include <QObject>
 #include <QList>
-#include <QPointF>
 
 #include <AIS_Shape.hxx>
 #include <AIS_InteractiveObject.hxx>
-#include <gp_Pnt.hxx>
 
 // Forward declarations — avoid pulling in heavy OCCT / Qt headers here
 namespace aicad {
@@ -84,14 +82,6 @@ public:
     /** Show or hide all overlay objects without destroying them. */
     void setVisible(bool visible);
 
-    /**
-     * @brief 設定 TM2 座標原點偏移（公尺），應與 CadView::setCoordinateOffset() 同步。
-     *
-     * AlignmentDocument 儲存的座標是 TM2 絕對座標；OCCT 世界座標是模型本地座標。
-     * toOCCT() 會用此偏移將 TM2 座標還原成 OCCT 本地座標後再建立幾何。
-     */
-    void setCoordinateOffset(double easting, double northing);
-
     /** Remove and clear all overlays (used when switching active TCL). */
     void clearOverlays();
 
@@ -155,13 +145,6 @@ private:
     railway::HorizontalAlignmentEdit*     m_edit     = nullptr;
     const railway::HorizontalAlignment*   m_directHA = nullptr;  ///< direct (no edit model)
     bool                                  m_visible  = true;  ///< overlay visibility
-
-    // TM2 座標偏移（與 CadView 同步），toOCCT() 時減去
-    double m_coordOffsetEasting  = 0.0;
-    double m_coordOffsetNorthing = 0.0;
-
-    /// TM2 → OCCT 本地座標轉換（減去偏移）
-    gp_Pnt toOCCT(const QPointF& p) const;
 
     /** All geometry overlay objects currently displayed (excl. PI grips). */
     QList<Handle(AIS_InteractiveObject)>  m_overlays;

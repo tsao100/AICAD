@@ -46,13 +46,9 @@ public:
     
     RubberBandMode mode;
     cad::Plane* plane;
-    QVector<QPointF> points;      // double 精度，支援 TM2 大座標
-    QPointF currentPoint;         // double 精度
+    QVector<QVector2D> points;
+    QVector2D currentPoint;
     bool hasCurrentPoint;
-
-    // ── TM2 座標原點偏移 ──────────────────────────────────────────────────────
-    double coordOffsetEasting  = 0.0;  ///< 東向偏移（m），與 CadView 同步
-    double coordOffsetNorthing = 0.0;  ///< 北向偏移（m）
 
     // ── Spiral / SCS parameters ───────────────────────────────────────────────
     double radius        = 400.0;   ///< Circular arc radius [m]; +right, −left
@@ -135,18 +131,18 @@ cad::Plane* RubberBand::plane() const {
     return d->plane;
 }
 
-void RubberBand::addPoint(const QPointF& point) {
+void RubberBand::addPoint(const QVector2D& point) {
     d->points.append(point);
     qDebug() << "[RubberBand] Point added:" << point.x() << "," << point.y()
              << "Total points:" << d->points.size();
 }
 
-void RubberBand::setCurrentPoint(const QPointF& point) {
+void RubberBand::setCurrentPoint(const QVector2D& point) {
     d->currentPoint = point;
     d->hasCurrentPoint = true;
 }
 
-QVector<QPointF> RubberBand::points() const {
+QVector<QVector2D> RubberBand::points() const {
     return d->points;
 }
 
@@ -320,13 +316,13 @@ void RubberBand::updateRectangle() {
     }
     
     // 創建矩形
-    QPointF p1 = d->points[0];
-    QPointF p2 = d->currentPoint;
+    QVector2D p1 = d->points[0];
+    QVector2D p2 = d->currentPoint;
     
-    QVector3D gp1 = planeToWorld(QPointF(p1.x(), p1.y()));
-    QVector3D gp2 = planeToWorld(QPointF(p2.x(), p1.y()));
-    QVector3D gp3 = planeToWorld(QPointF(p2.x(), p2.y()));
-    QVector3D gp4 = planeToWorld(QPointF(p1.x(), p2.y()));
+    QVector3D gp1 = planeToWorld(QVector2D(p1.x(), p1.y()));
+    QVector3D gp2 = planeToWorld(QVector2D(p2.x(), p1.y()));
+    QVector3D gp3 = planeToWorld(QVector2D(p2.x(), p2.y()));
+    QVector3D gp4 = planeToWorld(QVector2D(p1.x(), p2.y()));
     
     Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(5);
     polyline->AddVertex(gp_Pnt(gp1.x(), gp1.y(), gp1.z()));
@@ -363,7 +359,7 @@ void RubberBand::updatePolyline() {
     int numPoints = d->points.size() + 1;
     Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(numPoints);
     
-    for (const QPointF& pt : d->points) {
+    for (const QVector2D& pt : d->points) {
         QVector3D p = planeToWorld(pt);
         polyline->AddVertex(gp_Pnt(p.x(), p.y(), p.z()));
     }
@@ -402,7 +398,7 @@ void RubberBand::updateSpline() {
             new TColgp_HArray1OfPnt(1, numControlPoints);
 
         int index = 1;
-        for (const QPointF& pt : d->points) {
+        for (const QVector2D& pt : d->points) {
             QVector3D p = planeToWorld(pt);
             hControlPoints->SetValue(index++, gp_Pnt(p.x(), p.y(), p.z()));
         }
@@ -510,11 +506,11 @@ void RubberBand::updatePolygon() {
     }
 
     // 第一個點是中心點
-    QPointF center = d->points[0];
+    QVector2D center = d->points[0];
 
     // 從當前點計算半徑
-    QPointF delta = d->currentPoint - center;
-    double radius = std::hypot(delta.x(), delta.y());
+    QVector2D delta = d->currentPoint - center;
+    double radius = delta.length();
 
     if (radius < 0.001) {
         return;  // 半徑太小，不顯示
@@ -531,16 +527,16 @@ void RubberBand::updatePolygon() {
     double angleStep = 2.0 * M_PI / sides;
     double startAngle = -M_PI / 2.0;  // 從頂部（12點鐘方向）開始
 
-    QVector<QPointF> vertices;
+    QVector<QVector2D> vertices;
     for (int i = 0; i < sides; ++i) {
         double angle = startAngle + i * angleStep;
         double x = center.x() + radius * std::cos(angle);
         double y = center.y() + radius * std::sin(angle);
-        vertices.append(QPointF(x, y));
+        vertices.append(QVector2D(x, y));
     }
 
     // 添加所有頂點到 polyline
-    for (const QPointF& pt : vertices) {
+    for (const QVector2D& pt : vertices) {
         QVector3D p = planeToWorld(pt);
         polyline->AddVertex(gp_Pnt(p.x(), p.y(), p.z()));
     }
@@ -574,9 +570,8 @@ void RubberBand::updateCircle() {
     }
     
     // 計算半徑
-    QPointF center = d->points[0];
-    double radius = std::hypot(d->currentPoint.x() - center.x(),
-                               d->currentPoint.y() - center.y());
+    QVector2D center = d->points[0];
+    float radius = (d->currentPoint - center).length();
     
     if (radius < 0.001) {
         return;
@@ -622,11 +617,11 @@ void RubberBand::updateEllipse() {
         return;
     }
 
-    QPointF center = d->points[0];
+    QVector2D center = d->points[0];
 
     // === Case 1: Only have center, show line to current point (major axis direction) ===
     if (d->points.size() == 1) {
-        QVector3D centerWorld  = planeToWorld(center);
+        QVector3D centerWorld = planeToWorld(center);
         QVector3D currentWorld = planeToWorld(d->currentPoint);
 
         Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(2);
@@ -654,24 +649,23 @@ void RubberBand::updateEllipse() {
     }
 
     // === Case 2: Have center and major axis endpoint, show preview ellipse ===
-    QPointF majorAxisEnd  = d->points[1];
-    QPointF majorVector   = majorAxisEnd - center;
-    double  majorRadius   = std::hypot(majorVector.x(), majorVector.y());
+    QVector2D majorAxisEnd = d->points[1];
+    QVector2D majorVector = majorAxisEnd - center;
+    float majorRadius = majorVector.length();
 
     if (majorRadius < 0.001) {
         return;
     }
 
     // Calculate minor radius from current point
-    QPointF toPoint        = d->currentPoint - center;
-    double  mvLen          = majorRadius;
-    QPointF majorNorm      = (mvLen > 1e-9) ? QPointF(majorVector.x()/mvLen, majorVector.y()/mvLen) : QPointF(1,0);
-    QPointF perpendicular(-majorNorm.y(), majorNorm.x());
-    double  minorRadius    = qAbs(toPoint.x() * perpendicular.x() + toPoint.y() * perpendicular.y());
+    QVector2D toPoint = d->currentPoint - center;
+    QVector2D majorNormalized = majorVector.normalized();
+    QVector2D perpendicular(-majorNormalized.y(), majorNormalized.x());
+    float minorRadius = qAbs(QVector2D::dotProduct(toPoint, perpendicular));
 
     // If point is too close to center or major axis, use distance to point
     if (minorRadius < 0.001) {
-        minorRadius = std::hypot(toPoint.x(), toPoint.y());
+        minorRadius = toPoint.length();
         if (minorRadius < 0.001) {
             return; // Too close to center
         }
@@ -683,16 +677,16 @@ void RubberBand::updateEllipse() {
     }
 
     // Create ellipse in 3D
-    QVector3D centerWorld      = planeToWorld(center);
-    gp_Pnt    centerPnt(centerWorld.x(), centerWorld.y(), centerWorld.z());
+    QVector3D centerWorld = planeToWorld(center);
+    gp_Pnt centerPnt(centerWorld.x(), centerWorld.y(), centerWorld.z());
 
     // Calculate major axis direction in 3D
     QVector3D majorAxisEndWorld = planeToWorld(majorAxisEnd);
-    QVector3D majorAxisDir3D    = (majorAxisEndWorld - centerWorld).normalized();
-    gp_Dir    xDir(majorAxisDir3D.x(), majorAxisDir3D.y(), majorAxisDir3D.z());
+    QVector3D majorAxisDir3D = (majorAxisEndWorld - centerWorld).normalized();
+    gp_Dir xDir(majorAxisDir3D.x(), majorAxisDir3D.y(), majorAxisDir3D.z());
 
-    gp_Dir   normalDir(d->plane->normal().x(), d->plane->normal().y(), d->plane->normal().z());
-    gp_Ax2   ax2(centerPnt, normalDir, xDir);
+    gp_Dir normalDir(d->plane->normal().x(), d->plane->normal().y(), d->plane->normal().z());
+    gp_Ax2 ax2(centerPnt, normalDir, xDir);
     gp_Elips ellipse(ax2, majorRadius, minorRadius);
 
     // Create ellipse point array
@@ -779,19 +773,8 @@ void RubberBand::updateArc() {
     }
 }
 
-QVector3D RubberBand::planeToWorld(const QPointF& planePt) const {
-    // TM2 絕對座標 → 本地模型座標（減去偏移）
-    // double → float 截斷在此發生（QVector3D 為 float），視覺渲染可接受
-    const float localU = static_cast<float>(planePt.x() - d->coordOffsetEasting);
-    const float localV = static_cast<float>(planePt.y() - d->coordOffsetNorthing);
-    return d->plane->origin()
-         + d->plane->xAxis() * localU
-         + d->plane->yAxis() * localV;
-}
-
-void RubberBand::setCoordinateOffset(double easting, double northing) {
-    d->coordOffsetEasting  = easting;
-    d->coordOffsetNorthing = northing;
+QVector3D RubberBand::planeToWorld(const QVector2D& planePt) const {
+    return d->plane->origin() + d->plane->xAxis() * planePt.x() + d->plane->yAxis() * planePt.y();
 }
 
 // ============================================================================
@@ -845,14 +828,14 @@ makeTransitionElement(SpiralType type, double Ls, double signedR)
  * @param ox, oy  Origin in plane coords [m]
  * @param angle   Tangent bearing in plane space [rad, CCW from +U axis]
  */
-QPointF localToPlane(double lx, double ly,
-                     double ox, double oy,
-                     double angle)
+QVector2D localToPlane(double lx, double ly,
+                       double ox, double oy,
+                       double angle)
 {
     const double ca = std::cos(angle);
     const double sa = std::sin(angle);
-    return QPointF(ox + lx * ca - ly * sa,
-                   oy + lx * sa + ly * ca);
+    return QVector2D(static_cast<float>(ox + lx * ca - ly * sa),
+                     static_cast<float>(oy + lx * sa + ly * ca));
 }
 
 /**
@@ -869,20 +852,20 @@ QPointF localToPlane(double lx, double ly,
  * @param Ls        Total spiral length [m]
  * @param type      Spiral family (Clothoid / HalfSine / Parabola / …)
  * @param nSamples  Number of polyline segments
- * @param toWorld   Functor: plane QPointF → world QVector3D
+ * @param toWorld   Functor: plane QVector2D → world QVector3D
  */
 void appendSpiralByType(Handle(Graphic3d_ArrayOfPolylines)& poly,
                         double ox, double oy, double angle,
                         double signedR, double Ls,
                         SpiralType type, int nSamples,
-                        std::function<QVector3D(QPointF)> toWorld)
+                        std::function<QVector3D(QVector2D)> toWorld)
 {
     const auto elem = makeTransitionElement(type, Ls, signedR);
     for (int i = 0; i <= nSamples; ++i) {
-        const double     L  = Ls * static_cast<double>(i) / nSamples;
+        const double   L  = Ls * static_cast<double>(i) / nSamples;
         const LocalFrame lf = elem->localFrame(L);
-        const QPointF    p2 = localToPlane(lf.x, lf.y, ox, oy, angle);
-        const QVector3D  w  = toWorld(p2);
+        const QVector2D p2  = localToPlane(lf.x, lf.y, ox, oy, angle);
+        const QVector3D w   = toWorld(p2);
         poly->AddVertex(gp_Pnt(w.x(), w.y(), w.z()));
     }
 }
@@ -904,23 +887,24 @@ void RubberBand::updateSpiral()
     if (std::abs(R) < 1e-6 || Ls < 1e-6) return;
 
     // Origin: points[0]; direction: toward points[1] if present, else currentPoint
-    const QPointF origin = d->points[0];
-    const QPointF dirPt  = (d->points.size() >= 2) ? d->points[1]
-                                                   : d->currentPoint;
-    const QPointF delta  = dirPt - origin;
-    if (std::hypot(delta.x(), delta.y()) < 1e-6) return;
+    const QVector2D origin = d->points[0];
+    const QVector2D dirPt  = (d->points.size() >= 2) ? d->points[1]
+                                                    : d->currentPoint;
+    const QVector2D delta  = dirPt - origin;
+    if (delta.length() < 1e-6f) return;
 
-    const double angle = std::atan2(delta.y(), delta.x());
+    const double angle = std::atan2(static_cast<double>(delta.y()),
+                                    static_cast<double>(delta.x()));
 
     constexpr int kSamples = 60;
     Handle(Graphic3d_ArrayOfPolylines) poly =
         new Graphic3d_ArrayOfPolylines(kSamples + 1);
 
-    auto toWorld = [this](QPointF p) { return planeToWorld(p); };
+    auto toWorld = [this](QVector2D p) { return planeToWorld(p); };
 
     appendSpiralByType(poly,
-                       origin.x(),
-                       origin.y(),
+                       static_cast<double>(origin.x()),
+                       static_cast<double>(origin.y()),
                        angle, R, Ls,
                        d->spiralType1,   // honour selected spiral family
                        kSamples, toWorld);
@@ -965,21 +949,19 @@ void RubberBand::updateSCS()
     if (std::abs(R) < 1e-6) return;
 
     // ── Tangent directions ────────────────────────────────────────────────────
-    const QPointF p0  = d->points[0];    // entry tangent start
-    const QPointF pi  = d->points[1];    // PI
-    const QPointF pe  = d->currentPoint; // exit tangent end
+    const QVector2D p0  = d->points[0];    // entry tangent start
+    const QVector2D pi  = d->points[1];    // PI
+    const QVector2D pe  = d->currentPoint; // exit tangent end
 
-    QPointF entryRaw = pi - p0;
-    QPointF exitRaw  = pe - pi;
-    double  entryLen = std::hypot(entryRaw.x(), entryRaw.y());
-    double  exitLen  = std::hypot(exitRaw.x(),  exitRaw.y());
-    if (entryLen < 1e-6 || exitLen < 1e-6) return;
-    // Normalised direction vectors (as QPointF to keep double precision)
-    const QPointF entryVec(entryRaw.x()/entryLen, entryRaw.y()/entryLen);
-    const QPointF exitVec (exitRaw.x() /exitLen,  exitRaw.y() /exitLen);
+    const QVector2D entryVec = (pi - p0).normalized();
+    const QVector2D exitVec  = (pe - pi).normalized();
 
-    const double entryAngle = std::atan2(entryVec.y(), entryVec.x());
-    const double exitAngle  = std::atan2(exitVec.y(),  exitVec.x());
+    if (entryVec.length() < 1e-6f || exitVec.length() < 1e-6f) return;
+
+    const double entryAngle = std::atan2(static_cast<double>(entryVec.y()),
+                                         static_cast<double>(entryVec.x()));
+    const double exitAngle  = std::atan2(static_cast<double>(exitVec.y()),
+                                        static_cast<double>(exitVec.x()));
 
     // ── SCS geometry (asymmetric L1≠L2, type-aware) ─────────────────────────
     double delta = exitAngle - entryAngle;
@@ -1023,19 +1005,22 @@ void RubberBand::updateSCS()
     const double Ts2 = (absR + std::abs(Ym2)) * tanHalfD + Xm2 - correction;
 
     // SCS start / end in plane coords
-    const QPointF scsStart(pi.x() - Ts1 * entryVec.x(),
-                            pi.y() - Ts1 * entryVec.y());
-    const QPointF scsEnd  (pi.x() + Ts2 * exitVec.x(),
-                            pi.y() + Ts2 * exitVec.y());
+    const QVector2D scsStart(
+        static_cast<float>(static_cast<double>(pi.x()) - Ts1 * static_cast<double>(entryVec.x())),
+        static_cast<float>(static_cast<double>(pi.y()) - Ts1 * static_cast<double>(entryVec.y())));
+    const QVector2D scsEnd(
+        static_cast<float>(static_cast<double>(pi.x()) + Ts2 * static_cast<double>(exitVec.x())),
+        static_cast<float>(static_cast<double>(pi.y()) + Ts2 * static_cast<double>(exitVec.y())));
 
     // Entry spiral end point (SC) — from localFrame of the entry element
-    QPointF scPoint = scsStart;  // fallback: no entry spiral → arc starts at TS
-    QPointF csPoint = scsEnd;    // fallback: no exit  spiral → arc ends  at ST
+    QVector2D scPoint  = scsStart;  // fallback: no entry spiral → arc starts at TS
+    QVector2D csPoint  = scsEnd;    // fallback: no exit  spiral → arc ends  at ST
 
     if (Ls1 > 1e-9 && elem1) {
         const LocalFrame scFrame = elem1->localFrame(Ls1);
         scPoint = localToPlane(scFrame.x, scFrame.y,
-                               scsStart.x(), scsStart.y(),
+                               static_cast<double>(scsStart.x()),
+                               static_cast<double>(scsStart.y()),
                                entryAngle);
     }
 
@@ -1048,7 +1033,8 @@ void RubberBand::updateSCS()
         auto elem2rev = makeTransitionElement(d->spiralType2, Ls2, -signedR);
         const LocalFrame csFrame = elem2rev->localFrame(Ls2);
         csPoint = localToPlane(csFrame.x, csFrame.y,
-                               scsEnd.x(), scsEnd.y(),
+                               static_cast<double>(scsEnd.x()),
+                               static_cast<double>(scsEnd.y()),
                                revExitAngle);
     }
 
@@ -1063,14 +1049,15 @@ void RubberBand::updateSCS()
     constexpr int kSpiral = 60;
     constexpr int kArc    = 48;
 
-    auto toWorld = [this](QPointF p) { return planeToWorld(p); };
+    auto toWorld = [this](QVector2D p) { return planeToWorld(p); };
 
     // ── Segment 1: Entry spiral (dashed green) ────────────────────────────────
     if (Ls1 > 1e-9) {
         Handle(Graphic3d_ArrayOfPolylines) poly =
             new Graphic3d_ArrayOfPolylines(kSpiral + 1);
         appendSpiralByType(poly,
-                           scsStart.x(), scsStart.y(),
+                           static_cast<double>(scsStart.x()),
+                           static_cast<double>(scsStart.y()),
                            entryAngle, signedR, Ls1,
                            d->spiralType1, kSpiral, toWorld);
 
@@ -1087,8 +1074,10 @@ void RubberBand::updateSCS()
         const double cx = static_cast<double>(scPoint.x()) + std::abs(signedR) * std::cos(perpAngle);
         const double cy = static_cast<double>(scPoint.y()) + std::abs(signedR) * std::sin(perpAngle);
 
-        const double aStart = std::atan2(scPoint.y() - cy, scPoint.x() - cx);
-        const double aEnd   = std::atan2(csPoint.y() - cy, csPoint.x() - cx);
+        const double aStart = std::atan2(static_cast<double>(scPoint.y()) - cy,
+                                         static_cast<double>(scPoint.x()) - cx);
+        const double aEnd   = std::atan2(static_cast<double>(csPoint.y()) - cy,
+                                       static_cast<double>(csPoint.x()) - cx);
 
         double arcSpan = aEnd - aStart;
         if (signedR > 0.0) {
@@ -1101,8 +1090,8 @@ void RubberBand::updateSCS()
             new Graphic3d_ArrayOfPolylines(kArc + 1);
         for (int i = 0; i <= kArc; ++i) {
             const double a = aStart + arcSpan * i / kArc;
-            const QPointF pt(cx + std::abs(signedR) * std::cos(a),
-                             cy + std::abs(signedR) * std::sin(a));
+            const QVector2D pt(static_cast<float>(cx + std::abs(signedR) * std::cos(a)),
+                               static_cast<float>(cy + std::abs(signedR) * std::sin(a)));
             QVector3D w = toWorld(pt);
             poly->AddVertex(gp_Pnt(w.x(), w.y(), w.z()));
         }

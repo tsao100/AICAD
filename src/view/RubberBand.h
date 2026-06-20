@@ -9,7 +9,6 @@
 #define AICAD_VIEW_RUBBERBAND_H
 
 #include <QObject>
-#include <QPointF>
 #include <QVector2D>
 #include <QVector3D>
 #include <QVector>
@@ -58,8 +57,8 @@ enum class RubberBandMode {
  * RubberBand* rubber = new RubberBand(context, view);
  * rubber->setMode(RubberBandMode::Line);
  * rubber->setPlane(CustomPlane::XY());
- * rubber->addPoint(QPointF(0.0, 0.0));          // double，支援 TM2 大座標
- * rubber->setCurrentPoint(QPointF(10.0, 10.0));
+ * rubber->addPoint(QVector2D(0, 0));
+ * rubber->setCurrentPoint(QVector2D(10, 10));
  * rubber->update();
  * @endcode
  */
@@ -103,21 +102,21 @@ public:
     cad::Plane* plane() const;
     
     /**
-     * @brief 加入點（Alignment 模式傳入 QPointF double；Sketch 模式可傳 QVector2D 由隱式轉換處理）
-     * @param point 2D 平面座標（double 精度，支援 TM2 大座標）
+     * @brief 加入點
+     * @param point 2D 平面座標
      */
-    void addPoint(const QPointF& point);
-
+    void addPoint(const QVector2D& point);
+    
     /**
-     * @brief 設定當前追蹤點（滑鼠游標位置）
-     * @param point 2D 平面座標（double 精度）
+     * @brief 設定當前追蹤點
+     * @param point 2D 平面座標
      */
-    void setCurrentPoint(const QPointF& point);
-
+    void setCurrentPoint(const QVector2D& point);
+    
     /**
-     * @brief 取得所有已加入的點（double 精度）
+     * @brief 取得所有已加入的點
      */
-    QVector<QPointF> points() const;
+    QVector<QVector2D> points() const;
     
     /**
      * @brief 清除所有點
@@ -210,17 +209,6 @@ public:
      */
     bool hasCurrentPoint() const;
     
-    /**
-     * @brief 設定 TM2 座標原點偏移（公尺）
-     *
-     * RubberBand 收到的 addPoint / setCurrentPoint 座標為 TM2 絕對座標，
-     * planeToWorld() 需減去此偏移才能得到 OCCT 本地模型座標。
-     * 應與 CadView::setCoordinateOffset() 保持同步。
-     * @param easting  東向偏移（m）
-     * @param northing 北向偏移（m）
-     */
-    void setCoordinateOffset(double easting, double northing);
-
 Q_SIGNALS:
     /**
      * @brief 橡皮筋更新時發出
@@ -297,9 +285,9 @@ private:
     void updateSCS();
     
     /**
-     * @brief 平面座標轉世界座標（double 輸入，float QVector3D 輸出用於 OCCT 渲染）
+     * @brief 平面座標轉世界座標
      */
-    QVector3D planeToWorld(const QPointF& planePt) const;
+    QVector3D planeToWorld(const QVector2D& planePt) const;
     
     class Private;
     Private* d;
