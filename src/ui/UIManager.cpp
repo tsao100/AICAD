@@ -49,6 +49,8 @@
 
 #include <QMenu>
 #include <QMenuBar>
+#include <QPointF>
+#include <QRegularExpression>
 #include <QToolBar>
 #include <QTimer>
 #include <QtMath>
@@ -132,6 +134,9 @@ public:
 
     /// Per-TCL renderers for 3D visibility (key = tcl->id())
     QHash<QString, view::AlignmentRenderer*> tclRenderers;
+
+    /// B.3 TM2 座標原點是否已由使用者設定（若否，進入 alignment edit 時自動套用預設值）
+    bool originSet = false;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -662,6 +667,44 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         connect(docMgr, &core::DocumentManager::currentDocumentChanged,
                 d->featureBrowser, &FeatureBrowser::setCurrentDocument);
 
+        // ── F.1 載入檔案後重建 tclRenderers ─────────────────────────────────
+        // allFeaturesLoaded 是在 Document::load() 完成所有反序列化後 emit 的，
+        // 此時 doc->trackCenterLines() 已有完整資料，可安全建立 renderers。
+        connect(docMgr, &core::DocumentManager::currentDocumentChanged,
+                this, [this](cad::Document* doc) {
+            if (!doc) return;
+            connect(doc, &cad::Document::allFeaturesLoaded,
+                    this, [this, doc]() {
+                // 清除舊的 renderers（若有）
+                for (auto* r : d->tclRenderers) delete r;
+                d->tclRenderers.clear();
+
+                if (!d->cadView) return;
+                for (railway::TrackCenterLine* tcl : doc->trackCenterLines()) {
+                    const QString tid = tcl->id();
+                    // AlignmentDocument 可能已由 DOCUMENT_OPENED handler 建立
+                    railway::AlignmentDocument* aDoc =
+                        d->tclAlignmentDocs.value(tid, nullptr);
+                    if (!aDoc) continue;  // 尚未載入資料，略過
+
+                    auto* r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                    connect(aDoc->horizontal(),
+                            &railway::HorizontalAlignmentEdit::changed,
+                            r, &view::AlignmentRenderer::refresh);
+                    d->tclRenderers.insert(tid, r);
+
+                    const railway::HorizontalAlignment* ha = aDoc->horizontal()->result();
+                    if (ha && !ha->isEmpty()) {
+                        r->setHorizontalAlignment(tcl->horizontal());
+                        r->setVisible(tcl->hAlignVisible());
+                        r->refresh();
+                    }
+                }
+                qDebug() << "[UIManager] rebuildTclRenderers (allFeaturesLoaded):"
+                         << d->tclRenderers.size() << "tracks";
+            }, Qt::SingleShotConnection);  // 只連接一次，避免重複
+        });
+
         // 7. 連接主視窗關閉信號
         connect(d->mainWindow, &MainWindow::aboutToClose,
                 this, &UIManager::mainWindowClosed);
@@ -752,15 +795,15 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                }
                            } else if (action == "clearAndAdd") {
                                rb->clearPoints();
-                               QVector2D pt = map["point"].value<QVector2D>();
+                               QPointF pt = map["point"].value<QPointF>();
                                rb->addPoint(pt);
                                rb->update();
                            } else if (action == "addPoint") {
-                               QVector2D pt = map["point"].value<QVector2D>();
+                               QPointF pt = map["point"].value<QPointF>();
                                rb->addPoint(pt);
                                rb->update();
                            } else if (action == "setCurrentPoint") {
-                               QVector2D pt = map["point"].value<QVector2D>();
+                               QPointF pt = map["point"].value<QPointF>();
                                rb->setCurrentPoint(pt);
                                rb->update();
                            } else if (action == "clear") {
@@ -780,13 +823,48 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
+        // ── B.2 SETORIGIN 命令發布的原點設定 ─────────────────────────────────
+        bus->subscribe("command.set-coordinate-origin", this,
+                       [this](const QVariant& data) {
+                           QVariantMap map = data.toMap();
+                           double e = map["easting"].toDouble();
+                           double n = map["northing"].toDouble();
+                           if (d->cadView) {
+                               d->cadView->setCoordinateOffset(e, n);
+                               d->originSet = true;
+                               qDebug() << "[UIManager] Coordinate origin set: E=" << e << "N=" << n;
+                           }
+                       });
+
         // ✅ Monitor user interactions for debugging/logging
         bus->subscribe(core::Events::POINT_ACQUIRED, this,
                        [](const QVariant& data) {
                            QVariantMap map = data.toMap();
-                           QVector2D point = map["point"].value<QVector2D>();
+                           QPointF point = map["point"].value<QPointF>();
                            qDebug() << "[UIManager] User clicked point:" << point.x() << point.y();
                            // Could update coordinate display here
+                       });
+
+        // ── A.5 COORDINATE_INPUT → POINT_ACQUIRED 橋接 ──────────────────────
+        // CommandLineManager 在 InputType::Point 狀態發布 COORDINATE_INPUT（字串），
+        // 此橋接解析為 QPointF 並 re-publish POINT_ACQUIRED，使 alignment commands
+        // 可透過鍵盤輸入座標（支援 TM2 大座標，如 250100.123,2650200.456）
+        bus->subscribe(core::Events::COORDINATE_INPUT, this,
+                       [bus](const QVariant& data) {
+                           QString text = data.toString().trimmed();
+                           auto parts = text.split(
+                               QRegularExpression("[,\\s]+"),
+                               Qt::SkipEmptyParts);
+                           if (parts.size() < 2) return;
+                           bool okX, okY;
+                           double x = parts[0].toDouble(&okX);
+                           double y = parts[1].toDouble(&okY);
+                           if (!okX || !okY) return;
+                           QVariantMap m;
+                           m["point"] = QVariant::fromValue(QPointF(x, y));
+                           bus->publish(core::Events::POINT_ACQUIRED, m);
+                           qDebug() << "[UIManager] COORDINATE_INPUT → POINT_ACQUIRED:"
+                                    << x << y;
                        });
 
         // ── Extrude 建立 ─────────────────────────────────────────────
@@ -1490,6 +1568,19 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     // ── 更新 FeatureBrowser eye icon ──────────────────────────
                     Q_EMIT doc->treeStructureChanged();
 
+                    // ── B.3 TM2 格線：若尚未設定 origin，自動套用預設值 ───────
+                    if (d->cadView) {
+                        d->cadView->setGridEnabled(true);
+                        if (!d->originSet) {
+                            constexpr double kDefaultE = 250000.0;
+                            constexpr double kDefaultN = 2650000.0;
+                            d->cadView->setCoordinateOffset(kDefaultE, kDefaultN);
+                            d->originSet = true;
+                            qDebug() << "[UIManager] Auto-set TM2 origin: E="
+                                     << kDefaultE << "N=" << kDefaultN;
+                        }
+                    }
+
                     // ── 開啟縱斷面 dock ────────────────────────────────────────
                     d->vAlignDock->setAlignmentDocument(aDoc);
                     d->vAlignDock->loadTrackCenterLine(tcl);
@@ -1534,8 +1625,17 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         tr("確定要刪除「%1」嗎？").arg(tcl->name()),
                         QMessageBox::Yes | QMessageBox::No,
                         QMessageBox::No);
-                    if (ret == QMessageBox::Yes)
+                    if (ret == QMessageBox::Yes) {
+                        // ── F.2 先清除 renderer，再刪除 TCL ──────────────────
+                        if (d->tclRenderers.contains(tclId)) {
+                            delete d->tclRenderers.take(tclId);
+                        }
+                        // 清除對應的 AlignmentDocument
+                        if (d->tclAlignmentDocs.contains(tclId)) {
+                            delete d->tclAlignmentDocs.take(tclId);
+                        }
                         doc->removeTrackCenterLine(tclId);
+                    }
                 });
 
         // ── 取消選取時清除 grips ──────────────────────────────────────────────

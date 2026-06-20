@@ -38,6 +38,7 @@
 #include <V3d_View.hxx>
 
 #include <QObject>
+#include <QPointF>
 #include <QVector2D>
 #include <QVector3D>
 #include <optional>
@@ -98,6 +99,7 @@ public:
 
     /// 取得目前鎖定的 2D 草圖平面座標（無平面或無 snap 時 nullopt）
     std::optional<QVector2D> snapPoint2D() const;
+    std::optional<QPointF>   snapPoint2DF() const;   // double 精度版（Alignment 用）
 
     // ── 滑鼠事件入口（由 CadView 呼叫） ────────────────────────────────────────
     /**

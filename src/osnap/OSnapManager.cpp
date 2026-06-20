@@ -178,6 +178,15 @@ std::optional<QVector2D> OSnapManager::snapPoint2D() const {
     return plane->toPlane(worldPt);
 }
 
+std::optional<QPointF> OSnapManager::snapPoint2DF() const {
+    if (!m_currentSnap.has_value()) return std::nullopt;
+    cad::Plane* plane = m_detector.activePlane();
+    if (!plane) return std::nullopt;
+    // 直接使用 gp_Pnt 的 double 座標，經 toPlaneD() 保持精度，不經 QVector3D float 轉換
+    const gp_Pnt& wp = m_currentSnap->worldPoint;
+    return plane->toPlaneD(QVector3D(wp.X(), wp.Y(), wp.Z()));
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 //  滑鼠事件處理
 // ──────────────────────────────────────────────────────────────────────────────

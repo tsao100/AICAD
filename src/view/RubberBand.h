@@ -9,6 +9,7 @@
 #define AICAD_VIEW_RUBBERBAND_H
 
 #include <QObject>
+#include <QPointF>
 #include <QVector2D>
 #include <QVector3D>
 #include <QVector>
@@ -57,8 +58,8 @@ enum class RubberBandMode {
  * RubberBand* rubber = new RubberBand(context, view);
  * rubber->setMode(RubberBandMode::Line);
  * rubber->setPlane(CustomPlane::XY());
- * rubber->addPoint(QVector2D(0, 0));
- * rubber->setCurrentPoint(QVector2D(10, 10));
+ * rubber->addPoint(QPointF(0, 0));
+ * rubber->setCurrentPoint(QPointF(10, 10));
  * rubber->update();
  * @endcode
  */
@@ -103,20 +104,20 @@ public:
     
     /**
      * @brief 加入點
-     * @param point 2D 平面座標
+     * @param point 2D 平面座標（double 精度，支援 TM2 大座標）
      */
-    void addPoint(const QVector2D& point);
+    void addPoint(const QPointF& point);
     
     /**
      * @brief 設定當前追蹤點
-     * @param point 2D 平面座標
+     * @param point 2D 平面座標（double 精度，支援 TM2 大座標）
      */
-    void setCurrentPoint(const QVector2D& point);
+    void setCurrentPoint(const QPointF& point);
     
     /**
      * @brief 取得所有已加入的點
      */
-    QVector<QVector2D> points() const;
+    QVector<QPointF> points() const;
     
     /**
      * @brief 清除所有點
@@ -287,7 +288,7 @@ private:
     /**
      * @brief 平面座標轉世界座標
      */
-    QVector3D planeToWorld(const QVector2D& planePt) const;
+    QVector3D planeToWorld(const QPointF& planePt) const;
     
     class Private;
     Private* d;

@@ -243,6 +243,7 @@ SOURCES += \
     src/command/GeneralDimCommand.cpp \
     src/cad/sketch/GeneralDimClassifier.cpp \
     src/command/ExtrudeCommand.cpp \
+    src/command/SetOriginCommand.cpp \
     src/command/alignment/AlignmentAddSpiralCommand.cpp \
     src/command/alignment/AlignmentEditCommand.cpp \
     src/command/alignment/AlignmentFixCurveCommand.cpp \
@@ -367,6 +368,7 @@ HEADERS += \
     src/cad/sketch/GeneralDimClassifier.h \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
+    src/command/SetOriginCommand.h \
     src/command/alignment/AlignmentAddSpiralCommand.h \
     src/command/alignment/AlignmentCommandBase.h \
     src/command/alignment/AlignmentEditCommand.h \

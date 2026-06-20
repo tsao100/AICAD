@@ -9,6 +9,7 @@
 #include "core/Application.h"
 #include "cad/Feature.h"
 #include "FeatureBrowser.h"
+#include "FeatureTreeItem.h"
 #include "cad/Document.h"
 
 #include <QStyledItemDelegate>
@@ -110,6 +111,12 @@ public:
         if (event->type() == QEvent::MouseButtonRelease) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (eyeIconRect(opt.rect).contains(me->pos())) {
+                // ── E.2 VAlignment 子節點不允許單獨切換可見性 ──────────────
+                // 可見性由其父 TrackCenterLine 統一控制
+                int itype = index.data(Qt::UserRole + 1).toInt();
+                if (static_cast<ui::ItemType>(itype) == ui::ItemType::VAlignment)
+                    return false;
+
                 bool cur = index.data(Qt::UserRole + 2).toBool();
                 bool next = !cur;
 

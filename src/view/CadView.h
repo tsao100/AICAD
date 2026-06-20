@@ -9,6 +9,7 @@
 #define AICAD_VIEW_CADVIEW_H
 
 #include <QWidget>
+#include <QPointF>
 #include <QVector2D>
 #include <QPushButton>
 
@@ -206,12 +207,21 @@ public:
      * @return 平面座標
      */
     QVector2D screenToPlane(const QPoint& screenPos) const;
+    QPointF screenToPlaneD(const QPoint& screenPos) const;   // double 精度版（Alignment 用）
 
     /**
      * @brief 啟用/停用網格顯示
      * @param enabled 是否啟用
      */
     void setGridEnabled(bool enabled);
+
+    /**
+     * @brief 設定 TM2 參考座標原點（東向 E, 北向 N），供狀態列顯示相對座標用。
+     *        不影響幾何計算（幾何管道已全程使用 double）。
+     */
+    void setCoordinateOffset(double easting, double northing);
+    double coordinateOffsetE() const;
+    double coordinateOffsetN() const;
 
     /**
      * @brief 檢查網格是否啟用
@@ -314,7 +324,7 @@ Q_SIGNALS:
      * @brief 取得點時發出
      * @param point 平面座標
      */
-    void pointAcquired(QVector2D point);
+    void pointAcquired(QPointF point);   // double 精度（Alignment 用）
 
     /**
      * @brief 取得點時（帶草圖點 ID）發出 — 用於距離/角度約束選點
@@ -322,7 +332,7 @@ Q_SIGNALS:
      * @param geomUuid  snap 到的草圖幾何 UUID（若無法辨識則為空）
      * @param geomHandle snap 到的端點 handle（-1 = WholeGeom）
      */
-    void geomRefPicked(QVector2D point, QString geomUuid, int geomHandle);
+    void geomRefPicked(QPointF point, QString geomUuid, int geomHandle);
 
     /// ✅ Task E: PlaceDimLine 模式 — 滑鼠移動時的預覽偏移
     void dimLinePosPreview(double offsetX, double offsetY);

@@ -154,6 +154,8 @@ menu|Railway|alignmentfixcurve|Fixed Curve||
 menu|Railway|alignmentfloatcurve|Float Curve||
 menu|Railway|alignmentscs|SCS Curve||
 menu|Railway|separator|||
+menu|Railway|setorigin|Set TM2 Origin…||
+menu|Railway|separator|||
 menu|Railway|profileview|Vertical Profile View||
 menu|Railway|valigncheckgrade|Check Grade||
 

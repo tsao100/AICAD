@@ -18,7 +18,7 @@
  *   計算點到線段的最短距離，回傳最近切線元素的 index。
  *
  *   此函式（以相同邏輯）供 AlignmentSCSCommand 複用：
- *     static int nearestTangentIndex(const QVector2D& clickPt,
+ *     static int nearestTangentIndex(const QPointF& clickPt,
  *                                    const railway::HorizontalAlignmentEdit* edit);
  *
  * @see AlignmentCommandBase
@@ -27,6 +27,7 @@
 
 #include "command/alignment/AlignmentCommandBase.h"
 #include "command/CommandFactory.h"
+#include <QPointF>
 #include <QVector2D>
 
 namespace aicad {
@@ -52,7 +53,7 @@ public:
      * 距離定義：點到線段（startPI → endPI）的最短歐幾里得距離。
      */
     static int nearestTangentIndex(
-        const QVector2D&                            clickPt,
+        const QPointF&  clickPt,
         const railway::HorizontalAlignmentEdit*     edit);
 
 private:
@@ -64,7 +65,7 @@ private:
         WaitingForConfirm   ///< Radius 已取得，顯示預覽，等待 Enter 或下一個點
     };
 
-    void handlePointAcquired(const QVector2D& point);
+    void handlePointAcquired(const QPointF& point);
     void handleNumberInput(const QString& text);
     void handleCancelled();
     void commitCurve();
