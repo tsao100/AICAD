@@ -98,6 +98,7 @@ public:
     struct OverlayEntry {
         Handle(AIS_InteractiveObject) obj;
         QList<int> modes;
+        bool visible = true;  ///< false = eye-close 隱藏（displayAllFeatures 不重新 Display）
     };
 
     /**
@@ -198,6 +199,10 @@ public:
     /// 登錄「常駐」AIS 物件，displayAllFeatures 的 RemoveAll 後會自動重新顯示
     void addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
                        const QList<int>& activationModes = {});
+    /// 設定 overlay 物件的 eye-close 可見性。
+    /// visible=false 時從 OCCT context 移除但保留 overlayObjects 登錄，
+    /// 使 displayAllFeatures() 重建時不重新顯示它。
+    void setOverlayAISVisible(const Handle(AIS_InteractiveObject)& obj, bool visible);
     /// 移除登錄並從 context 移除
     void removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj);
 
@@ -219,8 +224,12 @@ public:
      * @brief 設定 TM2 參考座標原點（東向 E, 北向 N），供狀態列顯示相對座標用。
      *        不影響幾何計算（幾何管道已全程使用 double）。
      */
+    /// @deprecated Phase 2: 改由 ProjectOrigin::instance().setOrigin() 驅動。
+    ///             UIManager 在收到 PROJECT_ORIGIN_CHANGED 後呼叫此函式作為相容層。
     void setCoordinateOffset(double easting, double northing);
+    /// @deprecated 改用 ProjectOrigin::instance().originE()
     double coordinateOffsetE() const;
+    /// @deprecated 改用 ProjectOrigin::instance().originN()
     double coordinateOffsetN() const;
 
     /**

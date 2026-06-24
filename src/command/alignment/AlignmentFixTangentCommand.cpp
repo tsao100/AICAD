@@ -96,8 +96,8 @@ void AlignmentFixTangentCommand::handlePointAcquired(const QPointF& point)
 
     outputMessage(QString("Fixed Tangent #%1  (%2,%3) → (%4,%5)")
                       .arg(idx)
-                      .arg(p1.x(), 0, 'f', 2).arg(p1.y(), 0, 'f', 2)
-                      .arg(p2.x(), 0, 'f', 2).arg(p2.y(), 0, 'f', 2));
+                      .arg(m_startPoint.x(), 0, 'f', 2).arg(m_startPoint.y(), 0, 'f', 2)
+                      .arg(point.x(), 0, 'f', 2).arg(point.y(), 0, 'f', 2));
 
     // Chain: current end becomes new start (continuous mode)
     m_startPoint = point;

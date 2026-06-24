@@ -24,6 +24,7 @@
 #include "cad/grips/GripManager.h"
 #include "command/CommandManager.h"
 #include "geometry/GeometryBuilder.h"
+#include "core/geometry/ProjectOrigin.h"
 
 #include "cad/sketch/DimensionLineAIS.h"
 #include "cad/sketch/SketchConstraint.h"
@@ -892,15 +893,19 @@ void CadView::displayAllFeatures() {
 
     d->context->UpdateCurrentViewer();
 
-    // ── 重新加回 overlay 物件（如 ExtrudeManipulator 箭頭）──────────────
+    // ── 重新加回 overlay 物件（如 ExtrudeManipulator 箭頭），依 visible 旗標過濾 ──
+    // eye-close 的 AlignmentRenderer overlay (visible==false) 不重新顯示，
+    // 確保 Sketch draw commands 進入時不會意外顯示被 eye-close 的 Alignment。
+    bool anyOverlayDisplayed = false;
     for (const auto& entry : d->overlayObjects) {
-        if (!entry.obj.IsNull()) {
+        if (!entry.obj.IsNull() && entry.visible) {
             d->context->Display(entry.obj, Standard_False);
             for (int m : entry.modes)
                 d->context->Activate(entry.obj, m);
+            anyOverlayDisplayed = true;
         }
     }
-    if (!d->overlayObjects.isEmpty())
+    if (anyOverlayDisplayed)
         d->context->UpdateCurrentViewer();
 
     d->isDisplayingAllFeatures = false;
@@ -960,6 +965,34 @@ void CadView::removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj)
     if (!d->context.IsNull() && !obj.IsNull()
         && d->context->IsDisplayed(obj)) {
         d->context->Remove(obj, Standard_True);
+    }
+}
+
+void CadView::setOverlayAISVisible(const Handle(AIS_InteractiveObject)& obj, bool visible)
+{
+    if (obj.IsNull()) return;
+
+    // 更新登錄中的 visible 旗標
+    for (auto& entry : d->overlayObjects) {
+        if (entry.obj == obj) {
+            entry.visible = visible;
+            break;
+        }
+    }
+
+    if (d->context.IsNull()) return;
+
+    if (visible) {
+        // 重新顯示
+        if (!d->context->IsDisplayed(obj))
+            d->context->Display(obj, Standard_False);
+        d->context->UpdateCurrentViewer();
+    } else {
+        // 從 OCCT context 移除（但保留 overlayObjects 登錄，供下次 setVisible(true) 恢復）
+        if (d->context->IsDisplayed(obj)) {
+            d->context->Remove(obj, Standard_False);
+            d->context->UpdateCurrentViewer();
+        }
     }
 }
 
@@ -1159,8 +1192,23 @@ void CadView::setCoordinateOffset(double easting, double northing) {
     qDebug() << "[CadView] Coordinate offset set: E=" << easting << "N=" << northing;
 }
 
-double CadView::coordinateOffsetE() const { return d->coordinateOffsetE; }
-double CadView::coordinateOffsetN() const { return d->coordinateOffsetN; }
+/// @deprecated 使用 ProjectOrigin::instance().originE() 取代
+double CadView::coordinateOffsetE() const
+{
+    // Phase 2 deprecated compat: 若 ProjectOrigin 已設定，以它為準
+    using namespace aicad::core::geometry;
+    if (ProjectOrigin::instance().isSet())
+        return ProjectOrigin::instance().originE();
+    return d->coordinateOffsetE;
+}
+/// @deprecated 使用 ProjectOrigin::instance().originN() 取代
+double CadView::coordinateOffsetN() const
+{
+    using namespace aicad::core::geometry;
+    if (ProjectOrigin::instance().isSet())
+        return ProjectOrigin::instance().originN();
+    return d->coordinateOffsetN;
+}
 
 void CadView::onSketchRebuilt()
 {
@@ -1958,6 +2006,35 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
+    // Phase 3: Navigation 模式游標座標雙顯示（Local + TM2 Global）
+    if (d->mode == InteractionMode::Navigation || d->mode == InteractionMode::Idle) {
+        auto* bus = core::Application::instance() ? core::Application::instance()->eventBus() : nullptr;
+        if (bus) {
+            QPointF localPt = screenToPlaneD(event->pos());
+            // 若 OSnap 鎖定，用 snap 座標（精度更高）
+            if (m_snapManager && m_snapManager->isSnapActive()) {
+                auto snapPt = m_snapManager->snapPoint2DF();
+                if (snapPt.has_value()) localPt = snapPt.value();
+            }
+            using namespace aicad::core::geometry;
+            const auto& origin = ProjectOrigin::instance();
+            QString coordMsg;
+            if (origin.isSet()) {
+                const QPointF global = origin.toGlobal(localPt);
+                coordMsg = QString("E: %1   N: %2   (Local: %3, %4)")
+                    .arg(global.x(), 0, 'f', 3)
+                    .arg(global.y(), 0, 'f', 3)
+                    .arg(localPt.x(), 0, 'f', 3)
+                    .arg(localPt.y(), 0, 'f', 3);
+            } else {
+                coordMsg = QString("X: %1   Y: %2")
+                    .arg(localPt.x(), 0, 'f', 3)
+                    .arg(localPt.y(), 0, 'f', 3);
+            }
+            Q_EMIT statusMessageRequested(coordMsg, 0); // timeout=0 → 持續顯示直到下一次更新
+        }
+    }
+
     // 草圖模式：更新橡皮筋
     if (d->mode == InteractionMode::Sketching) {
         if (d->rubberBand) {
@@ -1972,7 +2049,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
                 planePtF = screenToPlaneD(event->pos());
             }
 
-            d->rubberBand->setCurrentPoint(QVector2D(planePtF.x(), planePtF.y()));
+            d->rubberBand->setCurrentPoint(planePtF);  // Phase fix: QPointF直接傳入
             d->rubberBand->update();
         }
     }

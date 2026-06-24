@@ -44,6 +44,7 @@
 #include "command/GripMoveCommand.h"
 #include "view/AlignmentRenderer.h"
 #include "railway/AlignmentDocument.h"
+#include "core/geometry/ProjectOrigin.h"
 #include "railway/RailwayAlignment.h"
 #include "ui/VAlignEditorDockWidget.h"   // Step 16
 
@@ -673,8 +674,14 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         connect(docMgr, &core::DocumentManager::currentDocumentChanged,
                 this, [this](cad::Document* doc) {
             if (!doc) return;
-            connect(doc, &cad::Document::allFeaturesLoaded,
-                    this, [this, doc]() {
+            // Qt5 相容的 single-shot connect：用 QSharedPointer<QMetaObject::Connection>
+            // 在 lambda 內部 disconnect 自身，取代 Qt6 的 Qt::SingleShotConnection。
+            auto connPtr = QSharedPointer<QMetaObject::Connection>::create();
+            *connPtr = connect(doc, &cad::Document::allFeaturesLoaded,
+                    this, [this, doc, connPtr]() {
+                // 只執行一次後立刻斷開
+                QObject::disconnect(*connPtr);
+
                 // 清除舊的 renderers（若有）
                 for (auto* r : d->tclRenderers) delete r;
                 d->tclRenderers.clear();
@@ -702,7 +709,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 }
                 qDebug() << "[UIManager] rebuildTclRenderers (allFeaturesLoaded):"
                          << d->tclRenderers.size() << "tracks";
-            }, Qt::SingleShotConnection);  // 只連接一次，避免重複
+            });  // Qt5 compatible single-shot via self-disconnect
         });
 
         // 7. 連接主視窗關閉信號
@@ -823,32 +830,50 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
-        // ── B.2 SETORIGIN 命令發布的原點設定 ─────────────────────────────────
-        bus->subscribe("command.set-coordinate-origin", this,
+        // ── B.2 PROJECT_ORIGIN_CHANGED — 由 ProjectOrigin::publishChanged() 觸發 ─
+        // Phase 0 fix: 統一訂閱 Events::PROJECT_ORIGIN_CHANGED，不再用舊字串事件。
+        // Phase 2:     更新 CadView::coordinateOffset（相容層）+ originSet flag。
+        bus->subscribe(core::Events::PROJECT_ORIGIN_CHANGED, this,
                        [this](const QVariant& data) {
                            QVariantMap map = data.toMap();
-                           double e = map["easting"].toDouble();
-                           double n = map["northing"].toDouble();
+                           if (!map.value("isSet").toBool()) return;
+                           double e = map["originE"].toDouble();
+                           double n = map["originN"].toDouble();
+                           // Phase 2: CadView deprecated 相容層（coordinateOffsetE/N getter 仍需此值）
                            if (d->cadView) {
                                d->cadView->setCoordinateOffset(e, n);
                                d->originSet = true;
-                               qDebug() << "[UIManager] Coordinate origin set: E=" << e << "N=" << n;
+                               qDebug() << "[UIManager] PROJECT_ORIGIN_CHANGED: E=" << e << "N=" << n;
                            }
                        });
 
         // ✅ Monitor user interactions for debugging/logging
         bus->subscribe(core::Events::POINT_ACQUIRED, this,
-                       [](const QVariant& data) {
+                       [this](const QVariant& data) {
                            QVariantMap map = data.toMap();
-                           QPointF point = map["point"].value<QPointF>();
-                           qDebug() << "[UIManager] User clicked point:" << point.x() << point.y();
-                           // Could update coordinate display here
+                           QPointF localPt = map["point"].value<QPointF>();
+                           qDebug() << "[UIManager] User clicked point:" << localPt.x() << localPt.y();
+                           // Phase 5: 將 Local 座標轉成 TM2 Global 後顯示於 status bar
+                           using namespace aicad::core::geometry;
+                           const QPointF globalPt = ProjectOrigin::instance().toGlobal(localPt);
+                           const QString coordMsg =
+                               QString("E: %1   N: %2")
+                                   .arg(globalPt.x(), 0, 'f', 3)
+                                   .arg(globalPt.y(), 0, 'f', 3);
+                           if (d->mainWindow)
+                               d->mainWindow->statusBar()->showMessage(coordMsg, 5000);
                        });
 
         // ── A.5 COORDINATE_INPUT → POINT_ACQUIRED 橋接 ──────────────────────
         // CommandLineManager 在 InputType::Point 狀態發布 COORDINATE_INPUT（字串），
         // 此橋接解析為 QPointF 並 re-publish POINT_ACQUIRED，使 alignment commands
-        // 可透過鍵盤輸入座標（支援 TM2 大座標，如 250100.123,2650200.456）
+        // 可透過鍵盤輸入座標。
+        //
+        // Phase 6 — TM2 邊界轉換規則：
+        //   • 使用者輸入的座標若量級 > 10000，視為 TM2 Global（絕對值），
+        //     透過 ProjectOrigin::toLocal() 轉成 Local 後再送入 POINT_ACQUIRED。
+        //   • 量級 ≤ 10000 視為已是 Local 座標（相對偏移），直接使用。
+        //   此規則支援直接貼上 TM2 坐標，也支援輸入相對距離。
         bus->subscribe(core::Events::COORDINATE_INPUT, this,
                        [bus](const QVariant& data) {
                            QString text = data.toString().trimmed();
@@ -860,11 +885,23 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            double x = parts[0].toDouble(&okX);
                            double y = parts[1].toDouble(&okY);
                            if (!okX || !okY) return;
+
+                           // Phase 6: TM2 大座標自動轉換
+                           using namespace aicad::core::geometry;
+                           auto& origin = ProjectOrigin::instance();
+                           QPointF pt(x, y);
+                           if (origin.isSet() && (qAbs(x) > 10000.0 || qAbs(y) > 10000.0)) {
+                               // 輸入為 TM2 Global 座標 → 轉成 Local
+                               pt = origin.toLocal(x, y);
+                               qDebug() << "[UIManager] COORDINATE_INPUT TM2→Local:"
+                                        << x << y << "->" << pt;
+                           }
+
                            QVariantMap m;
-                           m["point"] = QVariant::fromValue(QPointF(x, y));
+                           m["point"] = QVariant::fromValue(pt);
                            bus->publish(core::Events::POINT_ACQUIRED, m);
                            qDebug() << "[UIManager] COORDINATE_INPUT → POINT_ACQUIRED:"
-                                    << x << y;
+                                    << pt.x() << pt.y();
                        });
 
         // ── Extrude 建立 ─────────────────────────────────────────────
@@ -1574,9 +1611,16 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         if (!d->originSet) {
                             constexpr double kDefaultE = 250000.0;
                             constexpr double kDefaultN = 2650000.0;
-                            d->cadView->setCoordinateOffset(kDefaultE, kDefaultN);
+                            // Phase 2 fix: 統一透過 ProjectOrigin::setOrigin() 驅動，
+                            // publishChanged() 會觸發 PROJECT_ORIGIN_CHANGED，
+                            // 由 B.2 handler 呼叫 CadView::setCoordinateOffset（相容層）。
+                            // 不再直接呼叫 setCoordinateOffset()。
+                            using namespace aicad::core::geometry;
+                            if (!ProjectOrigin::instance().isSet()) {
+                                ProjectOrigin::instance().setOrigin(kDefaultE, kDefaultN, 0.0);
+                            }
                             d->originSet = true;
-                            qDebug() << "[UIManager] Auto-set TM2 origin: E="
+                            qDebug() << "[UIManager] Auto-set TM2 origin via ProjectOrigin: E="
                                      << kDefaultE << "N=" << kDefaultN;
                         }
                     }
@@ -2187,7 +2231,7 @@ void UIManager::setupSketchPanel()
     });
     if (d->cadView) {
         connect(d->cadView, &view::CadView::geomRefPicked,
-                this, [this](QVector2D planePt, QString geomUuid, int geomHandle) {
+                this, [this](QPointF planePt, QString geomUuid, int geomHandle) {
             // 舊路徑：pickSession（DimConstraintCommand 使用）
             if (d->pickSession->isActive()) {
                 d->pickSession->feedPoint(planePt, geomUuid, geomHandle);
@@ -2850,8 +2894,8 @@ void UIManager::setStatusMessage(const QString& message, int timeout) {
     if (d->mainWindow)
         d->mainWindow->statusBar()->showMessage(message, timeout);
 
-    if (d->commandLine && !message.isEmpty())
-        d->commandLine->appendHistory(message);
+//    if (d->commandLine && !message.isEmpty())
+//        d->commandLine->appendHistory(message);
 }
 
 // 添加 getter

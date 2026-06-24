@@ -25,6 +25,7 @@
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
+#include "core/geometry/ProjectOrigin.h"
 #include <QDebug>
 #include <QRegularExpression>
 
@@ -219,25 +220,29 @@ void SetOriginCommand::applyOffset(const QPointF& modelPt)
 {
     if (m_isFinishing) return;
 
-    const double offsetE = m_easting  - modelPt.x();
-    const double offsetN = m_northing - modelPt.y();
+    // ── Phase 2: 直接寫入 ProjectOrigin 單例 ─────────────────────────────
+    // origin = TM2 target − model point（即 CadView Local 原點在 TM2 系中的位置）
+    // ProjectOrigin::setOrigin() 會自動發布 Events::PROJECT_ORIGIN_CHANGED，
+    // UIManager 與 CadView 再透過訂閱同步。
+    const double originE = m_easting  - modelPt.x();
+    const double originN = m_northing - modelPt.y();
 
-    EventBus* bus = Application::instance()->eventBus();
-    QVariantMap d;
-    d["easting"]  = offsetE;
-    d["northing"] = offsetN;
-    bus->publish("command.set-coordinate-offset", d);
+    using namespace aicad::core::geometry;
+    ProjectOrigin::instance().setOrigin(originE, originN, 0.0);
+
+    // Phase 0 fix: 統一發布 PROJECT_ORIGIN_CHANGED（不再發布舊字串事件）
+    // UIManager 透過訂閱 PROJECT_ORIGIN_CHANGED 同步 CadView。
 
     outputMessage(
         QString("TM2 origin set:\n"
                 "  Model point  (%1, %2)\n"
                 "  TM2 target   E=%3  N=%4\n"
-                "  Offset       ΔE=%5  ΔN=%6")
+                "  OriginE=%5  OriginN=%6")
             .arg(modelPt.x(), 0, 'f', 3).arg(modelPt.y(), 0, 'f', 3)
             .arg(m_easting,   0, 'f', 3).arg(m_northing,  0, 'f', 3)
-            .arg(offsetE,     0, 'f', 3).arg(offsetN,     0, 'f', 3));
+            .arg(originE,     0, 'f', 3).arg(originN,     0, 'f', 3));
 
-    qDebug() << "[SetOrigin] offset applied: E=" << offsetE << "N=" << offsetN;
+    qDebug() << "[SetOrigin] ProjectOrigin set: E=" << originE << "N=" << originN;
 
     m_isFinishing = true;
     Q_EMIT finished(CommandResult::Success("TM2 coordinate origin set"));

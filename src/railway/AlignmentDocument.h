@@ -292,9 +292,21 @@ public:
     QJsonObject toJson()              const;
     bool        fromJson(const QJsonObject& obj);
 
+    // Phase 4: 此文件建立時所依據的 TM2 Project Origin（供多檔疊圖衝突偵測）
+    bool    hasDocOrigin() const;
+    double  docOriginE()   const;
+    double  docOriginN()   const;
+    QString docEpsgCode()  const;
+
 private:
     std::unique_ptr<HorizontalAlignmentEdit> m_horizontal;
     std::unique_ptr<VerticalAlignmentEdit>   m_vertical;
+
+    // Phase 4: 文件內嵌 origin（開檔衝突偵測用）
+    bool    m_hasDocOrigin = false;
+    double  m_docOriginE   = 0.0;
+    double  m_docOriginN   = 0.0;
+    QString m_docEpsgCode  = QStringLiteral("EPSG:3826");
     QString                                  m_activeTclId;
 };
 

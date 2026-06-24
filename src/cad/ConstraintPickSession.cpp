@@ -1,3 +1,4 @@
+#include <QPointF>
 #include "ConstraintPickSession.h"
 #include "Sketch.h"
 #include <QDebug>
@@ -161,13 +162,16 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
     return GeomRef(QString(), GeomHandle::WholeGeom);
 }
 
-void ConstraintPickSession::feedPoint(const QVector2D& planePt,
+void ConstraintPickSession::feedPoint(const QPointF& planePt,
                                       const QString& geomUuid,
                                       int geomHandle)
 {
     if (!m_active) return;
 
-    GeomRef ref = makeRef(geomUuid, geomHandle, planePt);
+    // QPointF → QVector2D（Sketch 內部座標仍使用 QVector2D）
+    const QVector2D planePtV(static_cast<float>(planePt.x()),
+                             static_cast<float>(planePt.y()));
+    GeomRef ref = makeRef(geomUuid, geomHandle, planePtV);
     m_refs.append(ref);
 
     qDebug() << "[PickSession] point" << m_refs.size() << "/"  << m_required

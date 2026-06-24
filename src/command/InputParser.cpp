@@ -1,4 +1,5 @@
 #include "InputParser.h"
+#include "core/geometry/ProjectOrigin.h"
 #include <QRegularExpression>
 #include <QtMath>
 #include <QDebug>
@@ -102,7 +103,18 @@ QVector2D InputParser::parseAbsoluteCoord(const QString& input) {
     double y = parts[1].trimmed().toDouble(&okY);
 
     if (okX && okY) {
-        return QVector2D(x, y);
+        // Phase 3: TM2 大座標自動轉換
+        // 若數值量級 > 10000 且 ProjectOrigin 已設定，視為 TM2 Global 座標，
+        // 先轉成 Local 再以 float QVector2D 返回（CAD 指令收到的是 Local 小座標）。
+        using namespace aicad::core::geometry;
+        auto& origin = ProjectOrigin::instance();
+        if (origin.isSet() && (qAbs(x) > 10000.0 || qAbs(y) > 10000.0)) {
+            QPointF local = origin.toLocal(x, y);
+            qDebug() << "[InputParser] TM2→Local:" << x << y << "->" << local;
+            return QVector2D(static_cast<float>(local.x()),
+                             static_cast<float>(local.y()));
+        }
+        return QVector2D(static_cast<float>(x), static_cast<float>(y));
     }
 
     return QVector2D();

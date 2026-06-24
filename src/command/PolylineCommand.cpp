@@ -61,7 +61,8 @@ CommandResult PolylineCommand::execute(const CommandContext& context) {
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap  map   = data.toMap();
-                       QVector2D    point = map["point"].value<QVector2D>();
+                       QPointF _ptF = map["point"].value<QPointF>();
+                       QVector2D point(static_cast<float>(_ptF.x()), static_cast<float>(_ptF.y()));
                        QMetaObject::invokeMethod(this, [this, point]() {
                            this->handlePointAcquired(point);
                        }, Qt::QueuedConnection);
@@ -97,7 +98,7 @@ void PolylineCommand::handlePointAcquired(QVector2D point) {
     // Update rubber-band anchor to the latest point
     QVariantMap rubberUpdate;
     rubberUpdate["action"] = "addPoint";
-    rubberUpdate["point"]  = QVariant::fromValue(point);
+    rubberUpdate["point"] = QVariant::fromValue(QPointF(point.x(), point.y()));
     bus->publish("command.update-rubber-band", rubberUpdate);
 
     if (isFirstPoint) {

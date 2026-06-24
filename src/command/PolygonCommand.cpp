@@ -64,7 +64,8 @@ CommandResult PolygonCommand::execute(const CommandContext& context) {
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map = data.toMap();
-                       QVector2D point = map["point"].value<QVector2D>();
+                       QPointF _ptF = map["point"].value<QPointF>();
+                       QVector2D point(static_cast<float>(_ptF.x()), static_cast<float>(_ptF.y()));
 
                        // ✅ Use QMetaObject::invokeMethod for thread safety
                        QMetaObject::invokeMethod(this, [this, point]() {
@@ -104,7 +105,7 @@ void PolygonCommand::handlePointAcquired(QVector2D point)
         // ✅ Update rubber band with center point
         QVariantMap rubberUpdate;
         rubberUpdate["action"] = "clearAndAdd";
-        rubberUpdate["point"] = QVariant::fromValue(point);
+        rubberUpdate["point"] = QVariant::fromValue(QPointF(point.x(), point.y()));
         rubberUpdate["polygonCenter"] = QVariant::fromValue(point);
         rubberUpdate["polygonSides"] = m_sides;
         bus->publish("command.update-rubber-band", rubberUpdate);

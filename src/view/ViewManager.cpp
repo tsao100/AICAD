@@ -161,13 +161,13 @@ ViewManager::ViewManager(QObject* parent)
                     rubber->clear();
 
                     if (update.contains("point")) {
-                        QVector2D point = update["point"].value<QVector2D>();
+                        QPointF point = update["point"].value<QPointF>();
                         rubber->addPoint(point);
                     }
                     rubber->update();   // ✅ 新增：立即重繪
                 } else if (action == "addPoint") {
                     if (update.contains("point")) {
-                        QVector2D point = update["point"].value<QVector2D>();
+                        QPointF point = update["point"].value<QPointF>();
                         rubber->addPoint(point);
                     }
                 } else if (action == "clear") {
