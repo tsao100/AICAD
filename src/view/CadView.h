@@ -278,6 +278,13 @@ public:
     QJsonObject saveViewState() const;
     void restoreViewState(const QJsonObject& state);
 
+    /// 顯示 H-Alignment edit 模式的返回按鈕（右上角）
+    void showReturnAlignmentButton();
+    /// 隱藏返回按鈕
+    void hideReturnAlignmentButton();
+    /// 控制 status bar 游標座標顯示（true = 不顯示）
+    void setSuppressCoordDisplay(bool suppress);
+
 public Q_SLOTS:
 
     void onSketchRebuilt();
@@ -317,6 +324,9 @@ public Q_SLOTS:
     /** 高亮選取的 region */
     void highlightSketchRegion(const QString& regionUuid);
 Q_SIGNALS:
+    /// 返回按鈕被按下（結束 H-Alignment edit 模式）
+    void returnAlignmentRequested();
+
     /**
      * @brief 視圖類型改變時發出
      * @param type 新的視圖類型
@@ -489,11 +499,14 @@ private:
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面
 
     QPushButton*        m_finishSketchButton;
+    QPushButton*        m_returnAlignmentButton = nullptr;  ///< H-Alignment edit 返回按鈕
+    bool                m_suppressCoordDisplay  = false;    ///< true = 不在 status bar 顯示游標座標
     DimPreviewOverlay*  m_dimOverlay = nullptr;   ///< GDIM 尺寸線預覽 overlay
     bool m_viewReadyPublished = false;
 
     void showFinishSketchButton();
     void hideFinishSketchButton();
+
     void showSketchContextMenu(const QPoint& screenPos);
 
     // ── Object Snap ──────────────────────────────────────────

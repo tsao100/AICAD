@@ -206,6 +206,28 @@ CadView::CadView(QWidget* parent)
     connect(m_finishSketchButton, &QPushButton::clicked,
             this, &CadView::onFinishSketchClicked);
 
+    // ── Return button（H-Alignment edit 模式，右上角圖示按鈕）──────────────
+    m_returnAlignmentButton = new QPushButton(this);
+    m_returnAlignmentButton->setIcon(QIcon(":/icons/return.png"));
+    m_returnAlignmentButton->setIconSize(QSize(24, 24));
+    m_returnAlignmentButton->setFixedSize(36, 36);
+    m_returnAlignmentButton->setToolTip(tr("結束 Alignment 編輯模式"));
+    m_returnAlignmentButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: rgba(60,60,60,200);"
+        "  border: 1px solid #888;"
+        "  border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: rgba(80,80,80,230);"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: rgba(40,40,40,255);"
+        "}");
+    m_returnAlignmentButton->hide();
+    connect(m_returnAlignmentButton, &QPushButton::clicked,
+            this, &CadView::returnAlignmentRequested);
+
     // GDIM: 尺寸預覽用 OCCT Presentation（仿 RubberBand），不使用 Qt widget overlay
     m_dimOverlay = new DimPreviewOverlay(this);
     // context 在 initializeViewer() 後才有效，在 showEvent 中呼叫 setContext
@@ -1293,6 +1315,27 @@ void CadView::hideFinishSketchButton() {
     m_finishSketchButton->hide();
 }
 
+void CadView::showReturnAlignmentButton() {
+    if (!m_returnAlignmentButton) return;
+    // 右上角：距右邊 10px，距上邊 10px
+    m_returnAlignmentButton->move(width() - m_returnAlignmentButton->width() - 10, 10);
+    m_returnAlignmentButton->show();
+    m_returnAlignmentButton->raise();
+}
+
+void CadView::hideReturnAlignmentButton() {
+    if (m_returnAlignmentButton)
+        m_returnAlignmentButton->hide();
+}
+
+void CadView::setSuppressCoordDisplay(bool suppress)
+{
+    m_suppressCoordDisplay = suppress;
+    // 立刻清除 status bar 顯示
+    if (suppress)
+        Q_EMIT statusMessageRequested(QString(), 0);
+}
+
 void CadView::onFinishSketchClicked() {
     if (d->rubberBand) {
         d->rubberBand->clearPoints();
@@ -1558,6 +1601,9 @@ void CadView::resizeEvent(QResizeEvent* event) {
 
     if (m_finishSketchButton) {
         m_finishSketchButton->setGeometry(width() - 120, 10, 110, 30);
+    }
+    if (m_returnAlignmentButton && m_returnAlignmentButton->isVisible()) {
+        m_returnAlignmentButton->move(width() - m_returnAlignmentButton->width() - 10, 10);
     }
 
     // GDIM overlay 是 OCCT Presentation，resize 無需更新 widget geometry
@@ -2007,7 +2053,9 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     }
 
     // Phase 3: Navigation 模式游標座標雙顯示（Local + TM2 Global）
-    if (d->mode == InteractionMode::Navigation || d->mode == InteractionMode::Idle) {
+    // m_suppressCoordDisplay == true 時（Alignment edit 結束後）不顯示任何座標
+    if (!m_suppressCoordDisplay &&
+        (d->mode == InteractionMode::Navigation || d->mode == InteractionMode::Idle)) {
         auto* bus = core::Application::instance() ? core::Application::instance()->eventBus() : nullptr;
         if (bus) {
             QPointF localPt = screenToPlaneD(event->pos());

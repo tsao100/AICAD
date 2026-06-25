@@ -128,6 +128,7 @@ public:
 
     // ── Railway alignment ──────────────────────────────────────
     railway::AlignmentDocument*  alignmentDoc      = nullptr;  ///< active edit session
+    QString                      activeTclId;                   ///< H-Alignment edit 中的 TCL id
     ui::VAlignEditorDockWidget*  vAlignDock        = nullptr;  ///< Step 16
 
     /// Per-TCL AlignmentDocument instances (key = tcl->id())
@@ -415,7 +416,59 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // 建立並加入 OSnap 工具列
         // 改用信號，等 viewer 初始化完畢再建立 toolbar
-        connect(d->cadView, &view::CadView::viewInitialized,
+        // ── 返回按鈕 → 結束 H-Alignment edit 模式 ─────────────────────────
+    connect(d->cadView, &view::CadView::returnAlignmentRequested,
+            this, [this, docMgr]() {
+                auto* doc = docMgr->currentDocument();
+                core::EventBus* bus = core::Application::instance()->eventBus();
+
+                // 1. 隱藏返回按鈕
+                d->cadView->hideReturnAlignmentButton();
+
+                // 2. Status bar 停止顯示座標（清除並抑制後續游標座標 emit）
+                d->cadView->setSuppressCoordDisplay(true);
+                if (d->mainWindow)
+                    d->mainWindow->statusBar()->clearMessage();
+
+                // 3. 將該 HAlignment item 設為 eyeClose（setHAlignVisible(false)）
+                //    並透過 halign-visibility-changed 讓 renderer 隱藏
+                if (!d->activeTclId.isEmpty() && doc) {
+                    auto* tcl = doc->findTrackCenterLine(d->activeTclId);
+                    if (tcl) {
+                        tcl->setHAlignVisible(false);
+                        doc->setModified(true);
+                    }
+                    // renderer setVisible(false)
+                    auto* r = d->tclRenderers.value(d->activeTclId, nullptr);
+                    if (r) r->setVisible(false);
+                    // 通知 FeatureBrowser 更新 eye icon 為 eyeClose
+                    if (doc) Q_EMIT doc->treeStructureChanged();
+                    // 發布 halign-visibility-changed 供其他模組訂閱
+                    QVariantMap hv;
+                    hv["tclId"]   = d->activeTclId;
+                    hv["visible"] = false;
+                    bus->publish("railway.halign-visibility-changed", hv);
+                }
+
+                // 4. 座標不再使用 TM2：清除 ProjectOrigin，重設 originSet flag
+                using namespace aicad::core::geometry;
+                ProjectOrigin::instance().clear();  // 發布 PROJECT_ORIGIN_CHANGED
+                d->originSet = false;
+
+                // 5. 關閉格線
+                d->cadView->setGridEnabled(false);
+
+                // 6. 清除 active alignment doc / tclId
+                d->alignmentDoc = nullptr;
+                d->activeTclId.clear();
+
+                // 7. 發布 alignment-edit-ended 讓其他模組知道
+                bus->publish("railway.alignment-edit-ended", QVariant{});
+
+                qDebug() << "[UIManager] H-Alignment edit ended via return button";
+            });
+
+    connect(d->cadView, &view::CadView::viewInitialized,
                 this, [this]() {
                     if (m_snapToolbar) return;  // 避免重複建立
                     if (d->cadView && d->cadView->snapManager()) {
@@ -1625,11 +1678,17 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         }
                     }
 
-                    // ── 開啟縱斷面 dock ────────────────────────────────────────
-                    d->vAlignDock->setAlignmentDocument(aDoc);
-                    d->vAlignDock->loadTrackCenterLine(tcl);
-                    d->vAlignDock->show();
-                    d->vAlignDock->raise();
+                    // ── 記錄 active TCL id（return button 用）─────────────
+                    d->activeTclId = tclId;
+
+                    // ── 顯示返回按鈕（右上角）────────────────────────────────
+                    // VAlignProfileView 由 VAlignment item 的 eyeOpen 控制，
+                    // 啟動 H-Alignment edit 不自動開啟縱斷面 dock。
+                    if (d->cadView) {
+                        d->cadView->showReturnAlignmentButton();
+                        // H-Alignment edit 期間啟用 TM2 座標顯示
+                        d->cadView->setSuppressCoordDisplay(false);
+                    }
                 });
 
         // ── TrackCenterLine — renameTrackRequested ────────────────────────────

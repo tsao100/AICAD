@@ -111,11 +111,37 @@ public:
         if (event->type() == QEvent::MouseButtonRelease) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (eyeIconRect(opt.rect).contains(me->pos())) {
-                // ── E.2 VAlignment 子節點不允許單獨切換可見性 ──────────────
-                // 可見性由其父 TrackCenterLine 統一控制
+                // ── E.2 VAlignment eye toggle → 開啟/關閉 VAlignProfileView ──
+                // eyeOpen = 開啟縱斷面 dock；eyeClose = 關閉
                 int itype = index.data(Qt::UserRole + 1).toInt();
-                if (static_cast<ui::ItemType>(itype) == ui::ItemType::VAlignment)
-                    return false;
+                if (static_cast<ui::ItemType>(itype) == ui::ItemType::VAlignment) {
+                    // 取出 itemId（格式 "valign_<tclId>"）
+                    QString vid = index.data(Qt::UserRole).toString();
+                    bool cur = index.data(Qt::UserRole + 2).toBool();
+                    bool next = !cur;
+                    // 更新 eye icon
+                    if (auto* tw = static_cast<AccessibleTreeWidget*>(
+                            const_cast<QWidget*>(opt.widget))) {
+                        if (QTreeWidgetItem* item = tw->itemFromIdx(index)) {
+                            tw->blockSignals(true);
+                            item->setData(0, Qt::UserRole + 2, next);
+                            tw->blockSignals(false);
+                            tw->update(index);
+                        }
+                    }
+                    // 發布 valign-visibility-changed
+                    if (!vid.isEmpty()) {
+                        const QString tclId = vid.startsWith("valign_")
+                                              ? vid.mid(7) : vid;
+                        core::EventBus* bus = core::Application::instance()->eventBus();
+                        QVariantMap d2;
+                        d2["tclId"]   = tclId;
+                        d2["visible"] = next;
+                        bus->publish("railway.valign-visibility-changed", d2);
+                        qDebug() << "[FeatureBrowser] VAlign eye:" << tclId << "visible=" << next;
+                    }
+                    return true;
+                }
 
                 bool cur = index.data(Qt::UserRole + 2).toBool();
                 bool next = !cur;
