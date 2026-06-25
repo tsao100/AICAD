@@ -9,6 +9,7 @@
 #define AICAD_VIEW_CADVIEW_H
 
 #include <QWidget>
+#include <QPointF>
 #include <QVector2D>
 #include <QPushButton>
 
@@ -98,6 +99,7 @@ public:
     struct OverlayEntry {
         Handle(AIS_InteractiveObject) obj;
         QList<int> modes;
+        bool visible = true;  ///< false = eye-close 隱藏（displayAllFeatures 不重新 Display）
     };
 
     /**
@@ -202,6 +204,10 @@ public:
     /// 登錄「常駐」AIS 物件，displayAllFeatures 的 RemoveAll 後會自動重新顯示
     void addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
                        const QList<int>& activationModes = {});
+    /// 設定 overlay 物件的 eye-close 可見性。
+    /// visible=false 時從 OCCT context 移除但保留 overlayObjects 登錄，
+    /// 使 displayAllFeatures() 重建時不重新顯示它。
+    void setOverlayAISVisible(const Handle(AIS_InteractiveObject)& obj, bool visible);
     /// 移除登錄並從 context 移除
     void removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj);
 
@@ -211,12 +217,25 @@ public:
      * @return 平面座標
      */
     QVector2D screenToPlane(const QPoint& screenPos) const;
+    QPointF screenToPlaneD(const QPoint& screenPos) const;   // double 精度版（Alignment 用）
 
     /**
      * @brief 啟用/停用網格顯示
      * @param enabled 是否啟用
      */
     void setGridEnabled(bool enabled);
+
+    /**
+     * @brief 設定 TM2 參考座標原點（東向 E, 北向 N），供狀態列顯示相對座標用。
+     *        不影響幾何計算（幾何管道已全程使用 double）。
+     */
+    /// @deprecated Phase 2: 改由 ProjectOrigin::instance().setOrigin() 驅動。
+    ///             UIManager 在收到 PROJECT_ORIGIN_CHANGED 後呼叫此函式作為相容層。
+    void setCoordinateOffset(double easting, double northing);
+    /// @deprecated 改用 ProjectOrigin::instance().originE()
+    double coordinateOffsetE() const;
+    /// @deprecated 改用 ProjectOrigin::instance().originN()
+    double coordinateOffsetN() const;
 
     /**
      * @brief 檢查網格是否啟用
@@ -271,6 +290,13 @@ public:
     QJsonObject saveViewState() const;
     void restoreViewState(const QJsonObject& state);
 
+    /// 顯示 H-Alignment edit 模式的返回按鈕（右上角）
+    void showReturnAlignmentButton();
+    /// 隱藏返回按鈕
+    void hideReturnAlignmentButton();
+    /// 控制 status bar 游標座標顯示（true = 不顯示）
+    void setSuppressCoordDisplay(bool suppress);
+
 public Q_SLOTS:
 
     void onSketchRebuilt();
@@ -310,6 +336,9 @@ public Q_SLOTS:
     /** 高亮選取的 region */
     void highlightSketchRegion(const QString& regionUuid);
 Q_SIGNALS:
+    /// 返回按鈕被按下（結束 H-Alignment edit 模式）
+    void returnAlignmentRequested();
+
     /**
      * @brief 視圖類型改變時發出
      * @param type 新的視圖類型
@@ -326,7 +355,7 @@ Q_SIGNALS:
      * @brief 取得點時發出
      * @param point 平面座標
      */
-    void pointAcquired(QVector2D point);
+    void pointAcquired(QPointF point);   // double 精度（Alignment 用）
 
     /**
      * @brief 取得點時（帶草圖點 ID）發出 — 用於距離/角度約束選點
@@ -334,7 +363,7 @@ Q_SIGNALS:
      * @param geomUuid  snap 到的草圖幾何 UUID（若無法辨識則為空）
      * @param geomHandle snap 到的端點 handle（-1 = WholeGeom）
      */
-    void geomRefPicked(QVector2D point, QString geomUuid, int geomHandle);
+    void geomRefPicked(QPointF point, QString geomUuid, int geomHandle);
 
     /// ✅ Task E: PlaceDimLine 模式 — 滑鼠移動時的預覽偏移
     void dimLinePosPreview(double offsetX, double offsetY);
@@ -482,11 +511,14 @@ private:
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面
 
     QPushButton*        m_finishSketchButton;
+    QPushButton*        m_returnAlignmentButton = nullptr;  ///< H-Alignment edit 返回按鈕
+    bool                m_suppressCoordDisplay  = false;    ///< true = 不在 status bar 顯示游標座標
     DimPreviewOverlay*  m_dimOverlay = nullptr;   ///< GDIM 尺寸線預覽 overlay
     bool m_viewReadyPublished = false;
 
     void showFinishSketchButton();
     void hideFinishSketchButton();
+
     void showSketchContextMenu(const QPoint& screenPos);
 
     // ── Object Snap ──────────────────────────────────────────

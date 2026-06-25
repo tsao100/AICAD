@@ -1753,7 +1753,7 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                     const double   tlen  = QLineF(stPt, endPt).length();
 
                     AlignmentPoint stTT;
-                    stTT.tsc      = QStringLiteral("TT");
+                    stTT.tsc      = QStringLiteral("ST");
                     stTT.easting  = stPt.x();
                     stTT.northing = stPt.y();
                     stTT.azimuth  = scs.azST;          // forward direction at ST
@@ -1906,7 +1906,7 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
 
                 // ST waypoint = start of the trimmed exit tangent
                 AlignmentPoint stpt;
-                stpt.tsc      = QStringLiteral("TT");
+                stpt.tsc      = QStringLiteral("ST");
                 stpt.easting  = ca.stPoint.x();
                 stpt.northing = ca.stPoint.y();
                 stpt.azimuth  = ca.azST;

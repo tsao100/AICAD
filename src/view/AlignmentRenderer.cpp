@@ -38,10 +38,12 @@ namespace view {
 
 namespace {
 
-/// Convert QPointF (Easting, Northing) to a flat gp_Pnt (Z = 0).
-inline gp_Pnt toOCCT(const QPointF& p)
+/// Convert QPointF (Local CAD coords) to a flat gp_Pnt (Z = 0).
+/// NOTE: worldXY() already returns Local coords (solver runs in Local space).
+/// No ProjectOrigin conversion needed here — coords are already local.
+inline gp_Pnt toOCCT(const QPointF& localPt)
 {
-    return gp_Pnt(p.x(), p.y(), 0.0);
+    return gp_Pnt(localPt.x(), localPt.y(), 0.0);
 }
 
 } // anonymous namespace
@@ -112,16 +114,11 @@ void AlignmentRenderer::setVisible(bool visible)
     m_visible = visible;
 
     if (!m_cadView) return;
-    auto ctx = m_cadView->context();
-    if (ctx.IsNull()) return;
 
-    for (const auto& obj : m_overlays) {
-        if (visible)
-            ctx->Display(obj, Standard_False);
-        else
-            ctx->Erase(obj, Standard_False);
-    }
-    ctx->UpdateCurrentViewer();
+    // 用 CadView::setOverlayAISVisible() 更新登錄中的 visible 旗標，
+    // 確保 displayAllFeatures() 重建時不會誤把 eye-close 的 overlay 重新顯示。
+    for (const auto& obj : m_overlays)
+        m_cadView->setOverlayAISVisible(obj, visible);
 }
 
 void AlignmentRenderer::clearOverlays()
@@ -167,7 +164,10 @@ void AlignmentRenderer::refresh()
 
         if (shape.IsNull()) continue;
 
-        m_cadView->addOverlayAIS(shape);
+        m_cadView->addOverlayAIS(shape, {0});   // mode 0 = whole-shape hit test
+        // 若目前 eye-close，立刻把剛加入的 shape 設為不可見
+        if (!m_visible)
+            m_cadView->setOverlayAISVisible(shape, false);
         m_overlays.append(shape);
     }
 
@@ -316,7 +316,8 @@ void AlignmentRenderer::buildPIGrips()
     constexpr double kR = 2.0;
 
     for (const railway::AlignmentPoint& pt : rawPts) {
-        gp_Pnt centre(pt.easting, pt.northing, 0.0);
+        // pt.easting/northing are Local coords (solver runs in Local space)
+        gp_Pnt centre = toOCCT(QPointF(pt.easting, pt.northing));
         BRepPrimAPI_MakeSphere mkSphere(centre, kR);
         if (!mkSphere.IsDone()) continue;
 
@@ -326,6 +327,9 @@ void AlignmentRenderer::buildPIGrips()
         sphere->SetMaterial(Graphic3d_NameOfMaterial_Gold);
 
         m_cadView->addOverlayAIS(sphere);
+        // 若目前 eye-close，PI grip 也要隱藏
+        if (!m_visible)
+            m_cadView->setOverlayAISVisible(sphere, false);
         m_piGrips.append(sphere);
     }
 }

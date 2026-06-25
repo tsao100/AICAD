@@ -9,6 +9,7 @@
 #define AICAD_CAD_PLANE_H
 
 #include <QObject>
+#include <QPointF>
 #include <QVector2D>
 #include <QVector3D>
 #include <QString>
@@ -192,6 +193,14 @@ public:
      * @brief 將 3D 世界座標投影到平面並取得 2D 座標
      */
     QVector2D toPlane(const QVector3D& worldPoint) const;
+
+    /**
+     * @brief 將 3D 世界座標投影到平面並取得 2D 座標（double 精度版，Alignment 用）
+     *
+     * 與 toPlane() 相同邏輯，但回傳 QPointF（double）避免 float 截斷。
+     * TM2 大座標（~2,650,000 m）使用此版本可保持 sub-mm 精度。
+     */
+    QPointF toPlaneD(const QVector3D& worldPoint) const;
 
     /**
      * @brief 計算點到平面的距離（有號距離）

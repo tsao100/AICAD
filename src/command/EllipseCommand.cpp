@@ -50,7 +50,8 @@ CommandResult EllipseCommand::execute(const CommandContext& context) {
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map = data.toMap();
-                       QVector2D point = map["point"].value<QVector2D>();
+                       QPointF _ptF = map["point"].value<QPointF>();
+                       QVector2D point(static_cast<float>(_ptF.x()), static_cast<float>(_ptF.y()));
 
                        // ✅ Use QMetaObject::invokeMethod for thread safety
                        QMetaObject::invokeMethod(this, [this, point]() {
@@ -93,7 +94,7 @@ void EllipseCommand::handlePointAcquired(QVector2D point)
         // ✅ Request rubber band update via EventBus
         QVariantMap rubberUpdate;
         rubberUpdate["action"] = "clearAndAdd";
-        rubberUpdate["point"] = QVariant::fromValue(point);
+        rubberUpdate["point"] = QVariant::fromValue(QPointF(point.x(), point.y()));
         bus->publish("command.update-rubber-band", rubberUpdate);
 
         outputMessage(QString("Center: (%1, %2). Specify endpoint of major axis:")
@@ -116,7 +117,7 @@ void EllipseCommand::handlePointAcquired(QVector2D point)
         // ✅ Update rubber band to show major axis
         QVariantMap rubberUpdate;
         rubberUpdate["action"] = "addPoint";
-        rubberUpdate["point"] = QVariant::fromValue(point);
+        rubberUpdate["point"] = QVariant::fromValue(QPointF(point.x(), point.y()));
         bus->publish("command.update-rubber-band", rubberUpdate);
 
         outputMessage(QString("Major axis: %1. Specify minor axis distance:")

@@ -175,7 +175,7 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map = data.toMap();
-                       QVector2D pt    = map["point"].value<QVector2D>();
+                       QPointF pt = map["point"].value<QPointF>();
                        QMetaObject::invokeMethod(this, [this, pt]() {
                            handlePointAcquired(pt);
                        }, Qt::QueuedConnection);
@@ -208,7 +208,7 @@ CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentSCSCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
 
@@ -745,23 +745,17 @@ void AlignmentSCSCommand::updateRubberBandPreview()
     QVariantMap rb1;
     rb1["action"] = "clearAndAdd";
     rb1["mode"]   = "scs";
-    rb1["point"]  = QVariant::fromValue(
-        QVector2D(static_cast<float>(t1end.x()),
-                  static_cast<float>(t1end.y())));
+    rb1["point"]  = QVariant::fromValue(QPointF(t1end.x(), t1end.y()));
     bus->publish("command.update-rubber-band", rb1);
 
     QVariantMap rb2;
     rb2["action"] = "addPoint";
-    rb2["point"]  = QVariant::fromValue(
-        QVector2D(static_cast<float>(pi.x()),
-                  static_cast<float>(pi.y())));
+    rb2["point"]  = QVariant::fromValue(QPointF(pi.x(), pi.y()));
     bus->publish("command.update-rubber-band", rb2);
 
     QVariantMap rb3;
     rb3["action"] = "setCurrentPoint";
-    rb3["point"]  = QVariant::fromValue(
-        QVector2D(static_cast<float>(t2start.x()),
-                  static_cast<float>(t2start.y())));
+    rb3["point"]  = QVariant::fromValue(QPointF(t2start.x(), t2start.y()));
     bus->publish("command.update-rubber-band", rb3);
 }
 

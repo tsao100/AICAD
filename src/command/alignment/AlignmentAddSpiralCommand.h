@@ -47,6 +47,7 @@
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
 
+#include <QPointF>
 #include <QVector2D>
 
 namespace aicad {
@@ -81,7 +82,7 @@ private:
         WaitingForConfirm   ///< 參數就緒；等待 Enter 確認或重輸入
     };
 
-    void handlePointAcquired(const QVector2D& point);
+    void handlePointAcquired(const QPointF& point);
     void handleNumberInput(const QString& text);
     void handleCancelled();
 
@@ -96,7 +97,7 @@ private:
      *        找不到時回傳 -1。距離以點到弧弦的最短距離近似（足夠精確）。
      */
     static int nearestFixedArcIndex(
-        const QVector2D&                            clickPt,
+        const QPointF&  clickPt,
         const railway::HorizontalAlignmentEdit*     edit);
 
     /**
@@ -106,7 +107,7 @@ private:
      * @return index ≥ 0 on success, -1 if nothing within searchRadius.
      */
     static int nearestTangentOrArc(
-        const QVector2D&                            clickPt,
+        const QPointF&  clickPt,
         const railway::HorizontalAlignmentEdit*     edit,
         railway::EditableElementType&               outType);
 

@@ -4,6 +4,7 @@
 #include "command/CommandFactory.h"
 #include "command/CommandTypes.h"
 #include "railway/AlignmentDocument.h"
+#include <QPointF>
 #include <QVector2D>
 
 namespace aicad {
@@ -30,7 +31,7 @@ public:
     QString getUsage() const override;
 
 private:
-    void handlePointAcquired(const QVector2D& point);
+    void handlePointAcquired(const QPointF& point);
     void handleCancelled();
     void cleanup() override;
 
@@ -38,7 +39,7 @@ private:
     railway::AlignmentDocument* m_alignDoc = nullptr;
 
     // interaction state
-    QVector2D m_startPoint;
+    QPointF m_startPoint;
     bool      m_hasStartPoint = false;
     bool      m_isFinishing   = false;
 };

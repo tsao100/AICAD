@@ -191,6 +191,12 @@ constexpr const char* GEOM_PICKED        = "input.geom_picked";
 constexpr const char* GEOM_HOVER         = "input.geom_hover";        ///< GetGeom 模式 mouseMoveEvent hover（geomUuid / handle / point）
 constexpr const char* DIM_LINE_CONFIRMED = "input.dim_line_confirmed";
 constexpr const char* DIM_LINE_PREVIEW   = "input.dim_line_preview";  ///< 拖曳預覽（非 pickSession 路徑）
+
+// ── ProjectOrigin / TM2 雙座標系統 ─────────────────────────────────────────
+/// ProjectOrigin::setOrigin() 或 clear() 呼叫後發布。
+/// payload: QVariantMap { "isSet": bool, "originE": double, "originN": double,
+///                        "originZ": double, "epsgCode": QString }
+constexpr const char* PROJECT_ORIGIN_CHANGED = "project.origin.changed";
 }
 
 } // namespace core

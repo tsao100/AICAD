@@ -44,11 +44,14 @@
 #include "command/GripMoveCommand.h"
 #include "view/AlignmentRenderer.h"
 #include "railway/AlignmentDocument.h"
+#include "core/geometry/ProjectOrigin.h"
 #include "railway/RailwayAlignment.h"
 #include "ui/VAlignEditorDockWidget.h"   // Step 16
 
 #include <QMenu>
 #include <QMenuBar>
+#include <QPointF>
+#include <QRegularExpression>
 #include <QToolBar>
 #include <QTimer>
 #include <QtMath>
@@ -125,6 +128,7 @@ public:
 
     // ── Railway alignment ──────────────────────────────────────
     railway::AlignmentDocument*  alignmentDoc      = nullptr;  ///< active edit session
+    QString                      activeTclId;                   ///< H-Alignment edit 中的 TCL id
     ui::VAlignEditorDockWidget*  vAlignDock        = nullptr;  ///< Step 16
 
     /// Per-TCL AlignmentDocument instances (key = tcl->id())
@@ -132,6 +136,9 @@ public:
 
     /// Per-TCL renderers for 3D visibility (key = tcl->id())
     QHash<QString, view::AlignmentRenderer*> tclRenderers;
+
+    /// B.3 TM2 座標原點是否已由使用者設定（若否，進入 alignment edit 時自動套用預設值）
+    bool originSet = false;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -276,6 +283,10 @@ void UIManager::initGripSystem()
         if (inSketch) {
             if (d->gripFilter) d->gripFilter->setEnabled(true);
             if (d->gripManager) d->gripManager->setEnabled(true);
+        } else if (d->alignmentDoc && d->gripManager->currentProvider()) {
+            // Alignment 編輯模式：command 結束後也要恢復 grip
+            if (d->gripFilter) d->gripFilter->setEnabled(true);
+            if (d->gripManager) d->gripManager->setEnabled(true);
         }
     };
     bus->subscribe(core::Events::COMMAND_EXECUTED,  this, onCommandEnd);
@@ -409,7 +420,59 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // 建立並加入 OSnap 工具列
         // 改用信號，等 viewer 初始化完畢再建立 toolbar
-        connect(d->cadView, &view::CadView::viewInitialized,
+        // ── 返回按鈕 → 結束 H-Alignment edit 模式 ─────────────────────────
+    connect(d->cadView, &view::CadView::returnAlignmentRequested,
+            this, [this, docMgr]() {
+                auto* doc = docMgr->currentDocument();
+                core::EventBus* bus = core::Application::instance()->eventBus();
+
+                // 1. 隱藏返回按鈕
+                d->cadView->hideReturnAlignmentButton();
+
+                // 2. Status bar 停止顯示座標（清除並抑制後續游標座標 emit）
+                d->cadView->setSuppressCoordDisplay(true);
+                if (d->mainWindow)
+                    d->mainWindow->statusBar()->clearMessage();
+
+                // 3. 將該 HAlignment item 設為 eyeClose（setHAlignVisible(false)）
+                //    並透過 halign-visibility-changed 讓 renderer 隱藏
+                if (!d->activeTclId.isEmpty() && doc) {
+                    auto* tcl = doc->findTrackCenterLine(d->activeTclId);
+                    if (tcl) {
+                        tcl->setHAlignVisible(false);
+                        doc->setModified(true);
+                    }
+                    // renderer setVisible(false)
+                    auto* r = d->tclRenderers.value(d->activeTclId, nullptr);
+                    if (r) r->setVisible(false);
+                    // 通知 FeatureBrowser 更新 eye icon 為 eyeClose
+                    if (doc) Q_EMIT doc->treeStructureChanged();
+                    // 發布 halign-visibility-changed 供其他模組訂閱
+                    QVariantMap hv;
+                    hv["tclId"]   = d->activeTclId;
+                    hv["visible"] = false;
+                    bus->publish("railway.halign-visibility-changed", hv);
+                }
+
+                // 4. 座標不再使用 TM2：清除 ProjectOrigin，重設 originSet flag
+                using namespace aicad::core::geometry;
+                ProjectOrigin::instance().clear();  // 發布 PROJECT_ORIGIN_CHANGED
+                d->originSet = false;
+
+                // 5. 關閉格線
+                d->cadView->setGridEnabled(false);
+
+                // 6. 清除 active alignment doc / tclId
+                d->alignmentDoc = nullptr;
+                d->activeTclId.clear();
+
+                // 7. 發布 alignment-edit-ended 讓其他模組知道
+                bus->publish("railway.alignment-edit-ended", QVariant{});
+
+                qDebug() << "[UIManager] H-Alignment edit ended via return button";
+            });
+
+    connect(d->cadView, &view::CadView::viewInitialized,
                 this, [this]() {
                     if (m_snapToolbar) return;  // 避免重複建立
                     if (d->cadView && d->cadView->snapManager()) {
@@ -662,6 +725,50 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         connect(docMgr, &core::DocumentManager::currentDocumentChanged,
                 d->featureBrowser, &FeatureBrowser::setCurrentDocument);
 
+        // ── F.1 載入檔案後重建 tclRenderers ─────────────────────────────────
+        // allFeaturesLoaded 是在 Document::load() 完成所有反序列化後 emit 的，
+        // 此時 doc->trackCenterLines() 已有完整資料，可安全建立 renderers。
+        connect(docMgr, &core::DocumentManager::currentDocumentChanged,
+                this, [this](cad::Document* doc) {
+            if (!doc) return;
+            // Qt5 相容的 single-shot connect：用 QSharedPointer<QMetaObject::Connection>
+            // 在 lambda 內部 disconnect 自身，取代 Qt6 的 Qt::SingleShotConnection。
+            auto connPtr = QSharedPointer<QMetaObject::Connection>::create();
+            *connPtr = connect(doc, &cad::Document::allFeaturesLoaded,
+                    this, [this, doc, connPtr]() {
+                // 只執行一次後立刻斷開
+                QObject::disconnect(*connPtr);
+
+                // 清除舊的 renderers（若有）
+                for (auto* r : d->tclRenderers) delete r;
+                d->tclRenderers.clear();
+
+                if (!d->cadView) return;
+                for (railway::TrackCenterLine* tcl : doc->trackCenterLines()) {
+                    const QString tid = tcl->id();
+                    // AlignmentDocument 可能已由 DOCUMENT_OPENED handler 建立
+                    railway::AlignmentDocument* aDoc =
+                        d->tclAlignmentDocs.value(tid, nullptr);
+                    if (!aDoc) continue;  // 尚未載入資料，略過
+
+                    auto* r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                    connect(aDoc->horizontal(),
+                            &railway::HorizontalAlignmentEdit::changed,
+                            r, &view::AlignmentRenderer::refresh);
+                    d->tclRenderers.insert(tid, r);
+
+                    const railway::HorizontalAlignment* ha = aDoc->horizontal()->result();
+                    if (ha && !ha->isEmpty()) {
+                        r->setHorizontalAlignment(tcl->horizontal());
+                        r->setVisible(tcl->hAlignVisible());
+                        r->refresh();
+                    }
+                }
+                qDebug() << "[UIManager] rebuildTclRenderers (allFeaturesLoaded):"
+                         << d->tclRenderers.size() << "tracks";
+            });  // Qt5 compatible single-shot via self-disconnect
+        });
+
         // 7. 連接主視窗關閉信號
         connect(d->mainWindow, &MainWindow::aboutToClose,
                 this, &UIManager::mainWindowClosed);
@@ -752,15 +859,15 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                }
                            } else if (action == "clearAndAdd") {
                                rb->clearPoints();
-                               QVector2D pt = map["point"].value<QVector2D>();
+                               QPointF pt = map["point"].value<QPointF>();
                                rb->addPoint(pt);
                                rb->update();
                            } else if (action == "addPoint") {
-                               QVector2D pt = map["point"].value<QVector2D>();
+                               QPointF pt = map["point"].value<QPointF>();
                                rb->addPoint(pt);
                                rb->update();
                            } else if (action == "setCurrentPoint") {
-                               QVector2D pt = map["point"].value<QVector2D>();
+                               QPointF pt = map["point"].value<QPointF>();
                                rb->setCurrentPoint(pt);
                                rb->update();
                            } else if (action == "clear") {
@@ -780,13 +887,78 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            }
                        });
 
+        // ── B.2 PROJECT_ORIGIN_CHANGED — 由 ProjectOrigin::publishChanged() 觸發 ─
+        // Phase 0 fix: 統一訂閱 Events::PROJECT_ORIGIN_CHANGED，不再用舊字串事件。
+        // Phase 2:     更新 CadView::coordinateOffset（相容層）+ originSet flag。
+        bus->subscribe(core::Events::PROJECT_ORIGIN_CHANGED, this,
+                       [this](const QVariant& data) {
+                           QVariantMap map = data.toMap();
+                           if (!map.value("isSet").toBool()) return;
+                           double e = map["originE"].toDouble();
+                           double n = map["originN"].toDouble();
+                           // Phase 2: CadView deprecated 相容層（coordinateOffsetE/N getter 仍需此值）
+                           if (d->cadView) {
+                               d->cadView->setCoordinateOffset(e, n);
+                               d->originSet = true;
+                               qDebug() << "[UIManager] PROJECT_ORIGIN_CHANGED: E=" << e << "N=" << n;
+                           }
+                       });
+
         // ✅ Monitor user interactions for debugging/logging
         bus->subscribe(core::Events::POINT_ACQUIRED, this,
-                       [](const QVariant& data) {
+                       [this](const QVariant& data) {
                            QVariantMap map = data.toMap();
-                           QVector2D point = map["point"].value<QVector2D>();
-                           qDebug() << "[UIManager] User clicked point:" << point.x() << point.y();
-                           // Could update coordinate display here
+                           QPointF localPt = map["point"].value<QPointF>();
+                           qDebug() << "[UIManager] User clicked point:" << localPt.x() << localPt.y();
+                           // Phase 5: 將 Local 座標轉成 TM2 Global 後顯示於 status bar
+                           using namespace aicad::core::geometry;
+                           const QPointF globalPt = ProjectOrigin::instance().toGlobal(localPt);
+                           const QString coordMsg =
+                               QString("E: %1   N: %2")
+                                   .arg(globalPt.x(), 0, 'f', 3)
+                                   .arg(globalPt.y(), 0, 'f', 3);
+                           if (d->mainWindow)
+                               d->mainWindow->statusBar()->showMessage(coordMsg, 5000);
+                       });
+
+        // ── A.5 COORDINATE_INPUT → POINT_ACQUIRED 橋接 ──────────────────────
+        // CommandLineManager 在 InputType::Point 狀態發布 COORDINATE_INPUT（字串），
+        // 此橋接解析為 QPointF 並 re-publish POINT_ACQUIRED，使 alignment commands
+        // 可透過鍵盤輸入座標。
+        //
+        // Phase 6 — TM2 邊界轉換規則：
+        //   • 使用者輸入的座標若量級 > 10000，視為 TM2 Global（絕對值），
+        //     透過 ProjectOrigin::toLocal() 轉成 Local 後再送入 POINT_ACQUIRED。
+        //   • 量級 ≤ 10000 視為已是 Local 座標（相對偏移），直接使用。
+        //   此規則支援直接貼上 TM2 坐標，也支援輸入相對距離。
+        bus->subscribe(core::Events::COORDINATE_INPUT, this,
+                       [bus](const QVariant& data) {
+                           QString text = data.toString().trimmed();
+                           auto parts = text.split(
+                               QRegularExpression("[,\\s]+"),
+                               Qt::SkipEmptyParts);
+                           if (parts.size() < 2) return;
+                           bool okX, okY;
+                           double x = parts[0].toDouble(&okX);
+                           double y = parts[1].toDouble(&okY);
+                           if (!okX || !okY) return;
+
+                           // Phase 6: TM2 大座標自動轉換
+                           using namespace aicad::core::geometry;
+                           auto& origin = ProjectOrigin::instance();
+                           QPointF pt(x, y);
+                           if (origin.isSet() && (qAbs(x) > 10000.0 || qAbs(y) > 10000.0)) {
+                               // 輸入為 TM2 Global 座標 → 轉成 Local
+                               pt = origin.toLocal(x, y);
+                               qDebug() << "[UIManager] COORDINATE_INPUT TM2→Local:"
+                                        << x << y << "->" << pt;
+                           }
+
+                           QVariantMap m;
+                           m["point"] = QVariant::fromValue(pt);
+                           bus->publish(core::Events::POINT_ACQUIRED, m);
+                           qDebug() << "[UIManager] COORDINATE_INPUT → POINT_ACQUIRED:"
+                                    << pt.x() << pt.y();
                        });
 
         // ── Extrude 建立 ─────────────────────────────────────────────
@@ -1490,11 +1662,37 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     // ── 更新 FeatureBrowser eye icon ──────────────────────────
                     Q_EMIT doc->treeStructureChanged();
 
-                    // ── 開啟縱斷面 dock ────────────────────────────────────────
-                    d->vAlignDock->setAlignmentDocument(aDoc);
-                    d->vAlignDock->loadTrackCenterLine(tcl);
-                    d->vAlignDock->show();
-                    d->vAlignDock->raise();
+                    // ── B.3 TM2 格線：若尚未設定 origin，自動套用預設值 ───────
+                    if (d->cadView) {
+                        d->cadView->setGridEnabled(true);
+                        if (!d->originSet) {
+                            constexpr double kDefaultE = 250000.0;
+                            constexpr double kDefaultN = 2650000.0;
+                            // Phase 2 fix: 統一透過 ProjectOrigin::setOrigin() 驅動，
+                            // publishChanged() 會觸發 PROJECT_ORIGIN_CHANGED，
+                            // 由 B.2 handler 呼叫 CadView::setCoordinateOffset（相容層）。
+                            // 不再直接呼叫 setCoordinateOffset()。
+                            using namespace aicad::core::geometry;
+                            if (!ProjectOrigin::instance().isSet()) {
+                                ProjectOrigin::instance().setOrigin(kDefaultE, kDefaultN, 0.0);
+                            }
+                            d->originSet = true;
+                            qDebug() << "[UIManager] Auto-set TM2 origin via ProjectOrigin: E="
+                                     << kDefaultE << "N=" << kDefaultN;
+                        }
+                    }
+
+                    // ── 記錄 active TCL id（return button 用）─────────────
+                    d->activeTclId = tclId;
+
+                    // ── 顯示返回按鈕（右上角）────────────────────────────────
+                    // VAlignProfileView 由 VAlignment item 的 eyeOpen 控制，
+                    // 啟動 H-Alignment edit 不自動開啟縱斷面 dock。
+                    if (d->cadView) {
+                        d->cadView->showReturnAlignmentButton();
+                        // H-Alignment edit 期間啟用 TM2 座標顯示
+                        d->cadView->setSuppressCoordDisplay(false);
+                    }
                 });
 
         // ── TrackCenterLine — renameTrackRequested ────────────────────────────
@@ -1534,8 +1732,17 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         tr("確定要刪除「%1」嗎？").arg(tcl->name()),
                         QMessageBox::Yes | QMessageBox::No,
                         QMessageBox::No);
-                    if (ret == QMessageBox::Yes)
+                    if (ret == QMessageBox::Yes) {
+                        // ── F.2 先清除 renderer，再刪除 TCL ──────────────────
+                        if (d->tclRenderers.contains(tclId)) {
+                            delete d->tclRenderers.take(tclId);
+                        }
+                        // 清除對應的 AlignmentDocument
+                        if (d->tclAlignmentDocs.contains(tclId)) {
+                            delete d->tclAlignmentDocs.take(tclId);
+                        }
                         doc->removeTrackCenterLine(tclId);
+                    }
                 });
 
         // ── 取消選取時清除 grips ──────────────────────────────────────────────
@@ -2093,7 +2300,7 @@ void UIManager::setupSketchPanel()
     });
     if (d->cadView) {
         connect(d->cadView, &view::CadView::geomRefPicked,
-                this, [this](QVector2D planePt, QString geomUuid, int geomHandle) {
+                this, [this](QPointF planePt, QString geomUuid, int geomHandle) {
             // 舊路徑：pickSession（DimConstraintCommand 使用）
             if (d->pickSession->isActive()) {
                 d->pickSession->feedPoint(planePt, geomUuid, geomHandle);
@@ -2764,8 +2971,8 @@ void UIManager::setStatusMessage(const QString& message, int timeout) {
     if (d->mainWindow)
         d->mainWindow->statusBar()->showMessage(message, timeout);
 
-    if (d->commandLine && !message.isEmpty())
-        d->commandLine->appendHistory(message);
+//    if (d->commandLine && !message.isEmpty())
+//        d->commandLine->appendHistory(message);
 }
 
 // 添加 getter

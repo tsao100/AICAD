@@ -101,7 +101,7 @@ QString AlignmentAddSpiralCommand::spiralTypeName(SpiralType t)
 // ────────────────────────────────────────────────────────────────────────────
 
 int AlignmentAddSpiralCommand::nearestFixedArcIndex(
-    const QVector2D&                        clickPt,
+    const QPointF&                        clickPt,
     const railway::HorizontalAlignmentEdit* edit)
 {
     if (!edit) return -1;
@@ -110,8 +110,8 @@ int AlignmentAddSpiralCommand::nearestFixedArcIndex(
     int    bestIdx  = -1;
     double bestDist = std::numeric_limits<double>::max();
 
-    const double px = static_cast<double>(clickPt.x());
-    const double py = static_cast<double>(clickPt.y());
+    const double px = clickPt.x();
+    const double py = clickPt.y();
 
     for (int i = 0; i < elems.size(); ++i) {
         const auto& e = elems[i];
@@ -154,7 +154,7 @@ int AlignmentAddSpiralCommand::nearestFixedArcIndex(
 // ────────────────────────────────────────────────────────────────────────────
 
 int AlignmentAddSpiralCommand::nearestTangentOrArc(
-    const QVector2D&                        clickPt,
+    const QPointF&                        clickPt,
     const railway::HorizontalAlignmentEdit* edit,
     EditableElementType&                    outType)
 {
@@ -165,8 +165,8 @@ int AlignmentAddSpiralCommand::nearestTangentOrArc(
     double bestDist = std::numeric_limits<double>::max();
     EditableElementType bestType = EditableElementType::Tangent;
 
-    const double px = static_cast<double>(clickPt.x());
-    const double py = static_cast<double>(clickPt.y());
+    const double px = clickPt.x();
+    const double py = clickPt.y();
 
     for (int i = 0; i < elems.size(); ++i) {
         const auto& e = elems[i];
@@ -432,7 +432,7 @@ CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map = data.toMap();
-                       QVector2D pt   = map["point"].value<QVector2D>();
+                       QPointF pt = map["point"].value<QPointF>();
                        QMetaObject::invokeMethod(this, [this, pt]() {
                            handlePointAcquired(pt);
                        }, Qt::QueuedConnection);
@@ -469,7 +469,7 @@ CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentAddSpiralCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
     EventBus* bus = Application::instance()->eventBus();

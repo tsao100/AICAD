@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QVector2D>
+#include <QPointF>
 #include <QString>
 #include <QVector>
 #include "sketch/SketchConstraint.h"
@@ -79,7 +80,7 @@ public:
      */
     void confirmDimLineOffset(double offsetX, double offsetY);
 
-    void feedPoint(const QVector2D& planePt,
+    void feedPoint(const QPointF& planePt,
                    const QString& geomUuid,
                    int geomHandle);
 

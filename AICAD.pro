@@ -209,7 +209,10 @@ win32 {
     INCLUDEPATH += D:/Git/eigen-5.0.0
 
     # 每次編譯完自動複製 menu.txt 到輸出資料夾
-    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/menu.txt) $$shell_path($$OUT_PWD)
+    QMAKE_POST_LINK += cmd /c copy /Y \
+        "\"$$shell_path($$PWD/menu.txt)\"" \
+        "\"$$shell_path($$OUT_PWD)\""
+
 }
 
 # ========================================
@@ -241,6 +244,7 @@ SOURCES += \
     src/command/GeneralDimCommand.cpp \
     src/cad/sketch/GeneralDimClassifier.cpp \
     src/command/ExtrudeCommand.cpp \
+    src/command/alignment/SetOriginCommand.cpp \
     src/command/alignment/AlignmentAddSpiralCommand.cpp \
     src/command/alignment/AlignmentEditCommand.cpp \
     src/command/alignment/AlignmentFixCurveCommand.cpp \
@@ -258,6 +262,7 @@ SOURCES += \
     src/command/SplineCommand.cpp \
     src/core/ParameterStore.cpp \
     src/core/geometry/CoordinateTransform.cpp \
+    src/core/geometry/ProjectOrigin.cpp \
     src/core/geometry/WorkPlane.cpp \
     src/drawing/DrawingSheet.cpp \
     src/drawing/DrawingSheetDialog.cpp \
@@ -366,6 +371,7 @@ HEADERS += \
     src/cad/sketch/GeneralDimClassifier.h \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
+    src/command/alignment/SetOriginCommand.h \
     src/command/alignment/AlignmentAddSpiralCommand.h \
     src/command/alignment/AlignmentCommandBase.h \
     src/command/alignment/AlignmentEditCommand.h \
@@ -405,6 +411,7 @@ HEADERS += \
     \
     # Geometry Module                # ✅ 添加
     src/core/geometry/CoordinateTransform.h \
+    src/core/geometry/ProjectOrigin.h \
     src/core/geometry/WorkPlane.h \
     src/drawing/DrawingSheet.h \
     src/drawing/DrawingSheetManager.h \

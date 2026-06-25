@@ -109,7 +109,7 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            QVector2D pt    = map["point"].value<QVector2D>();
+            QPointF pt = map["point"].value<QPointF>();
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -144,7 +144,7 @@ CommandResult AlignmentFloatCurveCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentFloatCurveCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
 
@@ -258,18 +258,14 @@ void AlignmentFloatCurveCommand::handleNumberInput(const QString& text)
 
         QVariantMap rb;
         rb["action"]      = "clearAndAdd";
-        rb["point"]       = QVariant::fromValue(
-            QVector2D(static_cast<float>(t1end.x()),
-                      static_cast<float>(t1end.y())));
+        rb["point"]       = QVariant::fromValue(QPointF(t1end.x(), t1end.y()));
         rb["radius"]      = m_radius;
         rb["mode"]        = "arc";
         bus->publish("command.update-rubber-band", rb);
 
         QVariantMap rb2;
         rb2["action"] = "addPoint";
-        rb2["point"]  = QVariant::fromValue(
-            QVector2D(static_cast<float>(pi.x()),
-                      static_cast<float>(pi.y())));
+        rb2["point"]  = QVariant::fromValue(QPointF(pi.x(), pi.y()));
         bus->publish("command.update-rubber-band", rb2);
     }
 
@@ -399,7 +395,7 @@ void AlignmentFloatCurveCommand::highlightTangent(int elemIdx)
 // ────────────────────────────────────────────────────────────────────────────
 
 int AlignmentFloatCurveCommand::nearestTangentIndex(
-    const QVector2D&                        clickPt,
+    const QPointF&                          clickPt,
     const railway::HorizontalAlignmentEdit* edit)
 {
     if (!edit) return -1;
@@ -420,8 +416,8 @@ int AlignmentFloatCurveCommand::nearestTangentIndex(
         const double bx = e.endPI.x();
         const double by = e.endPI.y();
 
-        const double px = static_cast<double>(clickPt.x());
-        const double py = static_cast<double>(clickPt.y());
+        const double px = clickPt.x();
+        const double py = clickPt.y();
 
         // AB 向量
         const double abx = bx - ax;

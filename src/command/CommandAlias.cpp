@@ -76,6 +76,7 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("SCS", "ALIGNMENTSCS",         "Add SCS (Spiral-Circular-Spiral) curve",       true);
     registerAlias("AS",  "ALIGNMENTADDSPIRAL",   "Insert Clothoid between Fixed Tangent and Arc (LC/CA)", true);
     registerAlias("TCL", "TRACK",                "New Track Centerline",                         true);
+    registerAlias("SO",  "SETORIGIN",            "Set TM2 coordinate origin (Easting, Northing)", true);
 
     // ── Step 15：縱斷面命令 ──────────────────────────────────────────────────
     registerAlias("VADD",   "VALIGNFLOATVCURVE", "Add VIP with vertical curve (K value)",        true);

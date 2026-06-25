@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
     qapp.setApplicationVersion("1.0.0-dev");
     
     qDebug() << "===========================================";
-    qDebug() << "  AICAD - Advanced Interactive CAD System";
+    qDebug() << "  AICAD - Artificial Intelligence CAD System";
     qDebug() << "  Version:" << qapp.applicationVersion();
     qDebug() << "===========================================";
     
