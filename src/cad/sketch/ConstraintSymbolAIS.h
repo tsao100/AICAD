@@ -59,6 +59,9 @@ private:
     void drawEqualLength   (const Handle(Prs3d_Presentation)& prs);
     void drawEqualRadius   (const Handle(Prs3d_Presentation)& prs);
     void drawFixed         (const Handle(Prs3d_Presentation)& prs);
+    void drawMidpoint      (const Handle(Prs3d_Presentation)& prs);
+    void drawSymmetric     (const Handle(Prs3d_Presentation)& prs);
+    void drawPointOnCurve  (const Handle(Prs3d_Presentation)& prs);
     void drawGeneric       (const Handle(Prs3d_Presentation)& prs, const char* label);
 
     gp_Pnt computeSymbolPos() const;

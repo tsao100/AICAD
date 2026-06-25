@@ -57,7 +57,7 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
             QVariantMap map = data.toMap();
-            QVector2D pt    = map["point"].value<QVector2D>();
+            QPointF pt = map["point"].value<QPointF>();
             QMetaObject::invokeMethod(this, [this, pt]() {
                 handlePointAcquired(pt);
             }, Qt::QueuedConnection);
@@ -82,7 +82,7 @@ CommandResult AlignmentFixCurveCommand::execute(const CommandContext& context)
 //  handlePointAcquired
 // ────────────────────────────────────────────────────────────────────────────
 
-void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
+void AlignmentFixCurveCommand::handlePointAcquired(const QPointF& point)
 {
     if (m_isFinishing) return;
 
@@ -141,22 +141,19 @@ void AlignmentFixCurveCommand::handlePointAcquired(const QVector2D& point)
         }
 
         // ── 建立 Fixed CircularArc ─────────────────────────────────────────
-        // center is already QPointF (double precision) from circumcircle()
-        QPointF arcStartF (m_startPoint.x(), m_startPoint.y());
-        QPointF arcEndF   (point.x(),        point.y());
-
+        // m_startPoint / point 已是 QPointF (double precision)
         int idx = m_alignDoc->horizontal()->addFixedCurve(
-                      arcStartF, arcEndF, center, radius);
+                      m_startPoint, point, center, radius);
         m_alignDoc->horizontal()->solve();   // emit changed() → AlignmentRenderer::refresh()
 
         outputMessage(
             QString("Fixed Curve #%1  start(%2, %3) → end(%4, %5)  R=%6 m")
                 .arg(idx)
-                .arg(arcStartF.x(), 0, 'f', 3)
-                .arg(arcStartF.y(), 0, 'f', 3)
-                .arg(arcEndF.x(),   0, 'f', 3)
-                .arg(arcEndF.y(),   0, 'f', 3)
-                .arg(radius,        0, 'f', 3));
+                .arg(m_startPoint.x(), 0, 'f', 3)
+                .arg(m_startPoint.y(), 0, 'f', 3)
+                .arg(point.x(),        0, 'f', 3)
+                .arg(point.y(),        0, 'f', 3)
+                .arg(radius,           0, 'f', 3));
 
         m_isFinishing = true;
         Q_EMIT finished(CommandResult::Success("AlignmentFixCurve completed"));
@@ -207,9 +204,9 @@ void AlignmentFixCurveCommand::cleanup()
 //  三點共線時 det ≈ 0。
 // ────────────────────────────────────────────────────────────────────────────
 
-bool AlignmentFixCurveCommand::circumcircle(const QVector2D& p1,
-                                            const QVector2D& p2,
-                                            const QVector2D& p3,
+bool AlignmentFixCurveCommand::circumcircle(const QPointF& p1,
+                                            const QPointF& p2,
+                                            const QPointF& p3,
                                             QPointF&         outCenter,
                                             double&          outRadius)
 {

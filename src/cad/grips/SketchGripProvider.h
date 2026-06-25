@@ -25,6 +25,9 @@ public:
     QVector<GripPoint> gripsForConstraint(const QString& constraintUuid,
                                           ConstraintOverlayManager* overlay) const;
 
+    /// 目前持有的幾何 indices（供累加選取時合併用）
+    const QSet<int>& geomIndices() const { return m_geomIndices; }
+
 private:
     Sketch*                     m_sketch;
     QSet<int>  m_geomIndices;  // ✅ empty = all geometries

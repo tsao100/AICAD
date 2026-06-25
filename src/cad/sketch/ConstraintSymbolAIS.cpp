@@ -112,6 +112,13 @@ void AIS_ConstraintSymbol::Compute(
         drawEqualRadius(prs);  break;
     case ConstraintType::Fixed:
         drawFixed(prs);        break;
+    case ConstraintType::Midpoint:
+        drawMidpoint(prs);     break;
+    case ConstraintType::Symmetric:
+        drawSymmetric(prs);    break;
+    case ConstraintType::PointOnCurve:
+    case ConstraintType::PointOnMidpoint:
+        drawPointOnCurve(prs); break;
     default:
         drawGeneric(prs, "•"); break;
     }
@@ -254,6 +261,59 @@ void AIS_ConstraintSymbol::drawGeneric(const Handle(Prs3d_Presentation)& prs,
                                        const char* /*label*/)
 {
     drawCircleSymbol(prs, m_symbolPos, kSymbolSize * 0.3, symbolColor());
+}
+
+// ── Midpoint：倒三角形（▽），表示「位於中點」────────────────────────────
+void AIS_ConstraintSymbol::drawMidpoint(const Handle(Prs3d_Presentation)& prs)
+{
+    Quantity_Color col = symbolColor();
+    double s = kSymbolSize * 0.6;
+    gp_Pnt p = m_symbolPos;
+    // 三角頂點：上方左/右 + 下方頂點
+    gp_Pnt tl(p.X()-s, p.Y()+s*0.6, p.Z());
+    gp_Pnt tr(p.X()+s, p.Y()+s*0.6, p.Z());
+    gp_Pnt bt(p.X(),   p.Y()-s*0.6, p.Z());
+    drawLine2Pts(prs, tl, tr, col);
+    drawLine2Pts(prs, tr, bt, col);
+    drawLine2Pts(prs, bt, tl, col);
+}
+
+// ── Symmetric：兩個小三角形面對面 (◁▷)，表示對稱 ─────────────────────
+void AIS_ConstraintSymbol::drawSymmetric(const Handle(Prs3d_Presentation)& prs)
+{
+    Quantity_Color col = symbolColor();
+    double s = kSymbolSize * 0.5;
+    gp_Pnt p = m_symbolPos;
+    // 左三角 ◁
+    gp_Pnt ll(p.X()-s*0.2, p.Y(),    p.Z());
+    gp_Pnt lt(p.X()-s,     p.Y()+s*0.7, p.Z());
+    gp_Pnt lb(p.X()-s,     p.Y()-s*0.7, p.Z());
+    drawLine2Pts(prs, ll, lt, col);
+    drawLine2Pts(prs, lt, lb, col);
+    drawLine2Pts(prs, lb, ll, col);
+    // 右三角 ▷
+    gp_Pnt rl(p.X()+s*0.2, p.Y(),    p.Z());
+    gp_Pnt rt(p.X()+s,     p.Y()+s*0.7, p.Z());
+    gp_Pnt rb(p.X()+s,     p.Y()-s*0.7, p.Z());
+    drawLine2Pts(prs, rl, rt, col);
+    drawLine2Pts(prs, rt, rb, col);
+    drawLine2Pts(prs, rb, rl, col);
+}
+
+// ── PointOnCurve：小菱形（◇），表示點落在曲線上 ─────────────────────
+void AIS_ConstraintSymbol::drawPointOnCurve(const Handle(Prs3d_Presentation)& prs)
+{
+    Quantity_Color col = symbolColor();
+    double s = kSymbolSize * 0.5;
+    gp_Pnt p = m_symbolPos;
+    gp_Pnt top(p.X(),    p.Y()+s, p.Z());
+    gp_Pnt rgt(p.X()+s,  p.Y(),   p.Z());
+    gp_Pnt bot(p.X(),    p.Y()-s, p.Z());
+    gp_Pnt lft(p.X()-s,  p.Y(),   p.Z());
+    drawLine2Pts(prs, top, rgt, col);
+    drawLine2Pts(prs, rgt, bot, col);
+    drawLine2Pts(prs, bot, lft, col);
+    drawLine2Pts(prs, lft, top, col);
 }
 
 } // namespace aicad::cad

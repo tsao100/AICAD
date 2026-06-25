@@ -177,6 +177,26 @@ public:
                SpiralType spiralType = SpiralType::Clothoid);
 
     void movePI(int idx, QPointF newPos);
+
+    /**
+     * @brief 移動 Fixed Tangent 的 startPI（from 端）。
+     *
+     * 對非 Tangent 元素，等同 movePI（移動 startPI）。
+     * 連續拖曳時 mergeId=2，與 movePI(mergeId=1) 互不合併。
+     */
+    void moveStartPI(int idx, QPointF newPos);
+
+    /**
+     * @brief Grip drag 用：直接修改 PI 座標，不 push Undo。
+     *
+     * Undo 由 AlignmentGripProvider::onGripDragEnd() 統一推入一筆記錄。
+     */
+    void movePIDirect(int idx, QPointF newPos);
+
+    /**
+     * @brief Grip drag 用：直接修改 startPI，不 push Undo。
+     */
+    void moveStartPIDirect(int idx, QPointF newPos);
     void setRadius(int idx, double radius);
     void setConstraintMode(int idx, ConstraintMode mode);
     void removeElement(int idx);
@@ -196,6 +216,7 @@ public:
 
     QJsonObject toJson()                        const;
     bool        fromJson(const QJsonObject& obj);
+    AlignmentDocument* parentDocument() const { return m_parentDoc; }
 
 Q_SIGNALS:
     void changed();
@@ -206,7 +227,6 @@ private:
     
     // Step 17: back-pointer to AlignmentDocument for Undo push
     friend class AlignmentDocument;
-    AlignmentDocument* parentDocument() const { return m_parentDoc; }
     AlignmentDocument* m_parentDoc = nullptr;
 };
 
@@ -272,9 +292,21 @@ public:
     QJsonObject toJson()              const;
     bool        fromJson(const QJsonObject& obj);
 
+    // Phase 4: 此文件建立時所依據的 TM2 Project Origin（供多檔疊圖衝突偵測）
+    bool    hasDocOrigin() const;
+    double  docOriginE()   const;
+    double  docOriginN()   const;
+    QString docEpsgCode()  const;
+
 private:
     std::unique_ptr<HorizontalAlignmentEdit> m_horizontal;
     std::unique_ptr<VerticalAlignmentEdit>   m_vertical;
+
+    // Phase 4: 文件內嵌 origin（開檔衝突偵測用）
+    bool    m_hasDocOrigin = false;
+    double  m_docOriginE   = 0.0;
+    double  m_docOriginN   = 0.0;
+    QString m_docEpsgCode  = QStringLiteral("EPSG:3826");
     QString                                  m_activeTclId;
 };
 

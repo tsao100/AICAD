@@ -167,6 +167,44 @@ public:
     void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
 };
 
+/// Midpoint：點 P 在線段 AB 的中點
+/// F0(x) = px - (x1+x2)/2 = 0
+/// F1(x) = py - (y1+y2)/2 = 0
+/// refs[0] = 點(point)，refs[1] = 線段(line)
+class MidpointEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 2; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// Symmetric：P0 與 P1 關於線段 axis 軸對稱
+/// 條件：(a) P0P1 的中點在 axis 上；(b) P0P1 垂直於 axis
+/// 產生 3 條方程式
+/// refs[0] = 點 A，refs[1] = 點 B，refs[2] = 軸線(line, GeomHandle::Curve)
+class SymmetricEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 3; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
+/// Collinear：兩線段共線
+/// 等價：Parallel + 線段 A 的起點在線段 B 上
+/// 產生 2 條方程式：
+/// F0 = cross(dA, dB) = 0  （平行）
+/// F1 = cross(dB, B1→A1) = 0  （A1 在 B 的延伸線上）
+/// refs[0] = 線段 A，refs[1] = 線段 B
+class CollinearEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 2; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
 class EqualRadiusEquation : public ConstraintEquation {
 public:
     using ConstraintEquation::ConstraintEquation;

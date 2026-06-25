@@ -4,7 +4,9 @@
 #include "core/Application.h"
 #include "ui/UIManager.h"
 
+#include "core/geometry/ProjectOrigin.h"
 #include <QJsonArray>
+#include <QMessageBox>
 #include <QLineF>
 #include <QtDebug>
 #include <cmath>
@@ -399,6 +401,57 @@ void HorizontalAlignmentEdit::movePI(int idx, QPointF newPos)
         if (app && app->uiManager() && app->uiManager()->undoStack())
             app->uiManager()->undoStack()->push(cmd);
     }
+}
+
+void HorizontalAlignmentEdit::moveStartPI(int idx, QPointF newPos)
+{
+    if (idx < 0 || idx >= m_elems.size()) return;
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    auto& e = m_elems[idx];
+    e.startPI = newPos;
+    if (e.type == EditableElementType::Tangent)
+        e.length = QLineF(newPos, e.endPI).length();
+    e.solved = false;
+
+    if (parentDocument()) {
+        // mergeId=2: 與 movePI(mergeId=1) 的拖曳互不合併
+        auto* cmd = new command::AlignmentEditCommand(
+            parentDocument(), before, parentDocument()->toJson(), "Move Start PI", /*mergeId=*/2);
+        auto* app = core::Application::instance();
+        if (app && app->uiManager() && app->uiManager()->undoStack())
+            app->uiManager()->undoStack()->push(cmd);
+    }
+}
+
+void HorizontalAlignmentEdit::movePIDirect(int idx, QPointF newPos)
+{
+    if (idx < 0 || idx >= m_elems.size()) return;
+    auto& e = m_elems[idx];
+    switch (e.type) {
+    case EditableElementType::Tangent:
+        e.endPI  = newPos;
+        e.length = QLineF(e.startPI, newPos).length();
+        break;
+    case EditableElementType::CircularArc:
+        e.startPI = newPos;
+        e.solved  = false;
+        break;
+    default:
+        e.startPI = newPos;
+        break;
+    }
+}
+
+void HorizontalAlignmentEdit::moveStartPIDirect(int idx, QPointF newPos)
+{
+    if (idx < 0 || idx >= m_elems.size()) return;
+    auto& e = m_elems[idx];
+    e.startPI = newPos;
+    if (e.type == EditableElementType::Tangent)
+        e.length = QLineF(newPos, e.endPI).length();
+    e.solved = false;
 }
 
 void HorizontalAlignmentEdit::setRadius(int idx, double radius)
@@ -806,11 +859,21 @@ AlignmentDocument::AlignmentDocument(QObject* parent)
     m_horizontal->m_parentDoc = this;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Phase 4: doc-origin accessors
+// ─────────────────────────────────────────────────────────────────────────────
+bool    AlignmentDocument::hasDocOrigin() const { return m_hasDocOrigin; }
+double  AlignmentDocument::docOriginE()   const { return m_docOriginE; }
+double  AlignmentDocument::docOriginN()   const { return m_docOriginN; }
+QString AlignmentDocument::docEpsgCode()  const { return m_docEpsgCode; }
+
 QJsonObject AlignmentDocument::toJson() const
 {
     QJsonObject obj;
-    obj["horizontal"] = m_horizontal->toJson();
-    obj["vertical"]   = m_vertical->toJson();
+    obj["horizontal"]     = m_horizontal->toJson();
+    obj["vertical"]       = m_vertical->toJson();
+    // Phase 3: 持久化 TM2 ProjectOrigin（供下次開啟自動還原）
+    obj["projectOrigin"]  = aicad::core::geometry::ProjectOrigin::instance().toJson();
     return obj;
 }
 
@@ -824,6 +887,50 @@ bool AlignmentDocument::fromJson(const QJsonObject& obj)
     bool ok = true;
     ok &= m_horizontal->fromJson(obj.value("horizontal").toObject());
     ok &= m_vertical->fromJson(obj.value("vertical").toObject());
+
+    // Phase 4: 還原文件內嵌 origin，並與目前 ProjectOrigin 做衝突偵測
+    if (obj.contains(QStringLiteral("projectOrigin"))) {
+        const QJsonObject originObj = obj[QStringLiteral("projectOrigin")].toObject();
+        m_hasDocOrigin = originObj[QStringLiteral("isSet")].toBool(false);
+        m_docOriginE   = originObj[QStringLiteral("originE")].toDouble(0.0);
+        m_docOriginN   = originObj[QStringLiteral("originN")].toDouble(0.0);
+        m_docEpsgCode  = originObj[QStringLiteral("epsgCode")].toString(QStringLiteral("EPSG:3826"));
+
+        auto& globalOrigin = aicad::core::geometry::ProjectOrigin::instance();
+        if (m_hasDocOrigin) {
+            if (!globalOrigin.isSet()) {
+                // 目前尚未設定 → 直接套用檔案內 origin
+                globalOrigin.fromJson(originObj);
+                qDebug() << "[AlignmentDocument] Auto-applied doc origin:"
+                         << m_docOriginE << m_docOriginN;
+            } else {
+                // 兩者不同 → 提示使用者
+                const double dE = qAbs(globalOrigin.originE() - m_docOriginE);
+                const double dN = qAbs(globalOrigin.originN() - m_docOriginN);
+                constexpr double kTolerance = 1.0; // 1 m 差異即視為衝突
+                if (dE > kTolerance || dN > kTolerance) {
+                    const QString msg = QString(
+                        "此檔案使用不同的 TM2 原點："
+                        "  檔案原點  E=%1  N=%2"
+                        "  目前原點  E=%3  N=%4"
+                        "是否套用檔案內原點？"
+                        "（選「否」將保持目前原點，Alignment 可能偏移）")
+                        .arg(m_docOriginE,          0,'f',3)
+                        .arg(m_docOriginN,          0,'f',3)
+                        .arg(globalOrigin.originE(),0,'f',3)
+                        .arg(globalOrigin.originN(),0,'f',3);
+                    const auto reply = QMessageBox::question(
+                        nullptr, tr("TM2 Origin 衝突"), msg,
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+                    if (reply == QMessageBox::Yes)
+                        globalOrigin.fromJson(originObj);
+                }
+            }
+        }
+    } else {
+        // 舊檔案無 origin 鍵 → 向下相容，保持恆等轉換
+        m_hasDocOrigin = false;
+    }
 
     // Re-solve so AlignmentRenderer gets refreshed after load/clear.
     // When the editors are empty, solve() calls result->clear() and

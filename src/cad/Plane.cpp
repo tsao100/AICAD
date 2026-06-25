@@ -285,6 +285,22 @@ QVector2D Plane::toPlane(const QVector3D& worldPoint) const {
     return QVector2D(u, v);
 }
 
+QPointF Plane::toPlaneD(const QVector3D& worldPoint) const {
+    // 以 double 計算各分量差值，避免 QVector3D float 中間值截斷
+    // 對 XY Plane（origin=(0,0,0), xAxis=(1,0,0), yAxis=(0,1,0)）：
+    //   u = worldPoint.x()，v = worldPoint.y()，完全無精度損失
+    double lx = static_cast<double>(worldPoint.x()) - static_cast<double>(m_origin.x());
+    double ly = static_cast<double>(worldPoint.y()) - static_cast<double>(m_origin.y());
+    double lz = static_cast<double>(worldPoint.z()) - static_cast<double>(m_origin.z());
+    double u = lx * static_cast<double>(m_xAxis.x())
+             + ly * static_cast<double>(m_xAxis.y())
+             + lz * static_cast<double>(m_xAxis.z());
+    double v = lx * static_cast<double>(m_yAxis.x())
+             + ly * static_cast<double>(m_yAxis.y())
+             + lz * static_cast<double>(m_yAxis.z());
+    return QPointF(u, v);
+}
+
 double Plane::distanceTo(const QVector3D& point) const {
     QVector3D vec = point - m_origin;
     return QVector3D::dotProduct(vec, m_normal);

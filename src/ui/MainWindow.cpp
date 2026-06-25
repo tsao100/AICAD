@@ -46,7 +46,7 @@ MainWindow::MainWindow()
 {
     qDebug() << "[MainWindow] Created";
 
-    setWindowTitle("AICAD - Advanced Interactive CAD System");
+    setWindowTitle("AICAD - Artificial Intelligence CAD System");
     resize(1280, 800);
 
     // EventBus 狀態列訂閱

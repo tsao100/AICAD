@@ -57,7 +57,8 @@ CommandResult ArcCommand::execute(const CommandContext& context) {
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
                        QVariantMap map   = data.toMap();
-                       QVector2D   point = map["point"].value<QVector2D>();
+                       QPointF _ptF = map["point"].value<QPointF>();
+                       QVector2D point(static_cast<float>(_ptF.x()), static_cast<float>(_ptF.y()));
 
                        QMetaObject::invokeMethod(this, [this, point]() {
                            this->handlePointAcquired(point);
@@ -103,7 +104,7 @@ void ArcCommand::handlePointAcquired(QVector2D point)
         // 更新 rubber band 錨點
         QVariantMap rubberUpdate;
         rubberUpdate["action"] = "clearAndAdd";
-        rubberUpdate["point"]  = QVariant::fromValue(point);
+        rubberUpdate["point"] = QVariant::fromValue(QPointF(point.x(), point.y()));
         bus->publish("command.update-rubber-band", rubberUpdate);
 
         outputMessage(QString("Start point: (%1, %2). Specify arc mid point:")
@@ -121,7 +122,7 @@ void ArcCommand::handlePointAcquired(QVector2D point)
         // 更新 rubber band：提供起點 + 中點，讓 View 可預覽弧形
         QVariantMap rubberUpdate;
         rubberUpdate["action"]     = "addPoint";
-        rubberUpdate["point"]   = QVariant::fromValue(point);
+        rubberUpdate["point"] = QVariant::fromValue(QPointF(point.x(), point.y()));
         bus->publish("command.update-rubber-band", rubberUpdate);
 
         outputMessage(QString("Mid point: (%1, %2). Specify arc end point:")

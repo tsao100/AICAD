@@ -1,3 +1,4 @@
+#include <QPointF>
 #include "ConstraintPickSession.h"
 #include "Sketch.h"
 #include <QDebug>
@@ -12,6 +13,7 @@ ConstraintPickSession::ConstraintPickSession(QObject* parent)
 
 int ConstraintPickSession::requiredPointCount(ConstraintType type) const {
     switch (type) {
+    // ── 尺寸約束（原有） ──────────────────────────────────────────
     case ConstraintType::FixedDistance:
         return 2;   // 點 A → 點 B
     case ConstraintType::FixedRadius:
@@ -21,6 +23,34 @@ int ConstraintPickSession::requiredPointCount(ConstraintType type) const {
         return 1;   // 選一個點
     case ConstraintType::FixedAngleDim:
         return 2;   // 選兩條線上的點（取線方向）
+
+    // ── 幾何約束：單一幾何 ────────────────────────────────────────
+    case ConstraintType::Horizontal:
+    case ConstraintType::Vertical:
+    case ConstraintType::Fixed:
+    case ConstraintType::FixedLength:
+    case ConstraintType::FixedDiameter:
+    case ConstraintType::FixedArcLength:
+        return 1;
+
+    // ── 幾何約束：兩個幾何 ────────────────────────────────────────
+    case ConstraintType::Coincident:
+    case ConstraintType::Parallel:
+    case ConstraintType::Perpendicular:
+    case ConstraintType::Tangent:
+    case ConstraintType::Concentric:
+    case ConstraintType::EqualLength:
+    case ConstraintType::EqualRadius:
+    case ConstraintType::Collinear:
+    case ConstraintType::Midpoint:
+    case ConstraintType::PointOnCurve:
+    case ConstraintType::PointOnMidpoint:
+        return 2;
+
+    // ── 幾何約束：三個幾何 ───────────────────────────────────────
+    case ConstraintType::Symmetric:
+        return 3;   // 點A、點B、軸線
+
     default:
         return 1;
     }
@@ -88,8 +118,50 @@ QString ConstraintPickSession::promptText() const {
     case ConstraintType::FixedAngleDim:
         if (picked == 0) return tr("選取第一條線上的點…");
         return tr("選取第二條線上的點…");
+
+    // ── 幾何約束：依類型給出明確提示 ────────────────────────────
+    case ConstraintType::Horizontal:
+    case ConstraintType::Vertical:
+        return tr("選取線段…");
+    case ConstraintType::Fixed:
+        return tr("選取要固定的幾何元素…");
+    case ConstraintType::Parallel:
+        if (picked == 0) return tr("選取第一條線段（平行）…");
+        return tr("選取第二條線段（平行）…");
+    case ConstraintType::Perpendicular:
+        if (picked == 0) return tr("選取第一條線段（垂直）…");
+        return tr("選取第二條線段（垂直）…");
+    case ConstraintType::Tangent:
+        if (picked == 0) return tr("選取第一個幾何（相切）…");
+        return tr("選取第二個幾何（相切）…");
+    case ConstraintType::Concentric:
+        if (picked == 0) return tr("選取第一個圓/弧（同心）…");
+        return tr("選取第二個圓/弧（同心）…");
+    case ConstraintType::EqualLength:
+        if (picked == 0) return tr("選取第一條線段（等長）…");
+        return tr("選取第二條線段（等長）…");
+    case ConstraintType::EqualRadius:
+        if (picked == 0) return tr("選取第一個圓/弧（等半徑）…");
+        return tr("選取第二個圓/弧（等半徑）…");
+    case ConstraintType::Coincident:
+        if (picked == 0) return tr("選取第一個幾何元素（重合）…");
+        return tr("選取第二個幾何元素（重合）…");
+    case ConstraintType::Collinear:
+        if (picked == 0) return tr("選取第一條線段（共線）…");
+        return tr("選取第二條線段（共線）…");
+    case ConstraintType::Midpoint:
+        if (picked == 0) return tr("選取點（中點約束）…");
+        return tr("選取線段（中點約束）…");
+    case ConstraintType::PointOnCurve:
+        if (picked == 0) return tr("選取點（點在曲線上）…");
+        return tr("選取曲線（點在曲線上）…");
+    case ConstraintType::Symmetric:
+        if (picked == 0) return tr("選取第一個點（對稱）…");
+        if (picked == 1) return tr("選取第二個點（對稱）…");
+        return tr("選取對稱軸線（對稱）…");
+
     default:
-        return tr("選取點 %1/%2…").arg(picked + 1).arg(total);
+        return tr("選取幾何 %1/%2…").arg(picked + 1).arg(total);
     }
 }
 
@@ -161,13 +233,16 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
     return GeomRef(QString(), GeomHandle::WholeGeom);
 }
 
-void ConstraintPickSession::feedPoint(const QVector2D& planePt,
+void ConstraintPickSession::feedPoint(const QPointF& planePt,
                                       const QString& geomUuid,
                                       int geomHandle)
 {
     if (!m_active) return;
 
-    GeomRef ref = makeRef(geomUuid, geomHandle, planePt);
+    // QPointF → QVector2D（Sketch 內部座標仍使用 QVector2D）
+    const QVector2D planePtV(static_cast<float>(planePt.x()),
+                             static_cast<float>(planePt.y()));
+    GeomRef ref = makeRef(geomUuid, geomHandle, planePtV);
     m_refs.append(ref);
 
     qDebug() << "[PickSession] point" << m_refs.size() << "/"  << m_required

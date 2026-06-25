@@ -24,9 +24,11 @@
 #include "cad/grips/GripManager.h"
 #include "command/CommandManager.h"
 #include "geometry/GeometryBuilder.h"
+#include "core/geometry/ProjectOrigin.h"
 
 #include "cad/sketch/DimensionLineAIS.h"
 #include "cad/sketch/SketchConstraint.h"
+#include "cad/sketch/SketchAxisAIS.h"
 
 #include <QDebug>
 #include <QTimer>
@@ -113,6 +115,9 @@ public:
     bool viewInitialized;
     bool gridEnabled;
 
+    // TM2 座標原點偏移（僅供狀態列顯示用，幾何管道已全程 double 不需補償）
+    double coordinateOffsetE = 0.0;
+    double coordinateOffsetN = 0.0;
     // 滑鼠狀態
     QPoint lastMousePos;
     bool mousePressed;
@@ -129,6 +134,13 @@ public:
     GripManager*         gripManager;
     bool commandInProgress = false;
     bool isDisplayingAllFeatures = false;
+    bool constraintPickActive = false;  ///< pickSession 等待選取中（GetGeom 但 command 已 finished）
+
+    // ── 草圖平面參考幾何 AIS（X 軸 / Y 軸 / 原點）────────────────────────
+    // 用 AIS_Shape 基底型別儲存（SketchAxisAIS/SketchOriginAIS 繼承 AIS_Shape）
+    Handle(AIS_Shape) sketchXAxisAIS;
+    Handle(AIS_Shape) sketchYAxisAIS;
+    Handle(AIS_Shape) sketchOriginAIS;
 
     QList<OverlayEntry> overlayObjects;
     QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
@@ -201,6 +213,28 @@ CadView::CadView(QWidget* parent)
 
     connect(m_finishSketchButton, &QPushButton::clicked,
             this, &CadView::onFinishSketchClicked);
+
+    // ── Return button（H-Alignment edit 模式，右上角圖示按鈕）──────────────
+    m_returnAlignmentButton = new QPushButton(this);
+    m_returnAlignmentButton->setIcon(QIcon(":/icons/return.png"));
+    m_returnAlignmentButton->setIconSize(QSize(24, 24));
+    m_returnAlignmentButton->setFixedSize(36, 36);
+    m_returnAlignmentButton->setToolTip(tr("結束 Alignment 編輯模式"));
+    m_returnAlignmentButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: rgba(60,60,60,200);"
+        "  border: 1px solid #888;"
+        "  border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: rgba(80,80,80,230);"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: rgba(40,40,40,255);"
+        "}");
+    m_returnAlignmentButton->hide();
+    connect(m_returnAlignmentButton, &QPushButton::clicked,
+            this, &CadView::returnAlignmentRequested);
 
     // GDIM: 尺寸預覽用 OCCT Presentation（仿 RubberBand），不使用 Qt widget overlay
     m_dimOverlay = new DimPreviewOverlay(this);
@@ -362,16 +396,16 @@ void CadView::initializeViewer() {
                 auto* bus = aicad::core::Application::instance()->eventBus();
                 if (!bus) return;
 
-                // ✅ 用 snapPoint2D() 取草圖平面座標，格式與 Command 期待一致
-                std::optional<QVector2D> pt2d = m_snapManager->snapPoint2D();
-                QVector2D planePt = pt2d.has_value()
-                                        ? pt2d.value()
-                                        : screenToPlane(mapFromGlobal(QCursor::pos()));
+                // ✅ 改用 snapPoint2DF()（double 版），保持 TM2 大座標精度
+                std::optional<QPointF> pt2d = m_snapManager->snapPoint2DF();
+                QPointF planePt = pt2d.has_value()
+                                ? pt2d.value()
+                                : screenToPlaneD(mapFromGlobal(QCursor::pos()));
 
                 QVariantMap data;
-                data["point"] = QVariant::fromValue(planePt);
-                bus->publish(core::Events::POINT_ACQUIRED, data);  // ✅ Command 系統能收到
-                Q_EMIT pointAcquired(planePt);
+                data["point"] = QVariant::fromValue(planePt);   // QPointF（double）
+                bus->publish(core::Events::POINT_ACQUIRED, data);
+                Q_EMIT pointAcquired(planePt);                   // signal 已改為 QPointF
             });
 
     qDebug() << "[CadView] OSnapManager initialized";
@@ -647,11 +681,12 @@ QStringList CadView::selectedGeomUuids() const
          d->context->MoreSelected();
          d->context->NextSelected())
     {
-        Handle(AIS_Shape) s = Handle(AIS_Shape)::DownCast(
-            d->context->SelectedInteractive());
-        if (s.IsNull()) continue;
+        // 使用 AIS_InteractiveObject（不限於 AIS_Shape），
+        // 讓 SketchAxisAIS / SketchOriginAIS 也能被識別
+        Handle(AIS_InteractiveObject) obj = d->context->SelectedInteractive();
+        if (obj.IsNull()) continue;
 
-        QString uuid = d->aisToGeomUuid.value(s.get());  // ← 直接取 UUID
+        QString uuid = d->aisToGeomUuid.value(obj.get());
         if (!uuid.isEmpty())
             result << uuid;
     }
@@ -664,6 +699,87 @@ void CadView::clearSketchGeomSelection()
         d->context->ClearSelected(Standard_True);
     if (auto* bus = Application::instance()->eventBus())
         bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
+}
+
+void CadView::showSketchAxes(cad::Sketch* sketch)
+{
+    if (!sketch || !sketch->plane() || d->context.IsNull()) return;
+
+    // 先移除舊的
+    hideSketchAxes();
+
+    auto* plane = sketch->plane();
+    QVector3D o  = plane->origin();
+    QVector3D xa = plane->xAxis();
+    QVector3D ya = plane->yAxis();
+    QVector3D n  = plane->normal();
+
+    gp_Pnt origin(o.x(), o.y(), o.z());
+    gp_Dir normDir(n.x(), n.y(), n.z());
+    gp_Dir xDir(xa.x(), xa.y(), xa.z());
+    gp_Ax3 ax3(origin, normDir, xDir);
+
+    // 軸長：視草圖大小而定（暫定 200mm；之後可改為自動適應）
+    double halfLen = 200.0;
+    double origSize = halfLen * 0.06;   // 原點十字大小
+
+    QString skUuid = sketch->id();
+
+    // 建立三個 AIS 物件
+    d->sketchXAxisAIS   = new cad::SketchAxisAIS(ax3, halfLen,
+                              cad::SketchAxisAIS::AxisType::X,
+                              "sketch_xaxis:" + skUuid);
+    d->sketchYAxisAIS   = new cad::SketchAxisAIS(ax3, halfLen,
+                              cad::SketchAxisAIS::AxisType::Y,
+                              "sketch_yaxis:" + skUuid);
+    d->sketchOriginAIS  = new cad::SketchOriginAIS(ax3, origSize,
+                              "sketch_origin:" + skUuid);
+
+    // 登記到 aisToGeomUuid（供 selectedGeomUuids() 使用）
+    d->aisToGeomUuid[static_cast<AIS_InteractiveObject*>(d->sketchXAxisAIS.get())]
+        = "sketch_xaxis:"  + skUuid;
+    d->aisToGeomUuid[static_cast<AIS_InteractiveObject*>(d->sketchYAxisAIS.get())]
+        = "sketch_yaxis:"  + skUuid;
+    d->aisToGeomUuid[static_cast<AIS_InteractiveObject*>(d->sketchOriginAIS.get())]
+        = "sketch_origin:" + skUuid;
+
+    // Display + Activate（與 SketchPointAIS 一致的標準模式：
+    // 兩參數 Display，再單獨呼叫 Activate 啟用 selection mode 0）
+    d->context->Display(d->sketchXAxisAIS,  Standard_False);
+    d->context->Display(d->sketchYAxisAIS,  Standard_False);
+    d->context->Display(d->sketchOriginAIS, Standard_False);
+
+    d->context->Activate(d->sketchXAxisAIS,  0, Standard_False);
+    d->context->Activate(d->sketchYAxisAIS,  0, Standard_False);
+    d->context->Activate(d->sketchOriginAIS, 0, Standard_False);
+
+    // 放寬選取容差（必須透過 context 呼叫，且在 Activate 之後，
+    // 這時 selection mode 0 對應的 SelectMgr_Selection 已存在）：
+    // 軸線稍寬方便點擊細線，原點更寬方便點擊單點。
+    d->context->SetSelectionSensitivity(d->sketchXAxisAIS,  0, 4.0);
+    d->context->SetSelectionSensitivity(d->sketchYAxisAIS,  0, 4.0);
+    d->context->SetSelectionSensitivity(d->sketchOriginAIS, 0, 8.0);
+
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::hideSketchAxes()
+{
+    if (d->context.IsNull()) return;
+
+    auto remove = [&](auto& handle) {
+        if (!handle.IsNull()) {
+            d->aisToGeomUuid.remove(
+                static_cast<AIS_InteractiveObject*>(handle.get()));
+            d->context->Remove(handle, Standard_False);
+            handle.Nullify();
+        }
+    };
+    remove(d->sketchXAxisAIS);
+    remove(d->sketchYAxisAIS);
+    remove(d->sketchOriginAIS);
+
+    d->context->UpdateCurrentViewer();
 }
 
 void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
@@ -723,6 +839,11 @@ void CadView::setViewType(ViewType type) {
 
 ViewType CadView::viewType() const {
     return d->viewType;
+}
+
+void CadView::setConstraintPickActive(bool active)
+{
+    d->constraintPickActive = active;
 }
 
 void CadView::setMode(InteractionMode mode) {
@@ -836,6 +957,20 @@ void CadView::displayAllFeatures() {
     d->context->Display(d->viewCube, Standard_False);
     d->aisToFeatureId.clear();  // ✅ 全部重建
 
+    // ── 立即重新顯示草圖平面參考幾何（X 軸 / Y 軸 / 原點）──────────────────
+    // RemoveAll 會把它們整個移出 context，包括內部 SelectMgr_Selection 狀態，
+    // 必須緊接著重建，避免後續流程中軸/原點處於「視覺可見但選取已失效」狀態。
+    auto redisplayAxis = [&](auto& handle, double sensitivity) {
+        if (!handle.IsNull()) {
+            d->context->Display(handle, Standard_False);
+            d->context->Activate(handle, 0, Standard_False);
+            d->context->SetSelectionSensitivity(handle, 0, sensitivity);
+        }
+    };
+    redisplayAxis(d->sketchXAxisAIS,  4.0);
+    redisplayAxis(d->sketchYAxisAIS,  4.0);
+    redisplayAxis(d->sketchOriginAIS, 8.0);
+
     for (Feature* feature : d->document->features()) {
         if (!feature) continue;
 
@@ -889,17 +1024,22 @@ void CadView::displayAllFeatures() {
 
     d->context->UpdateCurrentViewer();
 
-    // ── 重新加回 overlay 物件（如 ExtrudeManipulator 箭頭）──────────────
+    // ── 重新加回 overlay 物件（如 ExtrudeManipulator 箭頭），依 visible 旗標過濾 ──
+    // eye-close 的 AlignmentRenderer overlay (visible==false) 不重新顯示，
+    // 確保 Sketch draw commands 進入時不會意外顯示被 eye-close 的 Alignment。
+    bool anyOverlayDisplayed = false;
     for (const auto& entry : d->overlayObjects) {
-        if (!entry.obj.IsNull()) {
+        if (!entry.obj.IsNull() && entry.visible) {
             d->context->Display(entry.obj, Standard_False);
             for (int m : entry.modes)
                 d->context->Activate(entry.obj, m);
+            anyOverlayDisplayed = true;
         }
     }
-    if (!d->overlayObjects.isEmpty())
+    if (anyOverlayDisplayed)
         d->context->UpdateCurrentViewer();
 
+    d->context->UpdateCurrentViewer();
     d->isDisplayingAllFeatures = false;
 }
 
@@ -957,6 +1097,34 @@ void CadView::removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj)
     if (!d->context.IsNull() && !obj.IsNull()
         && d->context->IsDisplayed(obj)) {
         d->context->Remove(obj, Standard_True);
+    }
+}
+
+void CadView::setOverlayAISVisible(const Handle(AIS_InteractiveObject)& obj, bool visible)
+{
+    if (obj.IsNull()) return;
+
+    // 更新登錄中的 visible 旗標
+    for (auto& entry : d->overlayObjects) {
+        if (entry.obj == obj) {
+            entry.visible = visible;
+            break;
+        }
+    }
+
+    if (d->context.IsNull()) return;
+
+    if (visible) {
+        // 重新顯示
+        if (!d->context->IsDisplayed(obj))
+            d->context->Display(obj, Standard_False);
+        d->context->UpdateCurrentViewer();
+    } else {
+        // 從 OCCT context 移除（但保留 overlayObjects 登錄，供下次 setVisible(true) 恢復）
+        if (d->context->IsDisplayed(obj)) {
+            d->context->Remove(obj, Standard_False);
+            d->context->UpdateCurrentViewer();
+        }
     }
 }
 
@@ -1072,6 +1240,58 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
     return QVector2D(0, 0);
 }
 
+QPointF CadView::screenToPlaneD(const QPoint& screenPos) const {
+    if (d->view.IsNull()) return QPointF(0, 0);
+
+    Standard_Integer xp, yp;
+    qtToOCCT(screenPos, xp, yp);
+
+    cad::Plane* plane;
+    cad::PlaneManager* manager = cad::PlaneManager::instance();
+    switch (d->viewType) {
+    case ViewType::Top: case ViewType::Bottom: plane = manager->xyPlane(); break;
+    case ViewType::Front: case ViewType::Back: plane = manager->xzPlane(); break;
+    case ViewType::Right: case ViewType::Left: plane = manager->yzPlane(); break;
+    default: plane = manager->xyPlane(); break;
+    }
+
+    gp_Pln gpPlane(
+        gp_Pnt(plane->origin().x(), plane->origin().y(), plane->origin().z()),
+        gp_Dir(plane->normal().x(), plane->normal().y(), plane->normal().z())
+    );
+
+    Standard_Real Xeye, Yeye, Zeye, Xproj, Yproj, Zproj;
+    d->view->Eye(Xeye, Yeye, Zeye);
+    d->view->Proj(Xproj, Yproj, Zproj);
+
+    gp_Pnt eyePoint(Xeye, Yeye, Zeye);
+    gp_Dir projDir(Xproj, Yproj, Zproj);
+
+    Standard_Real Xv, Yv, Zv;
+    d->view->Convert(xp, yp, Xv, Yv, Zv);
+    gp_Pnt screenPoint3D(Xv, Yv, Zv);
+
+    gp_Pnt rayStart;
+    gp_Dir rayDir;
+    if (d->view->Camera()->IsOrthographic()) {
+        rayStart = screenPoint3D;
+        rayDir = projDir;
+    } else {
+        rayStart = eyePoint;
+        gp_Vec direction(eyePoint, screenPoint3D);
+        rayDir = (direction.Magnitude() < Precision::Confusion())
+                 ? projDir : gp_Dir(direction);
+    }
+
+    IntAna_IntConicQuad intersection(gp_Lin(rayStart, rayDir), gpPlane, Precision::Angular());
+    if (intersection.IsDone() && intersection.NbPoints() > 0) {
+        gp_Pnt ip = intersection.Point(1);
+        // gp_Pnt 座標是 double，直接用 plane->toPlaneD() 保持精度
+        return plane->toPlaneD(QVector3D(ip.X(), ip.Y(), ip.Z()));
+    }
+    return QPointF(0, 0);
+}
+
 void CadView::setGridEnabled(bool enabled) {
     d->gridEnabled = enabled;
 
@@ -1096,6 +1316,30 @@ void CadView::setGridEnabled(bool enabled) {
 
 bool CadView::isGridEnabled() const {
     return d->gridEnabled;
+}
+
+void CadView::setCoordinateOffset(double easting, double northing) {
+    d->coordinateOffsetE = easting;
+    d->coordinateOffsetN = northing;
+    qDebug() << "[CadView] Coordinate offset set: E=" << easting << "N=" << northing;
+}
+
+/// @deprecated 使用 ProjectOrigin::instance().originE() 取代
+double CadView::coordinateOffsetE() const
+{
+    // Phase 2 deprecated compat: 若 ProjectOrigin 已設定，以它為準
+    using namespace aicad::core::geometry;
+    if (ProjectOrigin::instance().isSet())
+        return ProjectOrigin::instance().originE();
+    return d->coordinateOffsetE;
+}
+/// @deprecated 使用 ProjectOrigin::instance().originN() 取代
+double CadView::coordinateOffsetN() const
+{
+    using namespace aicad::core::geometry;
+    if (ProjectOrigin::instance().isSet())
+        return ProjectOrigin::instance().originN();
+    return d->coordinateOffsetN;
 }
 
 void CadView::onSketchRebuilt()
@@ -1179,6 +1423,27 @@ void CadView::showFinishSketchButton() {
 
 void CadView::hideFinishSketchButton() {
     m_finishSketchButton->hide();
+}
+
+void CadView::showReturnAlignmentButton() {
+    if (!m_returnAlignmentButton) return;
+    // 右上角：距右邊 10px，距上邊 10px
+    m_returnAlignmentButton->move(width() - m_returnAlignmentButton->width() - 10, 10);
+    m_returnAlignmentButton->show();
+    m_returnAlignmentButton->raise();
+}
+
+void CadView::hideReturnAlignmentButton() {
+    if (m_returnAlignmentButton)
+        m_returnAlignmentButton->hide();
+}
+
+void CadView::setSuppressCoordDisplay(bool suppress)
+{
+    m_suppressCoordDisplay = suppress;
+    // 立刻清除 status bar 顯示
+    if (suppress)
+        Q_EMIT statusMessageRequested(QString(), 0);
 }
 
 void CadView::onFinishSketchClicked() {
@@ -1341,7 +1606,7 @@ void CadView::updateProjection() {
 }
 
 void CadView::handlePointInput(const QPoint& screenPos) {
-    QVector2D planePt = screenToPlane(screenPos);
+    QPointF planePt = screenToPlaneD(screenPos);   // ✅ 改用 double 版
 
     // 從 OSnapManager 取得目前鎖定的 snap 候選（含 geomUuid / geomHandle）
     QString geomUuid;
@@ -1351,9 +1616,9 @@ void CadView::handlePointInput(const QPoint& screenPos) {
         if (snap.has_value()) {
             geomUuid   = snap->geomUuid;
             geomHandle = snap->geomHandle;
-            // 若 snap 鎖定點存在，以 snap 的 planePoint 取代原始螢幕投影
-            if (!snap->planePoint.isNull())
-                planePt = snap->planePoint;
+            // ✅ 改用 snapPoint2DF()，避免 SnapCandidate::planePoint（QVector2D float）截斷
+            if (auto pt2d = m_snapManager->snapPoint2DF())
+                planePt = pt2d.value();
         }
     }
     // Snap 未偵測到幾何時，回退到 OCC DetectedInteractive
@@ -1446,6 +1711,9 @@ void CadView::resizeEvent(QResizeEvent* event) {
 
     if (m_finishSketchButton) {
         m_finishSketchButton->setGeometry(width() - 120, 10, 110, 30);
+    }
+    if (m_returnAlignmentButton && m_returnAlignmentButton->isVisible()) {
+        m_returnAlignmentButton->move(width() - m_returnAlignmentButton->width() - 10, 10);
     }
 
     // GDIM overlay 是 OCCT Presentation，resize 無需更新 widget geometry
@@ -1570,16 +1838,41 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
 
         if (!hasCmd) {
-            bool additive = (event->modifiers() & Qt::ShiftModifier);
-            d->context->SelectDetected(
-                additive ? AIS_SelectionScheme_Add
-                         : AIS_SelectionScheme_Replace);
-
             auto* bus = Application::instance()->eventBus();
+
+            // ── GetGeom 模式 + pickSession 等待中 ────────────────────────────
+            // GeomConstraintCommand::execute() 回傳後 command state 不是 Running，
+            // hasCmd = false，但 pickSession 仍在等待幾何選取。
+            // → 走 handlePointInput 路徑，透過 geomRefPicked → feedPoint。
+            if (d->mode == InteractionMode::GetGeom && d->constraintPickActive) {
+                if (m_snapManager && m_snapManager->onMousePress(x, y))
+                    return;
+                handlePointInput(event->pos());
+                return;
+            }
+
+            // ── Sketch Idle 選取規則 ─────────────────────────────────────────
+            // ① 點到空白處 → 清空所有選取
+            // ② 點到幾何   → 累加選取（不需按 Shift）
+            // Shift 鍵 = XOR（可反選已選物件）
+            if (!d->context->HasDetected()) {
+                // 點到空白 → 清空
+                d->context->ClearSelected(Standard_True);
+                bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
+                bus->publish("selection.cleared", QVariant());
+                return;
+            }
+
+            // 點到幾何：無 Shift = 累加；Shift = XOR（反選）
+            bool shiftHeld = (event->modifiers() & Qt::ShiftModifier);
+            d->context->SelectDetected(
+                shiftHeld ? AIS_SelectionScheme_XOR
+                          : AIS_SelectionScheme_Add);
 
             // ── 同一個迴圈同時收集 UUID（給 Sketch 高亮）和 geomIndex（給 Grips）──
             QStringList uuids;
             QMap<QString, QSet<int>> selectionMap;
+            Handle(AIS_InteractiveObject) overlayHit;  // alignment overlay (not in aisToFeatureId)
 
             for (d->context->InitSelected();
                  d->context->MoreSelected();
@@ -1593,7 +1886,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 if (!uuid.isEmpty()) uuids << uuid;
 
                 QString featureId = d->aisToFeatureId.value(obj.get());
-                if (featureId.isEmpty()) continue;
+                if (featureId.isEmpty()) {
+                    // Not a sketch feature — could be an alignment overlay
+                    if (overlayHit.IsNull()) overlayHit = obj;
+                    continue;
+                }
 
                 int geomIndex = d->aisToGeomIndex.value(obj.get(), -1);
                 if (geomIndex >= 0)
@@ -1603,24 +1900,31 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             }
 
             if (!uuids.isEmpty()) {
-                // ① 通知 Sketch 高亮選取的幾何
+                // ① 通知 Sketch 高亮選取的幾何（傳送目前所有已選 UUID）
                 QVariantMap data;
                 data["uuids"] = QVariant::fromValue(uuids);
                 bus->publish(Events::SKETCH_GEOM_SELECTED, data);
 
-                // ② 觸發 GripManager 附加 Provider（這是之前完全缺漏的步驟）
-                if (!selectionMap.isEmpty()) {
-                    QString featureId = selectionMap.firstKey();
+                // ② 觸發 GripManager：把所有已選幾何的 indices 合併後一次送出
+                // 支援跨多個 feature 的選取（實務上 sketch 同一個）
+                for (auto it = selectionMap.constBegin();
+                     it != selectionMap.constEnd(); ++it)
+                {
                     QVariantList indexList;
-                    for (int idx : selectionMap[featureId]) indexList.append(idx);
+                    for (int idx : it.value()) indexList.append(idx);
                     QVariantMap selData;
-                    selData["featureId"]   = featureId;
+                    selData["featureId"]   = it.key();
                     selData["geomIndices"] = indexList;
                     bus->publish("selection.featureSelected", selData);
                 }
+            } else if (!overlayHit.IsNull()) {
+                // Alignment overlay clicked in Sketching mode
+                QVariantMap selData;
+                selData["aisObject"] = QVariant::fromValue((void*)overlayHit.get());
+                bus->publish("geometry.selected", selData);
             } else {
                 bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
-                bus->publish("selection.cleared", QVariant());  // 同步清除 Grips
+                bus->publish("selection.cleared", QVariant());
             }
             return;
         }
@@ -1695,6 +1999,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
         // ✅ Collect ALL currently selected shapes
         QMap<QString, QSet<int>> selectionMap;  // featureId → set of geomIndices
+        Handle(AIS_InteractiveObject) overlayHit;  // alignment overlay hit (not in aisToFeatureId)
 
         for (d->context->InitSelected();
              d->context->MoreSelected();
@@ -1705,7 +2010,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             if (s.IsNull()) continue;
 
             QString featureId = d->aisToFeatureId.value(s.get());
-            if (featureId.isEmpty()) continue;
+            if (featureId.isEmpty()) {
+                // Not a registered feature — could be an alignment overlay
+                if (overlayHit.IsNull()) overlayHit = s;
+                continue;
+            }
 
             int geomIndex = d->aisToGeomIndex.value(s.get(), -1);
             if (geomIndex >= 0)
@@ -1732,7 +2041,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
 
         } else {
             auto* bus = core::Application::instance()->eventBus();
-            bus->publish("selection.cleared", QVariant());
+            // 檢查是否點選到 alignment overlay（未登記在 aisToFeatureId 的 AIS 物件）
+            if (!overlayHit.IsNull()) {
+                QVariantMap selData;
+                selData["aisObject"] = QVariant::fromValue((void*)overlayHit.get());
+                bus->publish("geometry.selected", selData);
+            } else {
+                bus->publish("selection.cleared", QVariant());
+            }
         }
     }
 
@@ -1872,21 +2188,52 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
+    // Phase 3: Navigation 模式游標座標雙顯示（Local + TM2 Global）
+    // m_suppressCoordDisplay == true 時（Alignment edit 結束後）不顯示任何座標
+    if (!m_suppressCoordDisplay &&
+        (d->mode == InteractionMode::Navigation || d->mode == InteractionMode::Idle)) {
+        auto* bus = core::Application::instance() ? core::Application::instance()->eventBus() : nullptr;
+        if (bus) {
+            QPointF localPt = screenToPlaneD(event->pos());
+            // 若 OSnap 鎖定，用 snap 座標（精度更高）
+            if (m_snapManager && m_snapManager->isSnapActive()) {
+                auto snapPt = m_snapManager->snapPoint2DF();
+                if (snapPt.has_value()) localPt = snapPt.value();
+            }
+            using namespace aicad::core::geometry;
+            const auto& origin = ProjectOrigin::instance();
+            QString coordMsg;
+            if (origin.isSet()) {
+                const QPointF global = origin.toGlobal(localPt);
+                coordMsg = QString("E: %1   N: %2   (Local: %3, %4)")
+                    .arg(global.x(), 0, 'f', 3)
+                    .arg(global.y(), 0, 'f', 3)
+                    .arg(localPt.x(), 0, 'f', 3)
+                    .arg(localPt.y(), 0, 'f', 3);
+            } else {
+                coordMsg = QString("X: %1   Y: %2")
+                    .arg(localPt.x(), 0, 'f', 3)
+                    .arg(localPt.y(), 0, 'f', 3);
+            }
+            Q_EMIT statusMessageRequested(coordMsg, 0); // timeout=0 → 持續顯示直到下一次更新
+        }
+    }
+
     // 草圖模式：更新橡皮筋
     if (d->mode == InteractionMode::Sketching) {
         if (d->rubberBand) {
-            QVector2D planePt;
+            QPointF planePtF;
 
-            // ✅ 優先使用 snap 鎖定座標
+            // ✅ 優先使用 snap 鎖定座標（double 版）
             if (m_snapManager && m_snapManager->isSnapActive()) {
-                auto pt2d = m_snapManager->snapPoint2D();
-                planePt = pt2d.has_value() ? pt2d.value()
-                                           : screenToPlane(event->pos());
+                auto pt2d = m_snapManager->snapPoint2DF();
+                planePtF = pt2d.has_value() ? pt2d.value()
+                                            : screenToPlaneD(event->pos());
             } else {
-                planePt = screenToPlane(event->pos());
+                planePtF = screenToPlaneD(event->pos());
             }
 
-            d->rubberBand->setCurrentPoint(planePt);
+            d->rubberBand->setCurrentPoint(planePtF);  // Phase fix: QPointF直接傳入
             d->rubberBand->update();
         }
     }

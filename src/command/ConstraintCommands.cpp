@@ -4,6 +4,9 @@
  */
 
 #include "ConstraintCommands.h"
+#include <limits>
+#include <QPair>
+#include <QVector2D>
 #include "CommandAlias.h"
 #include "CommandManager.h"
 #include "GeneralDimCommand.h"
@@ -23,6 +26,29 @@ using namespace cad;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 輔助函式
+
+/// 將 CadView 軸 AIS 的虛擬 UUID 轉換為 Sketch 內真實的幾何 UUID。
+/// 當使用者選取 X 軸 / Y 軸 / 原點時，ctx.args 含有
+/// "sketch_xaxis:<sketchId>" 等字串，需在此正規化後才能套用約束。
+static QString resolveAxisUuid(Sketch* sketch, const QString& uuid)
+{
+    if (!sketch) return uuid;
+    const QString skId = sketch->id();
+    if (uuid == "sketch_xaxis:"  + skId) return sketch->xAxisGeomUuid();
+    if (uuid == "sketch_yaxis:"  + skId) return sketch->yAxisGeomUuid();
+    if (uuid == "sketch_origin:" + skId) return sketch->originPointUuid();
+    return uuid;
+}
+
+/// 批次正規化 args 中所有 UUID
+static QStringList resolveAxisUuids(Sketch* sketch, const QStringList& args)
+{
+    QStringList out;
+    out.reserve(args.size());
+    for (const QString& a : args)
+        out << resolveAxisUuid(sketch, a);
+    return out;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 void reportSolveResult(const SolveResult& result,
@@ -97,8 +123,10 @@ CommandResult GeomConstraintCommand::execute(const CommandContext& ctx)
 
     // ── 模式 A：直接帶 UUID 參數 ────────────────────────────────────────────
     if (!ctx.args.isEmpty() && ctx.args.size() >= m_requiredSel) {
+        // 正規化軸/原點的虛擬 UUID → Sketch 真實幾何 UUID
+        QStringList resolvedArgs = resolveAxisUuids(sk, ctx.args);
         int dofBefore = sk->degreesOfFreedom();
-        QString uuid  = applyConstraint(sk, ctx.args);
+        QString uuid  = applyConstraint(sk, resolvedArgs);
         if (uuid.isEmpty()) {
             return CommandResult::Failure(
                 QString("Failed to apply %1 constraint. Check UUIDs.").arg(name()));
@@ -117,16 +145,12 @@ CommandResult GeomConstraintCommand::execute(const CommandContext& ctx)
     auto* ui = app->uiManager();
     if (!ui) return CommandResult::Failure("UIManager not available.");
 
-    // 透過 UIManager 的 ConstraintPickSession 進入 GetGeom 模式
+    // beginGeomConstraintPick 會：begin session + setMode(GetGeom) + 更新 status bar
+    ui->beginGeomConstraintPick(sk, m_type, m_requiredSel);
+
     auto* session = ui->constraintPickSession();
-    if (!session) return CommandResult::Failure("ConstraintPickSession not available.");
-
-    // 幾何約束不需要數值，用 value=0
-    session->begin(sk, m_type, 0.0, QString(), true);
-    // session 的 constraintReady signal 由 UIManager 連接處理
-
-    cmdMgr->showPrompt(session->promptText());
-    return CommandResult::Success(QString("[%1] Interactive mode started.").arg(name()));
+    cmdMgr->showPrompt(session ? session->promptText() : QString());
+    return CommandResult::Success(QString("[%1] 請在視埠中點選幾何元素").arg(name()));
 }
 
 QString GeomConstraintCommand::applyConstraint(Sketch* sketch,
@@ -148,25 +172,53 @@ CoincidentCommand::CoincidentCommand()
 
 QString CoincidentCommand::applyConstraint(Sketch* s, const QStringList& args) const {
     if (args.size() < 2) return {};
-    // args[0]=uuid1, args[1]="Start"|"End"|"Center", args[2]=uuid2, args[3]=handle
-    QString u1 = args[0];
-    GeomHandle h1 = GeomHandle::WholeGeom;
-    QString u2 = args.size() > 2 ? args[2] : args[1];
-    GeomHandle h2 = GeomHandle::WholeGeom;
 
-    auto parseHandle = [](const QString& s) {
-        if (s.toLower() == "start") return GeomHandle::Start;
-        if (s.toLower() == "end")   return GeomHandle::End;
-        if (s.toLower() == "center") return GeomHandle::Center;
+    auto parseHandle = [](const QString& t) {
+        if (t.toLower() == "start")  return GeomHandle::Start;
+        if (t.toLower() == "end")    return GeomHandle::End;
+        if (t.toLower() == "center") return GeomHandle::Center;
         return GeomHandle::WholeGeom;
     };
 
+    QString    u1 = args[0];
+    GeomHandle h1 = GeomHandle::WholeGeom;
+    QString    u2;
+    GeomHandle h2 = GeomHandle::WholeGeom;
+
     if (args.size() >= 4) {
-        h1 = parseHandle(args[1]);
-        u2 = args[2];
-        h2 = parseHandle(args[3]);
-    } else if (args.size() == 2) {
+        // 完整格式：uuid1 handle1 uuid2 handle2
+        h1 = parseHandle(args[1]); u2 = args[2]; h2 = parseHandle(args[3]);
+    } else {
         u2 = args[1];
+    }
+
+    // 若兩個都是 WholeGeom（純 UUID 選取，沒有明確端點），
+    // 找最近端點對，避免永遠只配對 start-start。
+    if (h1 == GeomHandle::WholeGeom && h2 == GeomHandle::WholeGeom) {
+        const SketchGeometry* gA = s->findGeometry(u1);
+        const SketchGeometry* gB = s->findGeometry(u2);
+        if (gA && gB) {
+            auto endpoints = [](const SketchGeometry* g)
+                -> QVector<QPair<QVector2D, GeomHandle>> {
+                QVector<QPair<QVector2D, GeomHandle>> pts;
+                if (g->type == SketchGeometryType::Point) {
+                    if (!g->points.isEmpty())
+                        pts.append({g->points[0], GeomHandle::WholeGeom});
+                } else if (!g->points.isEmpty()) {
+                    pts.append({g->points.front(), GeomHandle::Start});
+                    if (g->points.size() > 1)
+                        pts.append({g->points.back(), GeomHandle::End});
+                }
+                return pts;
+            };
+            auto ptsA = endpoints(gA), ptsB = endpoints(gB);
+            float best = std::numeric_limits<float>::max();
+            for (auto& [pa, ha] : ptsA)
+                for (auto& [pb, hb] : ptsB) {
+                    float d = (pa - pb).lengthSquared();
+                    if (d < best) { best = d; h1 = ha; h2 = hb; }
+                }
+        }
     }
     return s->constrainCoincident(GeomRef(u1, h1), GeomRef(u2, h2));
 }

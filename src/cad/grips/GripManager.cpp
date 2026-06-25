@@ -3,6 +3,10 @@
 #include "SketchGripProvider.h"
 #include <QDebug>
 #include <cmath>
+#include <IntAna_IntConicQuad.hxx>
+#include <gp_Pln.hxx>
+#include <gp_Lin.hxx>
+#include <Precision.hxx>
 
 namespace aicad::cad {
 
@@ -169,17 +173,46 @@ void GripManager::refreshGrips()
 // ── Hit Test ─────────────────────────────────────────────────────────
 QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double /*unused*/) const
 {
-    // 計算目前 zoom 下 12 像素對應的世界單位距離
-    double pixThreshold = 12.0;
-    double worldThreshold = pixThreshold;   // fallback
+    // Compute worldThreshold = world distance for pixThreshold pixels at Z=0,
+    // using the same ray-plane method as GripEventFilter::screenToWorld.
+    const double pixThreshold = 12.0;
+    double worldThreshold = 50.0;   // fallback
 
     if (!m_view.IsNull()) {
-        // V3d_View::Convert(pixSize) → world size
-        double wx1, wy1, wz1, wx2, wy2, wz2;
-        m_view->Convert(0, 0, wx1, wy1, wz1);
-        m_view->Convert((int)pixThreshold, 0, wx2, wy2, wz2);
-        worldThreshold = gp_Pnt(wx1,wy1,wz1).Distance(gp_Pnt(wx2,wy2,wz2));
+        auto projectToZ0 = [&](int sx, int sy) -> gp_Pnt {
+            Standard_Real Xeye,Yeye,Zeye, Xproj,Yproj,Zproj, Xv,Yv,Zv;
+            m_view->Eye (Xeye,  Yeye,  Zeye);
+            m_view->Proj(Xproj, Yproj, Zproj);
+            m_view->Convert(sx, sy, Xv, Yv, Zv);
+
+            gp_Pnt  rayStart;
+            gp_Dir  rayDir;
+            if (m_view->Camera()->IsOrthographic()) {
+                rayStart = gp_Pnt(Xv,Yv,Zv);
+                rayDir   = gp_Dir(Xproj,Yproj,Zproj);
+            } else {
+                rayStart = gp_Pnt(Xeye,Yeye,Zeye);
+                gp_Vec v(rayStart, gp_Pnt(Xv,Yv,Zv));
+                rayDir = v.Magnitude() > Precision::Confusion()
+                         ? gp_Dir(v) : gp_Dir(Xproj,Yproj,Zproj);
+            }
+
+            gp_Pln plane(gp_Pnt(0,0,0), gp_Dir(0,0,1));
+            IntAna_IntConicQuad inter(gp_Lin(rayStart,rayDir), plane, Precision::Angular());
+            if (inter.IsDone() && inter.NbPoints() > 0)
+                return inter.Point(1);
+            return gp_Pnt(Xv,Yv,0.0);
+        };
+
+        gp_Pnt w0 = projectToZ0(0, 0);
+        gp_Pnt w1 = projectToZ0((int)pixThreshold, 0);
+        double d  = w0.Distance(w1);
+        if (d > 1e-6) worldThreshold = d;
     }
+
+    qDebug() << "[GripManager] hitTestGrip worldPos=("
+             << worldPos.X() << worldPos.Y() << worldPos.Z()
+             << ") threshold=" << worldThreshold;
 
     QString best;
     double  bestDist = worldThreshold;
@@ -301,7 +334,10 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
 
 bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int sx, int sy)
 {
-    if (m_handles.isEmpty()) return false;
+    if (m_handles.isEmpty()) {
+        qDebug() << "[GripManager] mousePressEvent: m_handles is EMPTY — no grips displayed";
+        return false;
+    }
 
     // ── 狀態一：尚未選取 grip，嘗試 hit test ───────────────────
     if (!m_gripSelected) {
