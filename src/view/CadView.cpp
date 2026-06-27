@@ -13,7 +13,6 @@
 #include "cad/Sketch.h"
 #include "cad/Document.h"
 #include "cad/PlaneManager.h"
-#include "cad/grips/SketchGripProvider.h"
 #include "cad/grips/GripManager.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
@@ -423,7 +422,7 @@ void CadView::initializeViewer() {
             });
 
     connect(m_snapManager, &osnap::OSnapManager::snapCleared,
-            this, [this]() {
+            this, []() {
                 QToolTip::hideText();
             });
 
@@ -1541,7 +1540,7 @@ void CadView::showSketchContextMenu(const QPoint& screenPos)
 
     // ── 偵測區域 ─────────────────────────────────────────────────
     QAction* actDetect = menu.addAction(tr("偵測區域"));
-    connect(actDetect, &QAction::triggered, this, [this, sketch, screenPos] {
+    connect(actDetect, &QAction::triggered, this, [this, sketch] {
         auto regions = sketch->detectRegions();
         if (regions.isEmpty()) {
             Q_EMIT statusMessageRequested(tr("未找到閉合迴路"), 2000);
@@ -2498,7 +2497,7 @@ void CadView::showEvent(QShowEvent* event) {
         m_viewReadyPublished = true;
         auto* bus = core::Application::instance()->eventBus();
         // 延一個 event loop，確保 WM 完成初始定位
-        QTimer::singleShot(0, this, [bus, this]() {
+        QTimer::singleShot(0, this, [bus]() {
             bus->publish(core::Events::VIEW_READY);
         });
     }
