@@ -3104,11 +3104,20 @@ void UIManager::setupDefaultUI() {
 
     // File 選單
     QMenu* fileMenu = menuBar->addMenu("&File");
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    fileMenu->addAction("&New",   QKeySequence::New,  this,          &UIManager::onNewDocument);
+    fileMenu->addAction("&Open",  QKeySequence::Open, this,          &UIManager::onOpenDocument);
+    fileMenu->addAction("&Save",  QKeySequence::Save, this,          &UIManager::onSaveDocument);
+    fileMenu->addSeparator();
+    fileMenu->addAction("E&xit",  QKeySequence::Quit, d->mainWindow, &QMainWindow::close);
+#else
     fileMenu->addAction("&New", this, &UIManager::onNewDocument, QKeySequence::New);
     fileMenu->addAction("&Open", this, &UIManager::onOpenDocument, QKeySequence::Open);
     fileMenu->addAction("&Save", this, &UIManager::onSaveDocument, QKeySequence::Save);
     fileMenu->addSeparator();
     fileMenu->addAction("E&xit", d->mainWindow, &QMainWindow::close, QKeySequence::Quit);
+#endif
+
 
     // View 選單
     QMenu* viewMenu = menuBar->addMenu("&View");
