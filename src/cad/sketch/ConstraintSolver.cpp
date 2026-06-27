@@ -2,7 +2,6 @@
 #include "../Sketch.h"
 #include <QtMath>
 #include <QDebug>
-#include <algorithm>
 
 #include <Geom_Circle.hxx>
 #include <Geom_TrimmedCurve.hxx>
@@ -997,7 +996,7 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
     }
 
     Eigen::VectorXd x =
-        A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
+        Eigen::BDCSVD<Eigen::MatrixXd>(A, Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
 
     dx.resize(n);
     for (int j = 0; j < n; ++j) dx[j] = x(j);

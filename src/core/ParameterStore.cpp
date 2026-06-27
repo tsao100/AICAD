@@ -55,7 +55,7 @@ bool ParameterStore::hasLocal(const QString& name) const {
 }
 
 void ParameterStore::removeLocal(const QString& name) {
-    if (m_params.remove(name) > 0)
+    if (m_params.remove(name) != 0)
         Q_EMIT parametersRecomputed();
 }
 

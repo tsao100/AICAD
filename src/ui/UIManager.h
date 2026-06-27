@@ -25,7 +25,7 @@ namespace cad {
     class Document;
     class Feature;
     class Sketch;
-    class SketchGeometry;
+    struct SketchGeometry;
     class ConstraintPickSession;   // Phase 7
     enum class ConstraintType;
     struct SketchRegion;
