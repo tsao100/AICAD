@@ -564,7 +564,7 @@ SolvedLC AlignmentSolver::solveLC(
 
 SolvedCA AlignmentSolver::solveCA(
     QPointF arcCenter, double arcRadius,
-    QPointF arcStart,  double arcAzStart,
+    QPointF arcStart,  double /*arcAzStart*/,
     const QPointF& tanStart, const QPointF& tanEnd,
     SpiralType spiralType)
 {
@@ -715,7 +715,7 @@ SolvedACA AlignmentSolver::solveACA(
     QPointF arc1Start,  double arc1AzStart,
     QPointF arc2Center, double arc2Radius,
     QPointF arc2End,    double arc2AzEnd,
-    SpiralType spiralType)
+    SpiralType /*spiralType*/)
 {
     SolvedACA result;
 

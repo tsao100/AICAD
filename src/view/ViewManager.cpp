@@ -73,14 +73,14 @@ ViewManager::ViewManager(QObject* parent)
                            onSketchCreated(data);
                        });
 
-        bus->subscribe("command.enter-sketch-mode", this, [this](const QVariant& data) {
+        bus->subscribe("command.enter-sketch-mode", this, [this](const QVariant& /*data*/) {
             CadView* view = activeView();
             if (view) {
                 view->setMode(InteractionMode::Sketching);
             }
         });
 
-        bus->subscribe("command.cancelled", this, [this](const QVariant& data) {
+        bus->subscribe("command.cancelled", this, [this](const QVariant& /*data*/) {
             CadView* view = activeView();
             if (view) {
                 view->setMode(InteractionMode::Idle);

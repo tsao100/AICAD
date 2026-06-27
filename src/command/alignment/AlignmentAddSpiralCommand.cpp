@@ -27,7 +27,6 @@
  */
 
 #include "command/alignment/AlignmentAddSpiralCommand.h"
-#include "command/InputParser.h"
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
@@ -117,10 +116,6 @@ int AlignmentAddSpiralCommand::nearestFixedArcIndex(
         const auto& e = elems[i];
         if (e.type != EditableElementType::CircularArc) continue;
         if (e.mode != ConstraintMode::Fixed)            continue;
-
-        // Approximate distance: point to chord midpoint
-        const double mx = (e.startPI.x() + e.endPI.x()) * 0.5;
-        const double my = (e.startPI.y() + e.endPI.y()) * 0.5;
 
         // Also consider distance to chord segment itself
         const double ax = e.startPI.x(), ay = e.startPI.y();
@@ -275,8 +270,6 @@ void AlignmentAddSpiralCommand::showSolverPreview()
         const auto& tanElem = elems[m_tangentIdx];
 
         const QPointF r1 = arcElem.startPI - arcElem.arcCenter;
-        const double crossV = r1.x() * (arcElem.endPI.y() - arcElem.arcCenter.y())
-                              - r1.y() * (arcElem.endPI.x() - arcElem.arcCenter.x());
         const double azArcStart = std::atan2(-r1.y(), r1.x()); // approximate
 
         const railway::SolvedCA ca = railway::AlignmentSolver::solveCA(
@@ -315,12 +308,11 @@ void AlignmentAddSpiralCommand::showSolverPreview()
 
         // Approximate azimuths from geometry stored in EditableElement
         const QPointF r1s = arc1Elem.startPI - arc1Elem.arcCenter;
-        const QPointF r1e = arc1Elem.endPI   - arc1Elem.arcCenter;
-        const double cross1 = r1s.x() * r1e.y() - r1s.y() * r1e.x();
-        const double phi1   = std::abs(std::atan2(std::abs(cross1),
-                                                   r1s.x()*r1e.x()+r1s.y()*r1e.y()));
+//        const QPointF r1e = arc1Elem.endPI   - arc1Elem.arcCenter;
+//        const double cross1 = r1s.x() * r1e.y() - r1s.y() * r1e.x();
+//        const double phi1   = std::abs(std::atan2(std::abs(cross1),
+//                                                   r1s.x()*r1e.x()+r1s.y()*r1e.y()));
         const double azArc1Start = std::atan2(-r1s.y(), r1s.x());
-        const double azArc1End   = azArc1Start + (cross1 >= 0.0 ? phi1 : -phi1);
 
         const QPointF r2s = arc2Elem.startPI - arc2Elem.arcCenter;
         const QPointF r2e = arc2Elem.endPI   - arc2Elem.arcCenter;
@@ -402,12 +394,12 @@ CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
     // Need at least one Fixed Tangent and one Fixed CircularArc  (LC/CA),
     // OR at least two Fixed CircularArcs with different radii (ACA).
     const auto& elems = m_alignDoc->horizontal()->elements();
-    bool hasTangent = false, hasArc = false;
+    bool hasTangent = false;
     int fixedArcCount = 0;
     for (const auto& e : elems) {
         if (e.type == EditableElementType::Tangent) hasTangent = true;
         if (e.type == EditableElementType::CircularArc
-            && e.mode == ConstraintMode::Fixed) { hasArc = true; ++fixedArcCount; }
+            && e.mode == ConstraintMode::Fixed) { ++fixedArcCount; }
     }
     if (!hasTangent && fixedArcCount < 2) {
         return CommandResult::Failure(

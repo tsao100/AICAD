@@ -182,7 +182,6 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
             if (g) {
                 // ✅ Step 9: 直接引用 SketchPoint
                 if (g->type == SketchGeometryType::Point) {
-                    const auto* pt = static_cast<const SketchPoint*>(g);
                     GeomRef ref(geomUuid, GeomHandle::WholeGeom);
                     return ref;
                 }

@@ -238,7 +238,7 @@ int HorizontalAlignment::rawIndexAt(double p) const
 }
 
 QList<const AlignmentElement*>
-HorizontalAlignment::candidateElements(double x, double y) const
+HorizontalAlignment::candidateElements(double /*x*/, double /*y*/) const
 {
     // For hairpin detection: return all elements whose bounding chainage range
     // could plausibly contain the nearest foot-of-perpendicular.

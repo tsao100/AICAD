@@ -201,7 +201,6 @@ void TangentEquation::jacobian(const QVector<double>& v, int r0,
     // 數值雅可比（避免複雜解析式；可後續替換）
     const double h = 1e-7;
     QVector<double> Fp(1), Fm(1), vp=v, vm=v;
-    auto it = layout().begin();
     int N = v.size();
     for (int i = 0; i < N; ++i) {
         vp[i]=v[i]+h; vm[i]=v[i]-h;

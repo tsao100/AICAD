@@ -164,7 +164,6 @@ void AlignmentFloatCurveCommand::handlePointAcquired(const QPointF& point)
         m_idx1 = idx;
         highlightTangent(m_idx1);
 
-        const auto& elems = m_alignDoc->horizontal()->elements();
         outputMessage(
             QString("First tangent #%1 selected.  Select SECOND tangent:").arg(idx));
         bus->publish(Events::COMMAND_PROMPT,

@@ -655,7 +655,7 @@ void OSnapDetector::detectIntersections(
     const QVector<TopoDS_Shape>& shapes,
     const QVector<Handle(AIS_InteractiveObject)>& aisObjects,
     const Handle(V3d_View)& view,
-    const gp_Pnt& mousePt,
+    const gp_Pnt& /*mousePt*/,
     int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
@@ -747,7 +747,7 @@ void OSnapDetector::detectPerpendicular(
 void OSnapDetector::detectTangent(
     const TopoDS_Shape& shape,
     const Handle(AIS_InteractiveObject)& aisObj,
-    const gp_Pnt& mousePt,
+    const gp_Pnt& /*mousePt*/,
     const Handle(V3d_View)& view,
     int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
@@ -1040,7 +1040,6 @@ gp_Pnt OSnapDetector::projectToActivePlane(const gp_Pnt& pt) {
 
     gp_Pln pln = m_activePlane->toGpPln();
     // 投影到平面
-    gp_Pnt projPt = pt;
     double dist = pln.Distance(pt);
     if (std::abs(dist) < 1e-6) return pt;
 

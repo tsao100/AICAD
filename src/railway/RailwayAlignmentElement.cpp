@@ -139,18 +139,17 @@ QPointF AlignmentElement::inversePW(double x, double y) const
         return leftComp;
     };
 
-    // Along-track component (used to seed the iteration)
+    /*/ Along-track component (used to seed the iteration)
     auto along = [&](double L) -> double {
         LocalFrame lf = localFrame(L);
         QPointF pt    = localToWorld(lf, 0.0);
         double tangAz = normalise(az + (m_reversed ? -lf.theta : lf.theta));
         double dx = x - pt.x(), dy = y - pt.y();
         return dx * std::sin(tangAz) + dy * std::cos(tangAz);
-    };
+    }; */
 
     // Estimate starting L from along-track projection at the two ends
     double pA = perp(0.0),      pB = perp(m_length);
-    double aA = along(0.0),     aB = along(m_length);
     double LSA = std::abs(pA) + std::abs(pB);
     if (LSA < kTol) LSA = 1.0;
 

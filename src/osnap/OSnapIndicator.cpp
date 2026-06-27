@@ -245,7 +245,7 @@ void OSnapIndicator::drawIntersectSymbol(
 /**  ⊥  Perpendicular：L 形垂直符號 */
 void OSnapIndicator::drawPerpendSymbol(
     const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
-    const gp_Vec& axX, const gp_Vec& axY)
+    const gp_Vec& /*axX*/, const gp_Vec& /*axY*/)
 {
     Handle(Graphic3d_ArrayOfPolylines) lines =
         new Graphic3d_ArrayOfPolylines(5, 2);
@@ -263,7 +263,7 @@ void OSnapIndicator::drawPerpendSymbol(
 /**  切線符號：小圓 + 切線 */
 void OSnapIndicator::drawTangentSymbol(
     const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
-    const gp_Vec& axX, const gp_Vec& axY)
+    const gp_Vec& /*axX*/, const gp_Vec& /*axY*/)
 {
     // 小圓
     constexpr int N = 16;
@@ -317,7 +317,7 @@ void OSnapIndicator::drawNearestSymbol(
  */
 void OSnapIndicator::drawExtensionSymbol(
     const Handle(Graphic3d_Group)& grp, const gp_Pnt& p, double s,
-    const gp_Vec& axX, const gp_Vec& axY)
+    const gp_Vec& /*axX*/, const gp_Vec& /*axY*/)
 {
     // ── Step 1：推導延伸方向 ──────────────────────────────────────────────────
     //

@@ -242,7 +242,7 @@ void OSnapManager::onMouseMove(int mouseX, int mouseY) {
     }
 }
 
-bool OSnapManager::onMousePress(int mouseX, int mouseY) {
+bool OSnapManager::onMousePress(int /*mouseX*/, int /*mouseY*/) {
     if (!m_initialized || !isSnapActive()) return false;
 
     const SnapCandidate& snap = *m_currentSnap;

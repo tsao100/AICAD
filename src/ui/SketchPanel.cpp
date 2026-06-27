@@ -665,7 +665,6 @@ void SketchPanel::onConstraintReadyFromSession(
     auto uuid2 = resolvedRefs.size() > 2 ? resolvedRefs[2].geomUuid : QString();
 
     QString constraintUuid;
-    bool isDimensional = false;
 
     switch (type) {
     // ── 單幾何 ──────────────────────────────────────────────────────────────
@@ -771,7 +770,6 @@ void SketchPanel::onConstraintReadyFromSession(
 
     // ── 尺寸約束：走舊路徑 ──────────────────────────────────────────────────
     default: {
-        isDimensional = true;
         cad::SketchConstraint c;
         c.type      = type;
         c.refs      = refs;

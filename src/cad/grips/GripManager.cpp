@@ -332,7 +332,7 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
     return !hoverId.isEmpty();
 }
 
-bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int sx, int sy)
+bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int /*sx*/, int /*sy*/)
 {
     if (m_handles.isEmpty()) {
         qDebug() << "[GripManager] mousePressEvent: m_handles is EMPTY — no grips displayed";

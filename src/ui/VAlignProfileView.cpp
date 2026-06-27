@@ -364,7 +364,7 @@ double VAlignProfileView::elevAt(double ch,
  * Build the complete profile as a polyline of pixel points.
  * Tangent segments are 2-point, VCs are 65-point curves.
  */
-QVector<QPointF> VAlignProfileView::buildProfilePoly(const QVector<double>& gs,
+QVector<QPointF> VAlignProfileView::buildProfilePoly(const QVector<double>& /*gs*/,
                                                      const QVector<VcData>& vcs) const
 {
     if (m_vips.size() < 2) return {};
@@ -794,7 +794,7 @@ void VAlignProfileView::drawVCArcs(QPainter& p, const QVector<VcData>& vcs) cons
 
 void VAlignProfileView::drawVCAnnotations(QPainter& p,
                                           const QVector<VcData>& vcs,
-                                          const QVector<double>& gs) const
+                                          const QVector<double>& /*gs*/) const
 {
     p.save();
     p.setClipRect(profileRect());

@@ -376,7 +376,6 @@ gp_Pnt ExtrudeManipulator::screenToWorld(const QPoint& screenPt) const
     view->Eye(xEye, yEye, zEye);
 
     double xAt, yAt, zAt;
-    double xDir, yDir, zDir;
     view->Convert(px, py, xAt, yAt, zAt);
     gp_Vec rayDir(gp_Pnt(xEye, yEye, zEye), gp_Pnt(xAt, yAt, zAt));
     rayDir.Normalize();

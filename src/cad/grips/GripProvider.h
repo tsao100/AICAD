@@ -14,7 +14,7 @@ public:
     virtual QVector<GripPoint> computeGrips() const = 0;
 
     /// 當 grip 拖拉開始（供 Undo snapshot）
-    virtual void onGripDragBegin(const QString& gripId) {}
+    virtual void onGripDragBegin(const QString& /*gripId*/) {}
 
     /// Grip 即時更新（拖拉中）
     virtual void onGripDrag(const QString& gripId, const gp_Pnt& newPos) = 0;

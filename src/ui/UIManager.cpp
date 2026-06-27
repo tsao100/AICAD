@@ -793,7 +793,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // ✅ 監聽平面選取請求（顯示提示）
         bus->subscribe("command.request-plane-selection", this,
-                       [this](const QVariant& data) {
+                       [this](const QVariant& /*data*/) {
                            setStatusMessage("Click on a plane (XY, XZ, or YZ) to select...", 0);
                        });
 
@@ -820,7 +820,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             setStatusMessage("Error: " + data.toString(), 5000);
         });
 
-        bus->subscribe(core::Events::FEATURE_CREATED, this, [this](const QVariant& data) {
+        bus->subscribe(core::Events::FEATURE_CREATED, this, [this](const QVariant& /*data*/) {
             updateFeatureTree();
         });
 
@@ -1944,8 +1944,7 @@ void UIManager::connectCommandLineEvents() {
 
     // ── 命令完成 ────────────────────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_EXECUTED, this,
-                   [this](const QVariant& v) {
-                       // 命令結束 → transient history 淡出
+                   [this](const QVariant& /*v*/) {
                        d->commandLine->transientHistory()->beginFadeOut();
                        d->commandLine->clearCommandOptions();
                        d->commandLine->inputEdit()->setPlaceholderText(
@@ -2759,7 +2758,7 @@ command::CommandAlias* UIManager::commandAlias() const {
     return d->commandAlias;
 }
 
-void UIManager::showCommandMessage(const QString& message, const QString& color) {
+void UIManager::showCommandMessage(const QString& message, const QString& /*color*/) {
     if (d->commandLine && !message.isEmpty())
         d->commandLine->appendHistory(message);
 }
@@ -2868,7 +2867,6 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
             auto* plane = sketch->plane();
             QVector3D o  = plane->origin();
             QVector3D xa = plane->xAxis();
-            QVector3D ya = plane->yAxis();
             QVector3D n  = plane->normal();
 
             gp_Ax3 ax3(

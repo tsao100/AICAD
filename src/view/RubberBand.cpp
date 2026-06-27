@@ -986,25 +986,23 @@ void RubberBand::updateSCS()
     const double absR    = std::abs(signedR);
 
     // Entry spiral tangent length (Xm1, Ym1) via correct element type
-    double Xm1 = 0.0, Ym1 = 0.0, thetaS1 = 0.0;
+    double Xm1 = 0.0, Ym1 = 0.0;
     std::unique_ptr<TransitionElement> elem1;
     if (Ls1 > 1e-9) {
         elem1 = makeTransitionElement(d->spiralType1, Ls1, signedR);
         const LocalFrame lf1 = elem1->localFrame(Ls1);
         Xm1     = lf1.x;
         Ym1     = lf1.y;      // signed: positive = right
-        thetaS1 = lf1.theta;  // signed deflection
     }
 
     // Exit spiral tangent length (Xm2, Ym2) via correct element type
-    double Xm2 = 0.0, Ym2 = 0.0, thetaS2 = 0.0;
+    double Xm2 = 0.0, Ym2 = 0.0;
     std::unique_ptr<TransitionElement> elem2;
     if (Ls2 > 1e-9) {
         elem2 = makeTransitionElement(d->spiralType2, Ls2, signedR);
         const LocalFrame lf2 = elem2->localFrame(Ls2);
         Xm2     = lf2.x;
         Ym2     = lf2.y;
-        thetaS2 = lf2.theta;
     }
 
     // Tangent lengths T1, T2 — derived from Xm, Ym for asymmetric SCS

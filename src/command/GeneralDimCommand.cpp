@@ -30,18 +30,6 @@ cad::Sketch* GeneralDimCommand::activeSketch() const {
     return core::Application::instance()->activeSketch();
 }
 
-// 點 P 到線段 (A,B) 的投影點（在直線上，不 clamp 到端點）
-static QVector2D projectPointOnLine(const QVector2D& P,
-                                     const QVector2D& A,
-                                     const QVector2D& B)
-{
-    QVector2D AB = B - A;
-    float len2 = QVector2D::dotProduct(AB, AB);
-    if (len2 < 1e-10f) return A;
-    float t = QVector2D::dotProduct(P - A, AB) / len2;
-    return A + AB * t;
-}
-
 // 點 P 到直線 (A,B) 的垂距
 static double pointToLineDistance(const QVector2D& P,
                                    const QVector2D& A,

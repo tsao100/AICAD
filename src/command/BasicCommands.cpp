@@ -220,7 +220,7 @@ class NewCommand : public Command {
 public:
     NewCommand() : Command("new", "New Document") {}
 
-    CommandResult execute(const CommandContext& context) override {
+    CommandResult execute(const CommandContext& /*context*/) override {
         Application*     app    = Application::instance();
         DocumentManager* docMgr = app->documentManager();
         EventBus*        bus    = app->eventBus();
@@ -270,7 +270,7 @@ private:
     /// reset the railway alignment data so the canvas is completely clean.
     void createNew(Application*     app,
                    DocumentManager* docMgr,
-                   EventBus*        bus,
+                   EventBus*        /*bus*/,
                    core::CommandLineManager* clm)
     {
         // 1. Cancel any active sketch / command
@@ -479,7 +479,7 @@ class LoadCommand : public Command {
 public:
     LoadCommand() : Command("load", "Load Document") {}
     
-    CommandResult execute(const CommandContext& context) override {
+    CommandResult execute(const CommandContext& /*context*/) override {
         Application* app = Application::instance();
         DocumentManager* docMgr = app->documentManager();
 
@@ -521,7 +521,7 @@ class ViewTopCommand : public Command {
 public:
     ViewTopCommand() : Command("view_top", "Top View") {}
     
-    CommandResult execute(const CommandContext& context) override {
+    CommandResult execute(const CommandContext& /*context*/) override {
         Application* app = Application::instance();
         ui::UIManager* uiMgr = app->uiManager();
         view::CadView* cadView = uiMgr->cadView();
@@ -541,7 +541,7 @@ class ViewFrontCommand : public Command {
 public:
     ViewFrontCommand() : Command("view_front", "Front View") {}
     
-    CommandResult execute(const CommandContext& context) override {
+    CommandResult execute(const CommandContext& /*context*/) override {
         Application* app = Application::instance();
         ui::UIManager* uiMgr = app->uiManager();
         view::CadView* cadView = uiMgr->cadView();
@@ -561,7 +561,7 @@ class ViewRightCommand : public Command {
 public:
     ViewRightCommand() : Command("view_right", "Right View") {}
     
-    CommandResult execute(const CommandContext& context) override {
+    CommandResult execute(const CommandContext& /*context*/) override {
         Application* app = Application::instance();
         ui::UIManager* uiMgr = app->uiManager();
         view::CadView* cadView = uiMgr->cadView();
@@ -581,7 +581,7 @@ class ViewIsoCommand : public Command {
 public:
     ViewIsoCommand() : Command("view_iso", "Isometric View") {}
     
-    CommandResult execute(const CommandContext& context) override {
+    CommandResult execute(const CommandContext& /*context*/) override {
         Application* app = Application::instance();
         ui::UIManager* uiMgr = app->uiManager();
         view::CadView* cadView = uiMgr->cadView();

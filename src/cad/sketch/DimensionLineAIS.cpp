@@ -226,7 +226,7 @@ static void addArrow(const Handle(Prs3d_Presentation)& prs,
 static void addDimLine(const Handle(Prs3d_Presentation)& prs,
                        const gp_Pnt& p1, const gp_Pnt& p2,
                        double offset,
-                       const Quantity_Color& col,
+                       const Quantity_Color& /*col*/,
                        const QString& label)
 {
     gp_Vec up(0, 0, 1);
@@ -297,7 +297,7 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
 static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
                                 const gp_Pnt& p1, const gp_Pnt& p2,
                                 const gp_Pnt& d1, const gp_Pnt& d2,
-                                const Quantity_Color& col,
+                                const Quantity_Color& /*col*/,
                                 const QString& label)
 {
     gp_Vec along(d1, d2);
@@ -641,7 +641,6 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
     while (a1 < a0) a1 += 2 * M_PI;
     if (a1 - a0 > M_PI) { double tmp = a0; a0 = a1 - 2*M_PI; a1 = tmp + 2*M_PI; std::swap(a0,a1); a0 -= 2*M_PI; a1 -= 2*M_PI; while(a1<a0) a1+=2*M_PI; }
 
-    Quantity_Color col = dimColor(m_constraint.driving, m_status);
     Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
 
     // 角弧（20段折線）
@@ -871,7 +870,6 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
 void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)& prs) {
     // 座標尺寸：從點畫兩條引線到 X/Y 軸，各自加標籤
     // 需要從 refs[0] 解析點的草圖位置
-    Quantity_Color col = dimColor(m_constraint.driving, m_status);
 
     // 取點座標（優先 m_hasRefPos，否則用 geoms 的第一個點）
     gp_Pnt2d sk_pt;

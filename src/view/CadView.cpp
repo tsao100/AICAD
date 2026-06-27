@@ -84,6 +84,7 @@ static void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
     occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
     occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
 #else
+    (void)widget;
     occX = qtPos.x();
     occY = qtPos.y();
 #endif
@@ -392,7 +393,7 @@ void CadView::initializeViewer() {
 
     // 連接 OSnap 確認事件 → 通知 Command 系統
     connect(m_snapManager, &aicad::osnap::OSnapManager::snapConfirmed,
-            this, [this](const gp_Pnt& pt, aicad::osnap::SnapType /*type*/) {
+            this, [this](const gp_Pnt& /*pt*/, aicad::osnap::SnapType /*type*/) {
                 auto* bus = aicad::core::Application::instance()->eventBus();
                 if (!bus) return;
 
@@ -711,7 +712,6 @@ void CadView::showSketchAxes(cad::Sketch* sketch)
     auto* plane = sketch->plane();
     QVector3D o  = plane->origin();
     QVector3D xa = plane->xAxis();
-    QVector3D ya = plane->yAxis();
     QVector3D n  = plane->normal();
 
     gp_Pnt origin(o.x(), o.y(), o.z());
@@ -2065,9 +2065,6 @@ void CadView::enterEvent(QEvent* event) {
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
-    int x = event->x();
-    int y = event->y();
-
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
     bool gripActive = d->gripManager && d->gripManager->isGripSelected();

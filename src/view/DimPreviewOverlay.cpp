@@ -171,7 +171,7 @@ void DimPreviewOverlay::rebuild()
         QVector2D center; float r = 0;
         if (auto* c = dynamic_cast<const cad::SketchCircle*>(geom)) {
             center = c->center; r = c->radius;
-        } else if (auto* a = dynamic_cast<const cad::SketchArc*>(geom)) {
+        } else if (dynamic_cast<const cad::SketchArc*>(geom)) {
             cad::GeomRef cr(m_info.refs[0].geomUuid, cad::GeomHandle::Center);
             cad::GeomRef sr(m_info.refs[0].geomUuid, cad::GeomHandle::Start);
             center = cr.resolvePosition(m_sketch);
@@ -271,10 +271,7 @@ void DimPreviewOverlay::rebuild()
         // 偏移量由滑鼠到 AB 中點的垂直分量決定
         QVector2D ab  = B - A;
         float abLen   = ab.length();
-        // 垂直尺寸方向（A→B 的法向）
-        QVector2D perpDir = (abLen < 1e-4f)
-            ? QVector2D(1, 0)
-            : QVector2D(-ab.y(), ab.x()) / abLen;
+        (void)abLen; // perpendicular direction unused; dA/dB set directly below
         // 尺寸線就是 A→B（垂距線），不再偏移
         dA = A;
         dB = B;
