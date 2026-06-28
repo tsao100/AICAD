@@ -278,6 +278,11 @@ public:
      */
     QStringList selectedGeomUuids() const;
 
+    /// 若目前滑鼠偵測（hover/點擊）的物件是尺寸線（AIS_DimensionLine，
+    /// 例如尺寸文字），回傳其對應的約束 UUID；否則回傳空字串。
+    /// 供 ERASE 等命令在 GetGeom 互動模式下點擊尺寸文字時使用。
+    QString detectedConstraintUuid() const;
+
     void clearSketchGeomSelection();
 
     /// 在草圖模式下顯示 X 軸 / Y 軸 / 原點（可選取，供束制使用）

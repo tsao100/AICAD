@@ -56,12 +56,10 @@
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
 #include "railway/AlignmentDocument.h"
-#include "view/RubberBand.h"
 
 #include <QDebug>
 #include <QtMath>
 #include <cmath>
-#include <limits>
 
 using namespace aicad::core;
 using aicad::railway::SpiralType;

@@ -13,7 +13,10 @@
 #include "../core/CommandLineManager.h"
 #include "../core/EventBus.h"
 #include "../cad/Sketch.h"
+#include "../cad/sketch/DimensionLineAIS.h"
+#include "../cad/sketch/ConstraintOverlayManager.h"
 #include "../ui/UIManager.h"
+#include "../ui/SketchPanel.h"
 #include "../view/CadView.h"
 #include <QDebug>
 
@@ -29,6 +32,19 @@ bool isFixedReferenceUuid(const QString& uuid)
     return uuid.startsWith("sketch_xaxis:")  ||
            uuid.startsWith("sketch_yaxis:")  ||
            uuid.startsWith("sketch_origin:");
+}
+
+/// 統一的單一物件刪除入口：先當作一般幾何刪除，找不到再當作約束刪除
+/// （例如點擊尺寸線文字選到的是 constraint UUID，而不是幾何 UUID）。
+bool eraseOne(cad::Sketch* sk, const QString& uuid)
+{
+    if (!sk || uuid.isEmpty() || isFixedReferenceUuid(uuid))
+        return false;
+    if (sk->removeGeometry(uuid))
+        return true;
+    if (sk->removeConstraint(uuid))
+        return true;
+    return false;
 }
 } // namespace
 
@@ -64,8 +80,7 @@ CommandResult EraseCommand::execute(const CommandContext& ctx)
     if (!ctx.args.isEmpty()) {
         int erased = 0;
         for (const QString& uuid : ctx.args) {
-            if (isFixedReferenceUuid(uuid)) continue;
-            if (sk->removeGeometry(uuid)) ++erased;
+            if (eraseOne(sk, uuid)) ++erased;
         }
 
         auto* uiMgr = app->uiManager();
@@ -140,6 +155,14 @@ void EraseCommand::onGeomPicked(const QVariant& data)
     QVariantMap map = data.toMap();
     QString uuid = map.value("geomUuid").toString();
 
+    if (uuid.isEmpty()) {
+        // 一般幾何沒命中 → 再檢查是否點到尺寸線（文字），取得其約束 UUID
+        auto* app     = core::Application::instance();
+        auto* uiMgr   = app ? app->uiManager() : nullptr;
+        view::CadView* cadView = uiMgr ? uiMgr->cadView() : nullptr;
+        if (cadView) uuid = cadView->detectedConstraintUuid();
+    }
+
     if (uuid.isEmpty() || isFixedReferenceUuid(uuid)) {
         auto* cmdMgr = core::CommandLineManager::instance();
         if (cmdMgr) cmdMgr->printWarning("⚠️  No erasable geometry at that point — click closer.");
@@ -176,7 +199,7 @@ void EraseCommand::onConfirm(const QVariant& /*data*/)
 
     int erased = 0;
     for (const QString& uuid : m_pending) {
-        if (sk->removeGeometry(uuid)) ++erased;
+        if (eraseOne(sk, uuid)) ++erased;
     }
 
     if (cmdMgr) {
@@ -215,20 +238,30 @@ void EraseCommand::setHighlight(const QString& uuid, bool on)
     auto context = cadView->context();
     if (context.IsNull()) return;
 
-    const QList<QString>& uuids  = sk->aisShapeUuids();
-    QList<Handle(AIS_InteractiveObject)> shapes = sk->aisShapes();
-
-    for (int i = 0; i < uuids.size() && i < shapes.size(); ++i) {
-        if (uuids[i] != uuid) continue;
-        const Handle(AIS_InteractiveObject)& obj = shapes[i];
-        if (obj.IsNull()) continue;
-
+    auto toggle = [&](const Handle(AIS_InteractiveObject)& obj) -> bool {
+        if (obj.IsNull()) return false;
         bool isSelected = context->IsSelected(obj);
-        if (on && !isSelected)
+        if (on != isSelected)
             context->AddOrRemoveSelected(obj, Standard_True);
-        else if (!on && isSelected)
-            context->AddOrRemoveSelected(obj, Standard_True);
-        break;
+        return true;
+    };
+
+    // 1) 先當作一般幾何（直線 / 點 / 圓…）處理
+    const QList<QString>& uuids = sk->aisShapeUuids();
+    QList<Handle(AIS_InteractiveObject)> shapes = sk->aisShapes();
+    for (int i = 0; i < uuids.size() && i < shapes.size(); ++i) {
+        if (uuids[i] == uuid) {
+            toggle(shapes[i]);
+            return;
+        }
+    }
+
+    // 2) 找不到對應幾何 → 嘗試當作尺寸約束（AIS_DimensionLine）處理
+    auto* panel = uiMgr ? uiMgr->findChild<ui::SketchPanel*>() : nullptr;
+    if (panel && panel->overlay()) {
+        Handle(AIS_DimensionLine) dim = panel->overlay()->dimLineAISForConstraint(uuid);
+        if (!dim.IsNull())
+            toggle(dim);
     }
 }
 

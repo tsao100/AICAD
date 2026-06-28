@@ -76,17 +76,28 @@ namespace aicad {
 namespace view {
 
 // 輔助函式：Qt 座標轉 OCCT 座標
-static void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
+static void QtToOCCT(const QWidget* /*widget*/, const QPoint& qtPos,
                      Standard_Integer& occX, Standard_Integer& occY) {
 #if defined(_WIN32) || defined(__APPLE__)
     qreal dpr = widget->devicePixelRatio();
     occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
     occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
 #else
-    (void)widget;
     occX = qtPos.x();
     occY = qtPos.y();
 #endif
+}
+
+// 輔助函式：若給定的 AIS 物件是尺寸線（AIS_DimensionLine，例如點擊到尺寸文字），
+// 回傳其對應的約束 UUID；否則回傳空字串。
+// AIS_DimensionLine 由 ConstraintOverlayManager 自行管理顯示（m_dimLines），
+// 不會註冊進 d->aisToGeomUuid，所以一般的幾何 uuid 反查在這裡會失敗，
+// 需要另外用 DownCast 判斷型別後取 constraintUuid()。
+static QString constraintUuidForAIS(const Handle(AIS_InteractiveObject)& obj) {
+    if (obj.IsNull()) return QString();
+    Handle(AIS_DimensionLine) dim = Handle(AIS_DimensionLine)::DownCast(obj);
+    if (!dim.IsNull()) return dim->constraintUuid();
+    return QString();
 }
 
 class CadView::Private {
@@ -687,10 +698,19 @@ QStringList CadView::selectedGeomUuids() const
         if (obj.IsNull()) continue;
 
         QString uuid = d->aisToGeomUuid.value(obj.get());
+        if (uuid.isEmpty())
+            uuid = constraintUuidForAIS(obj);   // 選到尺寸線/文字 → 約束 UUID
         if (!uuid.isEmpty())
             result << uuid;
     }
     return result;
+}
+
+QString CadView::detectedConstraintUuid() const
+{
+    if (d->context.IsNull() || !d->context->HasDetected())
+        return QString();
+    return constraintUuidForAIS(d->context->DetectedInteractive());
 }
 
 void CadView::clearSketchGeomSelection()
@@ -711,6 +731,7 @@ void CadView::showSketchAxes(cad::Sketch* sketch)
     auto* plane = sketch->plane();
     QVector3D o  = plane->origin();
     QVector3D xa = plane->xAxis();
+    //QVector3D ya = plane->yAxis();
     QVector3D n  = plane->normal();
 
     gp_Pnt origin(o.x(), o.y(), o.z());
@@ -1824,13 +1845,10 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             }
         }
     }
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    int x = static_cast<int>(event->position().x());
-    int y = static_cast<int>(event->position().y());
-#else
+
     int x = event->x();
     int y = event->y();
-#endif
+
     if (event->button() == Qt::LeftButton &&
         (d->mode == InteractionMode::Sketching ||
          d->mode == InteractionMode::GetPoint  ||
@@ -2067,6 +2085,9 @@ void CadView::enterEvent(QEvent* event) {
 }
 
 void CadView::mouseMoveEvent(QMouseEvent* event) {
+    //int x = event->x();
+    //int y = event->y();
+
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
     bool gripActive = d->gripManager && d->gripManager->isGripSelected();
