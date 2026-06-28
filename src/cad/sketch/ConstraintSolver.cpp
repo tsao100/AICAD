@@ -997,12 +997,12 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
 
     // Eigen::BDCSVD: Eigen < 3.4 uses runtime flags; Eigen >= 3.4 / 5.x prefers
     // the class template parameter form to avoid the C4996 deprecation warning.
-#if EIGEN_VERSION_AT_LEAST(3,4,0)
-    Eigen::VectorXd x =
-        Eigen::BDCSVD<Eigen::MatrixXd>(A, Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
-#else
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0) //EIGEN_VERSION_AT_LEAST(3,4,0)
     Eigen::VectorXd x =
         Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV>(A).solve(b);
+#else
+    Eigen::VectorXd x =
+        Eigen::BDCSVD<Eigen::MatrixXd>(A, Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
 #endif
 
     dx.resize(n);

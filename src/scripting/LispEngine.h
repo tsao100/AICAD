@@ -15,7 +15,17 @@
 #include <functional>
 
 #ifdef HAVE_ECL
+// ECL pulls in ecl/gmp.h which contains mpz_get_ui() returning mp_limb_t
+// (unsigned long long on Win64) as unsigned long, triggering MSVC C4244.
+// Suppress at the include boundary since this is a third-party header.
+#ifdef _MSC_VER
+#  pragma warning(push)
+#  pragma warning(disable: 4244)  // 'return': conversion from mp_limb_t to unsigned long
+#endif
 #include <ecl/ecl.h>
+#ifdef _MSC_VER
+#  pragma warning(pop)
+#endif
 #endif
 
 namespace aicad {
