@@ -222,6 +222,23 @@ Q_SIGNALS:
     void changed();
 
 private:
+    /**
+     * @brief Insert a contiguous group of new elements at @p pos, keeping
+     *        m_elems in alignment (chainage) order, and fix up every other
+     *        element's tangentIdxBefore/After references that pointed at
+     *        or past @p pos.
+     *
+     * AlignmentSolver walks m_elems in storage-index order and assumes that
+     * order matches physical alignment order. Without this fix-up, simply
+     * appending new elements (e.g. a curve dropped between two existing
+     * tangents) would desynchronise storage order from alignment order and
+     * scramble the emitted TS/SC/CS/ST/TT point sequence (e.g. producing
+     * "TTC" instead of the correct "TCT" for a bare float curve).
+     *
+     * @return The index at which the first inserted element now lives.
+     */
+    int insertElementsOrdered(int pos, const QVector<EditableElement>& newElems);
+
     QVector<EditableElement>             m_elems;
     std::unique_ptr<HorizontalAlignment> m_result;
     

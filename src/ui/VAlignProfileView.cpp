@@ -643,6 +643,7 @@ void VAlignProfileView::paintEvent(QPaintEvent*)
     // ── Strip ────────────────────────────────────────────────────────────────
     drawStripBackground(p);
     drawStripElements(p);
+    drawStripGeometryLine(p);
     drawStripPlanTrace(p);
     drawStripVipTicks(p);
     if (m_hasCursor) drawStripCursorLine(p);
@@ -1144,7 +1145,7 @@ void VAlignProfileView::drawStripElements(QPainter& p) const
     p.save();
     p.setClipRect(stripRect());
     QFont fBig = font(); fBig.setPointSize(8);  fBig.setBold(true);
-    QFont fSml = font(); fSml.setPointSize(6.5);
+    QFont fSml = font(); fSml.setPointSize(7);
 
     for (const HElem& el : m_hElems) {
         int bx = int(tx(el.ch0));
@@ -1179,11 +1180,13 @@ void VAlignProfileView::drawStripElements(QPainter& p) const
         p.drawText(badge, Qt::AlignCenter, typeStr);
 
         // Radius label
-        if (el.radius > 0 && bw > 44) {
+        if (el.radius != 0.0 && bw > 44) {
             p.setFont(fSml);
             QColor tx2(elemTextColor(el.type)); tx2.setAlpha(140);
             p.setPen(tx2);
-            p.drawText(bx + 5, by + 26, QString("R=%1 m").arg(el.radius, 0, 'f', 0));
+            const QString hand = (el.radius >= 0.0) ? QStringLiteral("R") : QStringLiteral("L");
+            p.drawText(bx + 5, by + 26,
+                       QString("%1 R=%2 m").arg(hand).arg(std::abs(el.radius), 0, 'f', 0));
         }
 
         // Element label (centred)
@@ -1211,6 +1214,90 @@ void VAlignProfileView::drawStripElements(QPainter& p) const
 
     p.restore();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  drawStripGeometryLine — schematic horizontal-alignment "line" diagram
+//
+//  Convention (per element type, drawn as a single connected polyline):
+//    Tangent          → horizontal segment at the VERTICAL CENTRE of the strip.
+//    Right-hand curve → horizontal segment on the UPPER side  (radius ≥ 0).
+//    Left-hand curve  → horizontal segment on the LOWER side  (radius <  0).
+//    Spiral           → a single TILTED segment connecting the level of the
+//                        element immediately before it to the level of the
+//                        element immediately after it (TS↔SC or CS↔ST).
+//    Direct TC / CT   → when a Tangent and a Circular arc meet with no
+//                        intervening Spiral, a short VERTICAL segment is
+//                        drawn at the shared chainage to visually connect
+//                        the two levels.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void VAlignProfileView::drawStripGeometryLine(QPainter& p) const
+{
+    if (m_hElems.isEmpty()) return;
+
+    p.save();
+    p.setClipRect(stripRect());
+
+    const double yC   = stripCY();
+    const double amp   = kSH * 0.30;   // vertical offset for curve-side lines
+    const double yUp   = yC - amp;     // right-hand curve → upper side
+    const double yLo   = yC + amp;     // left-hand  curve → bottom side
+
+    // Schematic y-level for a Tangent/Circular element. Spiral elements have
+    // no single level of their own — they are drawn as the tilted segment
+    // connecting their neighbours' levels (see main loop below).
+    auto levelOf = [&](int idx) -> double {
+        if (idx < 0 || idx >= m_hElems.size()) return yC;
+        const HElem& e = m_hElems[idx];
+        switch (e.type) {
+        case HElemType::Tangent:  return yC;
+        case HElemType::Circular: return (e.radius >= 0.0) ? yUp : yLo;
+        case HElemType::Spiral:   return yC;  // not used directly
+        }
+        return yC;
+    };
+
+    QPen linePen(QColor("#16314f"), 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    QPen vertPen(QColor("#16314f"), 1.2, Qt::DashLine);
+
+    for (int i = 0; i < m_hElems.size(); ++i) {
+        const HElem& el = m_hElems[i];
+        const double x0 = tx(el.ch0);
+        const double x1 = tx(el.ch1);
+
+        p.setPen(linePen);
+        if (el.type == HElemType::Spiral) {
+            // Tilted segment: from the previous element's level to the next's.
+            const double yStart = levelOf(i - 1);
+            const double yEnd   = levelOf(i + 1);
+            p.drawLine(QPointF(x0, yStart), QPointF(x1, yEnd));
+        } else {
+            // Tangent or Circular: flat segment at this element's own level.
+            const double y = levelOf(i);
+            p.drawLine(QPointF(x0, y), QPointF(x1, y));
+        }
+
+        // Direct TC / CT (or reverse-curve CC) transition: no Spiral between
+        // this element and the next one, but their levels differ → connect
+        // with a short vertical segment at the shared boundary chainage.
+        if (i + 1 < m_hElems.size()) {
+            const HElem& nextEl = m_hElems[i + 1];
+            const bool directTransition = el.type     != HElemType::Spiral
+                                        && nextEl.type != HElemType::Spiral;
+            if (directTransition) {
+                const double yThis = levelOf(i);
+                const double yNext = levelOf(i + 1);
+                if (std::abs(yThis - yNext) > 0.5) {
+                    p.setPen(vertPen);
+                    p.drawLine(QPointF(x1, yThis), QPointF(x1, yNext));
+                }
+            }
+        }
+    }
+
+    p.restore();
+}
+
 
 void VAlignProfileView::drawStripPlanTrace(QPainter& p) const
 {

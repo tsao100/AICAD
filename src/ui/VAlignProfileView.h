@@ -79,7 +79,7 @@ struct HElem {
     HElemType type     = HElemType::Tangent;
     double    ch0      = 0.0;
     double    ch1      = 0.0;
-    double    radius   = 0.0;  ///< 0 on tangents
+    double    radius   = 0.0;  ///< Signed radius [m]; 0 on tangents. Positive = right-hand curve, negative = left-hand curve (matches AlignmentPoint::radius convention).
     QString   label;
 };
 
@@ -239,6 +239,7 @@ private:
     // Strip drawing
     void drawStripBackground  (QPainter&) const;
     void drawStripElements    (QPainter&) const;
+    void drawStripGeometryLine(QPainter&) const;
     void drawStripPlanTrace   (QPainter&) const;
     void drawStripVipTicks    (QPainter&) const;
     void drawStripCursorLine  (QPainter&) const;

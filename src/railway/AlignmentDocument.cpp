@@ -36,6 +36,31 @@ HorizontalAlignmentEdit::HorizontalAlignmentEdit(QObject* parent)
 
 // ── 元素新增 ──────────────────────────────────────────────────────────────────
 
+int HorizontalAlignmentEdit::insertElementsOrdered(int pos, const QVector<EditableElement>& newElems)
+{
+    const int count = newElems.size();
+    if (count == 0) return pos;
+
+    // Fix up existing elements' tangent references BEFORE inserting,
+    // shifting anything that pointed at or past pos by +count.
+    for (auto& other : m_elems) {
+        if (other.tangentIdxBefore >= pos) other.tangentIdxBefore += count;
+        if (other.tangentIdxAfter  >= pos) other.tangentIdxAfter  += count;
+    }
+
+    // Insert the new group, applying the same shift to any of their own
+    // tangent references that pointed at or past pos (captured by the
+    // caller before this call, so still using pre-shift indices).
+    for (int k = 0; k < count; ++k) {
+        EditableElement e = newElems[k];
+        if (e.tangentIdxBefore >= pos) e.tangentIdxBefore += count;
+        if (e.tangentIdxAfter  >= pos) e.tangentIdxAfter  += count;
+        m_elems.insert(pos + k, e);
+    }
+
+    return pos;
+}
+
 int HorizontalAlignmentEdit::addFixedTangent(QPointF from, QPointF to)
 {
     const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
@@ -109,14 +134,16 @@ int HorizontalAlignmentEdit::addFloatingCurve(int tangentIdxBefore,
     e.tangentIdxAfter  = tangentIdxAfter;
     // startPI / endPI left at default (0,0); AlignmentSolver fills them in.
 
-    m_elems.append(e);
+    // Insert immediately after tangentIdxBefore so storage order matches
+    // alignment order (see insertElementsOrdered() for full rationale).
+    const int newIdx = insertElementsOrdered(tangentIdxBefore + 1, { e });
 
     if (parentDocument()) {
         command::AlignmentEditCommand::push(parentDocument(),
                                             before, parentDocument()->toJson(),
                                             "Add Floating Curve");
     }
-    return m_elems.size() - 1;
+    return newIdx;
 }
 
 
@@ -151,7 +178,6 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
         return -1;
     }
 
-    const int spiralInIdx = m_elems.size();
     const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
 
     // ── 入螺旋 (SpiralIn) ──────────────────────────────────────────────────
@@ -162,7 +188,6 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     spiralIn.length           = std::abs(spiralLength);
     spiralIn.tangentIdxBefore = tangentIdxBefore;
     spiralIn.tangentIdxAfter  = tangentIdxAfter;
-    m_elems.append(spiralIn);
 
     // ── 圓弧 (CircularArc) ────────────────────────────────────────────────
     EditableElement arc;
@@ -171,7 +196,6 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     arc.radius           = std::abs(radius);
     arc.tangentIdxBefore = tangentIdxBefore;
     arc.tangentIdxAfter  = tangentIdxAfter;
-    m_elems.append(arc);
 
     // ── 出螺旋 (SpiralOut) ────────────────────────────────────────────────
     EditableElement spiralOut;
@@ -181,7 +205,11 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     spiralOut.length           = std::abs(spiralLength);
     spiralOut.tangentIdxBefore = tangentIdxBefore;
     spiralOut.tangentIdxAfter  = tangentIdxAfter;
-    m_elems.append(spiralOut);
+
+    // Insert in alignment (chainage) order, not at the end — see
+    // insertElementsOrdered() for the full rationale.
+    const int spiralInIdx = insertElementsOrdered(tangentIdxBefore + 1,
+                                                  { spiralIn, arc, spiralOut });
 
     if (parentDocument()) {
         command::AlignmentEditCommand::push(parentDocument(),
@@ -233,8 +261,9 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
         return addFloatingCurve(tangentIdxBefore, tangentIdxAfter, radius);
     }
 
-    const int firstIdx = m_elems.size();
     const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    QVector<EditableElement> group;
 
     // ── 入螺旋 (SpiralIn) — 僅當 L1 > 0 ────────────────────────────────────
     if (spiralLength1 > 1e-9) {
@@ -245,7 +274,7 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
         spiralIn.length           = spiralLength1;
         spiralIn.tangentIdxBefore = tangentIdxBefore;
         spiralIn.tangentIdxAfter  = tangentIdxAfter;
-        m_elems.append(spiralIn);
+        group.append(spiralIn);
     }
 
     // ── 圓弧 (CircularArc) ────────────────────────────────────────────────
@@ -255,7 +284,7 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     arc.radius           = std::abs(radius);
     arc.tangentIdxBefore = tangentIdxBefore;
     arc.tangentIdxAfter  = tangentIdxAfter;
-    m_elems.append(arc);
+    group.append(arc);
 
     // ── 出螺旋 (SpiralOut) — 僅當 L2 > 0 ────────────────────────────────────
     if (spiralLength2 > 1e-9) {
@@ -266,8 +295,12 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
         spiralOut.length           = spiralLength2;
         spiralOut.tangentIdxBefore = tangentIdxBefore;
         spiralOut.tangentIdxAfter  = tangentIdxAfter;
-        m_elems.append(spiralOut);
+        group.append(spiralOut);
     }
+
+    // Insert in alignment (chainage) order, not at the end — see
+    // insertElementsOrdered() for the full rationale.
+    const int firstIdx = insertElementsOrdered(tangentIdxBefore + 1, group);
 
     if (parentDocument()) {
         command::AlignmentEditCommand::push(parentDocument(),
@@ -325,7 +358,7 @@ int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
         return addFloatingCurve(tangentIdxBefore, tangentIdxAfter, radius);
     }
 
-    const int firstIdx = m_elems.size();
+    QVector<EditableElement> group;
 
     // ── 入螺旋 (SpiralIn) — 僅當 L1 > 0 ────────────────────────────────────
     if (spiralLength1 > 1e-9) {
@@ -338,7 +371,7 @@ int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
         spiralIn.tangentIdxAfter  = tangentIdxAfter;
         spiralIn.spiralType1      = type1;   // 入螺旋類型（自身使用）
         spiralIn.spiralType2      = type2;   // 出螺旋類型（由此攜帶供 Solver 查詢）
-        m_elems.append(spiralIn);
+        group.append(spiralIn);
     }
 
     // ── 圓弧 (CircularArc) ────────────────────────────────────────────────
@@ -348,7 +381,7 @@ int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
     arc.radius           = std::abs(radius);
     arc.tangentIdxBefore = tangentIdxBefore;
     arc.tangentIdxAfter  = tangentIdxAfter;
-    m_elems.append(arc);
+    group.append(arc);
 
     // ── 出螺旋 (SpiralOut) — 僅當 L2 > 0 ────────────────────────────────────
     if (spiralLength2 > 1e-9) {
@@ -361,8 +394,12 @@ int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
         spiralOut.tangentIdxAfter  = tangentIdxAfter;
         spiralOut.spiralType1      = type2;  // SpiralOut 自身類型記在 spiralType1
         spiralOut.spiralType2      = type2;  // 保持一致
-        m_elems.append(spiralOut);
+        group.append(spiralOut);
     }
+
+    // Insert in alignment (chainage) order, not at the end — see
+    // insertElementsOrdered() for the full rationale.
+    const int firstIdx = insertElementsOrdered(tangentIdxBefore + 1, group);
 
     return firstIdx;
 }

@@ -998,7 +998,7 @@ void VAlignEditorDockWidget::setTrackCenterLine(railway::TrackCenterLine* tcl)
         el.ch1 = rawPts[i+1].chainage;
         QChar t = pt.tsc[1];
         if      (t == 'T') el.type = HElemType::Tangent;
-        else if (t == 'C') { el.type = HElemType::Circular; el.radius = std::abs(pt.radius); }
+        else if (t == 'C') { el.type = HElemType::Circular; el.radius = pt.radius; }  // keep sign: + = right, - = left
         else                el.type = HElemType::Spiral;
         el.label = pt.curveType;
         hElems.append(el);
@@ -1063,7 +1063,7 @@ void VAlignEditorDockWidget::setAlignmentDocument(railway::AlignmentDocument* do
             if (pt.tsc.size() >= 2) {
                 QChar t = pt.tsc[1];
                 if      (t == 'T') el.type = HElemType::Tangent;
-                else if (t == 'C') { el.type = HElemType::Circular; el.radius = std::abs(pt.radius); }
+                else if (t == 'C') { el.type = HElemType::Circular; el.radius = pt.radius; }  // keep sign: + = right, - = left
                 else               el.type = HElemType::Spiral;
             }
             el.label = pt.curveType;
