@@ -103,6 +103,16 @@ void Sketch::removeGeometry(int index) {
     }
 }
 
+bool Sketch::removeGeometry(const QString& uuid) {
+    for (int i = 0; i < m_geometries.size(); ++i) {
+        if (m_geometries[i]->uuid == uuid) {
+            removeGeometry(i);
+            return true;
+        }
+    }
+    return false;
+}
+
 
 void Sketch::clearGeometry() {
     qDeleteAll(m_geometries);

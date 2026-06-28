@@ -1861,6 +1861,32 @@ void UIManager::setupCommandLine() {
                        bus->unsubscribe(core::Events::VIEW_READY, d->commandLine);
                    });
 
+    // ⑤ Delete 鍵 — 草圖編輯模式下，若有選取幾何則等同 ERASE 命令
+    //    使用 WidgetWithChildrenShortcut 綁定在 cadView 上，只在 cadView
+    //    （或其子元件）持有焦點時才會觸發，避免吃掉命令列輸入框中
+    //    Delete 鍵原本的「刪除字元」行為。
+    auto* shortcutDelete = new QShortcut(QKeySequence(Qt::Key_Delete), d->cadView);
+    shortcutDelete->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(shortcutDelete, &QShortcut::activated, this, [this]() {
+        auto* app = core::Application::instance();
+        if (!app || !d->cadView) return;
+
+        // 僅在草圖編輯模式（有 active sketch）下，Delete 鍵才等同 ERASE。
+        // 非草圖模式（例如 FeatureBrowser 選取）維持現有行為，不受影響。
+        if (!app->activeSketch()) return;
+
+        QStringList sel = d->cadView->selectedGeomUuids();
+        if (sel.isEmpty()) return;  // 沒有選取任何幾何，不做任何事
+
+        command::CommandContext ctx;
+        ctx.args      = sel;
+        ctx.uiManager = this;
+        ctx.cadView   = d->cadView;
+
+        auto* cmdMgr = app->commandManager();
+        if (cmdMgr) cmdMgr->executeCommand("ERASE", ctx);
+    });
+
     // 注意：show() 移到 VIEW_READY callback 內，這裡不呼叫
     //d->commandLine->show();
 }

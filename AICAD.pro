@@ -336,6 +336,7 @@ SOURCES += \
     src/command/Command.cpp \
     src/command/BasicCommands.cpp \
     src/command/LineCommand.cpp \
+    src/command/EraseCommand.cpp \
     \
     # Scripting Module (Daney - 腳本系統)
     src/scripting/LispEngine.cpp \
@@ -466,6 +467,7 @@ HEADERS += \
     src/command/CommandTypes.h \
     src/command/CommandFactory.h \
     src/command/LineCommand.h \
+    src/command/EraseCommand.h \
     \
     # Scripting Module (Daney)
     src/scripting/LispEngine.h \

@@ -250,6 +250,8 @@ public:
 
     void addGeometry(SketchGeometry* geom);
     void removeGeometry(int index);
+    /// 依 UUID 移除幾何元素（ERASE 命令用）。找不到回傳 false。
+    bool removeGeometry(const QString& uuid);
     void clearGeometry();
 
     QList<SketchGeometry*> geometries() const { return m_geometries; }

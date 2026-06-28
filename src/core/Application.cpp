@@ -22,6 +22,7 @@
 #include "scripting/LispEngine.h"
 #include "scripting/LispBindings.h"
 #include "../command/ConstraintCommands.h"  // Phase 9
+#include "../command/EraseCommand.h"
 #include <optional>
 #include "cad/sketch/SketchRegion.h"
 
@@ -256,6 +257,11 @@ bool Application::initialize() {
         // Phase 9：註冊所有約束命令（別名已在 registerConstraintCommands 內建立）
         command::registerConstraintCommands(this);
         qDebug() << "[Application] Phase 9: Constraint commands registered.";
+
+        // ERASE：刪除草圖中選取的幾何元素（別名 E 已在 CommandAlias 內建立）
+        d->commandManager->registerCommand("ERASE", {"E"},
+            []() -> command::Command* { return new command::EraseCommand(); });
+        qDebug() << "[Application] ERASE command registered.";
 
         d->initialized = true;
         qDebug() << "[Application] Initialization completed successfully";
