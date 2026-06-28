@@ -84,15 +84,6 @@ struct HElem {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Plan-deviation sample (for the trace line inside the strip)
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct PlanPoint {
-    double ch  = 0.0;   ///< Chainage [m]
-    double dev = 0.0;   ///< Lateral deviation in the plan frame [m]
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  View
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -115,9 +106,6 @@ public:
     /** Set horizontal alignment elements for the strip. */
     void setHElements(const QVector<HElem>& elems);
     const QVector<HElem>& hElements() const { return m_hElems; }
-
-    /** Set plan-deviation trace points for the strip. */
-    void setPlanTrace(const QVector<PlanPoint>& pts);
 
     /** Set total alignment chainage length. */
     void setChainageEnd(double ch);
@@ -198,7 +186,6 @@ private:
     double  ty(double el) const;    ///< Elevation → pixel Y
     double  fCh(double px) const;   ///< Pixel X → chainage
     double  fEl(double py) const;   ///< Pixel Y → elevation
-    double  stripDevY(double dev) const; ///< Plan deviation → strip pixel Y
 
     bool inProfile(const QPointF& pt) const;
 
@@ -240,7 +227,6 @@ private:
     void drawStripBackground  (QPainter&) const;
     void drawStripElements    (QPainter&) const;
     void drawStripGeometryLine(QPainter&) const;
-    void drawStripPlanTrace   (QPainter&) const;
     void drawStripVipTicks    (QPainter&) const;
     void drawStripCursorLine  (QPainter&) const;
 
@@ -259,7 +245,6 @@ private:
     // ── State ─────────────────────────────────────────────────────────────────
     QVector<Vip>       m_vips;
     QVector<HElem>     m_hElems;
-    QVector<PlanPoint> m_planPts;
     double             m_chEnd    = 850.0;
 
     Tool  m_tool      = Tool::Select;
@@ -290,10 +275,6 @@ private:
     double m_elTop = 18.0;
 
     void recomputeElevRange();
-
-    // Plan trace max deviation (for strip scaling)
-    double m_planMaxDev = 1.0;
-    void   recomputePlanMaxDev();
 };
 
 } // namespace ui

@@ -1005,23 +1005,6 @@ void VAlignEditorDockWidget::setTrackCenterLine(railway::TrackCenterLine* tcl)
     }
     m_profileView->setHElements(hElems);
     m_profileView->setChainageEnd(rawPts.isEmpty() ? 850.0 : rawPts.last().chainage);
-
-    // Build plan trace
-    QVector<PlanPoint> trace;
-    const double step = 2.0;
-    double az = 0.0, dev = 0.0;
-    trace.append({ 0.0, 0.0 });
-    for (const HElem& el : hElems) {
-        int n = std::max(1, int(std::ceil(el.ch1 - el.ch0) / step));
-        for (int k = 1; k <= n; ++k) {
-            double ds    = (el.ch1 - el.ch0) / n;
-            double kappa = (el.type == HElemType::Circular) ? 1.0 / el.radius : 0.0;
-            az  += kappa * ds;
-            dev += std::sin(az) * ds;
-            trace.append({ el.ch0 + k * ds, dev });
-        }
-    }
-    m_profileView->setPlanTrace(trace);
 }
 
 railway::TrackCenterLine* VAlignEditorDockWidget::trackCenterLine() const
@@ -1074,23 +1057,6 @@ void VAlignEditorDockWidget::setAlignmentDocument(railway::AlignmentDocument* do
         // 更新總里程
         if (!rawPts.isEmpty())
             m_profileView->setChainageEnd(rawPts.last().chainage);
-
-        // 重建 plan trace（PLAN DEV. 曲線）
-        QVector<PlanPoint> trace;
-        const double step = 2.0;
-        double az = 0.0, dev = 0.0;
-        trace.append({ 0.0, 0.0 });
-        for (const HElem& el : hElems) {
-            int n = std::max(1, int(std::ceil(el.ch1 - el.ch0) / step));
-            for (int k = 1; k <= n; ++k) {
-                double ds    = (el.ch1 - el.ch0) / n;
-                double kappa = (el.type == HElemType::Circular) ? 1.0 / el.radius : 0.0;
-                az  += kappa * ds;
-                dev += std::sin(az) * ds;
-                trace.append({ el.ch0 + k * ds, dev });
-            }
-        }
-        m_profileView->setPlanTrace(trace);
     };
 
     connect(m_alignDoc->horizontal(), &railway::HorizontalAlignmentEdit::changed,

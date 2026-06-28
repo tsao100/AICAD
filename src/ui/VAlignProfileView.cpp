@@ -205,13 +205,6 @@ void VAlignProfileView::setHElements(const QVector<HElem>& elems)
     update();
 }
 
-void VAlignProfileView::setPlanTrace(const QVector<PlanPoint>& pts)
-{
-    m_planPts = pts;
-    recomputePlanMaxDev();
-    update();
-}
-
 void VAlignProfileView::setChainageEnd(double ch)
 {
     m_chEnd = ch;
@@ -270,12 +263,6 @@ double VAlignProfileView::fEl(double py) const
 {
     if (profileH() < 1) return m_elBot;
     return m_elBot + (1.0 - (py - kMT) / profileH()) * (m_elTop - m_elBot);
-}
-
-double VAlignProfileView::stripDevY(double dev) const
-{
-    double scale = (kSH / 2.0 - 20.0) / std::max(m_planMaxDev, 1.0);
-    return stripCY() - dev * scale;
 }
 
 bool VAlignProfileView::inProfile(const QPointF& pt) const
@@ -443,13 +430,6 @@ void VAlignProfileView::recomputeElevRange()
     double pad = std::max((mx - mn) * 0.38, 1.8);
     m_elBot = std::floor((mn - pad) * 4.0) / 4.0;
     m_elTop = std::ceil ((mx + pad) * 4.0) / 4.0;
-}
-
-void VAlignProfileView::recomputePlanMaxDev()
-{
-    m_planMaxDev = 1.0;
-    for (const auto& p : m_planPts)
-        m_planMaxDev = std::max(m_planMaxDev, std::abs(p.dev));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -644,7 +624,6 @@ void VAlignProfileView::paintEvent(QPaintEvent*)
     drawStripBackground(p);
     drawStripElements(p);
     drawStripGeometryLine(p);
-    drawStripPlanTrace(p);
     drawStripVipTicks(p);
     if (m_hasCursor) drawStripCursorLine(p);
 }
@@ -1145,7 +1124,7 @@ void VAlignProfileView::drawStripElements(QPainter& p) const
     p.save();
     p.setClipRect(stripRect());
     QFont fBig = font(); fBig.setPointSize(8);  fBig.setBold(true);
-    QFont fSml = font(); fSml.setPointSize(7);
+    QFont fSml = font(); fSml.setPointSize(6.5);
 
     for (const HElem& el : m_hElems) {
         int bx = int(tx(el.ch0));
@@ -1298,36 +1277,6 @@ void VAlignProfileView::drawStripGeometryLine(QPainter& p) const
     p.restore();
 }
 
-
-void VAlignProfileView::drawStripPlanTrace(QPainter& p) const
-{
-    if (m_planPts.size() < 2) return;
-    p.save();
-    p.setClipRect(stripRect());
-
-    // Fill under the trace
-    QPainterPath fillPath;
-    fillPath.moveTo(tx(m_planPts[0].ch), stripDevY(m_planPts[0].dev));
-    for (int k = 1; k < m_planPts.size(); ++k)
-        fillPath.lineTo(tx(m_planPts[k].ch), stripDevY(m_planPts[k].dev));
-    fillPath.lineTo(tx(m_planPts.last().ch), stripCY());
-    fillPath.lineTo(tx(m_planPts.first().ch), stripCY());
-    fillPath.closeSubpath();
-    QColor fill(Pal::PlanFill); fill.setAlpha(14);
-    p.fillPath(fillPath, fill);
-
-    // Trace line
-    QVector<QPointF> pts;
-    pts.reserve(m_planPts.size());
-    for (const auto& pp : m_planPts)
-        pts.append({ tx(pp.ch), stripDevY(pp.dev) });
-
-    p.setPen(QPen(Pal::PlanTrace, 1.8, Qt::SolidLine, Qt::RoundCap));
-    p.drawPolyline(pts.constData(), pts.size());
-
-    p.restore();
-}
-
 void VAlignProfileView::drawStripVipTicks(QPainter& p) const
 {
     p.save();
@@ -1354,21 +1303,6 @@ void VAlignProfileView::drawStripVipTicks(QPainter& p) const
         p.setPen(QPen(sel ? Pal::VipTickS : Pal::VipTickN, 1.0));
         p.setBrush(sel ? QColor(255, 170, 0) : QColor(15, 30, 52));
         p.drawPolygon(tri);
-
-        // Dot at the plan-trace deviation for this VIP
-        double planDev = 0.0;
-        for (int k = 0; k + 1 < m_planPts.size(); ++k) {
-            if (m_planPts[k].ch <= v.ch && v.ch <= m_planPts[k+1].ch) {
-                double t = (v.ch - m_planPts[k].ch) /
-                           (m_planPts[k+1].ch - m_planPts[k].ch);
-                planDev = m_planPts[k].dev + t * (m_planPts[k+1].dev - m_planPts[k].dev);
-                break;
-            }
-        }
-        int dy = int(stripDevY(planDev));
-        p.setPen(QPen(sel ? Pal::VipSelDot : Pal::VipDotNBd, 1.0));
-        p.setBrush(sel ? Pal::VipDropSel : Pal::VipDotN);
-        p.drawEllipse(QPointF(sx, dy), 3.0, 3.0);
     }
     p.restore();
 }
