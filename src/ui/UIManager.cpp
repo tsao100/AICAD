@@ -793,7 +793,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // ✅ 監聽平面選取請求（顯示提示）
         bus->subscribe("command.request-plane-selection", this,
-                       [this](const QVariant& /*data*/) {
+                       [this](const QVariant& data) {
                            setStatusMessage("Click on a plane (XY, XZ, or YZ) to select...", 0);
                        });
 
@@ -820,7 +820,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
             setStatusMessage("Error: " + data.toString(), 5000);
         });
 
-        bus->subscribe(core::Events::FEATURE_CREATED, this, [this](const QVariant& /*data*/) {
+        bus->subscribe(core::Events::FEATURE_CREATED, this, [this](const QVariant& data) {
             updateFeatureTree();
         });
 
@@ -1970,7 +1970,8 @@ void UIManager::connectCommandLineEvents() {
 
     // ── 命令完成 ────────────────────────────────────────────────────
     bus->subscribe(core::Events::COMMAND_EXECUTED, this,
-                   [this](const QVariant& /*v*/) {
+                   [this](const QVariant& v) {
+                       // 命令結束 → transient history 淡出
                        d->commandLine->transientHistory()->beginFadeOut();
                        d->commandLine->clearCommandOptions();
                        d->commandLine->inputEdit()->setPlaceholderText(
@@ -2784,7 +2785,7 @@ command::CommandAlias* UIManager::commandAlias() const {
     return d->commandAlias;
 }
 
-void UIManager::showCommandMessage(const QString& message, const QString& /*color*/) {
+void UIManager::showCommandMessage(const QString& message, const QString& color) {
     if (d->commandLine && !message.isEmpty())
         d->commandLine->appendHistory(message);
 }
@@ -2893,6 +2894,7 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
             auto* plane = sketch->plane();
             QVector3D o  = plane->origin();
             QVector3D xa = plane->xAxis();
+            QVector3D ya = plane->yAxis();
             QVector3D n  = plane->normal();
 
             gp_Ax3 ax3(
@@ -3130,20 +3132,11 @@ void UIManager::setupDefaultUI() {
 
     // File 選單
     QMenu* fileMenu = menuBar->addMenu("&File");
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    fileMenu->addAction("&New",   QKeySequence::New,  this,          &UIManager::onNewDocument);
-    fileMenu->addAction("&Open",  QKeySequence::Open, this,          &UIManager::onOpenDocument);
-    fileMenu->addAction("&Save",  QKeySequence::Save, this,          &UIManager::onSaveDocument);
-    fileMenu->addSeparator();
-    fileMenu->addAction("E&xit",  QKeySequence::Quit, d->mainWindow, &QMainWindow::close);
-#else
     fileMenu->addAction("&New", this, &UIManager::onNewDocument, QKeySequence::New);
     fileMenu->addAction("&Open", this, &UIManager::onOpenDocument, QKeySequence::Open);
     fileMenu->addAction("&Save", this, &UIManager::onSaveDocument, QKeySequence::Save);
     fileMenu->addSeparator();
     fileMenu->addAction("E&xit", d->mainWindow, &QMainWindow::close, QKeySequence::Quit);
-#endif
-
 
     // View 選單
     QMenu* viewMenu = menuBar->addMenu("&View");

@@ -7,6 +7,8 @@
 #define AICAD_COMMAND_ERASECOMMAND_H
 
 #include "Command.h"
+#include <QStringList>
+#include <QVariant>
 
 namespace aicad {
 namespace command {
@@ -16,18 +18,22 @@ namespace command {
  *
  * 兩種使用方式：
  *  - 模式 A：先在視圖中選取幾何，再輸入 ERASE（或按 Delete 鍵）
- *            → UIManager 已將選取的 UUID 填入 ctx.args，直接刪除。
+ *            → UIManager 已將選取的 UUID 填入 ctx.args，直接刪除，
+ *              命令同步完成，不進入 Running 狀態。
  *  - 模式 B：直接輸入 ERASE，尚未選取任何幾何
- *            → 提示使用者在視圖中選取後按 Enter 確認。
- *            注意：此命令物件本身不會保持 Running 狀態，execute() 回傳後
- *            CommandManager 會立即將其視為完成並銷毀，讓 CadView 的滑鼠
- *            多選（SelectDetected）行為維持正常，不被誤判成繪圖命令的
- *            取點模式。真正等待 Enter 確認 / 執行刪除的邏輯改為訂閱在
- *            永久存在的 CommandLineManager singleton 上，不依賴本物件
- *            的生命週期。
+ *            → 命令進入 Running 狀態並切換 CadView 到 GetGeom 模式
+ *              （與 GeneralDimCommand / AlignmentSCSCommand 的取點/取幾何
+ *              架構相同）：
+ *                訂閱 GEOM_PICKED → 每次點擊一個幾何，加入/移出待刪清單
+ *                （並用 AIS_InteractiveContext::AddOrRemoveSelected 顯示
+ *                高亮），訂閱 STRING_INPUT → 使用者按 Enter（空輸入）時
+ *                確認並刪除待刪清單中的幾何，訂閱 COMMAND_CANCELLED →
+ *                使用者按 Esc 時取消整個操作。
+ *            完成或取消後一律呼叫 cleanup()：取消訂閱、還原 CadView 為
+ *            Sketching 模式、清空待刪清單、並以 complete() 結束命令。
  *
  * 僅在 Sketching 模式（有 active sketch）下有效；草圖平面參考幾何
- * （X 軸 / Y 軸 / 原點）為固定參考，不可被刪除。
+ * （X 軸 / Y 軸 / 原點）為固定參考，不可被刪除/選取。
  */
 class EraseCommand : public Command {
     Q_OBJECT
@@ -37,6 +43,20 @@ public:
 
     CommandResult execute(const CommandContext& context) override;
     QString getUsage() const override;
+
+private:
+    void subscribeAll();
+    void unsubscribeAll();
+    void cleanup();
+
+    void onGeomPicked(const QVariant& data);
+    void onConfirm(const QVariant& data);
+    void onCancelled(const QVariant& data);
+
+    void setHighlight(const QString& uuid, bool on);
+    void updatePendingPrompt();
+
+    QStringList m_pending;   ///< 已點選、等待確認刪除的幾何 UUID
 };
 
 } // namespace command
