@@ -1923,7 +1923,16 @@ void UIManager::connectCommandLineEvents() {
             d->commandLineManager, &core::CommandLineManager::onOptionSelected);
 
     connect(d->commandLine->inputEdit(), &CommandInputEdit::escapePressed,
-            d->commandLineManager, &core::CommandLineManager::onEscapePressed);
+            this, [this]() {
+                // ✅ Grips on 時，ESC 優先關閉 grips（Sketch / HAlign edit 共用），
+                //    不應該連帶取消目前命令；此檢查不受目前鍵盤焦點落在
+                //    CommandInputEdit 或 CadView 影響，確保行為一致。
+                if (d->cadView && d->cadView->hasActiveGrips()) {
+                    d->cadView->turnOffActiveGrips();
+                    return;
+                }
+                d->commandLineManager->onEscapePressed();
+            });
 
     // ── COMMAND_EXECUTE_REQUEST → CommandManager ──
     bus->subscribe(core::Events::COMMAND_EXECUTE_REQUEST, this,

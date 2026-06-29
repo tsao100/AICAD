@@ -810,6 +810,37 @@ void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
     d->gripFilter  = filter;
 }
 
+bool CadView::hasActiveGrips() const {
+    return d->gripManager && d->gripManager->hasActiveGrips();
+}
+
+bool CadView::turnOffActiveGrips() {
+    if (!d->gripManager || !d->gripManager->hasActiveGrips()) {
+        return false;
+    }
+
+    // 若正在拖曳 grip（click-to-place 中），先取消該次移動
+    if (d->gripManager->isGripSelected()) {
+        d->gripManager->cancelGrip();
+    }
+
+    // 不論是否正在拖曳，一律直接關閉所有 grips
+    d->gripManager->detach();
+    if (d->gripFilter)
+        d->gripFilter->clearSketchPlane();
+
+    if (!d->context.IsNull()) {
+        d->context->ClearSelected(Standard_False);
+        d->context->UpdateCurrentViewer();
+    }
+
+    auto* bus = core::Application::instance()->eventBus();
+    bus->publish("selection.cleared", QVariant());
+
+    qDebug() << "[CadView] All grips turned off";
+    return true;
+}
+
 void CadView::setDocument(cad::Document* document) {
     if (d->document == document) {
         return;
@@ -1896,14 +1927,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             }
 
             // ── Sketch Idle 選取規則 ─────────────────────────────────────────
-            // ① 點到空白處 → 清空所有選取
+            // ① 點到空白處 → 不做任何事（取消選取／關閉 grips 一律改由 ESC 處理）
             // ② 點到幾何   → 累加選取（不需按 Shift）
             // Shift 鍵 = XOR（可反選已選物件）
             if (!d->context->HasDetected()) {
-                // 點到空白 → 清空
-                d->context->ClearSelected(Standard_True);
-                bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
-                bus->publish("selection.cleared", QVariant());
+                // ✅ 點擊空白處不再清除選取，維持目前選取/grips 狀態
                 return;
             }
 
@@ -2003,8 +2031,11 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 // （實際上因為上面已 return，這個 case 在 GetGeom+hasCmd 時不會被執行）
                 break;   // ← 改為 break，移除重複的 handlePointInput 呼叫
             case InteractionMode::Selecting:
-                d->context->SelectDetected(AIS_SelectionScheme_Replace);
-                handleObjectSelection(event->pos());
+                // ✅ 點擊空白處不再清除選取／grips —— 一律改由 ESC 取代
+                if (d->context->HasDetected()) {
+                    d->context->SelectDetected(AIS_SelectionScheme_Replace);
+                    handleObjectSelection(event->pos());
+                }
                 break;
             case InteractionMode::PlaceDimLine: {  // ✅ Task E: 確認尺寸線位置
                 QVector2D planePt = screenToPlane(event->pos());
@@ -2471,32 +2502,8 @@ void CadView::keyPressEvent(QKeyEvent* event) {
 
             Q_EMIT pointCancelled();
         }
-        // ① 先 detach grips（安全順序同 visibility-changed）
-        // src/view/CadView.cpp — keyPressEvent ESC 段落，替換原本的 grip detach 區塊
-
-        if (d->gripManager && d->gripManager->hasActiveGrips()) {
-
-            // ① 若 grip 正在選取中（click-to-place 模式），先取消，保留 grip 顯示
-            if (d->gripManager->isGripSelected()) {
-                d->gripManager->cancelGrip();
-                event->accept();
-                return;   // 第一次 ESC 只取消移動，不清除 grips
-            }
-
-            // ② 第二次 ESC：真正 detach
-            d->gripManager->detach();
-            if (d->gripFilter)
-                d->gripFilter->clearSketchPlane();
-
-            if (!d->context.IsNull()) {
-                d->context->ClearSelected(Standard_False);
-                d->context->UpdateCurrentViewer();
-            }
-
-            auto* bus = core::Application::instance()->eventBus();
-            bus->publish("selection.cleared", QVariant());
-
-            qDebug() << "[CadView] ESC: grips detached";
+        // ESC：grips 開啟時，單次按下即關閉全部 grips（Sketch / HAlign edit 共用同一邏輯）
+        if (turnOffActiveGrips()) {
             event->accept();
         }
         return;

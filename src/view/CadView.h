@@ -115,6 +115,13 @@ public:
 
     void setGripManager(cad::GripManager* mgr, ui::GripEventFilter* filter);
 
+    /// 目前是否有 active grips（Sketch / HAlign edit 共用）
+    bool hasActiveGrips() const;
+
+    /// 若目前有 active grips，將其全部關閉（含取消進行中的拖曳）。
+    /// 回傳是否真的有 grips 被關閉（讓呼叫端決定是否還需要做其他取消動作）。
+    bool turnOffActiveGrips();
+
     /**
      * @brief 設定關聯的文件
      * @param document 文件指標
