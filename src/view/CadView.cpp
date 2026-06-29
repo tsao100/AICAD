@@ -386,6 +386,7 @@ void CadView::initializeViewer() {
     if (m_dimOverlay)
         m_dimOverlay->setContext(d->context);
     d->grid = new ViewGrid(d->viewer, this);
+    d->grid->setView(d->view);
 
     // 設定初始視角
     setViewType(ViewType::Isometric);
@@ -1088,6 +1089,12 @@ void CadView::fitAll() {
 
     d->view->FitAll();
     d->view->ZFitAll();
+
+    // ✅ 視野改變，格線需重新計算涵蓋範圍
+    if (d->grid && d->gridEnabled) {
+        d->grid->update();
+    }
+
     update();
 }
 
@@ -1432,6 +1439,11 @@ void CadView::alignToPlane(const cad::Plane* plane)
     d->viewer->SetPrivilegedPlane(ax);
 
     d->view->FitAll();
+
+    // ✅ 視角/縮放改變，格線需重新計算
+    if (d->grid && d->gridEnabled) {
+        d->grid->update();
+    }
 }
 
 void CadView::setIsometricView() {
@@ -1729,6 +1741,11 @@ void CadView::resizeEvent(QResizeEvent* event) {
     if (!d->view.IsNull()) {
         d->view->MustBeResized();
         d->view->Redraw();
+    }
+
+    // ✅ 視窗大小改變會影響格線涵蓋範圍，需重新計算
+    if (d->grid && d->gridEnabled) {
+        d->grid->update();
     }
 
     if (m_finishSketchButton) {
@@ -2115,6 +2132,11 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         // OCCT Pan(dX, dY)：dX 向右為正，dY 向上為正（螢幕 Y 軸相反）
         d->view->Pan(delta.x(), -delta.y());
 
+        // ✅ 平移會改變格線需涵蓋的世界座標範圍，需重新計算
+        if (d->grid && d->gridEnabled) {
+            d->grid->update();
+        }
+
         d->lastMousePos = event->pos();
         update();
         event->accept();
@@ -2389,6 +2411,11 @@ void CadView::wheelEvent(QWheelEvent* event) {
     // Step 5: Pan 補償，讓 3D 點回到原始滑鼠位置
     // OCCT Pan(dX, dY)：dX 向右為正，dY 向上為正（螢幕 Y 軸相反）
     d->view->Pan(xp - newXp, -(yp - newYp));
+
+    // ✅ 縮放比例改變，格線間距/範圍需依新的縮放比例重新計算
+    if (d->grid && d->gridEnabled) {
+        d->grid->update();
+    }
 
     if (m_snapManager && m_snapManager->isSnapActive()) {
         // 重新算一次同位置的 snap，讓 Indicator 以新的 scale 重繪

@@ -11,6 +11,7 @@
 #include <QObject>
 
 #include <V3d_Viewer.hxx>
+#include <V3d_View.hxx>
 #include <Aspect_GridType.hxx>
 #include <Aspect_GridDrawMode.hxx>
 
@@ -31,11 +32,19 @@ public:
     explicit ViewGrid(const Handle(V3d_Viewer)& viewer, QObject* parent = nullptr);
     ~ViewGrid() override;
 
+    /// 設定對應的 V3d_View，用於依視窗大小/縮放比例自動調整格線間距與範圍
+    void setView(const Handle(V3d_View)& view);
+
     void setPlane(cad::Plane* plane);
     cad::Plane* plane() const;
 
+    /// 基準間距（手動模式使用；自動模式下作為間距下限參考）
     void setSpacing(float spacing);
     float spacing() const;
+
+    /// 自動依視窗縮放比例調整格線間距與顯示範圍（預設開啟）
+    void setAutoScale(bool enabled);
+    bool autoScale() const;
 
     void setStyle(GridStyle style);
     GridStyle style() const;
@@ -54,6 +63,7 @@ Q_SIGNALS:
 
 private:
     void applyPrivilegedPlane();
+    bool computeViewportBoundsOnPlane(double& minU, double& minV, double& maxU, double& maxV) const;
 
     class Private;
     Private* d;
