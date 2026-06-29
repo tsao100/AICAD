@@ -76,13 +76,15 @@ namespace aicad {
 namespace view {
 
 // 輔助函式：Qt 座標轉 OCCT 座標
-static void QtToOCCT(const QWidget* /*widget*/, const QPoint& qtPos,
-                     Standard_Integer& occX, Standard_Integer& occY) {
 #if defined(_WIN32) || defined(__APPLE__)
+static void QtToOCCT(const QWidget* widget, const QPoint& qtPos,
+                     Standard_Integer& occX, Standard_Integer& occY) {
     qreal dpr = widget->devicePixelRatio();
     occX = static_cast<Standard_Integer>(qtPos.x() * dpr);
     occY = static_cast<Standard_Integer>(qtPos.y() * dpr);
 #else
+static void QtToOCCT(const QWidget* /*widget*/, const QPoint& qtPos,
+                     Standard_Integer& occX, Standard_Integer& occY) {
     occX = qtPos.x();
     occY = qtPos.y();
 #endif

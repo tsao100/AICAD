@@ -1124,7 +1124,7 @@ void VAlignProfileView::drawStripElements(QPainter& p) const
     p.save();
     p.setClipRect(stripRect());
     QFont fBig = font(); fBig.setPointSize(8);  fBig.setBold(true);
-    QFont fSml = font(); fSml.setPointSize(6.5);
+    QFont fSml = font(); fSml.setPointSize(7);
 
     for (const HElem& el : m_hElems) {
         int bx = int(tx(el.ch0));
