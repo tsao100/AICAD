@@ -1848,8 +1848,13 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         }
     }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    int x = static_cast<int>(event->position().x());
+    int y = static_cast<int>(event->position().y());
+#else
     int x = event->x();
     int y = event->y();
+#endif
 
     if (event->button() == Qt::LeftButton &&
         (d->mode == InteractionMode::Sketching ||
