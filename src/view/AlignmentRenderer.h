@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QList>
+#include <QVector>
 
 #include <AIS_Shape.hxx>
 #include <AIS_InteractiveObject.hxx>
@@ -148,6 +149,33 @@ private:
 
     /** All geometry overlay objects currently displayed (excl. PI grips). */
     QList<Handle(AIS_InteractiveObject)>  m_overlays;
+
+    /**
+     * @brief Lightweight per-element geometry fingerprint, parallel (1:1,
+     *        index-aligned) to @ref m_overlays.
+     *
+     * Used by refresh() to detect which elements actually changed since the
+     * last solve() so that only the affected AIS shapes are rebuilt instead
+     * of tearing down and re-adding every overlay object on every solve.
+     */
+    struct ElemFingerprint {
+        int    type     = -1;     ///< railway::ElementType, cast to int (-1 = invalid/unset)
+        double chainage  = 0.0;   ///< Placement::chainage
+        double easting   = 0.0;   ///< Placement::easting
+        double northing  = 0.0;   ///< Placement::northing
+        double azimuth   = 0.0;   ///< Placement::azimuth
+        double length    = 0.0;
+        double radius    = 0.0;   ///< CircularArcElement only; 0 otherwise
+
+        bool operator==(const ElemFingerprint& o) const;
+        bool operator!=(const ElemFingerprint& o) const { return !(*this == o); }
+    };
+
+    /** Fingerprints of the elements currently backing m_overlays. */
+    QVector<ElemFingerprint> m_overlayFingerprints;
+
+    /** Compute the fingerprint for @p elem (used to detect changes). */
+    static ElemFingerprint fingerprintOf(const railway::AlignmentElement* elem);
 
     /** PI marker sphere objects. */
     QList<Handle(AIS_InteractiveObject)>  m_piGrips;

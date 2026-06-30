@@ -73,14 +73,18 @@ AlignmentRenderer::~AlignmentRenderer()
 
 void AlignmentRenderer::setAlignment(railway::HorizontalAlignmentEdit* edit)
 {
+    if (m_edit == edit) return;
     m_edit     = edit;
     m_directHA = nullptr;
+    m_overlayFingerprints.clear();   // force full rebuild on next refresh()
 }
 
 void AlignmentRenderer::setHorizontalAlignment(const railway::HorizontalAlignment* ha)
 {
+    if (m_directHA == ha) return;
     m_directHA = ha;
     m_edit     = nullptr;
+    m_overlayFingerprints.clear();   // force full rebuild on next refresh()
 }
 
 bool AlignmentRenderer::containsObject(const AIS_InteractiveObject* obj) const
@@ -126,6 +130,7 @@ void AlignmentRenderer::clearOverlays()
     for (const auto& obj : m_overlays)
         if (m_cadView) m_cadView->removeOverlayAIS(obj);
     m_overlays.clear();
+    m_overlayFingerprints.clear();
     if (m_cadView) m_cadView->refreshView();
 }
 
@@ -135,26 +140,63 @@ void AlignmentRenderer::refresh()
 {
     if (!m_cadView) return;
 
-    // ── 1. Clear previously displayed geometry overlays ──────────────────────
-    for (const auto& obj : m_overlays)
-        m_cadView->removeOverlayAIS(obj);
-    m_overlays.clear();
+    // Note: m_visible is purely a display toggle, independently managed by
+    // setVisible() (which keeps overlays registered but calls
+    // CadView::setOverlayAISVisible() to hide/show them without destroying
+    // them). refresh() always rebuilds the underlying geometry/fingerprint
+    // cache regardless of visibility, so that a subsequent setVisible(true)
+    // has up-to-date shapes to reveal instead of stale ones.
 
-    if (!m_visible) return;
     if (!m_edit && !m_directHA) return;
 
     const railway::HorizontalAlignment* ha =
         m_edit ? m_edit->result() : m_directHA;
-    if (!ha || ha->isEmpty()) return;
 
-    // ── 2. Rebuild from solved element list ───────────────────────────────────
+    if (!ha || ha->isEmpty()) {
+        // Alignment cleared: drop everything.
+        for (const auto& obj : m_overlays)
+            m_cadView->removeOverlayAIS(obj);
+        m_overlays.clear();
+        m_overlayFingerprints.clear();
+        if (m_piGripsVisible) {
+            clearPIGrips();
+        }
+        m_cadView->refreshView();
+        return;
+    }
+
+    // ── Incremental diff against the previous element list ──────────────────
+    //
+    // Element order/index is stable across a solve() call (the vector only
+    // grows/shrinks via explicit insert/remove operations on the document,
+    // never inside solve() itself), so we can compare overlay[i] against
+    // elements[i] by index and only rebuild the AIS shapes whose underlying
+    // geometry actually changed — instead of tearing down and re-adding
+    // every overlay on every solve.
     const auto elems = ha->elements();   // vector<const AlignmentElement*>
+    bool anyChanged = false;
 
-    for (const railway::AlignmentElement* elem : elems) {
+    for (std::size_t i = 0; i < elems.size(); ++i) {
+        const railway::AlignmentElement* elem = elems[i];
+        const ElemFingerprint fp = fingerprintOf(elem);
+
+        const int idx = static_cast<int>(i);
+        const bool haveExisting = (idx < m_overlays.size());
+        const bool unchanged    = haveExisting
+                                   && (idx < m_overlayFingerprints.size())
+                                   && (m_overlayFingerprints[idx] == fp);
+
+        if (unchanged) {
+            // Geometry identical — keep the existing AIS shape untouched.
+            continue;
+        }
+
+        anyChanged = true;
+
+        // Build the replacement shape first; only touch the view if it
+        // actually produced something (degenerate elements render nothing,
+        // matching the previous full-rebuild behaviour).
         Handle(AIS_Shape) shape;
-
-        // TransitionElement covers Clothoid, HalfSine, Parabola, CubicJPN,
-        // CubicECI, Egg — detect via dynamic_cast rather than ElementType.
         if (const auto* sp =
             dynamic_cast<const railway::TransitionElement*>(elem)) {
             shape = buildSpiralAIS(sp, 150);
@@ -162,22 +204,88 @@ void AlignmentRenderer::refresh()
             shape = buildElementAIS(elem);
         }
 
-        if (shape.IsNull()) continue;
+        if (haveExisting) {
+            m_cadView->removeOverlayAIS(m_overlays[idx]);
+            m_overlays[idx] = shape;
+        } else {
+            m_overlays.append(shape);
+        }
 
-        m_cadView->addOverlayAIS(shape, {0});   // mode 0 = whole-shape hit test
-        // 若目前 eye-close，立刻把剛加入的 shape 設為不可見
-        if (!m_visible)
-            m_cadView->setOverlayAISVisible(shape, false);
-        m_overlays.append(shape);
+        if (idx < m_overlayFingerprints.size())
+            m_overlayFingerprints[idx] = fp;
+        else
+            m_overlayFingerprints.append(fp);
+
+        if (!shape.IsNull()) {
+            // mode 0 = whole-shape hit test; Display(..., Standard_False)
+            // defers the actual viewer redraw to the batched refreshView()
+            // call below, instead of updating once per shape.
+            m_cadView->addOverlayAIS(shape, {0});
+            // 若目前 eye-close，立刻把剛加入/重建的 shape 設為不可見，
+            // 維持與 setVisible() 一致的顯示狀態。
+            if (!m_visible)
+                m_cadView->setOverlayAISVisible(shape, false);
+        }
     }
 
-    // ── 3. Refresh PI grips if they were visible ──────────────────────────────
-    if (m_piGripsVisible) {
+    // Trailing overlays for elements that no longer exist (list shrank).
+    const int newCount = static_cast<int>(elems.size());
+    if (newCount < m_overlays.size()) {
+        anyChanged = true;
+        for (int i = newCount; i < m_overlays.size(); ++i)
+            m_cadView->removeOverlayAIS(m_overlays[i]);
+        // QList (Qt5) has no resize(); erase the trailing range instead.
+        m_overlays.erase(m_overlays.begin() + newCount, m_overlays.end());
+        if (m_overlayFingerprints.size() > newCount)
+            m_overlayFingerprints.erase(m_overlayFingerprints.begin() + newCount,
+                                         m_overlayFingerprints.end());
+    }
+
+    // ── PI grips: cheap to rebuild in full, only do so when something moved ──
+    if (m_piGripsVisible && anyChanged) {
         clearPIGrips();
         buildPIGrips();
     }
 
-    m_cadView->refreshView();
+    if (anyChanged)
+        m_cadView->refreshView();
+}
+
+// ============================================================================
+//  ElemFingerprint
+// ============================================================================
+
+bool AlignmentRenderer::ElemFingerprint::operator==(const ElemFingerprint& o) const
+{
+    // 1e-6 m / rad — well below solver-meaningful change, but well above
+    // double round-off noise at TM2 magnitudes (~1e6 m absolute coords).
+    constexpr double kEps = 1e-6;
+    return type == o.type
+        && std::abs(chainage - o.chainage) < kEps
+        && std::abs(easting  - o.easting)  < kEps
+        && std::abs(northing - o.northing) < kEps
+        && std::abs(azimuth  - o.azimuth)  < kEps
+        && std::abs(length   - o.length)   < kEps
+        && std::abs(radius   - o.radius)   < kEps;
+}
+
+AlignmentRenderer::ElemFingerprint
+AlignmentRenderer::fingerprintOf(const railway::AlignmentElement* elem)
+{
+    ElemFingerprint fp;
+    if (!elem) return fp;
+
+    fp.type     = static_cast<int>(elem->type());
+    fp.chainage = elem->placement().chainage;
+    fp.easting  = elem->placement().easting;
+    fp.northing = elem->placement().northing;
+    fp.azimuth  = elem->placement().azimuth;
+    fp.length   = elem->length();
+
+    if (const auto* arc = dynamic_cast<const railway::CircularArcElement*>(elem))
+        fp.radius = arc->radius();
+
+    return fp;
 }
 
 // ============================================================================

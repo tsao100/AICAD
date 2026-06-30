@@ -447,6 +447,11 @@ private:
     // Phase 0B：同步曲線的 start/end 座標（透過 UUID 查詢點座標）
     void syncGeometryFromPoints();
 
+    /** Cheap content hash of a geometry's solved shape (type/role/points/
+     *  type-specific fields). Used to detect whether a geometry's AIS
+     *  representation actually needs rebuilding after solve(). */
+    static quint64 geometryFingerprint(const SketchGeometry* geom);
+
 private:
     Plane* m_plane;
     QList<SketchGeometry*> m_geometries;
@@ -454,11 +459,35 @@ private:
     QList<TopoDS_Wire> m_wires;
     QList<Handle(AIS_InteractiveObject)> m_aisShapes;
     QList<QString>            m_aisShapeUuids;
+    /**
+     * @brief Content fingerprint of each geometry, index-aligned with
+     *        m_aisShapes/m_aisShapeUuids, used by rebuildShapesOnly() to
+     *        skip AIS Erase/Display churn for geometries whose solved
+     *        shape didn't actually change since the last solve.
+     */
+    QHash<QString, quint64> m_geomFingerprints;
     QList<SketchConstraint> m_constraints;
     QList<Handle(AIS_Shape)>  m_constructionShapes;
+    QHash<QString, quint64>   m_constructionFingerprints;  ///< parallel cache for m_constructionShapes
     ConstraintSolver        m_solver;
     Handle(AIS_InteractiveContext) m_aisContext;
     aicad::core::ParameterStore*  m_parameterStore = nullptr;
+
+    /**
+     * @brief When true, rebuild() skips its Q_EMIT rebuilt() call.
+     *
+     * Set by rebuildShapesOnly() around its internal rebuild() call: at
+     * that point m_aisShapes only holds *candidate* AIS handles (some of
+     * which rebuildShapesOnly()'s diff will immediately discard in favour
+     * of reused old handles for unchanged geometry). Letting rebuilt() fire
+     * there would make CadView::onSketchRebuilt() register the
+     * soon-to-be-discarded candidate pointers instead of the final ones,
+     * breaking pick lookups (e.g. GDIM's second selection) for any
+     * geometry whose AIS handle didn't actually change.
+     * rebuildShapesOnly() re-emits rebuilt() itself once m_aisShapes
+     * reflects the final, diffed state.
+     */
+    bool m_suppressRebuiltSignal = false;
 
     // 草圖平面參考幾何 UUID（lazy-init，初次存取時建立）
     QString m_xAxisGeomUuid;

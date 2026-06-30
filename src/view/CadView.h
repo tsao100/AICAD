@@ -199,6 +199,27 @@ public:
         const Handle(AIS_Shape)& aisShape) const;
 
     /**
+     * @brief 為單一 sketch 幾何的 AIS 物件登錄/更新 pick 反查表
+     *        （aisToFeatureId / aisToGeomUuid / aisToGeomIndex）。
+     *
+     * 用於 Sketch::rebuildShapesOnly() 局部重建 AIS handle 後，
+     * 只同步真正被替換掉的那幾個 entry，避免每次 solve 都呼叫
+     * 整個 displayAllFeatures()（RemoveAll + 全部重新 Display）。
+     *
+     * @param obj        新（或沿用的舊）AIS handle
+     * @param featureId  所屬 Feature::id()
+     * @param geomUuid   幾何 UUID（供 SKETCH_GEOM_SELECTED 高亮使用）
+     * @param geomIndex  幾何在 sketch->aisShapes() 中的 index（供 GripManager 使用）
+     */
+    void registerSketchGeomAIS(const Handle(AIS_InteractiveObject)& obj,
+                                const QString& featureId,
+                                const QString& geomUuid,
+                                int geomIndex);
+
+    /// 從 pick 反查表移除單一 AIS 物件的登錄（幾何被刪除、或 handle 被替換掉時呼叫）。
+    void unregisterSketchGeomAIS(const Handle(AIS_InteractiveObject)& obj);
+
+    /**
      * @brief 刷新視圖
      */
     void refreshView();

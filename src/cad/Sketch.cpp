@@ -38,6 +38,8 @@
 #include <TopExp_Explorer.hxx>
 
 #include <QJsonArray>
+#include <QSet>
+#include <cstring>
 
 namespace aicad {
 namespace cad {
@@ -286,6 +288,73 @@ SketchGeometry* Sketch::findGeometry(const QString& uuid) const {
     return nullptr;
 }
 
+// ============================================================================
+//  geometryFingerprint() — cheap dirty-check for incremental AIS rebuild
+// ============================================================================
+
+namespace {
+/// Combine a double into a running hash (bit-reinterpret to avoid NaN/round-off
+/// surprises from qHash(double) on some Qt versions).
+inline void hashCombine(quint64& seed, double v) {
+    quint64 bits;
+    static_assert(sizeof(bits) == sizeof(v), "double must be 64-bit");
+    std::memcpy(&bits, &v, sizeof(v));
+    // boost::hash_combine-style mix
+    seed ^= bits + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+}
+inline void hashCombine(quint64& seed, int v) {
+    hashCombine(seed, static_cast<double>(v));
+}
+} // anonymous namespace
+
+quint64 Sketch::geometryFingerprint(const SketchGeometry* geom)
+{
+    if (!geom) return 0;
+
+    quint64 h = 1469598103934665603ULL;  // FNV offset basis, arbitrary non-zero seed
+    hashCombine(h, static_cast<int>(geom->type));
+    hashCombine(h, static_cast<int>(geom->role));
+
+    if (const auto* arc = dynamic_cast<const SketchArc*>(geom)) {
+        // SketchArc keeps its geometry in an OCCT curve, not in `points`.
+        if (!arc->curve.IsNull()) {
+            const double t0 = arc->curve->FirstParameter();
+            const double t1 = arc->curve->LastParameter();
+            gp_Pnt pS = arc->curve->Value(t0);
+            gp_Pnt pM = arc->curve->Value((t0 + t1) * 0.5);
+            gp_Pnt pE = arc->curve->Value(t1);
+            hashCombine(h, pS.X()); hashCombine(h, pS.Y()); hashCombine(h, pS.Z());
+            hashCombine(h, pM.X()); hashCombine(h, pM.Y()); hashCombine(h, pM.Z());
+            hashCombine(h, pE.X()); hashCombine(h, pE.Y()); hashCombine(h, pE.Z());
+        }
+        return h;
+    }
+
+    for (const QVector2D& p : geom->points) {
+        hashCombine(h, static_cast<double>(p.x()));
+        hashCombine(h, static_cast<double>(p.y()));
+    }
+
+    if (const auto* pt = dynamic_cast<const SketchPoint*>(geom)) {
+        hashCombine(h, static_cast<double>(pt->pos.x()));
+        hashCombine(h, static_cast<double>(pt->pos.y()));
+    } else if (const auto* circle = dynamic_cast<const SketchCircle*>(geom)) {
+        hashCombine(h, static_cast<double>(circle->center.x()));
+        hashCombine(h, static_cast<double>(circle->center.y()));
+        hashCombine(h, circle->radius);
+    } else if (const auto* ellipse = dynamic_cast<const SketchEllipse*>(geom)) {
+        hashCombine(h, static_cast<double>(ellipse->center.x()));
+        hashCombine(h, static_cast<double>(ellipse->center.y()));
+        hashCombine(h, ellipse->majorRadius);
+        hashCombine(h, ellipse->minorRadius);
+        hashCombine(h, ellipse->angle);
+    } else if (const auto* pline = dynamic_cast<const SketchPolyline*>(geom)) {
+        hashCombine(h, pline->closed ? 1 : 0);
+    }
+
+    return h;
+}
+
 bool Sketch::rebuild() {
     qDebug() << "[Sketch]" << name() << "rebuilding with"
              << m_geometries.size() << "geometries on plane"
@@ -525,7 +594,8 @@ bool Sketch::rebuild() {
         qDebug() << "[Sketch]" << name() << "rebuilt with"
                  << m_wires.size() << "wires and"
                  << m_aisShapes.size() << "AIS shapes";
-        Q_EMIT rebuilt();
+        if (!m_suppressRebuiltSignal)
+            Q_EMIT rebuilt();
         return true;
 
     } catch (const Standard_Failure& e) {
@@ -541,32 +611,131 @@ bool Sketch::rebuildShapesOnly()
     if (!hasValidPlane()) return false;
     if (m_aisContext.IsNull()) return false;
 
-    // ① 把舊 AIS 物件從 context 先 Erase（保留 handle 本身）
-    for (const auto& s : m_aisShapes)
-        if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
-    for (const Handle(AIS_Shape)& s : m_constructionShapes)
-        if (!s.IsNull()) m_aisContext->Erase(s, Standard_False);
+    // ── Snapshot the previous AIS state before rebuild() overwrites it ───────
+    // rebuild() is CPU-only (TopoDS + fresh AIS handle allocation, no OCCT
+    // context calls), so it's cheap to call unconditionally. What's
+    // expensive is Erase/Display/Activate/UpdateCurrentViewer on the AIS
+    // context — so we diff old vs new by uuid+fingerprint and only touch
+    // the context for geometries whose solved shape actually changed,
+    // instead of erasing and redisplaying everything every solve.
+    const QList<Handle(AIS_InteractiveObject)> oldAisShapes   = m_aisShapes;
+    const QList<QString>                       oldAisUuids    = m_aisShapeUuids;
+    const QHash<QString, quint64>              oldFingerprints = m_geomFingerprints;
+    const QList<Handle(AIS_Shape)>             oldConstructionShapes = m_constructionShapes;
 
-    // ② 重建 TopoDS + 更新 m_aisShapes（建立全新 handle）
-    if (!rebuild()) return false;
+    QHash<QString, Handle(AIS_InteractiveObject)> oldByUuid;
+    for (int i = 0; i < oldAisUuids.size(); ++i)
+        oldByUuid.insert(oldAisUuids[i], oldAisShapes[i]);
 
-    // ③ 把新 AIS 物件 Display 回 context
-    for (const auto& obj : m_aisShapes) {
-        if (obj.IsNull()) continue;
-        m_aisContext->Display(obj, Standard_False);
-        // SketchPointAIS 需要明確啟用 selection
-        if (Handle(SketchPointAIS)::DownCast(obj)) {
-            m_aisContext->Activate(obj, 0, Standard_False);
+    // ② 重建 TopoDS + 取得全新 AIS handle 候選列表（純 CPU，未碰 context）。
+    //    rebuild() 會 emit shapeChanged()（Extrude 等下游 feature 需要這個信號
+    //    才能即時更新，不可封鎖）以及 rebuilt()（此時 m_aisShapes 只是
+    //    「候選」handle，未變動的幾何稍後會被下面的 diff 換回舊 handle；
+    //    若讓 CadView::onSketchRebuilt() 在這個時間點處理，會把反查表
+    //    登錄成 candidate（即將被丟棄）的指標，導致之後 pick 沿用舊
+    //    handle 的幾何時反查失敗，例如 GDIM 第二個選取點不到）。
+    //    因此只暫時阻斷 rebuilt()，shapeChanged() 仍正常發出。
+    m_suppressRebuiltSignal = true;
+    const bool ok = rebuild();
+    m_suppressRebuiltSignal = false;
+    if (!ok) return false;
+
+    // ── ③ Diff: for each new geometry, decide reuse-old vs display-new ──────
+    QHash<QString, quint64> newFingerprints;
+    bool anyChanged = false;
+
+    for (int i = 0; i < m_aisShapes.size(); ++i) {
+        const QString& uuid = m_aisShapeUuids[i];
+        SketchGeometry* geom = findGeometry(uuid);
+        const quint64 fp = geometryFingerprint(geom);
+        newFingerprints.insert(uuid, fp);
+
+        auto oldIt = oldByUuid.find(uuid);
+        const bool existedBefore = (oldIt != oldByUuid.end());
+        const bool unchanged = existedBefore
+                                && oldFingerprints.value(uuid, ~0ULL) == fp;
+
+        if (unchanged) {
+            // Geometry's solved shape is identical to last solve — keep the
+            // AIS object already displayed in the context untouched
+            // (preserves selection/highlight state too), discard the
+            // freshly-built duplicate from rebuild().
+            m_aisShapes[i] = oldIt.value();
+            continue;
+        }
+
+        anyChanged = true;
+
+        if (existedBefore) {
+            // Try in-place update for SketchPointAIS (no Erase/Display
+            // churn, preserves selection state); fall back to swap for
+            // wire-based shapes where in-place geometry mutation isn't
+            // exposed.
+            Handle(SketchPointAIS) oldPtAis = Handle(SketchPointAIS)::DownCast(oldIt.value());
+            const auto* pt = (geom && geom->type == SketchGeometryType::Point)
+                                ? static_cast<const SketchPoint*>(geom) : nullptr;
+
+            if (!oldPtAis.IsNull() && pt) {
+                oldPtAis->updatePosition(pt->pos);
+                m_aisContext->Redisplay(oldPtAis, Standard_False);
+                m_aisShapes[i] = oldPtAis;   // keep the old, now-updated handle
+            } else {
+                m_aisContext->Erase(oldIt.value(), Standard_False);
+                m_aisContext->Display(m_aisShapes[i], Standard_False);
+                if (Handle(SketchPointAIS)::DownCast(m_aisShapes[i]))
+                    m_aisContext->Activate(m_aisShapes[i], 0, Standard_False);
+            }
+        } else {
+            // Brand-new geometry — just display it.
+            m_aisContext->Display(m_aisShapes[i], Standard_False);
+            if (Handle(SketchPointAIS)::DownCast(m_aisShapes[i]))
+                m_aisContext->Activate(m_aisShapes[i], 0, Standard_False);
+        }
+    }
+
+    // Geometries that existed before but are gone now (deleted) — erase them.
+    QSet<QString> currentUuids;
+    currentUuids.reserve(m_aisShapeUuids.size());
+    for (const QString& u : m_aisShapeUuids)
+        currentUuids.insert(u);
+    for (auto it = oldByUuid.begin(); it != oldByUuid.end(); ++it) {
+        if (!currentUuids.contains(it.key())) {
+            anyChanged = true;
+            m_aisContext->Erase(it.value(), Standard_False);
+        }
+    }
+
+    m_geomFingerprints = newFingerprints;
+
+    // ── Construction shapes: no stable per-shape identity is tracked today
+    //    (rebuild() always allocates fresh handles for these), so erase the
+    //    previous batch and redisplay the new one. These are typically a
+    //    small, mostly-static subset (reference geometry), so this remains
+    //    cheap relative to the main geometry diff above. ───────────────────
+    for (const Handle(AIS_Shape)& s : oldConstructionShapes) {
+        if (!s.IsNull()) {
+            anyChanged = true;
+            m_aisContext->Erase(s, Standard_False);
         }
     }
     for (const Handle(AIS_Shape)& s : m_constructionShapes) {
         if (!s.IsNull()) {
+            anyChanged = true;
             m_aisContext->Display(s, Standard_False);
             m_aisContext->Deactivate(s);
         }
     }
 
-    m_aisContext->UpdateCurrentViewer();
+    if (anyChanged)
+        m_aisContext->UpdateCurrentViewer();
+
+    // 此時 m_aisShapes 已是「最終」狀態（未變動的沿用舊 handle，
+    // 變動的是新 handle）。現在才發出 rebuilt()，讓
+    // CadView::onSketchRebuilt() 用正確的 pointer 集合重建
+    // aisToFeatureId / aisToGeomUuid / aisToGeomIndex 反查表，
+    // 避免 pick（例如 GDIM 第二個選取）打到未登錄的 handle。
+    Q_EMIT rebuilt();
+
     return true;
 }
 
@@ -1100,23 +1269,28 @@ SolveResult Sketch::solveConstraints() {
         markDirty();
         Q_EMIT geometryChanged();
 
-        // ★ Solver 可能改變了幾何尺寸（如圓的 radius），需重建 AIS shapes
-        //   rebuildShapesOnly() 會 erase 舊 shapes、rebuild、redisplay
+        // ★ Solver 可能改變了幾何尺寸（如圓的 radius），需重建 AIS shapes。
+        //   rebuildShapesOnly() 現在會逐一比對每個幾何的 fingerprint，
+        //   只對「真的改變」的 shape 做 Erase/Display，未變動的沿用舊 handle。
         if (!m_aisContext.IsNull())
             rebuildShapesOnly();
     }
 
     // ✅ Step 13: 將全域 SolveStatus 傳遞給所有 SketchPointAIS，即時更新顏色
-    //   注意：rebuildShapesOnly() 已呼叫過 UpdateCurrentViewer；
-    //   若 m_aisContext 有效，這裡只需更新 PointAIS 顏色（rebuildShapesOnly 會重新 Display）
+    //   只有狀態真的改變的點才呼叫 Redisplay／UpdateCurrentViewer，
+    //   避免每次 solve 都對所有點觸發一次 context 更新。
     if (!m_aisContext.IsNull()) {
+        bool anyStatusChanged = false;
         for (const auto& obj : m_aisShapes) {
             if (auto ptAis = Handle(SketchPointAIS)::DownCast(obj)) {
+                if (ptAis->solveStatus() == result.status) continue;
                 ptAis->updateSolveStatus(result.status);
                 m_aisContext->Redisplay(ptAis, Standard_False);
+                anyStatusChanged = true;
             }
         }
-        m_aisContext->UpdateCurrentViewer();
+        if (anyStatusChanged)
+            m_aisContext->UpdateCurrentViewer();
     }
 
     return result;

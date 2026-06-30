@@ -1104,6 +1104,25 @@ QString CadView::findFeatureIdByAIS(
     return d->aisToFeatureId.value(aisShape.get(), QString());
 }
 
+void CadView::registerSketchGeomAIS(const Handle(AIS_InteractiveObject)& obj,
+                                    const QString& featureId,
+                                    const QString& geomUuid,
+                                    int geomIndex)
+{
+    if (obj.IsNull()) return;
+    d->aisToFeatureId[obj.get()]  = featureId;
+    d->aisToGeomUuid[obj.get()]   = geomUuid;
+    d->aisToGeomIndex[obj.get()]  = geomIndex;
+}
+
+void CadView::unregisterSketchGeomAIS(const Handle(AIS_InteractiveObject)& obj)
+{
+    if (obj.IsNull()) return;
+    d->aisToFeatureId.remove(obj.get());
+    d->aisToGeomUuid.remove(obj.get());
+    d->aisToGeomIndex.remove(obj.get());
+}
+
 void CadView::refreshView() {
     if (d->view.IsNull()) {
         return;

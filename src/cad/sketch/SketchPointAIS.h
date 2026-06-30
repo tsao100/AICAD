@@ -37,6 +37,9 @@ public:
     /// 更新顯示狀態（Under/Fully/Over constrained）
     void updateSolveStatus(SolveStatus status);
 
+    /// 目前的求解狀態（供呼叫端判斷是否需要 Redisplay，避免不必要的 context 更新）
+    SolveStatus solveStatus() const { return m_status; }
+
     const QString& pointUuid()           const { return m_uuid; }
     SketchPoint::Origin origin()         const { return m_origin; }
     gp_Pnt position3D()                  const { return m_pos3D; }
