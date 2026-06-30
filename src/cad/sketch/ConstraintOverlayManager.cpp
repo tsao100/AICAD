@@ -32,9 +32,14 @@ void ConstraintOverlayManager::attachMaster(Sketch* sketch, const gp_Trsf& toWor
     connect(sketch, &Sketch::rebuilt,
             this, &ConstraintOverlayManager::onSourceRebuilt,
             Qt::UniqueConnection);
+    // ⚠️ Qt::UniqueConnection 對 lambda/functor 連線無效（Qt 只能對
+    //    pointer-to-member-function 比較是否重複），標上該旗標不會有任何
+    //    保護效果，反而會誤導閱讀者以為已防止重複連線。
+    //    這裡的「不重複」實際上是靠 attachMaster() 開頭的 detach()
+    //    （內部 disconnect(m_sketch, nullptr, this, nullptr) 會先清除
+    //    舊 sketch 對 this 的所有連線，包含 lambda）來保證，故移除旗標。
     connect(sketch, &Sketch::constraintSolved,
-            this, [this](SolveResult){ rebuildAll(); },
-            Qt::UniqueConnection);
+            this, [this](SolveResult){ rebuildAll(); });
 
     rebuildAll();
 }
