@@ -2,10 +2,17 @@
 #include "SketchConstraint.h"
 #include <AIS_InteractiveObject.hxx>
 #include <Prs3d_Presentation.hxx>
+#include <Prs3d_Drawer.hxx>
 #include <SelectMgr_Selection.hxx>
+#include <SelectMgr_SequenceOfOwner.hxx>
 #include <PrsMgr_PresentationManager.hxx>
+#include <Quantity_Color.hxx>
+#include <Graphic3d_HorizontalTextAlignment.hxx>
+#include <Graphic3d_VerticalTextAlignment.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
+#include <gp_Dir.hxx>
 #include <QString>
 #include <QList>
 #include <QVector2D>
@@ -56,6 +63,41 @@ public:
     /// 計算數值標籤的世界座標中心（供 ComputeSelection 及拖曳錨點使用）
     gp_Pnt  labelPosition3D() const;
 
+    // ─────────────────────────────────────────────────────────────────────
+    // 數值標籤 hover 高亮（僅文字本身反白，尺寸線／延伸線／箭頭永不參與）
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// 單一數值標籤的世界座標區域快取（Compute() 時依實際繪製內容填入，
+    /// 供 ComputeSelection 建立精確的 hover/選取方框，以及 hover 高亮重繪文字用）
+    struct LabelRegion {
+        gp_Pnt  pos;               ///< 世界座標中心
+        gp_Dir  alongDir;          ///< 文字水平方向（與繪製時 SetOrientation 一致）
+        QString text;
+        double  halfW = 10.0;      ///< 依文字長度估算的半寬（mm）
+        double  halfH = 18.0;      ///< 依字高估算的半高（mm）
+        bool    oriented = true;   ///< 是否依 alongDir 做 3D SetOrientation（false=畫面朝向 billboard）
+        Graphic3d_HorizontalTextAlignment hAlign = Graphic3d_HTA_CENTER;
+        Graphic3d_VerticalTextAlignment   vAlign = Graphic3d_VTA_CENTER;
+    };
+
+    /// 記錄一個數值標籤的世界座標位置／方向／內容，供 ComputeSelection 與 hover 高亮使用。
+    /// hAlign/vAlign/oriented 對應實際繪製時使用的 Graphic3d_Text 設定，確保 hover 高亮
+    /// 重繪出的文字與原本顯示的文字完全疊合（位置、朝向皆一致）。
+    void addLabelRegion(const gp_Pnt& pos, const gp_Vec& along, const QString& text,
+                         bool oriented = true,
+                         Graphic3d_HorizontalTextAlignment hAlign = Graphic3d_HTA_CENTER,
+                         Graphic3d_VerticalTextAlignment   vAlign = Graphic3d_VTA_CENTER);
+
+    /// 由自訂 EntityOwner 在 hover 時呼叫：僅重繪指定索引的數值文字（反白色），
+    /// 不重繪尺寸線、延伸線、箭頭，確保只有數值本身會高亮
+    void hilightLabel(const Handle(PrsMgr_PresentationManager)& thePM,
+                       const Handle(Prs3d_Drawer)& theStyle,
+                       int labelIndex);
+
+    /// 點選後的持續高亮（與 hover 邏輯共用 hilightLabel，同樣僅高亮文字）
+    void HilightSelected(const Handle(PrsMgr_PresentationManager)& thePM,
+                          const SelectMgr_SequenceOfOwner& theOwners) override;
+
 private:
     void Compute(const Handle(PrsMgr_PresentationManager)&,
                  const Handle(Prs3d_Presentation)& prs,
@@ -97,6 +139,9 @@ private:
     bool                     m_hasRefPos  = false;
     QVector2D                m_refPos1;
     QVector2D                m_refPos2;
+
+    // hover/選取用：本次 Compute() 收集到的所有數值標籤世界座標區域
+    QList<LabelRegion>       m_labelRegions;
 };
 
 } // namespace aicad::cad

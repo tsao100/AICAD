@@ -23,6 +23,50 @@ IMPLEMENT_STANDARD_RTTIEXT(aicad::cad::AIS_DimensionLine, AIS_InteractiveObject)
 
 namespace aicad::cad {
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DimLabelOwner — 數值標籤專用的 EntityOwner
+//
+// 預設 OCCT 行為（SelectMgr_EntityOwner::HilightWithColor）在 hover 時會把整個
+// AIS 物件（尺寸線、延伸線、箭頭、文字全部）依目前顯示模式重新著色，這正是
+// 「尺寸線／延伸線也會被高亮」的成因；同時若 sensitive 區域跟實際文字位置/
+// 大小對不上，滑鼠在數值附近移動也偵測不到，造成「完全不會高亮」。
+//
+// 這裡改為完全自訂 hover 高亮：只重繪這一個數值標籤的文字（hilightLabel），
+// 尺寸線本體與延伸線、箭頭一律不參與。
+// ─────────────────────────────────────────────────────────────────────────────
+class DimLabelOwner;
+DEFINE_STANDARD_HANDLE(DimLabelOwner, SelectMgr_EntityOwner)
+
+class DimLabelOwner : public SelectMgr_EntityOwner {
+    DEFINE_STANDARD_RTTIEXT(DimLabelOwner, SelectMgr_EntityOwner)
+public:
+    DimLabelOwner(const Handle(SelectMgr_SelectableObject)& theSel,
+                  AIS_DimensionLine* theDim, int theIndex)
+        : SelectMgr_EntityOwner(theSel, 5)
+        , m_dim(theDim)
+        , m_index(theIndex)
+    {}
+
+    int LabelIndex() const { return m_index; }
+
+    void HilightWithColor(const Handle(PrsMgr_PresentationManager)& thePM,
+                           const Handle(Prs3d_Drawer)& theStyle,
+                           const Standard_Integer /*theMode*/) Standard_OVERRIDE
+    {
+        if (m_dim) m_dim->hilightLabel(thePM, theStyle, m_index);
+    }
+
+private:
+    AIS_DimensionLine* m_dim;
+    int                m_index;
+};
+
+}
+
+IMPLEMENT_STANDARD_RTTIEXT(aicad::cad::DimLabelOwner, SelectMgr_EntityOwner)
+
+namespace aicad::cad {
+
 AIS_DimensionLine::AIS_DimensionLine(
         const SketchConstraint& c,
         const QList<SketchGeometry*>& geoms,
@@ -157,6 +201,7 @@ void AIS_DimensionLine::Compute(
         const Standard_Integer /*mode*/)
 {
     prs->Clear();
+    m_labelRegions.clear();
 
     switch (m_constraint.type) {
     case ConstraintType::FixedRadius:
@@ -224,6 +269,7 @@ static void addArrow(const Handle(Prs3d_Presentation)& prs,
 }
 
 static void addDimLine(const Handle(Prs3d_Presentation)& prs,
+                       AIS_DimensionLine* self,
                        const gp_Pnt& p1, const gp_Pnt& p2,
                        double offset,
                        const Quantity_Color& /*col*/,
@@ -290,11 +336,14 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
         Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
         txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
         txtGrp->AddText(gtext);
+
+        if (self) self->addLabelRegion(mid, d1d2, label);
     }
 }
 
 // 明確指定尺寸線端點（d1、d2）的繪製版本，延伸線從 p1→d1、p2→d2
 static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
+                                AIS_DimensionLine* self,
                                 const gp_Pnt& p1, const gp_Pnt& p2,
                                 const gp_Pnt& d1, const gp_Pnt& d2,
                                 const Quantity_Color& /*col*/,
@@ -339,11 +388,14 @@ static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
         Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
         txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
         txtGrp->AddText(gtext);
+
+        if (self) self->addLabelRegion(mid, d1d2, label);
     }
 }
 
 // 使用者拖曳偏移向量版本（世界座標偏移 gp_Vec）
 static void addDimLineWithOffset(const Handle(Prs3d_Presentation)& prs,
+                                  AIS_DimensionLine* self,
                                   const gp_Pnt& p1, const gp_Pnt& p2,
                                   const gp_Vec& offsetVec,
                                   const Quantity_Color& col,
@@ -354,7 +406,7 @@ static void addDimLineWithOffset(const Handle(Prs3d_Presentation)& prs,
     if (along.Magnitude() < Precision::Confusion()) {
         gp_Pnt d1 = p1.Translated(offsetVec);
         gp_Pnt d2 = p2.Translated(offsetVec);
-        addDimLineExplicit(prs, p1, p2, d1, d2, col, label);
+        addDimLineExplicit(prs, self, p1, p2, d1, d2, col, label);
         return;
     }
     along.Normalize();
@@ -365,7 +417,7 @@ static void addDimLineWithOffset(const Handle(Prs3d_Presentation)& prs,
     if (std::abs(projDist) < Precision::Confusion()) projDist = 8.0;
     gp_Pnt d1 = p1.Translated(perp * projDist);
     gp_Pnt d2 = p2.Translated(perp * projDist);
-    addDimLineExplicit(prs, p1, p2, d1, d2, col, label);
+    addDimLineExplicit(prs, self, p1, p2, d1, d2, col, label);
 }
 
 // 垂足小方框符號
@@ -468,12 +520,12 @@ void AIS_DimensionLine::drawLinearDimension(const Handle(Prs3d_Presentation)& pr
         gp_Pnt orig(0.0, 0.0, 0.0);
         orig.Transform(m_sketchToWorld);
         gp_Vec offsetVec(orig, op);
-        addDimLineWithOffset(prs, p1, p2, offsetVec,
+        addDimLineWithOffset(prs, this, p1, p2, offsetVec,
                              dimColor(m_constraint.driving, m_status),
                              labelText());
         return;
     }
-    addDimLine(prs, p1, p2, offDist,
+    addDimLine(prs, this, p1, p2, offDist,
                dimColor(m_constraint.driving, m_status),
                labelText());
 }
@@ -506,7 +558,7 @@ void AIS_DimensionLine::drawHorizontalDim(const Handle(Prs3d_Presentation)& prs)
     gp_Pnt d2(skO.XYZ() + xAxis.XYZ() * p2x + yAxis.XYZ() * dimY);
     // 延伸線：p1→d1 長 |p1y - dimY|，p2→d2 長 |p2y - dimY|（兩條不等長）
 
-    addDimLineExplicit(prs, p1, p2, d1, d2,
+    addDimLineExplicit(prs, this, p1, p2, d1, d2,
                        dimColor(m_constraint.driving, m_status),
                        labelText());
 }
@@ -536,7 +588,7 @@ void AIS_DimensionLine::drawVerticalDim(const Handle(Prs3d_Presentation)& prs) {
     gp_Pnt d2(skO.XYZ() + xAxis.XYZ() * dimX + yAxis.XYZ() * p2y);
     // 延伸線：p1→d1 長 |p1x - dimX|，p2→d2 長 |p2x - dimX|（兩條不等長）
 
-    addDimLineExplicit(prs, p1, p2, d1, d2,
+    addDimLineExplicit(prs, this, p1, p2, d1, d2,
                        dimColor(m_constraint.driving, m_status),
                        labelText());
 }
@@ -577,7 +629,7 @@ void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& pr
     sk_ctr.Transform(m_sketchToWorld);
     sk_edge.Transform(m_sketchToWorld);
 
-    addDimLine(prs, sk_ctr, sk_edge, 0.0,
+    addDimLine(prs, this, sk_ctr, sk_edge, 0.0,
                dimColor(m_constraint.driving, m_status),
                "R " + labelText());
 }
@@ -592,7 +644,7 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
         // fallback
         gp_Pnt p1, p2;
         if (!getRefPoints(p1, p2)) return;
-        addDimLine(prs, p1, p2, m_offsetDist,
+        addDimLine(prs, this, p1, p2, m_offsetDist,
                    dimColor(m_constraint.driving, m_status),
                    labelText() + "°");
         return;
@@ -695,11 +747,21 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
     Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
     gtext->SetText(TCollection_ExtendedString(lbl.toUtf8().constData(), Standard_True));
     gtext->SetPosition(sk_label);
+    // 文字朝向：沿角弧切線方向（與半徑方向垂直），讓 hover 區域與實際渲染對齊
+    gp_Vec tangentSk(-std::sin(labelAng), std::cos(labelAng), 0.0);
+    gp_Vec tangentW = tangentSk;
+    tangentW.Transform(m_sketchToWorld);
+    if (tangentW.Magnitude() > Precision::Confusion()) {
+        gp_Vec dirW = tangentW.Normalized();
+        gtext->SetOrientation(gp_Ax2(sk_label, gp_Dir(0, 0, 1), gp_Dir(dirW)));
+    }
     gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
     gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
     Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
     txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
     txtGrp->AddText(gtext);
+
+    addLabelRegion(sk_label, tangentW, lbl);
 }
 
 // ── General Dimension 新增繪製函式 ────────────────────────────────────────
@@ -724,12 +786,12 @@ void AIS_DimensionLine::drawLengthDimension(const Handle(Prs3d_Presentation)& pr
         gp_Pnt orig(0.0, 0.0, 0.0);
         orig.Transform(m_sketchToWorld);
         gp_Vec offsetVec(orig, op);
-        addDimLineWithOffset(prs, p1, p2, offsetVec,
+        addDimLineWithOffset(prs, this, p1, p2, offsetVec,
                              dimColor(m_constraint.driving, m_status),
                              labelText());
         return;
     }
-    addDimLine(prs, p1, p2, m_offsetDist,
+    addDimLine(prs, this, p1, p2, m_offsetDist,
                dimColor(m_constraint.driving, m_status),
                labelText());
 }
@@ -774,7 +836,7 @@ void AIS_DimensionLine::drawDiameterDimension(const Handle(Prs3d_Presentation)& 
 
     // ── 用 addDimLineExplicit 繪製（與 FixedDistance 完全相同的 style）────────
     Quantity_Color col = dimColor(m_constraint.driving, m_status);
-    addDimLineExplicit(prs, wA, wB, wdA, wdB, col, labelText());
+    addDimLineExplicit(prs, this, wA, wB, wdA, wdB, col, labelText());
 }
 
 void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)& prs) {
@@ -785,7 +847,7 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
         // fallback：線性
         gp_Pnt p1, p2;
         if (!getRefPoints(p1, p2)) return;
-        addDimLine(prs, p1, p2, m_offsetDist,
+        addDimLine(prs, this, p1, p2, m_offsetDist,
                    dimColor(m_constraint.driving, m_status),
                    "~" + labelText());
         return;
@@ -856,15 +918,25 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
                     ctrPt.y() + dimR * std::sin(midAng), 0.0);
     sk_label.Transform(m_sketchToWorld);
 
+    QString arcLbl = "~" + labelText();
     Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
     gtext->SetText(TCollection_ExtendedString(
-        ("~" + labelText()).toUtf8().constData(), Standard_True));
+        arcLbl.toUtf8().constData(), Standard_True));
     gtext->SetPosition(sk_label);
+    gp_Vec tangentSk(-std::sin(midAng), std::cos(midAng), 0.0);
+    gp_Vec tangentW = tangentSk;
+    tangentW.Transform(m_sketchToWorld);
+    if (tangentW.Magnitude() > Precision::Confusion()) {
+        gp_Vec dirW = tangentW.Normalized();
+        gtext->SetOrientation(gp_Ax2(sk_label, gp_Dir(0, 0, 1), gp_Dir(dirW)));
+    }
     gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
     gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
     Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
     txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
     txtGrp->AddText(gtext);
+
+    addLabelRegion(sk_label, tangentW, arcLbl);
 }
 
 void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)& prs) {
@@ -917,6 +989,11 @@ void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)
         Handle(Graphic3d_Group) tg = prs->NewGroup();
         tg->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
         tg->AddText(gt);
+
+        // billboard 文字（未呼叫 SetOrientation）：hover 區域不需 3D 朝向，
+        // 對齊方式須與上方實際繪製一致（CENTER/BOTTOM），確保高亮文字與原文字重疊
+        addLabelRegion(midX, gp_Vec(wPt, wPx), xl,
+                       /*oriented=*/false, Graphic3d_HTA_CENTER, Graphic3d_VTA_BOTTOM);
     }
 
     // Y 尺寸線
@@ -941,6 +1018,9 @@ void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)
         Handle(Graphic3d_Group) tg = prs->NewGroup();
         tg->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
         tg->AddText(gt);
+
+        addLabelRegion(midY, gp_Vec(wPt, wPy), yl,
+                       /*oriented=*/false, Graphic3d_HTA_LEFT, Graphic3d_VTA_CENTER);
     }
 }
 
@@ -1135,32 +1215,139 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
     return gp_Pnt((d1.X()+d2.X())*0.5, (d1.Y()+d2.Y())*0.5, (d1.Z()+d2.Z())*0.5);
 }
 // ─────────────────────────────────────────────────────────────────────────────
-// ComputeSelection — 只對數值標籤建立 sensitive region
-// 尺寸線本體、延伸線不可 hover / 選取，避免覆蓋幾何元素
+// addLabelRegion — 記錄一個數值標籤的世界座標位置/方向/內容
+// 供 ComputeSelection 建立精確的 hover 方框，以及 hilightLabel 重繪 hover 文字
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AIS_DimensionLine::addLabelRegion(const gp_Pnt& pos, const gp_Vec& along,
+                                        const QString& text,
+                                        bool oriented,
+                                        Graphic3d_HorizontalTextAlignment hAlign,
+                                        Graphic3d_VerticalTextAlignment   vAlign)
+{
+    if (text.isEmpty()) return;
+
+    LabelRegion lr;
+    lr.pos = pos;
+    gp_Vec a = along;
+    if (a.Magnitude() < Precision::Confusion()) a = gp_Vec(1, 0, 0);
+    a.Normalize();
+    lr.alongDir = gp_Dir(a);
+    lr.text     = text;
+    lr.oriented = oriented;
+    lr.hAlign   = hAlign;
+    lr.vAlign   = vAlign;
+
+    // 依文字長度與字高（36mm，與繪製時一致）估算 hover 方框大小，
+    // 避免固定小方框跟實際渲染出的文字尺寸/位置對不上，導致滑鼠移到數值上卻偵測不到
+    constexpr double kFontHeight     = 36.0; // mm，與各 draw* 函式中 Graphic3d_Text(36.0f) 一致
+    constexpr double kCharWidthRatio = 0.62; // 經驗值：平均字寬／字高比例（含一定保留邊界）
+    const int len = std::max(1, text.length());
+    lr.halfW = std::max(12.0, len * kFontHeight * kCharWidthRatio * 0.5);
+    lr.halfH = kFontHeight * 0.65;
+
+    m_labelRegions.append(lr);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hilightLabel — hover/選取高亮時，只重繪「這一個」數值標籤的文字本身
+// 尺寸線本體、延伸線、箭頭一律不重繪，因此永遠不會被高亮
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AIS_DimensionLine::hilightLabel(const Handle(PrsMgr_PresentationManager)& thePM,
+                                      const Handle(Prs3d_Drawer)& theStyle,
+                                      int labelIndex)
+{
+    if (thePM.IsNull()) return;
+    if (labelIndex < 0 || labelIndex >= m_labelRegions.size()) return;
+
+    Handle(Prs3d_Presentation) hiPrs = GetHilightPresentation(thePM);
+    if (hiPrs.IsNull()) return;
+    hiPrs->Clear();
+
+    const LabelRegion& lr = m_labelRegions[labelIndex];
+    Quantity_Color col = (!theStyle.IsNull()) ? theStyle->Color()
+                                               : Quantity_Color(Quantity_NOC_YELLOW);
+
+    Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
+    gtext->SetText(TCollection_ExtendedString(lr.text.toUtf8().constData(), Standard_True));
+    gtext->SetPosition(lr.pos);
+    if (lr.oriented) {
+        gtext->SetOrientation(gp_Ax2(lr.pos, gp_Dir(0, 0, 1), lr.alongDir));
+    }
+    gtext->SetHorizontalAlignment(lr.hAlign);
+    gtext->SetVerticalAlignment(lr.vAlign);
+
+    Handle(Graphic3d_Group) grp = hiPrs->NewGroup();
+    Handle(Graphic3d_AspectText3d) asp = new Graphic3d_AspectText3d();
+    asp->SetColor(col);
+    grp->SetGroupPrimitivesAspect(asp);
+    grp->AddText(gtext);
+
+    thePM->AddToImmediateList(hiPrs);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HilightSelected — 點選後的持續高亮，同樣只重繪數值文字本身
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AIS_DimensionLine::HilightSelected(const Handle(PrsMgr_PresentationManager)& thePM,
+                                         const SelectMgr_SequenceOfOwner& theOwners)
+{
+    if (theOwners.IsEmpty()) return;
+    // 選取狀態固定使用一個明顯的反白色（不依賴 Drawer 的 SelectionStyle accessor，
+    // 避免不同 OCCT 版本 API 差異），與 hover 的 hilightLabel 共用同一段重繪邏輯
+    Handle(Prs3d_Drawer) selStyle = new Prs3d_Drawer();
+    selStyle->SetColor(Quantity_Color(Quantity_NOC_ORANGE));
+    for (SelectMgr_SequenceOfOwner::Iterator it(theOwners); it.More(); it.Next()) {
+        Handle(DimLabelOwner) lo = Handle(DimLabelOwner)::DownCast(it.Value());
+        if (lo.IsNull()) continue;
+        hilightLabel(thePM, selStyle, lo->LabelIndex());
+        break; // 同一物件每次只會有一個標籤被選取/拖曳
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComputeSelection — 只對「實際渲染出的數值標籤文字」建立 sensitive region；
+// 尺寸線本體、延伸線、箭頭完全不參與選取，自然也就永遠不會被 hover 高亮。
+//
+// 每個標籤的方框直接取自 Compute() 時依實際文字內容/位置記錄下來的 m_labelRegions，
+// 而不是另外用近似公式重新猜測位置，確保 hover 偵測範圍與畫面上看到的數值完全對齊。
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AIS_DimensionLine::ComputeSelection(
         const Handle(SelectMgr_Selection)& sel,
         const Standard_Integer /*mode*/)
 {
-    // 計算標籤中心世界座標
+    auto addBoxFor = [&](const LabelRegion& lr, int index) {
+        // 用對角線半徑覆蓋旋轉後的文字範圍，避免因尺寸線角度造成 hover 偵測死角
+        const double radius = std::sqrt(lr.halfW * lr.halfW + lr.halfH * lr.halfH);
+        Bnd_Box box;
+        box.Add(gp_Pnt(lr.pos.X() - radius, lr.pos.Y() - radius, lr.pos.Z() - radius));
+        box.Add(gp_Pnt(lr.pos.X() + radius, lr.pos.Y() + radius, lr.pos.Z() + radius));
+
+        Handle(DimLabelOwner) owner = new DimLabelOwner(this, this, index);
+        Handle(Select3D_SensitiveBox) sens = new Select3D_SensitiveBox(owner, box);
+        sel->Add(sens);
+    };
+
+    if (!m_labelRegions.isEmpty()) {
+        for (int i = 0; i < m_labelRegions.size(); ++i) {
+            addBoxFor(m_labelRegions[i], i);
+        }
+        return;
+    }
+
+    // 後備路徑：理論上 Compute() 必定先於 ComputeSelection() 填好 m_labelRegions，
+    // 但若因任何原因尚未填入（例如外部直接呼叫 ComputeSelection），
+    // 仍退回舊式估算位置，避免完全無法選取/拖曳。
     gp_Pnt labelPt = labelPosition3D();
-
-    // 建立以標籤為中心的小方框（±labelHalfSize mm），僅此區域可 hover / 選取
-    constexpr double labelHalfSize = 8.0;  // mm，可視字高調整
-    Bnd_Box box;
-    box.Add(gp_Pnt(labelPt.X() - labelHalfSize,
-                   labelPt.Y() - labelHalfSize,
-                   labelPt.Z() - labelHalfSize));
-    box.Add(gp_Pnt(labelPt.X() + labelHalfSize,
-                   labelPt.Y() + labelHalfSize,
-                   labelPt.Z() + labelHalfSize));
-
-    Handle(SelectMgr_EntityOwner) owner =
-        new SelectMgr_EntityOwner(this, 5);
-    Handle(Select3D_SensitiveBox) sens =
-        new Select3D_SensitiveBox(owner, box);
-    sel->Add(sens);
+    LabelRegion fallback;
+    fallback.pos   = labelPt;
+    fallback.text  = labelText();
+    fallback.halfW = 18.0;
+    fallback.halfH = 18.0;
+    addBoxFor(fallback, 0);
 }
 
 
