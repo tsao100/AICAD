@@ -70,12 +70,10 @@ public:
     /// 單一數值標籤的世界座標區域快取（Compute() 時依實際繪製內容填入，
     /// 供 ComputeSelection 建立精確的 hover/選取方框，以及 hover 高亮重繪文字用）
     struct LabelRegion {
-        gp_Pnt  pos;               ///< 世界座標中心
+        gp_Pnt  pos;               ///< 數值文字的世界座標中心
         gp_Dir  alongDir;          ///< 文字水平方向（與繪製時 SetOrientation 一致）
         QString text;
-        double  halfW = 10.0;      ///< 依文字長度估算的半寬（mm）
-        double  halfH = 18.0;      ///< 依字高估算的半高（mm）
-        bool    oriented = true;   ///< 是否依 alongDir 做 3D SetOrientation（false=畫面朝向 billboard）
+        bool    oriented = true;
         Graphic3d_HorizontalTextAlignment hAlign = Graphic3d_HTA_CENTER;
         Graphic3d_VerticalTextAlignment   vAlign = Graphic3d_VTA_CENTER;
     };

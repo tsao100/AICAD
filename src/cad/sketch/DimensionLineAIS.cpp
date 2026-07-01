@@ -10,8 +10,7 @@
 #include <Prs3d_TextAspect.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <SelectMgr_EntityOwner.hxx>
-#include <Select3D_SensitiveBox.hxx>
-#include <Bnd_Box.hxx>
+#include <Select3D_SensitivePoint.hxx>
 #include <Quantity_Color.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <gp_Pnt2d.hxx>
@@ -1238,14 +1237,6 @@ void AIS_DimensionLine::addLabelRegion(const gp_Pnt& pos, const gp_Vec& along,
     lr.hAlign   = hAlign;
     lr.vAlign   = vAlign;
 
-    // 依文字長度與字高（36mm，與繪製時一致）估算 hover 方框大小，
-    // 避免固定小方框跟實際渲染出的文字尺寸/位置對不上，導致滑鼠移到數值上卻偵測不到
-    constexpr double kFontHeight     = 36.0; // mm，與各 draw* 函式中 Graphic3d_Text(36.0f) 一致
-    constexpr double kCharWidthRatio = 0.62; // 經驗值：平均字寬／字高比例（含一定保留邊界）
-    const int len = std::max(1, text.length());
-    lr.halfW = std::max(12.0, len * kFontHeight * kCharWidthRatio * 0.5);
-    lr.halfH = kFontHeight * 0.65;
-
     m_labelRegions.append(lr);
 }
 
@@ -1319,35 +1310,42 @@ void AIS_DimensionLine::ComputeSelection(
         const Handle(SelectMgr_Selection)& sel,
         const Standard_Integer /*mode*/)
 {
-    auto addBoxFor = [&](const LabelRegion& lr, int index) {
-        // 用對角線半徑覆蓋旋轉後的文字範圍，避免因尺寸線角度造成 hover 偵測死角
-        const double radius = std::sqrt(lr.halfW * lr.halfW + lr.halfH * lr.halfH);
-        Bnd_Box box;
-        box.Add(gp_Pnt(lr.pos.X() - radius, lr.pos.Y() - radius, lr.pos.Z() - radius));
-        box.Add(gp_Pnt(lr.pos.X() + radius, lr.pos.Y() + radius, lr.pos.Z() + radius));
+    // ─────────────────────────────────────────────────────────────────────
+    // 重要：Graphic3d_Text(36.0f) 的 36 是「畫面像素高度」，與 model-space mm 無關；
+    // 若繼續用 model-space Select3D_SensitiveBox 估算文字大小，不同縮放下 box 大小
+    // 和實際渲染文字大小的比例永遠對不上，導致 hover 範圍偏大或偏小。
+    //
+    // 正確做法：改用 Select3D_SensitivePoint（偵測點 = 文字中心）並搭配
+    // SetSensitivityFactor，以畫素容差而非 model-space 大小來決定命中範圍，
+    // 確保各縮放層級下 hover 範圍都只涵蓋數值文字本身。
+    // ─────────────────────────────────────────────────────────────────────
 
+    // kLabelSensitivity 乘以 SelectMgr 的 PixelTolerance（預設 2px）後即為實際偵測半徑。
+    // 數值文字高度約 36px，故設為 12 → 有效容差 ≈ 24px（字高的 2/3），
+    // 可命中文字大部分範圍而不會蓋到旁邊的幾何元素。
+    // 若實際效果偏緊或偏鬆，可在此微調此數值。
+    constexpr int kLabelSensitivity = 36;
+
+    auto addPointFor = [&](const LabelRegion& lr, int index) {
         Handle(DimLabelOwner) owner = new DimLabelOwner(this, this, index);
-        Handle(Select3D_SensitiveBox) sens = new Select3D_SensitiveBox(owner, box);
+        Handle(Select3D_SensitivePoint) sens = new Select3D_SensitivePoint(owner, lr.pos);
+        sens->SetSensitivityFactor(kLabelSensitivity);
         sel->Add(sens);
     };
 
     if (!m_labelRegions.isEmpty()) {
         for (int i = 0; i < m_labelRegions.size(); ++i) {
-            addBoxFor(m_labelRegions[i], i);
+            addPointFor(m_labelRegions[i], i);
         }
         return;
     }
 
-    // 後備路徑：理論上 Compute() 必定先於 ComputeSelection() 填好 m_labelRegions，
-    // 但若因任何原因尚未填入（例如外部直接呼叫 ComputeSelection），
-    // 仍退回舊式估算位置，避免完全無法選取/拖曳。
+    // 後備路徑
     gp_Pnt labelPt = labelPosition3D();
     LabelRegion fallback;
-    fallback.pos   = labelPt;
-    fallback.text  = labelText();
-    fallback.halfW = 18.0;
-    fallback.halfH = 18.0;
-    addBoxFor(fallback, 0);
+    fallback.pos  = labelPt;
+    fallback.text = labelText();
+    addPointFor(fallback, 0);
 }
 
 

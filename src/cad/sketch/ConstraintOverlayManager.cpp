@@ -197,7 +197,11 @@ void ConstraintOverlayManager::updateSymbolFor(const SketchConstraint& c) {
                 dimAIS->setRefPositions(rp1, rp2);
         }
         dimAIS->setDimLineOffset(c.dimLineOffsetX, c.dimLineOffsetY);
+        // Redisplay 觸發 Compute()，填入最新 m_labelRegions；
+        // 接著必須 RecomputeSelectionOnly 讓 ComputeSelection() 依新位置重建
+        // Select3D_SensitivePoint，否則拖曳後 hover 偵測座標停在舊位置。
         m_ctx->Redisplay(dimAIS, Standard_False);
+        m_ctx->RecomputeSelectionOnly(dimAIS);
     } else {
         createSymbolFor(c);
     }
@@ -302,7 +306,13 @@ void ConstraintOverlayManager::updateDimLine(const QString& uuid,
     dimAIS->setDimLineOffset(newOffsetX, newOffsetY);
 
     if (!m_ctx.IsNull()) {
+        // RecomputePrsOnly 觸發 Compute()，重新填入 m_labelRegions（新位置）；
+        // RecomputeSelectionOnly 再觸發 ComputeSelection()，依新的 m_labelRegions
+        // 重建 Select3D_SensitivePoint，確保 hover 偵測點跟著數值文字一起移動。
+        // 若只呼叫 RecomputePrsOnly 而省略 RecomputeSelectionOnly，拖曳後
+        // SensitivePoint 仍停在舊座標，導致文字可見但 hover 偵測失效。
         m_ctx->RecomputePrsOnly(dimAIS, Standard_False);
+        m_ctx->RecomputeSelectionOnly(dimAIS);
         m_ctx->UpdateCurrentViewer();
     }
 }
