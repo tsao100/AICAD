@@ -145,6 +145,13 @@ unix:!macx {
 # Define PROJECT_SOURCE_DIR as the .pro file's directory
 DEFINES += PROJECT_SOURCE_DIR=\\\"$$PWD\\\"
 
+# 啟用 Lisp 引擎（ECL）：
+# macx / unix:!macx / win32 三個平台區塊都已經連結 ECL 的 include path 與函式庫，
+# 但少了 HAVE_ECL 這個巨集，導致 LispEngine.h / LispEngine.cpp 內所有 #ifdef HAVE_ECL
+# 保護的實際 ECL 呼叫都被跳過，只會編譯出永遠回傳失敗的 stub（initialize()/eval()
+# 都直接回傳 "ECL support not compiled in"）。加上這行讓三個平台都吃到真正的實作。
+DEFINES += HAVE_ECL
+
 
 # ---------- Windows (Qt6 with MSVC) ----------
 win32 {
@@ -310,6 +317,7 @@ SOURCES += \
     src/ui/GripEventFilter.cpp \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
+    src/ui/AlignmentDataTableDialog.cpp \
     src/ui/ParameterPanel.cpp \
     src/ui/PropertyPanel.cpp \
     src/ui/SketchPanel.cpp \
@@ -440,6 +448,7 @@ HEADERS += \
     src/ui/GripEventFilter.h \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
+    src/ui/AlignmentDataTableDialog.h \
     src/ui/ParameterPanel.h \
     src/ui/PropertyPanel.h \
     src/ui/SketchPanel.h \

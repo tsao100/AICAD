@@ -507,6 +507,30 @@ void HorizontalAlignmentEdit::setConstraintMode(int idx, ConstraintMode mode)
     m_elems[idx].solved = false;
 }
 
+void HorizontalAlignmentEdit::setLength(int idx, double length)
+{
+    if (idx < 0 || idx >= m_elems.size()) return;
+    m_elems[idx].length = std::abs(length);
+    m_elems[idx].solved = false;
+}
+
+void HorizontalAlignmentEdit::setSpiralType(int idx, SpiralType type, bool isExit)
+{
+    if (idx < 0 || idx >= m_elems.size()) return;
+    auto& e = m_elems[idx];
+    if (e.type == EditableElementType::SpiralIn) {
+        // SCS 群組：SpiralIn 同時持有 spiralType1（entry）和 spiralType2（exit）
+        if (isExit) e.spiralType2 = type;
+        else        e.spiralType1 = type;
+    } else if (e.type == EditableElementType::SpiralOut) {
+        // CA 群組：SpiralOut 持有 spiralType2（exit）
+        e.spiralType2 = type;
+    } else {
+        return;
+    }
+    e.solved = false;
+}
+
 void HorizontalAlignmentEdit::removeElement(int idx)
 {
     if (idx < 0 || idx >= m_elems.size()) return;
@@ -720,6 +744,36 @@ void VerticalAlignmentEdit::setKValue(int vipIdx, double K)
     const double deltaG = std::abs(g_out - g_in);  // |Δg%|
 
     m_vips[vipIdx].lvc = (deltaG < 1e-9) ? 0.0 : K * deltaG;
+}
+
+// ── setLvc ────────────────────────────────────────────────────────────────────
+void VerticalAlignmentEdit::setLvc(int vipIdx, double lvc)
+{
+    if (vipIdx <= 0 || vipIdx >= m_vips.size() - 1) {
+        qWarning() << "[VerticalAlignmentEdit] setLvc: vipIdx" << vipIdx
+                   << "is an endpoint — no VC can be assigned.";
+        return;
+    }
+    if (lvc < 0.0) lvc = 0.0;
+    m_vips[vipIdx].lvc = lvc;
+}
+
+double VerticalAlignmentEdit::vipChainage(int idx) const
+{
+    if (idx < 0 || idx >= m_vips.size()) return 0.0;
+    return m_vips[idx].chainage;
+}
+
+double VerticalAlignmentEdit::vipElevation(int idx) const
+{
+    if (idx < 0 || idx >= m_vips.size()) return 0.0;
+    return m_vips[idx].elevation;
+}
+
+double VerticalAlignmentEdit::vipLvc(int idx) const
+{
+    if (idx < 0 || idx >= m_vips.size()) return 0.0;
+    return m_vips[idx].lvc;
 }
 
 // ── solve ─────────────────────────────────────────────────────────────────────

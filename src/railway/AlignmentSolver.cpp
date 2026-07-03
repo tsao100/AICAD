@@ -1773,7 +1773,16 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             const double len = QLineF(tanStart[i], tanEnd[i]).length();
             if (len < 1e-9) continue;
 
-            pt.tsc      = QStringLiteral("TT");
+            // 判斷前一個非 SCS-handled 元素的型別，決定此切線起點的 tsc 碼：
+            //   前一元素為 CircularArc → 「CT」（弧→切線過渡）
+            //   其他                  → 「TT」（切線起點或初始點）
+            auto prevType = EditableElementType::Tangent;
+            for (int j = i - 1; j >= 0; --j) {
+                if (!handledBySCS[j]) { prevType = elems[j].type; break; }
+            }
+            const bool prevIsArc = (prevType == EditableElementType::CircularArc);
+
+            pt.tsc      = prevIsArc ? QStringLiteral("CT") : QStringLiteral("TT");
             pt.easting  = tanStart[i].x();
             pt.northing = tanStart[i].y();
             pt.azimuth  = azimuthOf(tanStart[i], tanEnd[i]);
@@ -1826,11 +1835,24 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             }
 
             // ── Emit the arc itself ───────────────────────────────────────────
-            // tsc label depends on what precedes/follows this arc:
-            //   LC  entry  → "SC"   (coming from a spiral)
-            //   ACA entry  → "SC"   (coming from the ACA spiral's SC₂)
-            //   otherwise  → "CC"   (bare arc start)
-            pt.tsc      = (hasLC || hasACA_entry) ? QStringLiteral("SC") : QStringLiteral("CC");
+            // tsc 碼依前後元素決定：
+            //   LC  / ACA entry → "SC"（來自螺旋）
+            //   前一元素為 Tangent → "TC"（切線→圓弧）
+            //   前一元素為 CircularArc → "CC"（弧→弧，反向曲線）
+            {
+                const bool hasLC_entry = (hasLC || hasACA_entry);
+                if (hasLC_entry) {
+                    pt.tsc = QStringLiteral("SC");
+                } else {
+                    auto prevTypeArc = EditableElementType::Tangent;
+                    for (int j = i - 1; j >= 0; --j) {
+                        if (!handledBySCS[j]) { prevTypeArc = elems[j].type; break; }
+                    }
+                    pt.tsc = (prevTypeArc == EditableElementType::CircularArc)
+                             ? QStringLiteral("CC")
+                             : QStringLiteral("TC");
+                }
+            }
             pt.easting  = arc.pc.x();
             pt.northing = arc.pc.y();
             pt.azimuth  = arc.azPC;
@@ -1951,8 +1973,18 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                     const double signedDelta = (e.radius >= 0.0) ? delta : -delta;
                     const double azPT        = arc.azPC + signedDelta;
 
+                    // tsc 碼：後一個非 SCS-handled 元素若為 CircularArc → "CC"（弧弧相接）
+                    //          否則（末端點）→ "TT"
+                    QString waypointTsc = QStringLiteral("TT");
+                    for (int j = i + 1; j < n; ++j) {
+                        if (handledBySCS[j]) continue;
+                        if (elems[j].type == EditableElementType::CircularArc)
+                            waypointTsc = QStringLiteral("CC");
+                        break;
+                    }
+
                     AlignmentPoint ptWaypoint;
-                    ptWaypoint.tsc      = QStringLiteral("TT");
+                    ptWaypoint.tsc      = waypointTsc;
                     ptWaypoint.easting  = arc.pt.x();
                     ptWaypoint.northing = arc.pt.y();
                     ptWaypoint.azimuth  = azPT;

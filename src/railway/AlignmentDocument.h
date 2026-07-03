@@ -201,6 +201,14 @@ public:
     void setConstraintMode(int idx, ConstraintMode mode);
     void removeElement(int idx);
 
+    /** 直接設定元素長度（主要供 SpiralIn/SpiralOut 緩和曲線長度編輯使用）。 */
+    void setLength(int idx, double length);
+
+    /** 設定緩和曲線類型（SpiralIn → spiralType1；SpiralOut → spiralType2）。
+     *  @param isExit  true = 設定 SCS 出口類型（SpiralIn.spiralType2）；
+     *                 false（預設）= 設定入口類型（SpiralIn.spiralType1）。 */
+    void setSpiralType(int idx, SpiralType type, bool isExit = false);
+
     // ── 求解 ─────────────────────────────────────────────────────────────────
 
     /** 執行求解；結果存入 m_result，並 emit changed() */
@@ -263,7 +271,17 @@ public:
     void moveVip(int idx, double newChainage, double newElevation);
     void removeVip(int idx);
     void setKValue(int vipIdx, double K);
+
+    /** 直接設定 VIP 的豎曲線長度 Lvc（端點 VIP 無豎曲線，呼叫無效果）。 */
+    void setLvc(int vipIdx, double lvc);
+
     void solve();
+
+    // ── 查詢（供資料表 UI 使用） ────────────────────────────────────────────
+    int    vipCount()              const { return m_vips.size(); }
+    double vipChainage(int idx)    const;
+    double vipElevation(int idx)   const;
+    double vipLvc(int idx)         const;
 
     const VerticalAlignment* result() const;
 

@@ -73,6 +73,7 @@
 #include <gp.hxx>
 #include "cad/SketchInstance.h"   // Phase 3
 #include "cad/ConstraintPickSession.h"  // Point-pick for dimension constraints
+#include "ui/AlignmentDataTableDialog.h"  // 線形資料表對話框
 
 using namespace aicad::core;
 using namespace aicad::cad;
@@ -1693,6 +1694,105 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         // H-Alignment edit 期間啟用 TM2 座標顯示
                         d->cadView->setSuppressCoordDisplay(false);
                     }
+                });
+
+        // ── TrackCenterLine — showAlignmentDataTableRequested ─────────────────
+        connect(d->featureBrowser, &FeatureBrowser::showAlignmentDataTableRequested,
+                this, [this, docMgr](const QString& tclId) {
+                    qDebug() << "[UIManager] showAlignmentDataTableRequested tclId=" << tclId;
+
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) {
+                        qWarning() << "[UIManager] showAlignmentDataTableRequested: no currentDocument";
+                        return;
+                    }
+
+                    auto* tcl = doc->findTrackCenterLine(tclId);
+                    if (!tcl) {
+                        qWarning() << "[UIManager] showAlignmentDataTableRequested: TCL not found id=" << tclId;
+                        return;
+                    }
+
+                    // ── 取得（或建立）此 TCL 的 AlignmentDocument ────────────
+                    railway::AlignmentDocument* aDoc =
+                        d->tclAlignmentDocs.value(tclId, nullptr);
+                    if (!aDoc) {
+                        aDoc = new railway::AlignmentDocument(d->mainWindow);
+                        d->tclAlignmentDocs.insert(tclId, aDoc);
+
+                        // 優先從 per-TCL JSON（editSession）載入
+                        QJsonObject editJson = doc->tclAlignmentData(tclId);
+                        if (!editJson.isEmpty()) {
+                            aDoc->fromJson(editJson);
+                        } else {
+                            // 若還沒有 editSession，從 TCL 的 editorVips 初始化縱斷面
+                            if (tcl->hasEditorVips()) {
+                                QJsonObject vObj;
+                                vObj[QStringLiteral("vips")] = tcl->editorVips();
+                                QJsonObject wrapper;
+                                wrapper[QStringLiteral("vertical")] = vObj;
+                                aDoc->fromJson(wrapper);
+                            }
+                        }
+
+                        // 確保 solver 已執行一次（空資料也要 solve，保持 m_result 有效）
+                        aDoc->horizontal()->solve();
+                        aDoc->vertical()->solve();
+                    }
+
+                    // ── 將 renderer 切換到 AlignmentDocument 即時模式 ────────
+                    // 使得後續每次 solve() → changed() 都能自動刷新 3D 視圖，
+                    // 無需等待 dataCommitted。
+                    view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
+                    if (!r) {
+                        r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+                        d->tclRenderers.insert(tclId, r);
+                    }
+                    r->setAlignment(aDoc->horizontal());
+                    r->refresh();
+
+                    qDebug() << "[UIManager] Opening AlignmentDataTableDialog:"
+                             << "H elements=" << aDoc->horizontal()->elements().size()
+                             << "V vipCount=" << aDoc->vertical()->vipCount();
+
+                    auto* dlg = new AlignmentDataTableDialog(
+                        aDoc, tcl, d->mainWindow);
+                    dlg->setAttribute(Qt::WA_DeleteOnClose);
+                    dlg->setWindowModality(Qt::NonModal);
+
+                    // ── H 編輯：changed() 自動同步 TCL 並刷新 renderer ───────
+                    // connKeeper 的生命週期綁定到 dlg，對話框關閉時自動斷開連線。
+                    auto* connKeeper = new QObject(dlg);
+                    connect(aDoc->horizontal(),
+                            &railway::HorizontalAlignmentEdit::changed,
+                            connKeeper,
+                            [r, aDoc, tcl, doc]() {
+                                // 同步 solver 結果到 TCL rawPoints（供其他消費者使用）
+                                const railway::HorizontalAlignment* ha =
+                                    aDoc->horizontal()->result();
+                                if (ha && !ha->isEmpty())
+                                    tcl->loadHorizontal(ha->rawPoints());
+                                // renderer 已設為 AlignmentDocument 模式，直接刷新
+                                if (r) r->refresh();
+                                doc->setModified(true);
+                            });
+
+                    // ── V 編輯：dataCommitted 時同步縱斷面到 TCL ─────────────
+                    connect(dlg, &AlignmentDataTableDialog::dataCommitted,
+                            this, [this, tclId, aDoc, tcl]() {
+                                const railway::VerticalAlignment* va =
+                                    aDoc->vertical()->result();
+                                if (va && !va->isEmpty())
+                                    tcl->loadVertical(va->points());
+
+                                // 若縱斷面 dock 可見，刷新顯示
+                                if (d->vAlignDock && d->vAlignDock->isVisible())
+                                    d->vAlignDock->loadTrackCenterLine(tcl);
+                            });
+
+                    dlg->show();
+                    dlg->raise();
+                    dlg->activateWindow();
                 });
 
         // ── TrackCenterLine — renameTrackRequested ────────────────────────────

@@ -498,6 +498,13 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
 
         menu.addSeparator();
 
+        QAction* actTable = menu.addAction(tr("線形資料表"));
+        connect(actTable, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT showAlignmentDataTableRequested(itemId);
+        });
+
+        menu.addSeparator();
+
         QAction* actRename = menu.addAction(tr("重新命名"));
         connect(actRename, &QAction::triggered, this, [this, itemId] {
             Q_EMIT renameTrackRequested(itemId);

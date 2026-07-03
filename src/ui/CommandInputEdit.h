@@ -41,9 +41,14 @@ private:
     void historyUp();
     void historyDown();
     void repeatLastCommand();
+    void submitCurrentLine();      // Enter 與空白鍵（非 Lisp、非等待輸入時）共用的送出邏輯
     void    rebuildDocument();
     QString anchorAtPos(const QPoint& pos) const; // 轉換座標後呼叫 anchorAt
     void    updateLeftMargin();
+
+    // Lisp 多行輸入（括弧未對應時）
+    static bool isLispParensBalanced(const QString& text);
+    void        updateLispContinuationHint();
 
     QTextDocument* m_promptDoc   = nullptr;
     QString        m_promptPrefix;
@@ -55,6 +60,11 @@ private:
     QStringList m_history;
     int         m_historyIndex = -1;   // -1 = 目前輸入
     QString     m_savedInput;          // 暫存當前輸入（歷程瀏覽時）
+
+    // 是否正在輸入一個左右括弧尚未對應的 Lisp 表達式（跨多次 Enter 累積）
+    bool    m_lispMode = false;
+    // 已累積的 Lisp 表達式內容（以真正的 '\n' 分隔每次按 Enter 前的那一行）
+    QString m_lispBuffer;
 };
 
 } // namespace ui

@@ -216,6 +216,14 @@ Q_SIGNALS:
     
 private:
     /**
+     * @brief 判斷輸入是否為 Lisp 表達式（以 '(' 開頭），若是則交給
+     *        LispEngine 求值，不進入一般具名命令的查找流程。
+     * @param expr 已去除頭尾空白的輸入字串（以 '(' 開頭）
+     * @return 執行結果
+     */
+    CommandResult executeLispExpression(const QString& expr);
+
+    /**
      * @brief 添加到歷史記錄
      */
     void addToHistory(const QString& commandName, const QStringList& args);

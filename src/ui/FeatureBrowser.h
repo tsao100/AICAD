@@ -110,6 +110,7 @@ Q_SIGNALS:
     void editAlignmentRequested(const QString& tclId);
     void renameTrackRequested(const QString& tclId);
     void deleteTrackRequested(const QString& tclId);
+    void showAlignmentDataTableRequested(const QString& tclId);
     
 private Q_SLOTS:
     void onItemClicked(QTreeWidgetItem* item, int column);

@@ -9,6 +9,7 @@
 #include "command/Command.h"
 #include "core/EventBus.h"
 #include "core/Application.h"
+#include "scripting/LispEngine.h"
 
 #include <QDebug>
 #include <QHash>
@@ -185,6 +186,15 @@ CommandResult CommandManager::executeCommand(
     const QString& commandName,
     const CommandContext& context)
 {
+    // ── Lisp 表達式分流 ──────────────────────────────────────────────
+    // 若輸入（去除頭尾空白後）以 '(' 開頭，視為 Lisp 表達式，直接交給
+    // LispEngine 求值，不進入一般具名命令的查找/生命週期流程。
+    // （CommandInputEdit 已保證多行 Lisp 表達式的括弧會在送出前對應完成。）
+    const QString trimmedInput = commandName.trimmed();
+    if (trimmedInput.startsWith(QLatin1Char('('))) {
+        return executeLispExpression(trimmedInput);
+    }
+
     QString canonicalName = getCanonicalName(commandName);
     if (canonicalName.isEmpty()) {
         auto* bus = core::Application::instance()->eventBus();
@@ -245,6 +255,99 @@ CommandResult CommandManager::executeCommand(
         Q_EMIT cmd->finished(result);
     }
 
+    return result;
+}
+
+namespace {
+
+// 將 LispEngine::eval() 回傳的 QVariant 轉為適合顯示在命令列的字串。
+// Lisp 的 list 會被轉為巢狀 QVariantList，這裡遞迴印成 "(a b c)" 的形式；
+// 布林 T/NIL、以及沒有回傳值（NIL）的情況分別處理。
+QString formatLispResultForDisplay(const QVariant& value) {
+    if (!value.isValid()) {
+        return QStringLiteral("NIL");
+    }
+    if (value.type() == QVariant::List) {
+        QStringList parts;
+        for (const QVariant& item : value.toList()) {
+            parts << formatLispResultForDisplay(item);
+        }
+        return QLatin1Char('(') + parts.join(QLatin1Char(' ')) + QLatin1Char(')');
+    }
+    if (value.type() == QVariant::Bool) {
+        return value.toBool() ? QStringLiteral("T") : QStringLiteral("NIL");
+    }
+    return value.toString();
+}
+
+} // anonymous namespace
+
+CommandResult CommandManager::executeLispExpression(const QString& expr) {
+    auto* app = core::Application::instance();
+    auto* bus = app ? app->eventBus() : nullptr;
+    scripting::LispEngine* lisp = app ? app->lispEngine() : nullptr;
+
+    if (!lisp || !lisp->isInitialized()) {
+        const QString msg = "Lisp engine not available";
+        qWarning() << "[CommandManager]" << msg;
+        if (bus) {
+            bus->publish(Events::COMMAND_ERROR, msg);
+            bus->publish(Events::COMMAND_FAILED, expr);
+        }
+        return CommandResult::Failure(msg);
+    }
+
+    // 取消目前正在執行的具名命令（若有），行為與一般命令分流一致。
+    if (d->currentCommand) {
+        d->currentCommand->cancel();
+        d->currentCommand->cleanup();
+        d->currentCommand->deleteLater();
+        d->currentCommand = nullptr;
+    }
+
+    Q_EMIT commandStarted(expr);
+    if (bus) {
+        bus->publish(Events::COMMAND_STARTED, expr);
+    }
+
+    // eval() 內部並不會在成功時清除 lastError()，因此不能靠 lastError()
+    // 事後判斷本次求值是否出錯；改用 errorOccurred 訊號在本次呼叫期間
+    // 是否被觸發來判斷，訊號在同執行緒下是同步發出的。
+    bool    hadError = false;
+    QString errorMsg;
+    QMetaObject::Connection conn = QObject::connect(
+        lisp, &scripting::LispEngine::errorOccurred,
+        [&hadError, &errorMsg](const QString& msg) {
+            hadError = true;
+            errorMsg = msg;
+        });
+
+    const QVariant evalResult = lisp->eval(expr);
+
+    QObject::disconnect(conn);
+
+    CommandResult result;
+
+    if (hadError) {
+        qWarning() << "[CommandManager] Lisp evaluation failed:" << errorMsg;
+        if (bus) {
+            bus->publish(Events::COMMAND_ERROR, errorMsg);
+            bus->publish(Events::COMMAND_FAILED, expr);
+        }
+        result = CommandResult::Failure(errorMsg);
+    } else {
+        const QString display = formatLispResultForDisplay(evalResult);
+        qDebug() << "[CommandManager] Lisp evaluation result:" << display;
+        if (bus) {
+            bus->publish(Events::COMMAND_LOG, display);
+            bus->publish(Events::COMMAND_PROMPT, "");
+            bus->publish(Events::COMMAND_EXECUTED, expr);
+        }
+        addToHistory(expr, QStringList());
+        result = CommandResult::Success(display);
+    }
+
+    Q_EMIT commandFinished(expr, result);
     return result;
 }
 
