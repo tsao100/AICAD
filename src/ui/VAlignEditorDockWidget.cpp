@@ -40,6 +40,37 @@ namespace aicad {
 namespace ui {
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  mergeAdjacentHElems — 合併相鄰且同類型的水平元素
+//
+//  rawPts 的關鍵點序列有時會在同一個實體元素中間插入額外的 tsc="TT"（或
+//  同半徑的 "CC"）記錄（例如兩個 PI 之間沒有曲線、直接以直線相接的情況），
+//  這會讓 PLAN DEV. 條帶把同一段切齊型式（例如同一段 Tangent）畫成兩個
+//  相鄰的方塊，視覺上出現「TANGENT 重複」。此處在建立 HElem 陣列後，
+//  將里程銜接、型別相同（曲線並半徑亦相同）的相鄰元素合併為一段。
+// ─────────────────────────────────────────────────────────────────────────────
+static QVector<HElem> mergeAdjacentHElems(const QVector<HElem>& in)
+{
+    QVector<HElem> out;
+    out.reserve(in.size());
+    for (const HElem& el : in) {
+        if (!out.isEmpty()) {
+            HElem& prev = out.last();
+            const bool contiguous = std::abs(prev.ch1 - el.ch0) < 1e-6;
+            const bool sameType   = prev.type == el.type;
+            const bool sameRadius = (prev.type != HElemType::Circular)
+                                     || (std::abs(prev.radius - el.radius) < 1e-6);
+            if (contiguous && sameType && sameRadius) {
+                prev.ch1 = el.ch1;
+                if (prev.label.isEmpty()) prev.label = el.label;
+                continue;
+            }
+        }
+        out.append(el);
+    }
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  VAlignPropertiesPanel
 //  A self-contained widget embedded in the right side of the dock.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -924,52 +955,31 @@ void VAlignEditorDockWidget::setTrackCenterLine(railway::TrackCenterLine* tcl)
     if (!tcl) return;
 
     // ── Load VIPs ─────────────────────────────────────────────────────────────
-    // Prefer editor-VIP format (lossless, one record per PVI) over the raw
-    // VerticalAlignment m_pts, which may contain ALD-style triplet records.
+    // 單一資料來源：VIP 清單一律來自 AlignmentDocument::VerticalAlignmentEdit
+    // （與 AlignmentDataTableDialog 共用同一份 aDoc 實例），不再另外維護
+    // TrackCenterLine::editorVips 這一份平行資料，避免資料表編輯與本編輯器
+    // 各自持有不同的 VIP 清單而失去同步。
+    //
+    // 若 aDoc 尚無 VIP 資料（例如 TCL 剛從 ALD 匯入、從未經過任何編輯器），
+    // 透過 seedFromDensePoints() 由 tcl->vertical()->points() 反推一次，
+    // 之後即以 aDoc 為準。
     QVector<Vip> vips;
-    int id = 1;
-
-    if (tcl->hasEditorVips()) {
-        // Restore exactly what the editor last saved
-        for (const QJsonValue& val : tcl->editorVips()) {
-            QJsonObject o = val.toObject();
+    if (m_alignDoc) {
+        railway::VerticalAlignmentEdit* ve = m_alignDoc->vertical();
+        ve->seedFromDensePoints(tcl->vertical()->points());  // 已有資料時為 no-op
+        for (int i = 0; i < ve->vipCount(); ++i) {
             Vip v;
-            v.id  = id++;
-            v.ch  = o["ch"].toDouble();
-            v.el  = o["el"].toDouble();
-            v.lvc = o["lvc"].toDouble();
+            v.id  = i + 1;
+            v.ch  = ve->vipChainage(i);
+            v.el  = ve->vipElevation(i);
+            v.lvc = ve->vipLvc(i);
             vips.append(v);
         }
-    } else {
-        // First time — build VIPs from the raw VerticalAlignment points.
-        // Collapse ALD triplets: skip records that are VC sub-entries
-        // (identified by having lvc==0 and same chainage range as next triplet).
-        // Simplest safe approach: take only records where lvc > 0 (PVI records)
-        // OR records not sandwiched between a lvc>0 neighbour.
-        const auto& vPts = tcl->vertical()->points();
-        for (int i = 0; i < vPts.size(); ++i) {
-            const auto& vpt = vPts[i];
-            // Skip sub-records of a triplet: a record is a sub-record if
-            // a neighbour has lvc > 0 and this record has lvc == 0.
-            bool isTripletSub = false;
-            if (vpt.lvc < 1e-6) {
-                if (i > 0 && vPts[i-1].lvc > 1e-6) isTripletSub = true;
-                if (i + 1 < vPts.size() && vPts[i+1].lvc > 1e-6) isTripletSub = true;
-            }
-            if (isTripletSub) continue;
-
-            Vip v;
-            v.id  = id++;
-            v.ch  = vpt.chainage;
-            v.el  = vpt.elevation;
-            v.lvc = vpt.lvc;
-            vips.append(v);
-        }
-        // If still empty (e.g. brand-new TCL), create two flat endpoints
-        if (vips.isEmpty()) {
-            Vip v0; v0.id = 1; v0.ch = 0.0;   v0.el = 0.0; vips.append(v0);
-            Vip v1; v1.id = 2; v1.ch = 1000.0; v1.el = 0.0; vips.append(v1);
-        }
+    }
+    if (vips.isEmpty()) {
+        // m_alignDoc 尚未設定，或 TCL 亦無任何稠密資料：建立預設兩端點
+        Vip v0; v0.id = 1; v0.ch = 0.0;    v0.el = 0.0; vips.append(v0);
+        Vip v1; v1.id = 2; v1.ch = 1000.0; v1.el = 0.0; vips.append(v1);
     }
 
     m_profileView->setVips(vips);
@@ -1003,7 +1013,7 @@ void VAlignEditorDockWidget::setTrackCenterLine(railway::TrackCenterLine* tcl)
         el.label = pt.curveType;
         hElems.append(el);
     }
-    m_profileView->setHElements(hElems);
+    m_profileView->setHElements(mergeAdjacentHElems(hElems));
     m_profileView->setChainageEnd(rawPts.isEmpty() ? 850.0 : rawPts.last().chainage);
 }
 
@@ -1052,7 +1062,7 @@ void VAlignEditorDockWidget::setAlignmentDocument(railway::AlignmentDocument* do
             el.label = pt.curveType;
             hElems.append(el);
         }
-        m_profileView->setHElements(hElems);
+        m_profileView->setHElements(mergeAdjacentHElems(hElems));
 
         // 更新總里程
         if (!rawPts.isEmpty())
@@ -1199,19 +1209,25 @@ void VAlignEditorDockWidget::writeBackToTcl()
 
     const QVector<Vip> vips = m_profileView->vips();
 
-    // Serialise current Vips to JSON and store in TCL
-    QJsonArray arr;
-    for (const Vip& v : vips) {
-        QJsonObject o;
-        o["ch"]  = v.ch;
-        o["el"]  = v.el;
-        o["lvc"] = v.lvc;
-        arr.append(o);
+    // 單一資料來源：把 profile view 目前的 VIP 清單寫回
+    // AlignmentDocument::VerticalAlignmentEdit（與資料表對話框共用同一份
+    // aDoc 實例），取代舊有寫入 TrackCenterLine::editorVips 的作法 —
+    // 那是一份平行維護、與資料表脫節的 VIP 資料。
+    if (m_alignDoc) {
+        railway::VerticalAlignmentEdit* ve = m_alignDoc->vertical();
+        while (ve->vipCount() > 0)
+            ve->removeVip(ve->vipCount() - 1);
+        for (const Vip& v : vips)
+            ve->addVip(v.ch, v.el, v.lvc);
+        ve->solve();   // 觸發 changed()：資料表對話框（若開啟）與 3D 皆自動刷新
+
+        // 同步稠密求解結果到 TCL，供 3D 查詢 / PLAN DEV 等其他消費者使用
+        const railway::VerticalAlignment* va = ve->result();
+        if (va && !va->isEmpty())
+            m_tcl->loadVertical(va->points());
     }
 
-    // setEditorVips also rebuilds m_v for runtime queries
-    m_tcl->setEditorVips(arr);
-    qDebug() << "[VAlignEditor] writeBackToTcl:" << arr.size() << "VIPs";
+    qDebug() << "[VAlignEditor] writeBackToTcl:" << vips.size() << "VIPs -> AlignmentDocument";
 }
 
 } // namespace ui

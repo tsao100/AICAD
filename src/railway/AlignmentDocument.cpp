@@ -758,6 +758,39 @@ void VerticalAlignmentEdit::setLvc(int vipIdx, double lvc)
     m_vips[vipIdx].lvc = lvc;
 }
 
+// ── seedFromDensePoints ────────────────────────────────────────────────────────
+//  由稠密的 VerticalAlignmentPoint 序列反推 VIP 清單的唯一實作。
+bool VerticalAlignmentEdit::seedFromDensePoints(const QVector<VerticalAlignmentPoint>& rawPts)
+{
+    if (!m_vips.isEmpty()) return false;   // 已有資料，不覆蓋
+    if (rawPts.size() < 2)  return false;
+
+    // ── 起始 VIP ─────────────────────────────────────────────────────────────
+    addVip(rawPts.first().chainage, rawPts.first().elevation, 0.0);
+
+    // ── 中間 VIP：掃描「VC exit 記錄」（lvc > threshold）────────────────────
+    // solve() 輸出：
+    //   - lvc > 0 的記錄 = VC exit（攜帶真實 lvc + pviElevation）
+    //   - lvc = 1e-6（tiny）= 折點，還原為 lvc = 0
+    constexpr double kLvcThreshold = 0.001;  // < 1 mm 視為折點
+
+    for (int i = 1; i < rawPts.size() - 1; ++i) {
+        const auto& pt = rawPts[i];
+        if (pt.lvc <= 0.0) continue;  // 非 VC exit 記錄
+
+        const double realLvc = (pt.lvc < kLvcThreshold) ? 0.0 : pt.lvc;
+        // VC exit 里程 = pvi 里程 + lvc/2；pvi 里程 = exit.ch - lvc/2
+        const double pviCh = pt.chainage - pt.lvc / 2.0;
+        const double pviEl = (realLvc > 0.0) ? pt.pviElevation : pt.elevation;
+        addVip(pviCh, pviEl, realLvc);
+    }
+
+    // ── 終止 VIP ─────────────────────────────────────────────────────────────
+    addVip(rawPts.last().chainage, rawPts.last().elevation, 0.0);
+    solve();
+    return true;
+}
+
 double VerticalAlignmentEdit::vipChainage(int idx) const
 {
     if (idx < 0 || idx >= m_vips.size()) return 0.0;

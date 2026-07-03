@@ -325,12 +325,6 @@ public:
     QJsonObject toJson()               const;
     bool        fromJson(const QJsonObject&);
 
-    // ── Editor-VIP storage (high-level; round-trips through JSON) ─────────────
-    /** Set VIPs from the profile editor and rebuild VerticalAlignment. */
-    void       setEditorVips(const QJsonArray& vips);
-    QJsonArray editorVips()  const { return m_editorVips; }
-    bool       hasEditorVips() const { return !m_editorVips.isEmpty(); }
-
     // ── 3-D forward ──────────────────────────────────────────────────────────
 
     QVector3D getXYZ(double p, double w = 0.0) const;
@@ -387,8 +381,6 @@ private:
 
     bool                 m_hAlignVisible = false;  ///< 3D view visibility
     bool                 m_vAlignVisible = false;  ///< profile dock visibility
-
-    QJsonArray           m_editorVips;   ///< High-level VIP data from the profile editor
 
     QVector<SpacingRule> m_spacingRules;
     double               m_preDistance = 25.0;

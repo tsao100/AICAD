@@ -1724,16 +1724,12 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         QJsonObject editJson = doc->tclAlignmentData(tclId);
                         if (!editJson.isEmpty()) {
                             aDoc->fromJson(editJson);
-                        } else {
-                            // 若還沒有 editSession，從 TCL 的 editorVips 初始化縱斷面
-                            if (tcl->hasEditorVips()) {
-                                QJsonObject vObj;
-                                vObj[QStringLiteral("vips")] = tcl->editorVips();
-                                QJsonObject wrapper;
-                                wrapper[QStringLiteral("vertical")] = vObj;
-                                aDoc->fromJson(wrapper);
-                            }
                         }
+
+                        // 若載入後（或本來就）尚無 VIP 資料，嘗試從 TCL 既有的
+                        // 稠密 VerticalAlignment 點位反推一次（例如 ALD 匯入、
+                        // 尚未經過任何編輯器的情況）。已有資料時為 no-op。
+                        aDoc->vertical()->seedFromDensePoints(tcl->vertical()->points());
 
                         // 確保 solver 已執行一次（空資料也要 solve，保持 m_result 有效）
                         aDoc->horizontal()->solve();
@@ -1779,7 +1775,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
                     // ── V 編輯：dataCommitted 時同步縱斷面到 TCL ─────────────
                     connect(dlg, &AlignmentDataTableDialog::dataCommitted,
-                            this, [this, tclId, aDoc, tcl]() {
+                            this, [this, tclId, aDoc, tcl, doc]() {
                                 const railway::VerticalAlignment* va =
                                     aDoc->vertical()->result();
                                 if (va && !va->isEmpty())
@@ -1788,6 +1784,9 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                 // 若縱斷面 dock 可見，刷新顯示
                                 if (d->vAlignDock && d->vAlignDock->isVisible())
                                     d->vAlignDock->loadTrackCenterLine(tcl);
+
+                                // 與 H 編輯對齊：標記文件已修改
+                                doc->setModified(true);
                             });
 
                     dlg->show();

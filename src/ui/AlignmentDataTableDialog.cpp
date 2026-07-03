@@ -110,7 +110,7 @@ QString azimuthToDMS(double rad)
 
 /// 唯讀儲存格（灰底）
 QTableWidgetItem* roItem(const QString& text,
-                          const QColor& bg = QColor(242, 242, 242))
+                         const QColor& bg = QColor(242, 242, 242))
 {
     auto* item = new QTableWidgetItem(text);
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
@@ -133,19 +133,31 @@ QTableWidgetItem* editItem(double v, int decimals = 5)
 // ============================================================================
 
 AlignmentDataTableDialog::AlignmentDataTableDialog(AlignmentDocument* doc,
-                                                     TrackCenterLine*   tcl,
-                                                     QWidget* parent)
+                                                   TrackCenterLine*   tcl,
+                                                   QWidget* parent)
     : QDialog(parent)
     , m_doc(doc)
     , m_tcl(tcl)
 {
     setWindowTitle(tcl ? tr("線形資料表 — %1").arg(tcl->name())
-                        : tr("線形資料表"));
+                       : tr("線形資料表"));
     resize(1020, 580);
     buildUi();
     populateHorizontalTable();
     initVerticalVipsIfEmpty();
     populateVerticalTable();
+
+    // ── 與內部資料同步 ─────────────────────────────────────────────────────
+    // aDoc->vertical() 是 VAlignProfileView（繪圖編輯）與本資料表共用的唯一
+    // VIP 資料來源；不論變更來自本表格自身編輯、VAlignProfileView 的拖曳/
+    // 增刪 VIP，或 Undo/Redo，都會呼叫 solve() 並發出 changed()。這裡統一
+    // 監聽該訊號以自動刷新表格，確保兩者不會顯示不同步的資料。
+    // （m_populating 已保護 onVCellChanged 不會被 populate 觸發的
+    //   itemChanged 訊號誤觸發，故此處重新整理是安全的。）
+    if (m_doc) {
+        connect(m_doc->vertical(), &railway::VerticalAlignmentEdit::changed,
+                this, &AlignmentDataTableDialog::populateVerticalTable);
+    }
 }
 
 void AlignmentDataTableDialog::buildUi()
@@ -167,7 +179,7 @@ void AlignmentDataTableDialog::buildUi()
     m_hTable->verticalHeader()->setVisible(false);
     m_hTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_hTable->setEditTriggers(QAbstractItemView::DoubleClicked |
-                               QAbstractItemView::EditKeyPressed);
+                              QAbstractItemView::EditKeyPressed);
     m_hTable->setAlternatingRowColors(true);
     connect(m_hTable, &QTableWidget::itemChanged,
             this, &AlignmentDataTableDialog::onHCellChanged);
@@ -187,7 +199,7 @@ void AlignmentDataTableDialog::buildUi()
     m_vTable->verticalHeader()->setVisible(false);
     m_vTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_vTable->setEditTriggers(QAbstractItemView::DoubleClicked |
-                               QAbstractItemView::EditKeyPressed);
+                              QAbstractItemView::EditKeyPressed);
     m_vTable->setAlternatingRowColors(true);
     connect(m_vTable, &QTableWidget::itemChanged,
             this, &AlignmentDataTableDialog::onVCellChanged);
@@ -301,8 +313,8 @@ void AlignmentDataTableDialog::populateHorizontalTable()
         // ProjectOrigin::toGlobal() 在未設定時為恆等轉換，安全呼叫。
         using aicad::core::geometry::ProjectOrigin;
         const QPointF tm2 = usingSolverResult
-            ? ProjectOrigin::instance().toGlobal(p.easting, p.northing)
-            : QPointF(p.easting, p.northing);
+                                ? ProjectOrigin::instance().toGlobal(p.easting, p.northing)
+                                : QPointF(p.easting, p.northing);
 
         m_hTable->setItem(row, 1, roItem(QString::number(tm2.x(), 'f', 5)));
         m_hTable->setItem(row, 2, roItem(QString::number(tm2.y(), 'f', 5)));
@@ -335,7 +347,7 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             m_hTable->setItem(row, 5, editItem(p.length));
         } else {
             m_hTable->setItem(row, 5, roItem(p.length > 1e-9
-                ? QString::number(p.length, 'f', 5) : QStringLiteral("—")));
+                                                 ? QString::number(p.length, 'f', 5) : QStringLiteral("—")));
         }
 
         // ── 曲線類型 / 半徑欄：SC / CC / TC 可編輯半徑；TS / CS 唯讀（類型）──
@@ -460,36 +472,10 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
 void AlignmentDataTableDialog::initVerticalVipsIfEmpty()
 {
     if (!m_doc || !m_tcl) return;
-    auto* ve = m_doc->vertical();
-    if (ve->vipCount() > 0) return;  // 已有資料，不覆蓋
-
-    const auto& rawPts = m_tcl->vertical()->points();
-    if (rawPts.isEmpty()) return;
-
-    // ── 起始 VIP ─────────────────────────────────────────────────────────────
-    const QJsonObject before = m_doc->toJson();
-    ve->addVip(rawPts.first().chainage, rawPts.first().elevation, 0.0);
-
-    // ── 中間 VIP：掃描「VC exit 記錄」（lvc > threshold）────────────────────
-    // solve() 輸出：
-    //   - lvc > 0 的記錄 = VC exit（攜帶真實 lvc + pviElevation）
-    //   - lvc = 1e-6（tiny）= 折點，還原為 lvc = 0
-    constexpr double kLvcThreshold = 0.001;  // < 1 mm 視為折點
-
-    for (int i = 1; i < rawPts.size() - 1; ++i) {
-        const auto& pt = rawPts[i];
-        if (pt.lvc <= 0.0) continue;  // 非 VC exit 記錄
-
-        const double realLvc = (pt.lvc < kLvcThreshold) ? 0.0 : pt.lvc;
-        // VC exit 里程 = pvi 里程 + lvc/2；pvi 里程 = exit.ch - lvc/2
-        const double pviCh = pt.chainage - pt.lvc / 2.0;
-        const double pviEl = (realLvc > 0.0) ? pt.pviElevation : pt.elevation;
-        ve->addVip(pviCh, pviEl, realLvc);
-    }
-
-    // ── 終止 VIP ─────────────────────────────────────────────────────────────
-    ve->addVip(rawPts.last().chainage, rawPts.last().elevation, 0.0);
-    ve->solve();
+    // 反推邏輯已統一至 VerticalAlignmentEdit::seedFromDensePoints，
+    // 與 VAlignEditorDockWidget 共用同一份實作，避免兩處各自維護、
+    // 可能產生不同結果的還原邏輯。
+    m_doc->vertical()->seedFromDensePoints(m_tcl->vertical()->points());
 }
 
 // ============================================================================
@@ -614,7 +600,7 @@ void AlignmentDataTableDialog::populateVerticalTable()
 
         // ── 坡度%（BVC/折點/起點/終點 顯示坡度；PVI/EVC 坡度無意義留空）
         m_vTable->setItem(row, 3,
-            roItem(QString::number(r.grade, 'f', 5)));
+                          roItem(QString::number(r.grade, 'f', 5)));
 
         // ── K值（BVC/折點/起點/終點 顯示K值；PVI/EVC K值無意義留空）
         if (isPVI) {
@@ -641,8 +627,8 @@ void AlignmentDataTableDialog::populateVerticalTable()
                 m_vTable->setItem(row, 6, lvcItem);
             } else {
                 m_vTable->setItem(row, 6,
-                    roItem(r.lvc > kMinLvc ? QString::number(r.lvc, 'f', 5)
-                                            : QStringLiteral("—")));
+                                  roItem(r.lvc > kMinLvc ? QString::number(r.lvc, 'f', 5)
+                                                         : QStringLiteral("—")));
             }
 
             // ── Mo（唯讀）
@@ -665,7 +651,11 @@ void AlignmentDataTableDialog::onVCellChanged(QTableWidgetItem* item)
     const QVariant role = item->data(Qt::UserRole);
     if (!role.isValid()) return;
     const int vipIdx = role.toInt();
-    if (vipIdx < 1 || vipIdx >= m_doc->vertical()->vipCount() - 1) return;
+    // 有效範圍為 [0, vipCount()-1]：起點(0)、終點(vipCount()-1) 只能編輯
+    // 里程／高程（欄1/2），中間 PVI 才能額外編輯 PVI 高程／Lvc（欄5/6）；
+    // 原本 [1, vipCount()-2] 的範圍會把起點與終點排除在外，導致這兩列的
+    // 編輯被直接忽略、既未套用也未還原顯示。
+    if (vipIdx < 0 || vipIdx >= m_doc->vertical()->vipCount()) return;
 
     bool ok = false;
     const double value = item->text().toDouble(&ok);

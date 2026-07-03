@@ -650,8 +650,6 @@ QJsonObject TrackCenterLine::toJson() const
     o["vAlignVisible"]  = m_vAlignVisible;
     o["horizontal"] = m_h->toJson();
     o["vertical"]   = m_v->toJson();
-    if (!m_editorVips.isEmpty())
-        o["editorVips"] = m_editorVips;  // high-level round-trip data
     return o;
 }
 
@@ -665,57 +663,8 @@ bool TrackCenterLine::fromJson(const QJsonObject& j)
     if (!m_h->fromJson(j["horizontal"].toObject()))
         return false;
 
-    // Prefer editor-VIP format (lossless round-trip) over raw triplet format
-    if (j.contains("editorVips") && !j["editorVips"].toArray().isEmpty()) {
-        setEditorVips(j["editorVips"].toArray());
-    } else {
-        m_v->fromJson(j["vertical"].toObject());
-    }
+    m_v->fromJson(j["vertical"].toObject());
     return true;
-}
-
-// ── Editor-VIP → VerticalAlignment conversion ─────────────────────────────────
-//
-// Vip (editor) format:  { ch, el, lvc }  — one record per PVI
-// VerticalAlignment (runtime) format: flat sequential points, one per PVI;
-//   lvc stored on the PVI record, grade computed between consecutive points.
-//
-// NOTE: The grade/triplet-triplet structure is only needed for ALD-imported data.
-// For editor-created data we store VIPs directly and use a simpler flat format.
-// VerticalAlignment::getElevation() handles lvc > 0 at a record by reading
-// from the *next* record's grade — so we store grade as the OUTGOING slope.
-
-void TrackCenterLine::setEditorVips(const QJsonArray& vips)
-{
-    m_editorVips = vips;
-
-    // Convert VIP JSON array → VerticalAlignmentPoint for runtime queries
-    // Each VIP becomes one VerticalAlignmentPoint.
-    // Grade is computed as the slope to the NEXT VIP (outgoing).
-    QVector<VerticalAlignmentPoint> pts;
-    pts.reserve(vips.size());
-
-    for (const QJsonValue& v : vips) {
-        QJsonObject o = v.toObject();
-        VerticalAlignmentPoint vpt;
-        vpt.chainage     = o["ch"].toDouble();
-        vpt.elevation    = o["el"].toDouble();
-        vpt.lvc          = o["lvc"].toDouble();
-        vpt.pviElevation = vpt.elevation;
-        vpt.grade        = 0.0;  // filled in below
-        pts.append(vpt);
-    }
-
-    // Compute outgoing grade at each point (slope to next PVI)
-    for (int i = 0; i + 1 < pts.size(); ++i) {
-        double dCh = pts[i+1].chainage - pts[i].chainage;
-        if (dCh > 1e-6)
-            pts[i].grade = (pts[i+1].elevation - pts[i].elevation) / dCh * 100.0;
-    }
-    if (!pts.isEmpty())
-        pts.last().grade = pts.size() >= 2 ? pts[pts.size()-2].grade : 0.0;
-
-    m_v->load(pts);
 }
 
 QVector3D TrackCenterLine::getXYZ(double p, double w) const

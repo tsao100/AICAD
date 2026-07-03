@@ -275,6 +275,22 @@ public:
     /** 直接設定 VIP 的豎曲線長度 Lvc（端點 VIP 無豎曲線，呼叫無效果）。 */
     void setLvc(int vipIdx, double lvc);
 
+    /**
+     * @brief 若目前尚無 VIP 資料，嘗試從稠密的 VerticalAlignmentPoint 序列
+     *        （例如 ALD 匯入或舊格式 TCL::vertical()->points()）反推出 PVI 清單。
+     *
+     *  這是「由稠密曲線點反推 VIP」的唯一實作，供資料表對話框
+     *  （AlignmentDataTableDialog）與縱斷面繪圖編輯器
+     *  （VAlignEditorDockWidget）共用，避免兩處各自維護一份、可能
+     *  產生不同結果的還原邏輯。
+     *
+     * @param rawPts 稠密點序列（solve() 輸出格式：中間 VIP 以 lvc>0 的
+     *               「VC exit」記錄標示）。
+     * @return 已有 VIP 資料（不覆蓋）或 rawPts 不足兩點時回傳 false；
+     *         成功建立新 VIP 清單時回傳 true。
+     */
+    bool seedFromDensePoints(const QVector<VerticalAlignmentPoint>& rawPts);
+
     void solve();
 
     // ── 查詢（供資料表 UI 使用） ────────────────────────────────────────────
