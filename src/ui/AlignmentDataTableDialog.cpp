@@ -560,9 +560,11 @@ void AlignmentDataTableDialog::populateVerticalTable()
             rows.append({"BVC", entry.chainage, entry.elevation,
                          entry.grade, exit.kValue, exit.pviElevation, exit.lvc, exit.mo, -1});
 
-            rows.append({"PVI", pviCh, exit.elevation,
+            rows.append({"PVI", pviCh,
+                         exit.pviElevation + exit.mo * (entry.grade < exit.grade ? 1.0 : -1.0),
                          (entry.grade + exit.grade)/2,  // 坡度
-                         exit.kValue, exit.pviElevation, exit.lvc, exit.mo, vipIdx});
+                         exit.kValue, exit.pviElevation, exit.lvc,
+                         exit.mo * (entry.grade < exit.grade ? 1.0 : -1.0), vipIdx});
 
             rows.append({"EVC", exit.chainage, exit.elevation,
                          exit.grade, exit.kValue, exit.pviElevation, exit.lvc, exit.mo, -1});
@@ -578,7 +580,7 @@ void AlignmentDataTableDialog::populateVerticalTable()
     {
         const auto& pN = vSrc->last();
         rows.append({"終點", pN.chainage, pN.elevation, pN.grade,
-                     pN.kValue, 0.0, 0.0, 0.0, (int)vSrc->size()});
+                     pN.kValue, 0.0, 0.0, 0.0, vipIdx});
     }
 
     // ── 填入表格 ────────────────────────────────────────────────────────
@@ -624,9 +626,9 @@ void AlignmentDataTableDialog::populateVerticalTable()
 
         if (isPVI) {
             // ──（PVI/折點可編輯）
-            auto* elItem = editable ? editItem(r.el) : roItem(QString::number(r.pviEl, 'f', 5));
-            if (editable) elItem->setData(Qt::UserRole, r.vipIdx);
-            m_vTable->setItem(row, 5, elItem);
+            auto* pvielItem = editable ? editItem(r.pviEl) : roItem(QString::number(r.pviEl, 'f', 5));
+            if (editable) pvielItem->setData(Qt::UserRole, r.vipIdx);
+            m_vTable->setItem(row, 5, pvielItem);
 
             // ── Lvc（PVI/折點可編輯；折點顯示 0）
             if (editable && r.lvc > kMinLvc) {
@@ -645,8 +647,7 @@ void AlignmentDataTableDialog::populateVerticalTable()
 
             // ── Mo（唯讀）
             m_vTable->setItem(row, 7,
-                roItem(r.mo > 1e-9 ? QString::number(r.mo, 'f', 5)
-                                    : QStringLiteral("—")));
+                              roItem(QString::number(r.mo, 'f', 5)));
         }
     }
 
