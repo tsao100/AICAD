@@ -33,9 +33,11 @@
 // 也不需要每個使用端（main.cpp、LispBindings.cpp…）各自維護
 // 「必須在 Qt 標頭之前 include ECL」的脆弱約定。
 #pragma push_macro("slots")
+#pragma push_macro("SLOT")
 #pragma push_macro("signals")
 #pragma push_macro("emit")
 #undef slots
+#undef SLOT
 #undef signals
 #undef emit
 
@@ -43,6 +45,7 @@
 
 #pragma pop_macro("emit")
 #pragma pop_macro("signals")
+#pragma pop_macro("SLOT")
 #pragma pop_macro("slots")
 
 #ifdef _MSC_VER

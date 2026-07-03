@@ -578,7 +578,7 @@ void AlignmentDataTableDialog::populateVerticalTable()
     {
         const auto& pN = vSrc->last();
         rows.append({"終點", pN.chainage, pN.elevation, pN.grade,
-                     pN.kValue, 0.0, 0.0, 0.0, vSrc->size()});
+                     pN.kValue, 0.0, 0.0, 0.0, (int)vSrc->size()});
     }
 
     // ── 填入表格 ────────────────────────────────────────────────────────
