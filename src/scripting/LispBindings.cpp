@@ -5,15 +5,12 @@
  * @date 2024-12-04
  */
 
-// CRITICAL: ECL headers MUST be included BEFORE Qt headers
-// to avoid macro conflicts (especially 'slots')
-#include <ecl/ecl.h>
-
-// Undefine Qt-conflicting macros from ECL
-#ifdef slots
-#undef slots
-#endif
-
+// 注意：以前這裡靠著「一定要在 Qt 標頭之前 include ECL」的順序，
+// 手動 #include <ecl/ecl.h> 並 #undef slots 來避免 Qt 的 slots 巨集
+// 弄壞 ECL <ecl/object.h> 的 "cl_object *slots;" 成員。這個約定很脆弱，
+// 已改在 scripting/LispEngine.h 內用 push_macro/undef/pop_macro 妥善處理，
+// 因此這裡不再需要特別把 ECL 標頭排在 Qt 標頭之前，直接 include
+// LispBindings.h／LispEngine.h 即可（LispEngine.h 會安全地帶入 ecl.h）。
 
 #include "LispBindings.h"
 #include "LispEngine.h"

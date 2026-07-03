@@ -22,7 +22,29 @@
 #  pragma warning(push)
 #  pragma warning(disable: 4244)  // 'return': conversion from mp_limb_t to unsigned long
 #endif
+
+// <ecl/object.h> 內含名為 slots 的結構成員（cl_object *slots;）。由於本檔案
+// 上方已經 #include <QObject>，Qt 會把 slots / signals / emit 展開成巨集
+// （slots 會展開成空字串），使得該行被展開成 "cl_object *;"，導致
+// 「expected unqualified-id before ';' token」的編譯錯誤
+// （錯誤發生在 ecl/object.h:1049，但根源是本檔案的 include 順序）。
+// 用 push_macro/undef/pop_macro 在 include ECL 標頭期間暫時清除這三個巨集，
+// include 完畢後立刻還原，讓本檔案不論被哪個順序 include 都能正確編譯，
+// 也不需要每個使用端（main.cpp、LispBindings.cpp…）各自維護
+// 「必須在 Qt 標頭之前 include ECL」的脆弱約定。
+#pragma push_macro("slots")
+#pragma push_macro("signals")
+#pragma push_macro("emit")
+#undef slots
+#undef signals
+#undef emit
+
 #include <ecl/ecl.h>
+
+#pragma pop_macro("emit")
+#pragma pop_macro("signals")
+#pragma pop_macro("slots")
+
 #ifdef _MSC_VER
 #  pragma warning(pop)
 #endif

@@ -1,12 +1,9 @@
-// Include ECL headers FIRST, before any Qt headers
-#include <ecl/ecl.h>
-
-// Undefine slots macro to avoid conflict with ECL
-#ifdef slots
-#undef slots
-#endif
-
-// Now include application headers (which contain Qt headers)
+// 注意：以前這裡曾經手動 "#include <ecl/ecl.h>" 並在其後 "#undef slots"，
+// 靠著「一定要在 Qt 標頭之前 include ECL」這個順序來避免 Qt 的 slots 巨集
+// 把 ECL <ecl/object.h> 內的 "cl_object *slots;" 成員展開成 "cl_object *;"
+// 而編譯失敗。這個順序約定很脆弱（任何人調整 include 順序就會壞掉），
+// 已改在 scripting/LispEngine.h 內用 push_macro/undef/pop_macro 妥善處理，
+// 因此這裡不再需要特別把 ECL 標頭排在 Qt 標頭之前。
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QDebug>

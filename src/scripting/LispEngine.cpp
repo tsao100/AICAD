@@ -453,10 +453,20 @@ QString LispEngine::clObjectToQString(cl_object obj) {
 cl_object LispEngine::eclFunctionWrapper(cl_narg narg, ...) {
     va_list args;
     va_start(args, narg);
-    
-    // 取得函式名稱 (從 ECL 環境)
-    cl_object fnObj = ecl_function_name(ecl_current_function());
-    QString fnName = clObjectToQString(fnObj).toUpper();
+
+    // 取得函式名稱。
+    // 舊版程式碼使用的 ecl_current_function() / ecl_function_name()
+    // 在任何公開版本的 ECL 中均不存在（object.h 也找不到這兩個符號）。
+    // 正確做法：
+    //   1. 透過 ecl_process_env() 取得目前執行緒的 ECL 環境指標。
+    //   2. env->function 即為目前正在被呼叫的函式物件（t_cfun 或
+    //      t_cfunfixed，由 ecl_def_c_function_va 建立）。
+    //   3. si_compiled_function_name(fn) 回傳該物件的 .cfun.name，
+    //      是在 ecl_def_c_function_va 綁定 symbol 時自動填入的 symbol name。
+    cl_env_ptr the_env = ecl_process_env();
+    cl_object  fn      = the_env->function;
+    cl_object  nameObj = (fn != Cnil) ? si_compiled_function_name(fn) : Cnil;
+    QString fnName = clObjectToQString(nameObj).toUpper();
     
     qDebug() << "[LispEngine] Calling:" << fnName << "with" << narg << "args";
     
