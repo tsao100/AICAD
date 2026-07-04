@@ -1632,14 +1632,26 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
 
     // Track which indices are part of an SCS group (to avoid double-emitting).
     //
-    // CRITICAL: the exit tangent (tangentIdxAfter) of every SCS group must also
-    // be suppressed from the main loop.  addSCS() always appends SCS elements
-    // AFTER the existing tangents, so the exit tangent index is always LOWER
-    // than the SpiralIn index.  Emitting it in index order inserts a TT
-    // keypoint into pts[] BEFORE the TS/SC/CS keypoints (wrong chainage order).
+    // The exit tangent (tangentIdxAfter) of every SCS group must also be
+    // suppressed from the main loop, because the SCS emission block below
+    // ALWAYS emits the trimmed exit tangent TT inline, immediately after the
+    // CS keypoint (correct chainage order), regardless of whether the exit
+    // tangent's own array index happens to be lower or higher than the
+    // SpiralIn's index.
     //
-    // Instead, the SCS emission block emits the trimmed exit tangent TT
-    // immediately after the CS keypoint — correct order, correct position.
+    // BUG FIX (was: `&& ta < i`): the previous guard assumed addSCS() always
+    // appends SCS elements AFTER the existing tangents, so the exit tangent
+    // index would always be LOWER than the SpiralIn index. That assumption
+    // does not always hold — e.g. when a floating curve/SCS group is
+    // inserted between two pre-existing tangents, the exit tangent's index
+    // can end up HIGHER than the SpiralIn's index. In that case the guard
+    // failed to suppress the exit tangent, so it was emitted twice: once
+    // here (inline, with the full correct length) and again later when the
+    // main loop reached that Tangent element in normal index order — the
+    // second copy repeated the SAME start point and length, i.e. exactly
+    // the "折返" (fold-back) duplicate-station artifact seen downstream in
+    // 3D Alignment sampling and elsewhere. Suppression must apply whenever
+    // the inline emission happens, independent of index order.
     QVector<bool> handledBySCS(n, false);
     for (int i = 0; i < n; ++i) {
         if (scsData[i].valid) {
@@ -1648,8 +1660,10 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             handledBySCS[scsData[i].spiralOutIdx] = true;  // SpiralOut
 
             // Suppress exit tangent — emitted inline by the SCS block (after CS).
+            // Guard must mirror the emission-side check below exactly, so an
+            // element is only suppressed when it was actually pre-emitted.
             const int ta = elems[i].tangentIdxAfter;
-            if (ta >= 0 && ta < n && ta < i)
+            if (ta >= 0 && ta < n && elems[ta].type == EditableElementType::Tangent)
                 handledBySCS[ta] = true;
         }
         // LC group: SpiralIn is emitted inline with the Fixed Arc → suppress SpiralIn

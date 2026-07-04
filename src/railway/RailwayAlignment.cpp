@@ -611,6 +611,23 @@ double VerticalAlignment::getSlope(double p) const
     return insideVC(idx) ? parabolaSlope(idx, p) : tangentSlope(idx);
 }
 
+double VerticalAlignment::getRadius(double p) const
+{
+    int idx = indexAt(p);
+    if (idx < 0 || !insideVC(idx))
+        return std::numeric_limits<double>::infinity();
+
+    const double s1  = m_pts[idx].grade;                                  // [%]
+    const double s2  = (idx + 2 < m_pts.size()) ? m_pts[idx + 2].grade : s1;
+    const double lvc = m_pts[idx + 1].lvc;
+    const double dA  = s2 - s1;                                           // [%]
+
+    if (std::abs(dA) < 1e-9 || lvc < 1e-9)
+        return std::numeric_limits<double>::infinity();
+
+    return std::abs(lvc / dA) * 100.0;   // R ≈ 100·K，K = Lvc / |Δgrade(%)|
+}
+
 // ============================================================================
 //  TrackCenterLine
 // ============================================================================
@@ -698,6 +715,7 @@ QList<QPointF> TrackCenterLine::getAllPW(double x, double y) const
 double TrackCenterLine::getAzimuth(double p) const { return m_h->getAzimuth(p); }
 double TrackCenterLine::getSlope  (double p) const { return m_v->getSlope(p);   }
 double TrackCenterLine::getRadius (double p, bool signed_) const { return m_h->getRadius(p, signed_); }
+double TrackCenterLine::getVerticalRadius(double p) const { return m_v->getRadius(p); }
 double TrackCenterLine::getCant         (double p, bool s) const { return m_h->getCant(p, s);          }
 double TrackCenterLine::getGaugeWidening(double p, bool s) const { return m_h->getGaugeWidening(p, s); }
 

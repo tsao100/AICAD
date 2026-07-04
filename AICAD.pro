@@ -332,6 +332,7 @@ SOURCES += \
     src/ui/VAlignProfileView.cpp \
     src/ui/VAlignTheme.cpp \
     src/view/AlignmentRenderer.cpp \
+    src/view/Railway3DAlignmentRenderer.cpp \
     src/view/ViewManager.cpp \
     src/view/CadView.cpp \
     src/view/DimPreviewOverlay.cpp \
@@ -463,6 +464,7 @@ HEADERS += \
     src/ui/VAlignProfileView.h \
     src/ui/VAlignTheme.h \
     src/view/AlignmentRenderer.h \
+    src/view/Railway3DAlignmentRenderer.h \
     src/view/ViewManager.h \
     src/view/CadView.h \
     src/view/DimPreviewOverlay.h \

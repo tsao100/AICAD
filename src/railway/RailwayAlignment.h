@@ -252,6 +252,14 @@ public:
     double getElevation(double p) const;  ///< [m]
     double getSlope    (double p) const;  ///< [%]
 
+    /**
+     * @brief 豎曲線（拋物線）近似半徑 [m]；直線坡度（無豎曲線）回傳 +∞。
+     *
+     * 以 K 值定義近似之：R ≈ 100 · K = 100 · Lvc / |Δgrade(%)|。
+     * 供 3D Alignment 取樣時，依豎曲線曲率決定適當取樣間距使用。
+     */
+    double getRadius   (double p) const;
+
 Q_SIGNALS:
     void dataChanged();
 
@@ -341,6 +349,9 @@ public:
     double getAzimuth(double p)                      const;
     double getSlope  (double p)                      const;
     double getRadius (double p, bool signed_ = true)  const;
+
+    /** 豎曲線近似半徑 [m]（+∞ = 直線坡度）；供 3D Alignment 取樣使用。 */
+    double getVerticalRadius(double p)               const;
 
     // ── Track attributes ──────────────────────────────────────────────────────
 

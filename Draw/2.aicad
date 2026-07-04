@@ -200,9 +200,9 @@
                 },
                 "projectOrigin": {
                     "epsgCode": "EPSG:3826",
-                    "isSet": true,
-                    "originE": 250000,
-                    "originN": 2650000,
+                    "isSet": false,
+                    "originE": 0,
+                    "originN": 0,
                     "originZ": 0
                 },
                 "vertical": {
@@ -218,7 +218,7 @@
                             "lvc": 80
                         },
                         {
-                            "chainage": 800,
+                            "chainage": 802.8,
                             "elevation": 8.5,
                             "lvc": 90
                         },
@@ -344,30 +344,9 @@
                         "upDown": ""
                     },
                     {
-                        "azimuth": 1.11045994910156,
-                        "cant": 0,
-                        "chainage": 485.4838739887059,
-                        "contChainage": 0,
-                        "curveNo": "",
-                        "curveType": "",
-                        "easting": 62.851488076858345,
-                        "gaugeWidening": 0,
-                        "length": 102.37254217047767,
-                        "northing": -45.613036106556606,
-                        "plat": "",
-                        "radius": 0,
-                        "real1": 0,
-                        "real2": 0,
-                        "speedLimit": 0,
-                        "text1": "",
-                        "text2": "",
-                        "tsc": "TT",
-                        "upDown": ""
-                    },
-                    {
                         "azimuth": 1.1104599491015599,
                         "cant": 0,
-                        "chainage": 587.8564161591836,
+                        "chainage": 485.4838739887059,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
@@ -388,7 +367,7 @@
                     {
                         "azimuth": 0.7727406015537626,
                         "cant": 0,
-                        "chainage": 621.6283509139633,
+                        "chainage": 519.2558087434857,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
@@ -409,7 +388,7 @@
                     {
                         "azimuth": 0.7727406015537625,
                         "cant": 0,
-                        "chainage": 749.4271346764428,
+                        "chainage": 647.0545925059652,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "SPIRAL",
@@ -430,7 +409,7 @@
                     {
                         "azimuth": 0.8414906015537624,
                         "cant": 0,
-                        "chainage": 804.4271346764428,
+                        "chainage": 702.0545925059652,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "ARC",
@@ -451,7 +430,7 @@
                     {
                         "azimuth": 1.2553995827088875,
                         "cant": 0,
-                        "chainage": 969.990727138493,
+                        "chainage": 867.6181849680153,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "SPIRAL",
@@ -472,7 +451,7 @@
                     {
                         "azimuth": 1.3241495827088876,
                         "cant": 0,
-                        "chainage": 1024.990727138493,
+                        "chainage": 922.6181849680153,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
@@ -493,28 +472,7 @@
                     {
                         "azimuth": 1.3241495827088876,
                         "cant": 0,
-                        "chainage": 1173.1331967096246,
-                        "contChainage": 0,
-                        "curveNo": "",
-                        "curveType": "",
-                        "easting": 505.70435336377193,
-                        "gaugeWidening": 0,
-                        "length": 148.14246957113164,
-                        "northing": 246.29038811143477,
-                        "plat": "",
-                        "radius": 0,
-                        "real1": 0,
-                        "real2": 0,
-                        "speedLimit": 0,
-                        "text1": "",
-                        "text2": "",
-                        "tsc": "TT",
-                        "upDown": ""
-                    },
-                    {
-                        "azimuth": 1.3241495827088876,
-                        "cant": 0,
-                        "chainage": 1321.2756662807562,
+                        "chainage": 1070.7606545391468,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
@@ -559,35 +517,35 @@
                     },
                     {
                         "chainage": 370,
-                        "elevation": 8.957446808510639,
-                        "grade": -0.10638297872340426,
-                        "kValue": 752,
+                        "elevation": 8.957698815566836,
+                        "grade": -0.10575296108291034,
+                        "kValue": 756.4799999999999,
                         "lvc": 80,
-                        "mo": 0.010638297872340425,
+                        "mo": 0.010575296108291034,
                         "pviElevation": 9
                     },
                     {
-                        "chainage": 755,
-                        "elevation": 8.547872340425531,
-                        "grade": -0.10638297872340426,
+                        "chainage": 757.8,
+                        "elevation": 8.54758883248731,
+                        "grade": -0.10575296108291034,
                         "kValue": 0,
                         "lvc": 0,
                         "mo": 0,
                         "pviElevation": 0
                     },
                     {
-                        "chainage": 845,
-                        "elevation": 8.844458052663809,
-                        "grade": 0.765462339252909,
-                        "kValue": 103.22932078009411,
+                        "chainage": 847.8,
+                        "elevation": 8.847436689314392,
+                        "grade": 0.7720815318097592,
+                        "kValue": 102.52502120693502,
                         "lvc": 90,
-                        "mo": 0.09808259827233524,
+                        "mo": 0.09875638045042531,
                         "pviElevation": 8.5
                     },
                     {
                         "chainage": 1076.6,
-                        "elevation": 10.617268830373545,
-                        "grade": 0.765462339252909,
+                        "elevation": 10.61395923409512,
+                        "grade": 0.7720815318097592,
                         "kValue": 0,
                         "lvc": 0,
                         "mo": 0,
@@ -597,9 +555,9 @@
                         "chainage": 1176.6,
                         "elevation": 11,
                         "grade": 0,
-                        "kValue": 130.63999999999996,
+                        "kValue": 129.51999999999998,
                         "lvc": 100,
-                        "mo": 0.09568279240661362,
+                        "mo": 0.0965101914762199,
                         "pviElevation": 11
                     },
                     {
@@ -613,20 +571,313 @@
                     }
                 ]
             }
+        },
+        {
+            "alignmentEdit": {
+                "horizontal": {
+                    "elements": [
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 93.24789787438013,
+                            "endY": 188.87974673192656,
+                            "length": 564.659144520652,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": -247.25112915039062,
+                            "startY": -261.56488037109375,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 55,
+                            "mode": 1,
+                            "radius": 600,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 4,
+                            "tangentIdxBefore": 0,
+                            "type": 2
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 0,
+                            "mode": 1,
+                            "radius": 600,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 4,
+                            "tangentIdxBefore": 0,
+                            "type": 1
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 60,
+                            "mode": 1,
+                            "radius": 600,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 4,
+                            "tangentIdxBefore": 0,
+                            "type": 3
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 636.2739061877436,
+                            "endY": 312.2973104353064,
+                            "length": 556.8744389314551,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 93.24789787438013,
+                            "startY": 188.87974673192656,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        }
+                    ]
+                },
+                "projectOrigin": {
+                    "epsgCode": "EPSG:3826",
+                    "isSet": false,
+                    "originE": 0,
+                    "originN": 0,
+                    "originZ": 0
+                },
+                "vertical": {
+                    "vips": [
+                        {
+                            "chainage": 0,
+                            "elevation": 10,
+                            "lvc": 0
+                        },
+                        {
+                            "chainage": 757.6,
+                            "elevation": 15,
+                            "lvc": 200
+                        },
+                        {
+                            "chainage": 1411.15065,
+                            "elevation": 10,
+                            "lvc": 0
+                        }
+                    ]
+                }
+            },
+            "hAlignVisible": true,
+            "horizontal": {
+                "rawPoints": [
+                    {
+                        "azimuth": 0.6472776356548139,
+                        "cant": 0,
+                        "chainage": 0,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": -247.25112915039062,
+                        "gaugeWidening": 0,
+                        "length": 317.9925385460668,
+                        "northing": -261.56488037109375,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.6472776356548139,
+                        "cant": 0,
+                        "chainage": 317.9925385460668,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -55.49624299160905,
+                        "gaugeWidening": 0,
+                        "length": 55,
+                        "northing": -7.893206341050558,
+                        "plat": "",
+                        "radius": 600,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.6931109689881472,
+                        "cant": 0,
+                        "chainage": 372.9925385460668,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": -21.66706514062539,
+                        "gaugeWidening": 0,
+                        "length": 362.52256243172565,
+                        "northing": 35.46601318297653,
+                        "plat": "",
+                        "radius": 600,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "SC",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.29731523970769,
+                        "cant": 0,
+                        "chainage": 735.5151009777924,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": 277.83928752112104,
+                        "gaugeWidening": 0,
+                        "length": 60,
+                        "northing": 229.80788690494603,
+                        "plat": "",
+                        "radius": 600,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "CS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.34731523970769,
+                        "cant": 0,
+                        "chainage": 795.5151009777924,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 336.11098802695915,
+                        "gaugeWidening": 0,
+                        "length": 307.8177731449582,
+                        "northing": 244.07704933112143,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "ST",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.34731523970769,
+                        "cant": 0,
+                        "chainage": 1103.3328741227506,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 636.2739061877436,
+                        "gaugeWidening": 0,
+                        "length": 0,
+                        "northing": 312.2973104353064,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    }
+                ]
+            },
+            "id": "35d176fd-07da-472b-a92b-d255fe25cb79",
+            "name": "Track 2",
+            "vAlignVisible": false,
+            "vertical": {
+                "points": [
+                    {
+                        "chainage": 0,
+                        "elevation": 10,
+                        "grade": 0.6599788806758183,
+                        "kValue": 0,
+                        "lvc": 0,
+                        "mo": 0,
+                        "pviElevation": 0
+                    },
+                    {
+                        "chainage": 657.6,
+                        "elevation": 14.34002111932418,
+                        "grade": 0.6599788806758183,
+                        "kValue": 0,
+                        "lvc": 0,
+                        "mo": 0,
+                        "pviElevation": 0
+                    },
+                    {
+                        "chainage": 857.6,
+                        "elevation": 14.234948354806166,
+                        "grade": -0.7650516451938346,
+                        "kValue": 140.3478707082054,
+                        "lvc": 200,
+                        "mo": 0.3562576314674132,
+                        "pviElevation": 15
+                    },
+                    {
+                        "chainage": 1411.15065,
+                        "elevation": 10,
+                        "grade": -0.7650516451938346,
+                        "kValue": 0,
+                        "lvc": 0,
+                        "mo": 0,
+                        "pviElevation": 0
+                    }
+                ]
+            }
         }
     ],
     "version": "1.0",
     "viewState": {
-        "atX": 306.41736332025107,
-        "atY": -44.274153132272865,
-        "atZ": 0,
-        "eyeX": 306.41736332025107,
-        "eyeY": -44.274153132272865,
-        "eyeZ": 204.32865065155448,
-        "scale": 0.7513104636409416,
-        "upX": 0,
-        "upY": 1,
-        "upZ": 0,
+        "atX": 142.00934904033312,
+        "atY": 29.448527450651696,
+        "atZ": 192.3082876522839,
+        "eyeX": 118.82739982151782,
+        "eyeY": -127.07448272749924,
+        "eyeZ": 321.5883788971147,
+        "scale": 0.6830095124008665,
+        "upX": 0.119314856116653,
+        "upY": 0.6217048836809878,
+        "upZ": 0.7741104589895889,
         "viewType": 7
     }
 }

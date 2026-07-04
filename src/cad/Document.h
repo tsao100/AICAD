@@ -435,6 +435,15 @@ private:
 
     QList<railway::TrackCenterLine*> m_trackCenterLines;  ///< 線路中心線列表
 
+    // ── Railway 資料夾 3D Alignment 彙總顯示 ──────────────────────────────
+    /** Railway 資料夾節點目前是否為 eyeOpen（彙總 3D Alignment 顯示中）。 */
+    bool m_railway3DVisible = false;
+
+    /** eyeOpen 期間暫時關閉之前，各 TCL 原本的 hAlign/vAlign 可見狀態快照，
+     *  供 eyeClose 時還原（key = TrackCenterLine::id()）。 */
+    struct RailwayChildVisSnapshot { bool hAlign = false; bool vAlign = false; };
+    QHash<QString, RailwayChildVisSnapshot> m_railwaySavedChildVisibility;
+
     Q_DISABLE_COPY(Document)
 };
 

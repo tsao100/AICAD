@@ -43,6 +43,7 @@
 #include "command/LineCommand.h"
 #include "command/GripMoveCommand.h"
 #include "view/AlignmentRenderer.h"
+#include "view/Railway3DAlignmentRenderer.h"
 #include "railway/AlignmentDocument.h"
 #include "core/geometry/ProjectOrigin.h"
 #include "railway/RailwayAlignment.h"
@@ -137,6 +138,9 @@ public:
 
     /// Per-TCL renderers for 3D visibility (key = tcl->id())
     QHash<QString, view::AlignmentRenderer*> tclRenderers;
+
+    /// Railway 資料夾節點 eyeOpen 觸發的「全部線路彙總 3D Alignment」顯示器
+    view::Railway3DAlignmentRenderer* railway3DRenderer = nullptr;
 
     /// B.3 TM2 座標原點是否已由使用者設定（若否，進入 alignment edit 時自動套用預設值）
     bool originSet = false;
@@ -614,6 +618,9 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     delete ad;
                 d->tclAlignmentDocs.clear();
                 d->alignmentDoc = nullptr;
+                // ✅ 清除 Railway 彙總 3D Alignment 顯示
+                if (d->railway3DRenderer)
+                    d->railway3DRenderer->clear();
                 // ✅ 隱藏 vAlign dock
                 if (d->vAlignDock)
                     d->vAlignDock->hide();
@@ -680,6 +687,26 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 } else {
                     d->vAlignDock->hide();
                 }
+            });
+
+        // ── Railway 資料夾：彙總 3D Alignment 顯示（eyeOpen/eyeClose）──────────
+        bus->subscribe("railway.railway3d-visibility-changed", this,
+            [this, docMgr](const QVariant& data) {
+                QVariantMap m = data.toMap();
+                const bool vis = m["visible"].toBool();
+
+                auto* doc = docMgr->currentDocument();
+                if (!doc) return;
+
+                if (!d->railway3DRenderer) {
+                    d->railway3DRenderer =
+                        new view::Railway3DAlignmentRenderer(d->cadView, d->mainWindow);
+                }
+
+                if (vis)
+                    d->railway3DRenderer->showAll(doc->trackCenterLines());
+                else
+                    d->railway3DRenderer->clear();
             });
 
         // 監聽特徵事件

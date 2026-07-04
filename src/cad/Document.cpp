@@ -1206,6 +1206,72 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
     // ── 3. Feature (Sketch, Extrude …) ───────────────────────────────────
     Feature* feature = findFeature(itemId);
     if (!feature || m_aisContext.IsNull()) {
+        // ── 3a. Railway 資料夾節點：彙總 3D Alignment 顯示 ─────────────────
+        // eyeOpen  → 顯示所有 TrackCenterLine 的 3D Alignment（E,N,Z 折線），
+        //            並暫時把每個 child（TrackCenterLine 及其 VAlignment）
+        //            eyeClose（沿用既有 halign/valign-visibility-changed
+        //            事件，讓 UIManager 一併隱藏個別的疊加/縱斷面 dock）。
+        // eyeClose → 移除彙總 3D Alignment，並還原各 child 先前的可見狀態。
+        if (itemId == QLatin1String("__railway_folder__")) {
+            m_railway3DVisible = visible;
+            setModified(true);
+
+            core::EventBus* bus = core::Application::instance()->eventBus();
+
+            if (visible) {
+                for (railway::TrackCenterLine* tcl : m_trackCenterLines) {
+                    RailwayChildVisSnapshot snap;
+                    snap.hAlign = tcl->hAlignVisible();
+                    snap.vAlign = tcl->vAlignVisible();
+                    m_railwaySavedChildVisibility.insert(tcl->id(), snap);
+
+                    if (snap.hAlign) {
+                        tcl->setHAlignVisible(false);
+                        QVariantMap vdata;
+                        vdata["tclId"]   = tcl->id();
+                        vdata["visible"] = false;
+                        bus->publish("railway.halign-visibility-changed", vdata);
+                    }
+                    if (snap.vAlign) {
+                        tcl->setVAlignVisible(false);
+                        QVariantMap vdata;
+                        vdata["tclId"]   = tcl->id();
+                        vdata["visible"] = false;
+                        bus->publish("railway.valign-visibility-changed", vdata);
+                    }
+                }
+            } else {
+                for (railway::TrackCenterLine* tcl : m_trackCenterLines) {
+                    const auto it = m_railwaySavedChildVisibility.constFind(tcl->id());
+                    if (it == m_railwaySavedChildVisibility.constEnd())
+                        continue;
+
+                    if (it->hAlign != tcl->hAlignVisible()) {
+                        tcl->setHAlignVisible(it->hAlign);
+                        QVariantMap vdata;
+                        vdata["tclId"]   = tcl->id();
+                        vdata["visible"] = it->hAlign;
+                        bus->publish("railway.halign-visibility-changed", vdata);
+                    }
+                    if (it->vAlign != tcl->vAlignVisible()) {
+                        tcl->setVAlignVisible(it->vAlign);
+                        QVariantMap vdata;
+                        vdata["tclId"]   = tcl->id();
+                        vdata["visible"] = it->vAlign;
+                        bus->publish("railway.valign-visibility-changed", vdata);
+                    }
+                }
+                m_railwaySavedChildVisibility.clear();
+            }
+
+            QVariantMap rdata;
+            rdata["visible"] = visible;
+            bus->publish("railway.railway3d-visibility-changed", rdata);
+
+            Q_EMIT treeStructureChanged();
+            return;
+        }
+
         // ── 4. TrackCenterLine or its VAlignment child ────────────────────
         // Check valign_ prefix first
         if (itemId.startsWith("valign_")) {
@@ -1345,7 +1411,7 @@ QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
     railwayFolder.id         = "__railway_folder__";
     railwayFolder.name       = "Railway";
     railwayFolder.parentId   = "";
-    railwayFolder.visible    = true;
+    railwayFolder.visible    = m_railway3DVisible;  ///< eyeOpen = 顯示彙總 3D Alignment
     railwayFolder.selectable = false;
     items.append(railwayFolder);
 
