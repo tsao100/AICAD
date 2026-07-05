@@ -208,6 +208,14 @@ protected:
     static constexpr double kTol    = 1e-9;
     static constexpr double kAngTol = 1e-7;
     static constexpr double kInf    = std::numeric_limits<double>::infinity();
+
+    /** 樁號邊界比對容差（非浮點運算誤差容差，用途不同於 kTol）。
+     *  舊系統 ALD 資料的樁號 (chainage) 與長度 (length) 各自獨立以
+     *  ASCII 文字四捨五入寫入（通常到公釐等級），相鄰兩元素之間可能因此
+     *  產生次公釐等級（實測 GM01/YT01 樣本資料最大約 0.12 mm）的銜接
+     *  落差，遠大於 kTol (1e-9)。contains() 採用 1 mm 作為邊界容差，
+     *  避免查詢端點樁號時落在此落差區間而得到「找不到元素」的結果。 */
+    static constexpr double kChainageTol = 1e-3;
 };
 
 // ============================================================================

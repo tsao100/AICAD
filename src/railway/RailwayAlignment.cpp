@@ -20,6 +20,13 @@ namespace railway {
 static constexpr double kTol = 1e-9;
 static constexpr double kInf = std::numeric_limits<double>::infinity();
 
+// 樁號邊界比對容差（用途不同於上面的 kTol，見 AlignmentElement::kChainageTol
+// 的說明）。舊系統 ALD 資料的樁號與長度各自獨立以 ASCII 文字四捨五入寫入，
+// 相鄰關鍵點或水平/垂直兩檔案各自的終點樁號之間可能有次公釐級落差，遠大於
+// kTol (1e-9)；用於 rawIndexAt()/indexAt() 判斷「是否已到達最後一筆記錄」
+// 以及可容忍的越界查詢範圍，避免退化為 0 座標/高程。
+static constexpr double kChainageTol = 1e-3;
+
 // ============================================================================
 //  AlignmentPoint  serialisation
 // ============================================================================
@@ -216,7 +223,27 @@ const AlignmentElement* HorizontalAlignment::elementAt(double p) const
 {
     for (const auto& e : m_elements)
         if (e->contains(p)) return e.get();
-    return nullptr;
+
+    // 找不到「嚴格包含」p 的元素。多半發生在舊系統 ALD 資料裡樁號與長度
+    // 各自獨立四捨五入所造成的次公釐級銜接落差（見 contains() 的
+    // kChainageTol 說明），而非真正意義上的越界查詢。
+    // 退回距離 p 最近的邊界元素，避免呼叫端（getXY/getAzimuth/getRadius…）
+    // 取得退化座標 (0,0)；只有整條線形完全沒有元素時才回傳 nullptr。
+    if (m_elements.empty())
+        return nullptr;
+
+    const AlignmentElement* nearest = m_elements.begin()->get();
+    double bestDist = std::abs(p - nearest->startChainage());
+    for (const auto& e : m_elements) {
+        const double d = (p < e->startChainage()) ? (e->startChainage() - p)
+                        : (p > e->endChainage())   ? (p - e->endChainage())
+                                                    : 0.0;
+        if (d < bestDist) {
+            bestDist = d;
+            nearest  = e.get();
+        }
+    }
+    return nearest;
 }
 
 int HorizontalAlignment::rawIndexAt(double p) const
@@ -225,7 +252,10 @@ int HorizontalAlignment::rawIndexAt(double p) const
     if (m_pts.isEmpty()) return -1;
     const int n = m_pts.size();
 
-    if (std::abs(p - m_pts[n-1].chainage) < kTol) return n - 2;
+    // 容差內視為抵達終點（含終點稍微越界的查詢，例如取樣迴圈以最後一筆
+    // 記錄之樁號當作終止值時，兩份獨立四捨五入的樁號可能有微小落差）。
+    if (p >= m_pts[n-1].chainage - kChainageTol) return n - 2;
+    if (p <= m_pts[0].chainage + kChainageTol)   return 0;
 
     int left = 0, right = n - 2;
     while (left <= right) {
@@ -538,8 +568,14 @@ int VerticalAlignment::indexAt(double p) const
     if (m_pts.isEmpty()) return -1;
     const int n = m_pts.size();
 
-    if (std::abs(p - m_pts[n-1].chainage) < kTol) {
+    // 容差內視為抵達終點；亦涵蓋查詢樁號略微超出本檔案最後一筆記錄的情況
+    // （水平/垂直線形分屬不同檔案，各自獨立四捨五入，端點樁號可能有次
+    // 公釐級落差，不應因此讓高程退化為 0）。
+    if (p >= m_pts[n-1].chainage - kChainageTol) {
         m_idx = n - 2; return m_idx;
+    }
+    if (p <= m_pts[0].chainage + kChainageTol) {
+        m_idx = 0; return m_idx;
     }
 
     int left = 0, right = n - 2;

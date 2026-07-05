@@ -259,6 +259,7 @@ SOURCES += \
     src/command/alignment/AlignmentFloatCurveCommand.cpp \
     src/command/alignment/AlignmentSCSCommand.cpp \
     src/command/alignment/TrackCenterLineCommands.cpp \
+    src/command/alignment/ImportAlignmentCommand.cpp \
     src/command/alignment/VAlignFloatVCurveCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
@@ -309,6 +310,7 @@ SOURCES += \
     src/railway/AlignmentSolver.cpp \
     src/railway/RailwayAlignment.cpp \
     src/railway/RailwayAlignmentElement.cpp \
+    src/railway/AldFileIO.cpp \
     src/ui/AutoCompleteModel.cpp \
     src/ui/CommandHistoryPopup.cpp \
     src/ui/CommandInputEdit.cpp \
@@ -391,6 +393,7 @@ HEADERS += \
     src/command/alignment/AlignmentSCSCommand.h \
     src/command/alignment/ProfileViewCommand.h \
     src/command/alignment/TrackCenterLineCommands.h \
+    src/command/alignment/ImportAlignmentCommand.h \
     src/command/alignment/VAlignCheckGradeCommand.h \
     src/command/alignment/VAlignFloatVCurveCommand.h \
     src/command/alignment/VAlignMovePVICommand.h \
@@ -441,6 +444,7 @@ HEADERS += \
     src/railway/AlignmentSolver.h \
     src/railway/RailwayAlignment.h \
     src/railway/RailwayAlignmentElement.h \
+    src/railway/AldFileIO.h \
     src/ui/AutoCompleteModel.h \
     src/ui/CommandHistoryPopup.h \
     src/ui/CommandInputEdit.h \

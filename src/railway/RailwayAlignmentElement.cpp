@@ -44,7 +44,7 @@ double AlignmentElement::endChainage() const
 
 bool AlignmentElement::contains(double p) const
 {
-    return p >= startChainage() - kTol && p <= endChainage() + kTol;
+    return p >= startChainage() - kChainageTol && p <= endChainage() + kChainageTol;
 }
 
 // ── Resolve / unresolve ───────────────────────────────────────────────────────
