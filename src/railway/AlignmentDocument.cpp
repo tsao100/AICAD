@@ -61,6 +61,44 @@ int HorizontalAlignmentEdit::insertElementsOrdered(int pos, const QVector<Editab
     return pos;
 }
 
+int HorizontalAlignmentEdit::removeFloatingBetween(int tangentIdxBefore, int tangentIdxAfter)
+{
+    // Everything physically sitting between the two Tangent elements *is*
+    // the existing floating group (AFC arc, or SCS spiral/arc/spiral) — it
+    // was always inserted right after tangentIdxBefore by insertElementsOrdered().
+    // Matching on position rather than re-checking each element's own stored
+    // tangentIdxBefore/After avoids silently missing the old group if those
+    // fields were ever out of sync with the current index layout.
+    const int start = tangentIdxBefore + 1;
+    const int count = tangentIdxAfter - start;   // elements strictly between them
+    if (count <= 0) return 0;
+
+    // Safety check: only remove if the whole gap is Floating. A Fixed
+    // element there (e.g. a Fixed CircularArc from an LC/CA/ACA group) means
+    // this isn't a plain "two tangents + floating group" gap, so leave it
+    // alone rather than risk deleting something that isn't a float.
+    for (int i = start; i < tangentIdxAfter; ++i) {
+        if (m_elems.at(i).mode != ConstraintMode::Floating) {
+            qWarning() << "[HorizontalAlignmentEdit] removeFloatingBetween:"
+                       << "non-Floating element at index" << i
+                       << "between tangents" << tangentIdxBefore << "and" << tangentIdxAfter
+                       << "— leaving gap untouched.";
+            return 0;
+        }
+    }
+
+    m_elems.remove(start, count);
+
+    // Fix up every remaining element's tangent references, mirroring the
+    // shift insertElementsOrdered() applies on insert.
+    for (auto& other : m_elems) {
+        if (other.tangentIdxBefore >= start) other.tangentIdxBefore -= count;
+        if (other.tangentIdxAfter  >= start) other.tangentIdxAfter  -= count;
+    }
+
+    return count;
+}
+
 int HorizontalAlignmentEdit::addFixedTangent(QPointF from, QPointF to)
 {
     const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
@@ -126,6 +164,12 @@ int HorizontalAlignmentEdit::addFloatingCurve(int tangentIdxBefore,
 
     const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
 
+    // Validation above has already guaranteed this call will succeed, so it
+    // is now safe to replace any prior AFC/SCS floating group already
+    // occupying this tangent gap rather than stacking a second one on top.
+    const int removed = removeFloatingBetween(tangentIdxBefore, tangentIdxAfter);
+    if (removed > 0) tangentIdxAfter -= removed;
+
     EditableElement e;
     e.type             = EditableElementType::CircularArc;
     e.mode             = ConstraintMode::Floating;
@@ -179,6 +223,12 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     }
 
     const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    // Validation above has already guaranteed this call will succeed, so it
+    // is now safe to replace any prior AFC/SCS floating group already
+    // occupying this tangent gap rather than stacking a second one on top.
+    const int removed = removeFloatingBetween(tangentIdxBefore, tangentIdxAfter);
+    if (removed > 0) tangentIdxAfter -= removed;
 
     // ── 入螺旋 (SpiralIn) ──────────────────────────────────────────────────
     EditableElement spiralIn;
@@ -262,6 +312,12 @@ int HorizontalAlignmentEdit::addSCS(int    tangentIdxBefore,
     }
 
     const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    // Validation above has already guaranteed this call will succeed, so it
+    // is now safe to replace any prior AFC/SCS floating group already
+    // occupying this tangent gap rather than stacking a second one on top.
+    const int removed = removeFloatingBetween(tangentIdxBefore, tangentIdxAfter);
+    if (removed > 0) tangentIdxAfter -= removed;
 
     QVector<EditableElement> group;
 
@@ -357,6 +413,12 @@ int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
     if (spiralLength1 < 1e-9 && spiralLength2 < 1e-9) {
         return addFloatingCurve(tangentIdxBefore, tangentIdxAfter, radius);
     }
+
+    // Validation above has already guaranteed this call will succeed, so it
+    // is now safe to replace any prior AFC/SCS floating group already
+    // occupying this tangent gap rather than stacking a second one on top.
+    const int removed = removeFloatingBetween(tangentIdxBefore, tangentIdxAfter);
+    if (removed > 0) tangentIdxAfter -= removed;
 
     QVector<EditableElement> group;
 

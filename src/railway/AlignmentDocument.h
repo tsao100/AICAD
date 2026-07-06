@@ -247,6 +247,28 @@ private:
      */
     int insertElementsOrdered(int pos, const QVector<EditableElement>& newElems);
 
+    /**
+     * @brief Remove any existing element(s) already occupying the gap
+     *        strictly between tangentIdxBefore and tangentIdxAfter (i.e. a
+     *        prior AFC arc or SCS spiral/arc/spiral group), so a new
+     *        AFC/SCS call replaces rather than stacks on top of it.
+     *
+     * Matching is purely positional: everything between the two Tangent
+     * indices is treated as the old floating group, since insertElementsOrdered()
+     * always places a new AFC/SCS group immediately after tangentIdxBefore.
+     * As a safety check, removal only proceeds if every element in that gap
+     * is Floating; if a Fixed element is found there (e.g. from an LC/CA/ACA
+     * group), the gap is left untouched and 0 is returned.
+     *
+     * After removal, every remaining element's tangentIdxBefore/After that
+     * pointed at or past the removed range is shifted down, mirroring the
+     * fix-up insertElementsOrdered() performs on insert.
+     *
+     * @return Number of elements removed (0 if nothing occupied the gap,
+     *         or if a non-Floating element was found there).
+     */
+    int removeFloatingBetween(int tangentIdxBefore, int tangentIdxAfter);
+
     QVector<EditableElement>             m_elems;
     std::unique_ptr<HorizontalAlignment> m_result;
     
