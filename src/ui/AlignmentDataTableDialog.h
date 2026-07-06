@@ -52,10 +52,15 @@ private Q_SLOTS:
 private:
     // ── 輔助結構：水平資料表每列的可編輯性後設資料 ──────────────────────────
     struct HRowMeta {
-        int  elemIdx   = -1;    ///< 對應的 EditableElement 索引；-1 表示唯讀
-        bool editLen   = false; ///< 可編輯長度（SpiralIn/SpiralOut）
-        bool editRad   = false; ///< 可編輯半徑（CircularArc）
-        bool editType  = false; ///< 可編輯緩和曲線類型
+        int  elemIdx    = -1;    ///< 對應的 EditableElement 索引（型別/半徑用）；-1 表示唯讀
+        int  lenElemIdx = -1;    ///< 長度欄實際要寫入的 EditableElement 索引。
+                                  ///< 多數情況與 elemIdx 相同，但 SCS 群組的 CS 列例外：
+                                  ///< elemIdx 指向 SpiralIn（讀取 spiralType2 用），
+                                  ///< 而出螺旋長度（L2）實際存在獨立的 SpiralOut 元素上，
+                                  ///< 若誤用 elemIdx 寫入會覆蓋到 SpiralIn 的長度（L1）。
+        bool editLen    = false; ///< 可編輯長度（SpiralIn/SpiralOut）
+        bool editRad    = false; ///< 可編輯半徑（CircularArc）
+        bool editType   = false; ///< 可編輯緩和曲線類型
     };
 
     void buildUi();

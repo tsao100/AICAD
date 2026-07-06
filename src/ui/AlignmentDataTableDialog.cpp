@@ -324,6 +324,7 @@ void AlignmentDataTableDialog::populateHorizontalTable()
         // ── 長度欄：TS / CS 可編輯（緩和曲線長度）──────────────────────────
         if (p.tsc == QLatin1String("TS")) {
             meta.elemIdx  = nthElemIdx(EditableElementType::SpiralIn, spiralInCount);
+            meta.lenElemIdx = meta.elemIdx;   // SpiralIn 自身持有 L1
             meta.editLen  = true;
             meta.editType = true;
             ++spiralInCount;
@@ -336,10 +337,14 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             if (spiralOutCount < spiralInCount) {
                 // SCS 群組：spiralOutCount 個 SCS 的出螺旋 → 對應第 spiralOutCount 個 SpiralIn
                 meta.elemIdx = nthElemIdx(EditableElementType::SpiralIn, spiralOutCount);
+                // 但 L2（出螺旋長度）實際存在獨立的 SpiralOut 元素上，不能用
+                // SpiralIn 的索引寫入，否則會覆蓋掉 SpiralIn 自己的 L1。
+                meta.lenElemIdx = nthElemIdx(EditableElementType::SpiralOut, spiralOutCount);
             } else {
                 // CA 群組：SpiralOut 元素在 m_elems 中的順序 = spiralOutCount
                 // （前 spiralInCount 個 SpiralOut 屬於 SCS；後面的屬於 CA）
                 meta.elemIdx = nthElemIdx(EditableElementType::SpiralOut, spiralOutCount);
+                meta.lenElemIdx = meta.elemIdx;
             }
             meta.editLen  = true;
             meta.editType = true;
@@ -450,7 +455,8 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
     QString actionText;
 
     if (col == 5 && meta.editLen) {
-        m_doc->horizontal()->setLength(meta.elemIdx, value);
+        const int lenIdx = (meta.lenElemIdx >= 0) ? meta.lenElemIdx : meta.elemIdx;
+        m_doc->horizontal()->setLength(lenIdx, value);
         actionText = tr("編輯緩和曲線長度");
     } else if (col == 6 && meta.editRad) {
         m_doc->horizontal()->setRadius(meta.elemIdx, value);
