@@ -216,6 +216,26 @@ protected:
      *  落差，遠大於 kTol (1e-9)。contains() 採用 1 mm 作為邊界容差，
      *  避免查詢端點樁號時落在此落差區間而得到「找不到元素」的結果。 */
     static constexpr double kChainageTol = 1e-3;
+
+    /** 曲線幾何公式下限半徑（低於此值一律視為退化為 0，予以修正）。
+     *  1 mm 已遠小於任何實際鐵路曲線半徑，僅用於偵測資料異常。 */
+    static constexpr double kMinRadius = 1e-3;
+    /** 修正退化半徑時代入的極大值（視為近似直線，曲率≈0）。 */
+    static constexpr double kMaxRadius = 1.0e9;
+
+    /**
+     * @brief 修正退化（零或極小）半徑，避免 CircularArcElement／
+     *        TransitionElement 各家公式中 1/R、L/R 等除以半徑的運算
+     *        產生 Infinity/NaN。
+     *
+     * 目前唯一已知會產生 0 半徑的情況：AlignmentElementFactory 在無法
+     * 依 TC/CT/CC 規則判斷緩和曲線鄰接型態時（例如連續多段緩和曲線的
+     * 複合／反向曲線，鄰近關鍵點本身也是緩和曲線而非圓弧），退回使用
+     * 鄰近關鍵點的 radius 欄位，但該欄位對緩和曲線關鍵點而言並非真正
+     * 的圓弧半徑（值為 0）。此處在寫入 m_radius 前一律做防呆修正，讓
+     * 這類資料異常退化為近似直線，而不是讓程式因浮點例外而當掉。
+     */
+    static double clampRadius(double r);
 };
 
 // ============================================================================
@@ -260,13 +280,13 @@ class CircularArcElement : public AlignmentElement
 {
 public:
     CircularArcElement() = default;
-    explicit CircularArcElement(double radius) : m_radius(radius) {}
+    explicit CircularArcElement(double radius) : m_radius(clampRadius(radius)) {}
 
     ElementType type()     const override { return ElementType::CircularArc; }
     QString     typeName() const override { return QStringLiteral("CircularArc"); }
 
     double radius() const { return m_radius; }
-    void   setRadius(double r) { m_radius = r; }
+    void   setRadius(double r) { m_radius = clampRadius(r); }
 
     LocalFrame  localFrame(double L)           const override;
     QPointF     inversePW (double x, double y) const override;
@@ -314,7 +334,7 @@ public:
 
     /** Equivalent exit radius.  |radius| → ∞ means exiting onto a tangent. */
     double radius() const { return m_radius; }
-    void   setRadius(double r) { m_radius = r; }
+    void   setRadius(double r) { m_radius = clampRadius(r); }
 
     bool   isReversed() const { return m_reversed; }
     void   setReversed(bool r) { m_reversed = r; }
@@ -489,7 +509,7 @@ class EggTransitionElement : public TransitionElement
 public:
     EggTransitionElement() = default;
     EggTransitionElement(double r1, double r2, double le)
-        : m_r1(r1), m_r2(r2), m_le(le) { rebuild(); }
+        : m_r1(clampRadius(r1)), m_r2(clampRadius(r2)), m_le(le) { rebuild(); }
 
     ElementType type()     const override { return ElementType::Egg; }
     QString     typeName() const override { return QStringLiteral("Egg"); }
@@ -500,8 +520,8 @@ public:
     double ls() const { return m_ls; }          ///< Equivalent spiral length [m]
     bool   r1Dominant() const { return m_r1Dominant; } ///< True when |R1| ≥ |R2|
 
-    void setR1(double r) { m_r1 = r; rebuild(); }
-    void setR2(double r) { m_r2 = r; rebuild(); }
+    void setR1(double r) { m_r1 = clampRadius(r); rebuild(); }
+    void setR2(double r) { m_r2 = clampRadius(r); rebuild(); }
     void setLE(double l) { m_le = l; rebuild(); }
 
     LocalFrame  localFrame(double L) const override;

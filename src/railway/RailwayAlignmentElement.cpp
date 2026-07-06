@@ -47,6 +47,24 @@ bool AlignmentElement::contains(double p) const
     return p >= startChainage() - kChainageTol && p <= endChainage() + kChainageTol;
 }
 
+double AlignmentElement::clampRadius(double r)
+{
+    // 第二道防線：AlignmentElementFactory 已在建構前以 isValidRadius() 擋掉
+    // 已知會產生退化半徑的情況（見 createSpiral() 的 TC/CT/Fallback 分支），
+    // 這裡再於元素本身把關一次，避免任何其他呼叫路徑（例如未來的 JSON
+    // 反序列化、測試程式碼等）繞過工廠直接建構出零半徑元素，導致
+    // CircularArcElement／TransitionElement 各家公式中 1/R、L/R 產生
+    // Infinity/NaN（ECL 會將此類浮點例外攔截為 FLOATING-POINT-OVERFLOW
+    // 條件並讓整個行程崩潰）。
+    if (!std::isfinite(r) || std::abs(r) < kMinRadius) {
+        if (r != 0.0)  // 0.0 是常見的「尚未設定」預設值，不需要每次都警告
+            qWarning() << "[AlignmentElement] clampRadius: degenerate radius" << r
+                       << "clamped to" << kMaxRadius;
+        return std::signbit(r) ? -kMaxRadius : kMaxRadius;
+    }
+    return r;
+}
+
 // ── Resolve / unresolve ───────────────────────────────────────────────────────
 
 void AlignmentElement::resolvePW(double p, double w,
@@ -716,6 +734,25 @@ QJsonObject EggTransitionElement::toJson() const
 //  AlignmentElementFactory
 // ============================================================================
 
+namespace {
+// 圓弧／緩和曲線半徑有效性檢查。半徑 0（或非有限值）在幾何上沒有意義——
+// ClothoidElement/HalfSineElement/ParabolaElement/CubicJPNElement/
+// CubicECIElement 的 localFrame() 都會以此半徑作分母（A² = |R|·Ls、
+// b = 1/(2R) …），若放行 R=0 會產生 Infinity/NaN，在啟用了浮點例外
+// 陷阱的執行環境下（例如本專案內嵌的 ECL）會直接觸發
+// FLOATING-POINT-OVERFLOW 而讓整個行程崩潰。
+// 曾實際發生的觸發情境：ALD 資料中出現非典型的 TSC 鄰接樣式（例如
+// "SC"/"CS"/"SS"），createSpiral() 的 fallback 分支誤用了鄰近「S」型
+// 關鍵點的 radius 欄位——該欄位對緩和曲線關鍵點而言恆為 0（半徑欄位
+// 在此類記錄中實際存放的是曲線類型名稱，而非數值），因而建出半徑為 0
+// 的退化元素。
+bool isValidRadius(double r)
+{
+    constexpr double kMinRadius = 1e-3;  // 1 mm；小於此值視為資料錯誤
+    return std::isfinite(r) && std::abs(r) > kMinRadius;
+}
+} // namespace
+
 Placement AlignmentElementFactory::makePlacement(const AlignmentPoint& pt)
 {
     return { pt.chainage, pt.easting, pt.northing, pt.azimuth };
@@ -754,6 +791,12 @@ AlignmentElementFactory::create(const AlignmentPoint& prev,
     }
 
     if (elemType == 'C') {
+        if (!isValidRadius(cur.radius)) {
+            qWarning() << "[AlignmentElementFactory] Rejecting circular element with"
+                          " invalid radius at chainage" << cur.chainage
+                       << "radius=" << cur.radius;
+            return nullptr;
+        }
         auto elem = std::make_unique<CircularArcElement>(cur.radius);
         elem->setPlacement(makePlacement(cur));
         elem->setLength(cur.length);
@@ -780,6 +823,12 @@ AlignmentElementFactory::createSpiral(const AlignmentPoint& prev,
 
     // ── Egg (CC): circle → spiral → circle ────────────────────────────────
     if (prevElem == 'C' && nextElem == 'C') {
+        if (!isValidRadius(prev.radius) || !isValidRadius(next.radius)) {
+            qWarning() << "[AlignmentElementFactory] Rejecting egg transition with"
+                          " invalid neighbour radius at chainage" << cur.chainage
+                       << "R1=" << prev.radius << "R2=" << next.radius;
+            return nullptr;
+        }
         auto elem = std::make_unique<EggTransitionElement>(
             prev.radius, next.radius, cur.length);
         elem->setPlacement(makePlacement(cur));
@@ -817,12 +866,24 @@ AlignmentElementFactory::createSpiral(const AlignmentPoint& prev,
 
     // ── Normal (TC): tangent → spiral → circle ─────────────────────────────
     if (prevElem == 'T' && nextElem == 'C') {
+        if (!isValidRadius(next.radius)) {
+            qWarning() << "[AlignmentElementFactory] Rejecting TC transition with"
+                          " invalid exit radius at chainage" << cur.chainage
+                       << "radius=" << next.radius;
+            return nullptr;
+        }
         // Normal: starts at cur, exits onto circle with radius next.radius
         return makeTransition(next.radius, makePlacement(cur), cur.length, false);
     }
 
     // ── Reversed (CT): circle → spiral → tangent ──────────────────────────
     if (prevElem == 'C' && nextElem == 'T') {
+        if (!isValidRadius(prev.radius)) {
+            qWarning() << "[AlignmentElementFactory] Rejecting CT transition with"
+                          " invalid entry radius at chainage" << cur.chainage
+                       << "radius=" << prev.radius;
+            return nullptr;
+        }
         // Reversed: reference origin = next (far end = ST), reversed azimuth.
         //
         // Radius sign: load() has already assigned the correct sign to
@@ -845,6 +906,15 @@ AlignmentElementFactory::createSpiral(const AlignmentPoint& prev,
     qWarning() << "[AlignmentElementFactory] Unhandled spiral pattern:"
                << prev.tsc << cur.tsc << next.tsc
                << "– falling back to ClothoidElement";
+    if (!isValidRadius(next.radius)) {
+        // next 本身也是緩和曲線關鍵點時，其 radius 欄位並非真正的圓弧
+        // 半徑（恆為 0）。找不到可用的鄰接圓弧半徑，寧可跳過此關鍵點
+        // （該段線形留下小缺口）也不要建出零半徑元素而讓程式當掉。
+        qWarning() << "[AlignmentElementFactory] Rejecting fallback spiral with"
+                      " invalid neighbour radius at chainage" << cur.chainage
+                   << "radius=" << next.radius;
+        return nullptr;
+    }
     return makeTransition(next.radius, makePlacement(cur), cur.length, false);
 }
 
