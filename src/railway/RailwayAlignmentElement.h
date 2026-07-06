@@ -152,13 +152,27 @@ public:
      * @brief World (Easting, Northing) at chainage @p p, offset @p w.
      * @param p  Chainage [m]
      * @param w  Lateral offset [m]; POSITIVE = LEFT of direction of travel.
+     *
+     * Virtual: EggTransitionElement overrides this to recompute its internal
+     * equivalent-spiral placement (eggEquivPlacement()) before delegating,
+     * which the generic base implementation (localToWorld() using this
+     * element's own m_place) cannot do correctly. Without `virtual` here,
+     * calls through a base AlignmentElement& — which is how every other
+     * part of the codebase holds elements (elementAt(), TrackCenterLine's
+     * element list, etc.) — would silently hide EggTransitionElement's
+     * override and use the wrong placement, producing incorrect 3D geometry
+     * for CSC-style compound curves (observed on G02U).
      */
-    QPointF worldXY     (double p, double w = 0.0) const;
+    virtual QPointF worldXY(double p, double w = 0.0) const;
 
     /**
      * @brief Tangent azimuth [rad, CW from N] at chainage @p p.
+     *
+     * Virtual for the same reason as worldXY() above: EggTransitionElement
+     * needs to evaluate this against its internal equivalent-spiral
+     * placement rather than this element's own m_place.
      */
-    double  worldAzimuth(double p)             const;
+    virtual double worldAzimuth(double p) const;
 
     // ── Inverse solver ────────────────────────────────────────────────────────
 
@@ -525,7 +539,8 @@ public:
     void setLE(double l) { m_le = l; rebuild(); }
 
     LocalFrame  localFrame(double L) const override;
-    QPointF     worldXY   (double p, double w = 0.0) const;
+    QPointF     worldXY   (double p, double w = 0.0) const override;
+    double      worldAzimuth(double p) const override;
     QPointF     inversePW (double x, double y)        const override;
     QJsonObject toJson()                               const override;
 

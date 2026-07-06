@@ -358,9 +358,15 @@ double HorizontalAlignment::computeRadius(int i, double p, bool signed_) const
         R = pt.radius;
 
     } else if (elem == 'S') {
-        // Determine spiral neighbour types
-        const QChar prev = (i > 0) ? m_pts[i-1].tsc[1] : QChar('T');
-        const QChar next = (i+1 < m_pts.size()) ? m_pts[i+1].tsc[1] : QChar('T');
+        // Determine spiral neighbour types.
+        // 'S' 鄰居視同 'T'：兩段緩和曲線在 SS 交會點直接相接，等同於在該
+        // 點達到零曲率（直線）狀態，行為與真正的切線鄰接相同（見
+        // AlignmentElementFactory::createSpiral() 的對應處理與說明）。
+        auto asPatternChar = [](QChar c) -> QChar {
+            return (c == 'S') ? QChar('T') : c;
+        };
+        const QChar prev = asPatternChar((i > 0) ? m_pts[i-1].tsc[1] : QChar('T'));
+        const QChar next = asPatternChar((i+1 < m_pts.size()) ? m_pts[i+1].tsc[1] : QChar('T'));
         const QString nc = QString(prev) + QString(next);
         const QString& ct = pt.curveType;
 

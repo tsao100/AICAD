@@ -696,6 +696,36 @@ QPointF EggTransitionElement::worldXY(double p, double w) const
     return m_equiv->worldXY(p_equiv, w_eff);
 }
 
+double EggTransitionElement::worldAzimuth(double p) const
+{
+    if (!m_equiv) return 0.0;
+
+    const double le = m_le;
+    const double ls = m_ls;
+
+    // Same placement/offset mapping as worldXY() above.
+    Placement equivPlace = eggEquivPlacement(*this, *m_equiv);
+    m_equiv->setPlacement(equivPlace);
+
+    const double L_local = p - startChainage();
+
+    double Lequiv;
+    if (m_r1Dominant) {
+        Lequiv = (ls - le) + L_local;
+    } else {
+        // Reversed traversal: equivalent spiral is walked back-to-front, so
+        // the tangent direction is opposite to the equivalent spiral's own
+        // (+180°) — mirrors the `w_eff = -w` sign flip used in worldXY().
+        Lequiv = ls - L_local;
+    }
+
+    const double p_equiv = equivPlace.chainage + Lequiv;
+    double az = m_equiv->worldAzimuth(p_equiv);
+    if (!m_r1Dominant)
+        az = normalise(az + M_PI);
+    return az;
+}
+
 QPointF EggTransitionElement::inversePW(double x, double y) const
 {
     if (!m_equiv) return {};
@@ -817,9 +847,19 @@ AlignmentElementFactory::createSpiral(const AlignmentPoint& prev,
                                       const AlignmentPoint& next)
 {
     // Determine spiral sub-type from neighbour TSC second characters
-    // (matching the C# switch: prev.tsc[1] + next.tsc[1])
-    const QChar prevElem = (prev.tsc.size() >= 2) ? prev.tsc[1] : QChar('T');
-    const QChar nextElem = (next.tsc.size() >= 2) ? next.tsc[1] : QChar('T');
+    // (matching the C# switch: prev.tsc[1] + next.tsc[1]).
+    //
+    // 'S' 鄰居視同 'T'：兩段緩和曲線在 SS 交會點直接相接（例如 G06U 的
+    // SC(800)-CS-SS-SC(800)-CS 複合反曲線），該交會點在幾何上等同於曲率
+    // 歸零的「虛擬切線點」（長度為 0 的切線），與真正的 T（直線）鄰接在
+    // 半徑判斷上是等價的。若不做此轉換，"CS"/"SS" 這類組合會落入下方的
+    // Fallback 分支，誤用鄰近緩和曲線關鍵點的 radius 欄位（該欄位對緩和
+    // 曲線關鍵點而言恆為 0，非真正的圓弧半徑）。
+    auto asPatternChar = [](QChar c) -> QChar {
+        return (c == 'S') ? QChar('T') : c;
+    };
+    const QChar prevElem = asPatternChar((prev.tsc.size() >= 2) ? prev.tsc[1] : QChar('T'));
+    const QChar nextElem = asPatternChar((next.tsc.size() >= 2) ? next.tsc[1] : QChar('T'));
 
     // ── Egg (CC): circle → spiral → circle ────────────────────────────────
     if (prevElem == 'C' && nextElem == 'C') {
