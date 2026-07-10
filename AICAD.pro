@@ -260,6 +260,7 @@ SOURCES += \
     src/command/alignment/AlignmentSCSCommand.cpp \
     src/command/alignment/TrackCenterLineCommands.cpp \
     src/command/alignment/ImportAlignmentCommand.cpp \
+    src/command/alignment/ExportAlignmentCommand.cpp \
     src/command/alignment/VAlignFloatVCurveCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
@@ -394,6 +395,7 @@ HEADERS += \
     src/command/alignment/ProfileViewCommand.h \
     src/command/alignment/TrackCenterLineCommands.h \
     src/command/alignment/ImportAlignmentCommand.h \
+    src/command/alignment/ExportAlignmentCommand.h \
     src/command/alignment/VAlignCheckGradeCommand.h \
     src/command/alignment/VAlignFloatVCurveCommand.h \
     src/command/alignment/VAlignMovePVICommand.h \

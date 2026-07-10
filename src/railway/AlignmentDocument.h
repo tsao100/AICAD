@@ -220,6 +220,21 @@ public:
 
     const QVector<EditableElement>& elements() const { return m_elems; }
 
+    // ── 起始里程（僅影響顯示/輸出的里程偏移，不影響幾何解算）───────────────────
+    //
+    //  solve() 產生的 AlignmentPoint 序列一律以 chainage = 0 為起點；下列兩個
+    //  偏移量讓使用者可在資料表第一列設定實際的「起始里程」與「起始連續里程」，
+    //  solve() 完成後會將其加總套用到每一點的 chainage / contChainage。
+    //  contChainage 定義為 chainage + (m_startContChainage - m_startChainage)，
+    //  亦即「連續里程」與「里程」之間維持一個固定常數差（對應現場常見的里程續
+    //  接慣例；本應用未支援里程中途重置）。
+
+    double startChainage()           const { return m_startChainage; }
+    double startContinuousChainage() const { return m_startContChainage; }
+
+    void setStartChainage(double chainage)            { m_startChainage     = chainage; }
+    void setStartContinuousChainage(double contChain) { m_startContChainage = contChain; }
+
     // ── 序列化 ───────────────────────────────────────────────────────────────
 
     QJsonObject toJson()                        const;
@@ -271,6 +286,8 @@ private:
 
     QVector<EditableElement>             m_elems;
     std::unique_ptr<HorizontalAlignment> m_result;
+    double                                m_startChainage     = 0.0;
+    double                                m_startContChainage = 0.0;
     
     // Step 17: back-pointer to AlignmentDocument for Undo push
     friend class AlignmentDocument;

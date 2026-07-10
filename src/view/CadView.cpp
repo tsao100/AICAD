@@ -16,6 +16,7 @@
 #include "cad/grips/GripManager.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
+#include "core/CommandLineManager.h"
 #include "core/DocumentManager.h"
 #include "osnap/OSnapManager.h"
 #include "ui/GripEventFilter.h"
@@ -32,7 +33,9 @@
 #include <QDebug>
 #include <QTimer>
 #include <QMouseEvent>
+#include <QCursor>
 #include <QKeyEvent>
+#include <cmath>
 #include <QToolTip>
 #include <QMenu>
 #include <QPainter>
@@ -51,6 +54,17 @@
 #include <IntAna_IntConicQuad.hxx>
 #include <Precision.hxx>
 #include <AIS_SelectionScheme.hxx>
+#include <SelectMgr_ViewerSelector.hxx>
+#include <SelectMgr_EntityOwner.hxx>
+#include <Aspect_TypeOfLine.hxx>
+#include <Prs3d_Presentation.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <Graphic3d_Group.hxx>
+#include <Graphic3d_ArrayOfPolylines.hxx>
+#include <Graphic3d_DisplayPriority.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Pnt2d.hxx>
+#include <TColgp_Array1OfPnt2d.hxx>
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -164,6 +178,27 @@ public:
     QVector2D            dragDimStartMouse;  ///< 拖曳起始的草圖平面座標
     double               dragDimBaseOffsetX = 0.0;  ///< 拖曳前的舊偏移 X
     double               dragDimBaseOffsetY = 0.0;  ///< 拖曳前的舊偏移 Y
+
+    // ── 窗選 / 穿越窗選（Window / Crossing box selection）────────────────────
+    // Sketch edit 與 H-Alignment edit 共用同一套機制：
+    //   由左至右 → 窗選（Window）：只選完全被框住的物件
+    //   由右至左 → 穿越窗選（Crossing）：與框相交/接觸即選取
+    // 操作方式：滑鼠左鍵點一下放開（記錄起點）→ 移動滑鼠（不必按住）→
+    //          再點一下放開完成選取。若使用者改為按住拖曳也同樣支援。
+    bool              boxSelectArmed      = false;  ///< 已記錄起點，等待完成（拖曳中或等待第二次點擊）
+    bool              boxSelectActive     = false;  ///< 選取框正在顯示（拖曳超過門檻，或已進入等待第二次點擊）
+    bool              boxSelectWaitingSecondClick = false;  ///< 第一次點擊已放開，選取框跟隨滑鼠自由移動，等待第二次點擊
+    bool              boxSelectSketchMode = false;  ///< true=Sketch 幾何選取語意；false=一般（H-Alignment 等）
+    bool              boxSelectAdditive   = false;  ///< Shift 按下＝疊加選取
+    Standard_Integer  boxSelectStartX = 0, boxSelectStartY = 0;  ///< 起點（OCCT 物理像素，供 SelectRectangle 使用）
+    QPoint            boxSelectStartQt;              ///< 起點（Qt 邏輯座標，供選取框視覺 unproject 使用）
+    Handle(Prs3d_Presentation) boxSelectPresentation; ///< 選取框顯示物件（沿用 RubberBand 相同技術，非 AIS 物件）
+    QVector<Handle(SelectMgr_EntityOwner)> boxSelectSavedOwners; ///< 框選開始前的選取狀態快照（預覽/取消時還原用）
+
+    // ── 籬選(Fence) / 多邊形窗選(WPolygon) / 多邊形框選(CPolygon) ─────────────
+    CadView::BoxSelectShape boxSelectShape = CadView::BoxSelectShape::Rectangle;
+    QVector<QPoint>   boxSelectPolyQt;    ///< 已確定的多邊形/籬選頂點（Qt 邏輯座標），第一點＝框選起點
+    QString           boxSelectShapeKeyBuffer;  ///< 累積鍵盤輸入緩衝，偵測 F / WP / CP（見 keyPressEvent）
 
     Private()
         : document(nullptr)
@@ -461,6 +496,37 @@ void CadView::initializeViewer() {
         bus->subscribe(Events::FEATURE_CREATED, this, [this](const QVariant& data) {
             Q_UNUSED(data);
             displayAllFeatures();
+        });
+
+        // ── 窗選提示階段輸入 F / WP / CP：切換為籬選 / 多邊形窗選 / 多邊形框選 ──
+        // 命令列文字輸入與選項按鈕點擊分別會傳回 label（例如「籬選」）或
+        // shortcut（例如「F」），這裡兩種都比對，確保兩種輸入方式都能觸發。
+        bus->subscribe(Events::OPTION_SELECTED, this, [this](const QVariant& data) {
+            if (!d->boxSelectArmed) return;
+            const QString opt = data.toString();
+
+            if (d->boxSelectShape == BoxSelectShape::Rectangle) {
+                // 矩形窗選階段：F/WP/CP 切換為籬選/多邊形窗選/多邊形框選
+                if (opt.compare(tr("籬選"), Qt::CaseInsensitive) == 0 ||
+                    opt.compare("F", Qt::CaseInsensitive) == 0) {
+                    beginBoxSelectShapeMode(BoxSelectShape::Fence);
+                } else if (opt.compare(tr("多邊形窗選"), Qt::CaseInsensitive) == 0 ||
+                           opt.compare("WP", Qt::CaseInsensitive) == 0) {
+                    beginBoxSelectShapeMode(BoxSelectShape::WPolygon);
+                } else if (opt.compare(tr("多邊形框選"), Qt::CaseInsensitive) == 0 ||
+                           opt.compare("CP", Qt::CaseInsensitive) == 0) {
+                    beginBoxSelectShapeMode(BoxSelectShape::CPolygon);
+                }
+                return;
+            }
+
+            // ── 籬選 / 多邊形窗選 / 多邊形框選頂點收集中 ──────────────────────
+            // 命令列在「等待輸入」狀態下，對空白輸入（純按 Enter 或 Space，
+            // 沒有先輸入文字）一律會發布空字串的 OPTION_SELECTED；藉此判斷
+            // 使用者是要完成目前的籬選/多邊形選取。
+            if (opt.isEmpty()) {
+                finishBoxSelectPolygon();
+            }
         });
 
         bus->subscribe(Events::FEATURE_UPDATED, this, [this](const QVariant& data) {
@@ -808,6 +874,9 @@ void CadView::hideSketchAxes()
 void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
     d->gripManager = mgr;
     d->gripFilter  = filter;
+    if (d->gripFilter) {
+        d->gripFilter->setBoxSelectActiveQuery([this]() { return isBoxSelectArmed(); });
+    }
 }
 
 bool CadView::hasActiveGrips() const {
@@ -815,29 +884,36 @@ bool CadView::hasActiveGrips() const {
 }
 
 bool CadView::turnOffActiveGrips() {
-    if (!d->gripManager || !d->gripManager->hasActiveGrips()) {
-        return false;
+    const bool hadGrips = d->gripManager && d->gripManager->hasActiveGrips();
+
+    if (hadGrips) {
+        // 若正在拖曳 grip（click-to-place 中），先取消該次移動
+        if (d->gripManager->isGripSelected()) {
+            d->gripManager->cancelGrip();
+        }
+        // 不論是否正在拖曳，一律直接關閉所有 grips
+        d->gripManager->detach();
+        if (d->gripFilter)
+            d->gripFilter->clearSketchPlane();
     }
 
-    // 若正在拖曳 grip（click-to-place 中），先取消該次移動
-    if (d->gripManager->isGripSelected()) {
-        d->gripManager->cancelGrip();
-    }
-
-    // 不論是否正在拖曳，一律直接關閉所有 grips
-    d->gripManager->detach();
-    if (d->gripFilter)
-        d->gripFilter->clearSketchPlane();
-
+    // ⚠️ 不論 grips 是否啟用，都要清除底層 AIS 選取狀態（例如窗選/穿越窗選
+    // 選中但尚未觸發 grip 附加的物件、或 alignment overlay 這類不會產生
+    // grip 的選取），確保 ESC 一律能可靠清除「所有」選取，而不是只清 grips。
+    const bool hadSelection = !d->context.IsNull() && d->context->NbSelected() > 0;
     if (!d->context.IsNull()) {
         d->context->ClearSelected(Standard_False);
         d->context->UpdateCurrentViewer();
     }
 
+    if (!hadGrips && !hadSelection) {
+        return false;
+    }
+
     auto* bus = core::Application::instance()->eventBus();
     bus->publish("selection.cleared", QVariant());
 
-    qDebug() << "[CadView] All grips turned off";
+    qDebug() << "[CadView] All grips/selection turned off";
     return true;
 }
 
@@ -900,9 +976,27 @@ void CadView::setConstraintPickActive(bool active)
     d->constraintPickActive = active;
 }
 
+bool CadView::isBoxSelectArmed() const
+{
+    return d->boxSelectArmed;
+}
+
+void CadView::cancelActiveBoxSelect()
+{
+    if (d->boxSelectArmed) {
+        cancelBoxSelectCandidate();
+        d->mousePressed = false;
+    }
+}
+
 void CadView::setMode(InteractionMode mode) {
     if (d->mode == mode) {
         return;
+    }
+
+    // 模式切換時，若窗選/穿越窗選正在進行中則取消，避免殘留選取框。
+    if (d->boxSelectArmed) {
+        cancelBoxSelectCandidate();
     }
 
     // GetGeom 模式：關閉 OSnap，讓 OCCT DetectedInteractive 決定選取幾何
@@ -1775,6 +1869,532 @@ void CadView::qtToOCCT(const QPoint& qtPos, Standard_Integer& occX, Standard_Int
     QtToOCCT(this, qtPos, occX, occY);
 }
 
+// ── 窗選 / 穿越窗選（Window / Crossing box selection）────────────────────────
+// 由左至右拖曳 = 窗選（Window，只選完全被框住的物件）
+// 由右至左拖曳 = 穿越窗選（Crossing，與框相交/接觸即選取）
+// 拖曳門檻（Qt 邏輯像素，manhattanLength）：小於此距離視為單純點擊，不啟動框選。
+// 注意：選取框視覺沿用既有 RubberBand.cpp 的 Prs3d_Presentation 技術
+// （非 AIS_InteractiveObject），因為 AIS_RubberBand::Compute() 在本專案的
+// OCCT/顯示環境下會造成 segmentation fault，故不採用。
+static constexpr int kBoxSelectDragThreshold = 4;
+
+void CadView::beginBoxSelectCandidate(const QPoint& screenPos, bool additive, bool sketchMode)
+{
+    d->boxSelectArmed               = true;
+    d->boxSelectActive              = false;
+    d->boxSelectWaitingSecondClick  = false;
+    d->boxSelectShape      = BoxSelectShape::Rectangle;
+    d->boxSelectPolyQt.clear();
+    d->boxSelectShapeKeyBuffer.clear();
+    d->boxSelectAdditive   = additive;
+    d->boxSelectSketchMode = sketchMode;
+    d->boxSelectStartQt    = screenPos;
+    qtToOCCT(screenPos, d->boxSelectStartX, d->boxSelectStartY);
+
+    // 快照目前選取狀態：框選預覽期間會暫時改變 context 的選取內容，
+    // 若使用者取消框選，或以疊加（Shift）方式完成框選時，需要以此還原/合併。
+    d->boxSelectSavedOwners.clear();
+    if (!d->context.IsNull()) {
+        for (d->context->InitSelected(); d->context->MoreSelected(); d->context->NextSelected()) {
+            Handle(SelectMgr_EntityOwner) owner = d->context->SelectedOwner();
+            if (!owner.IsNull()) d->boxSelectSavedOwners.push_back(owner);
+        }
+    }
+
+    // 命令列提示（比照 AutoCAD 窗選/穿越窗選慣例用語）。透過 CommandLineManager
+    // 顯示（而非直接發布 COMMAND_PROMPT），讓使用者可在命令列輸入
+    // F / WP / CP 切換為籬選 / 多邊形窗選 / 多邊形框選。
+    auto* clm = core::CommandLineManager::instance();
+    clm->showPrompt(tr("指定對角點或 [籬選(F)/多邊形窗選(WP)/多邊形框選(CP)]:"));
+    clm->waitForInput(core::InputType::Option);
+}
+
+cad::Plane* CadView::boxSelectReferencePlane() const
+{
+    cad::PlaneManager* mgr = cad::PlaneManager::instance();
+    switch (d->viewType) {
+    case ViewType::Front: case ViewType::Back: return mgr->xzPlane();
+    case ViewType::Right: case ViewType::Left: return mgr->yzPlane();
+    default:                                   return mgr->xyPlane();
+    }
+}
+
+void CadView::updateBoxSelectDrag(const QPoint& screenPos)
+{
+    if (!d->boxSelectArmed || d->context.IsNull() || d->view.IsNull()) return;
+
+    if (!d->boxSelectActive) {
+        const QPoint delta = screenPos - d->boxSelectStartQt;
+        if (delta.manhattanLength() < kBoxSelectDragThreshold)
+            return;   // 尚未超過拖曳門檻
+        d->boxSelectActive = true;
+    }
+
+    // 依拖曳方向即時切換窗選（藍/實線）與穿越窗選（綠/虛線）樣式
+    const bool isCrossing = (screenPos.x() < d->boxSelectStartQt.x());
+
+    const int minX = qMin(d->boxSelectStartQt.x(), screenPos.x());
+    const int maxX = qMax(d->boxSelectStartQt.x(), screenPos.x());
+    const int minY = qMin(d->boxSelectStartQt.y(), screenPos.y());
+    const int maxY = qMax(d->boxSelectStartQt.y(), screenPos.y());
+
+    // 取得與 screenToPlane() 相同的參考平面（依 viewType 決定），
+    // 將矩形四個角點各自 unproject 到該平面再轉回世界座標，
+    // 如此無論目前視角為何都能組出對應螢幕上矩形的世界座標多邊形。
+    cad::Plane* plane = boxSelectReferencePlane();
+    if (!plane) return;
+
+    const QPoint screenCorners[5] = {
+        QPoint(minX, minY), QPoint(maxX, minY),
+        QPoint(maxX, maxY), QPoint(minX, maxY),
+        QPoint(minX, minY)
+    };
+
+    Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(5);
+    for (int i = 0; i < 5; ++i) {
+        QVector2D planePt = screenToPlane(screenCorners[i]);
+        QVector3D worldPt = plane->toWorld(planePt.x(), planePt.y());
+        polyline->AddVertex(gp_Pnt(worldPt.x(), worldPt.y(), worldPt.z()));
+    }
+
+    if (!d->boxSelectPresentation.IsNull()) {
+        d->boxSelectPresentation->Clear();
+        d->boxSelectPresentation->Erase();
+    }
+    d->boxSelectPresentation = new Prs3d_Presentation(d->context->MainPrsMgr()->StructureManager());
+
+    Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+        isCrossing ? Quantity_Color(0.25, 0.75, 0.30, Quantity_TOC_RGB)   // 綠 = 穿越窗選
+                   : Quantity_Color(0.25, 0.55, 1.00, Quantity_TOC_RGB),  // 藍 = 窗選
+        isCrossing ? Aspect_TOL_DASH : Aspect_TOL_SOLID,
+        1.5);
+
+    Handle(Graphic3d_Group) group = d->boxSelectPresentation->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect->Aspect());
+    group->AddPrimitiveArray(polyline);
+
+    d->boxSelectPresentation->SetZLayer(Graphic3d_ZLayerId_Top);
+    d->boxSelectPresentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+    d->boxSelectPresentation->Display();
+
+    // ── 預覽高亮：即時反映目前矩形範圍（依窗選/穿越窗選規則）會選中哪些物件 ──
+    // 與正式完成選取（performRectangleSelection）共用同一套邏輯，確保 Shift
+    // （疊加）狀態在拖曳過程中的每一格畫面都與最終結果一致：已選取的物件
+    // 不會在預覽過程中被誤判為未選取而消失。
+    {
+        Standard_Integer sx0, sy0, sx1, sy1;
+        qtToOCCT(d->boxSelectStartQt, sx0, sy0);
+        qtToOCCT(screenPos, sx1, sy1);
+        applyBoxSelectionScheme(sx0, sy0, sx1, sy1, d->boxSelectAdditive);
+    }
+
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::finishBoxSelect(const QPoint& screenPos)
+{
+    if (!d->boxSelectArmed) return;
+
+    const bool wasActive = d->boxSelectActive;
+
+    if (!d->boxSelectPresentation.IsNull()) {
+        d->boxSelectPresentation->Clear();
+        d->boxSelectPresentation->Erase();
+        d->boxSelectPresentation.Nullify();
+    }
+
+    if (wasActive) {
+        // 疊加選取（Shift）的還原＋Add 邏輯已統一收斂到 performRectangleSelection
+        // 內部呼叫的 applyBoxSelectionScheme，這裡不需要重複處理。
+        Standard_Integer endX, endY;
+        qtToOCCT(screenPos, endX, endY);
+        performRectangleSelection(d->boxSelectStartX, d->boxSelectStartY,
+                                   endX, endY,
+                                   d->boxSelectAdditive, d->boxSelectSketchMode);
+    } else if (!d->boxSelectSketchMode) {
+        // 單純點擊空白處（非草圖模式，例如 H-Alignment edit）：
+        // 不清除既有選取，維持目前選取狀態；一律改由 ESC 清除所有選取。
+    }
+    // 草圖模式下單純點擊空白處：同樣維持既有規則，不清除選取（改由 ESC 處理）。
+
+    if (!d->context.IsNull()) d->context->UpdateCurrentViewer();
+
+    // 結束框選流程：清除命令列提示，並重設「等待輸入」狀態
+    // （resetInputWait 不會像 cancelCommand 一樣廣播 COMMAND_CANCELLED，
+    //  避免誤觸其他模組的副作用，例如強制切回 Idle 檢視模式）。
+    auto* clm = core::CommandLineManager::instance();
+    clm->clearPrompt();
+    clm->resetInputWait();
+
+    d->boxSelectArmed               = false;
+    d->boxSelectActive              = false;
+    d->boxSelectWaitingSecondClick  = false;
+    d->boxSelectShape               = BoxSelectShape::Rectangle;
+    d->boxSelectPolyQt.clear();
+    d->boxSelectShapeKeyBuffer.clear();
+}
+
+void CadView::cancelBoxSelectCandidate()
+{
+    if (!d->boxSelectPresentation.IsNull()) {
+        d->boxSelectPresentation->Clear();
+        d->boxSelectPresentation->Erase();
+        d->boxSelectPresentation.Nullify();
+    }
+    // 若預覽期間曾暫時改變 context 的選取內容，取消時還原成框選前的原始狀態。
+    if (d->boxSelectActive) {
+        restoreBoxSelectSavedSelection();
+    }
+    if (!d->context.IsNull()) d->context->UpdateCurrentViewer();
+
+    // 取消框選流程：清除命令列提示，並重設「等待輸入」狀態。
+    auto* clm = core::CommandLineManager::instance();
+    clm->clearPrompt();
+    clm->resetInputWait();
+
+    d->boxSelectArmed               = false;
+    d->boxSelectActive              = false;
+    d->boxSelectWaitingSecondClick  = false;
+    d->boxSelectShape               = BoxSelectShape::Rectangle;
+    d->boxSelectPolyQt.clear();
+    d->boxSelectShapeKeyBuffer.clear();
+}
+
+void CadView::restoreBoxSelectSavedSelection()
+{
+    if (d->context.IsNull()) return;
+
+    d->context->ClearSelected(Standard_False);
+    for (const Handle(SelectMgr_EntityOwner)& owner : d->boxSelectSavedOwners) {
+        if (!owner.IsNull()) d->context->AddOrRemoveSelected(owner, Standard_False);
+    }
+}
+
+void CadView::applyBoxSelectionScheme(Standard_Integer x0, Standard_Integer y0,
+                                       Standard_Integer x1, Standard_Integer y1,
+                                       bool additive)
+{
+    if (d->context.IsNull() || d->view.IsNull()) return;
+
+    if (additive) {
+        // 疊加選取（Shift）：每次套用前都先還原成框選開始前的原始選取狀態，
+        // 再以 Add scheme 疊加目前矩形命中的物件。這樣不論是預覽中的每一格
+        // 畫面、或是正式完成選取，原本已選取的物件都不會被誤判為未選取。
+        restoreBoxSelectSavedSelection();
+    }
+
+    const Standard_Integer minX = qMin(x0, x1), maxX = qMax(x0, x1);
+    const Standard_Integer minY = qMin(y0, y1), maxY = qMax(y0, y1);
+
+    // 窗選（Window，由左至右）：只選完全被框住的物件
+    // 穿越窗選（Crossing，由右至左）：只要與框相交/接觸即選取
+    const bool isCrossing = (x1 < x0);
+    Handle(SelectMgr_ViewerSelector) selector = d->context->MainSelector();
+    if (!selector.IsNull())
+        selector->AllowOverlapDetection(isCrossing);
+
+    d->context->SelectRectangle(Graphic3d_Vec2i(minX, minY),
+                                 Graphic3d_Vec2i(maxX, maxY),
+                                 d->view,
+                                 additive ? AIS_SelectionScheme_Add
+                                          : AIS_SelectionScheme_Replace);
+
+    if (!selector.IsNull())
+        selector->AllowOverlapDetection(Standard_False);   // 還原預設，避免影響後續單擊 pick
+
+    // 非疊加模式下，若這次矩形範圍沒有選中任何物件，不清除原本已有的選取
+    // ——維持「點/框選空白處不清除選取，一律以 ESC 清除」的規則。
+    if (!additive && d->context->NbSelected() == 0 && !d->boxSelectSavedOwners.isEmpty()) {
+        restoreBoxSelectSavedSelection();
+    }
+}
+
+void CadView::performRectangleSelection(Standard_Integer x0, Standard_Integer y0,
+                                         Standard_Integer x1, Standard_Integer y1,
+                                         bool additive, bool sketchMode)
+{
+    if (d->context.IsNull() || d->view.IsNull()) return;
+
+    applyBoxSelectionScheme(x0, y0, x1, y1, additive);
+    publishBoxSelectionResult(sketchMode);
+}
+
+void CadView::publishBoxSelectionResult(bool sketchMode)
+{
+    if (d->context.IsNull()) return;
+
+    // ── 收集選取結果，比照既有單擊選取邏輯發布事件 ──────────────────────────
+    QStringList uuids;
+    QMap<QString, QSet<int>> selectionMap;   // featureId → set of geomIndices
+    Handle(AIS_InteractiveObject) overlayHit;  // alignment overlay（不在 aisToFeatureId 內）
+
+    for (d->context->InitSelected(); d->context->MoreSelected(); d->context->NextSelected()) {
+        Handle(AIS_InteractiveObject) obj = d->context->SelectedInteractive();
+        if (obj.IsNull()) continue;
+
+        QString uuid = d->aisToGeomUuid.value(obj.get());
+        if (!uuid.isEmpty()) uuids << uuid;
+
+        QString featureId = d->aisToFeatureId.value(obj.get());
+        if (featureId.isEmpty()) {
+            if (overlayHit.IsNull()) overlayHit = obj;
+            continue;
+        }
+
+        int geomIndex = d->aisToGeomIndex.value(obj.get(), -1);
+        if (geomIndex >= 0)
+            selectionMap[featureId].insert(geomIndex);
+        else
+            selectionMap[featureId];
+    }
+
+    auto* bus = core::Application::instance()->eventBus();
+    if (!bus) return;
+
+    if (!uuids.isEmpty()) {
+        QVariantMap data;
+        data["uuids"] = QVariant::fromValue(uuids);
+        bus->publish(Events::SKETCH_GEOM_SELECTED, data);
+    }
+
+    if (!selectionMap.isEmpty()) {
+        for (auto it = selectionMap.constBegin(); it != selectionMap.constEnd(); ++it) {
+            QVariantList indexList;
+            for (int idx : it.value()) indexList.append(idx);
+            QVariantMap selData;
+            selData["featureId"]   = it.key();
+            selData["geomIndices"] = indexList;
+            bus->publish("selection.featureSelected", selData);
+        }
+    } else if (!overlayHit.IsNull()) {
+        QVariantMap selData;
+        selData["aisObject"] = QVariant::fromValue((void*)overlayHit.get());
+        bus->publish("geometry.selected", selData);
+    } else if (!sketchMode) {
+        // 非草圖模式（例如 H-Alignment edit）：若框選前就已有選取，
+        // applyBoxSelectionScheme() 已經在矩形沒選中任何物件時還原回原本的選取，
+        // 這裡只會在「框選前本來就沒有任何選取」時才會真的發布 cleared
+        // （此時發布也無實質影響，因為本來就沒有東西可清）。
+        bus->publish("selection.cleared", QVariant());
+    }
+    // 草圖模式下框選未選中任何物件：維持既有規則，不清除選取（改由 ESC 處理）。
+}
+
+// ── 籬選(Fence) / 多邊形窗選(WPolygon) / 多邊形框選(CPolygon) ────────────────
+//
+// 在矩形窗選提示「指定對角點或 [籬選(F)/多邊形窗選(WP)/多邊形框選(CP)]:」階段，
+// 透過命令列輸入 F/WP/CP（見建構子中對 Events::OPTION_SELECTED 的訂閱）觸發，
+// 切換為多點式選取：第一點沿用矩形窗選的起點，之後每次左鍵點一下新增一個頂點，
+// Enter 或 Space 完成，ESC 取消（沿用既有的 cancelBoxSelectCandidate）。
+//
+// 窗選 / 穿越窗選的判定規則沿用：多邊形窗選＝完全包含（AllowOverlapDetection=false）、
+// 多邊形框選＝相交即選（AllowOverlapDetection=true）。籬選（Fence）在 OCCT 沒有對應
+// 的「開放路徑crossing」原生 API，這裡以 SelectPolygon + AllowOverlapDetection(true)
+// 近似實作：多邊形會自動以最後一點連回第一點封閉，因此若某物件恰好只被這條「隱形
+// 封閉邊」穿越、而未真正穿越使用者畫出的籬選路徑本身，仍可能被選中；對一般用途
+// （籬選路徑不與自身首尾重疊）而言此近似已相當接近正確結果。
+
+void CadView::beginBoxSelectShapeMode(BoxSelectShape shape)
+{
+    if (!d->boxSelectArmed || shape == BoxSelectShape::Rectangle) return;
+    // 呼叫端（OPTION_SELECTED 訂閱／鍵盤攔截）已經以
+    // d->boxSelectShape == Rectangle 判斷「尚未切換過」，這裡不需要也不應該
+    // 再檢查 d->boxSelectActive —— 該旗標在使用者快速點一下放開後就已經是
+    // true（代表「等待第二次點擊」），而這正是接受 F/WP/CP 切換的正常時機，
+    // 用它當守衛反而會擋掉合法的切換。
+
+    d->boxSelectShape = shape;
+    d->boxSelectPolyQt.clear();
+    d->boxSelectShapeKeyBuffer.clear();
+    d->boxSelectPolyQt.push_back(d->boxSelectStartQt);   // 第一點沿用矩形窗選的起點
+    d->boxSelectWaitingSecondClick = false;   // 矩形模式的「等待第二次點擊」已不適用
+    d->boxSelectActive = true;   // 借用既有旗標讓 mouseMoveEvent/ESC 等邏輯知道框選「進行中」
+
+    const QString label = shape == BoxSelectShape::Fence     ? tr("籬選")
+                         : shape == BoxSelectShape::WPolygon  ? tr("多邊形窗選")
+                                                                : tr("多邊形框選");
+    auto* clm = core::CommandLineManager::instance();
+    clm->showPrompt(tr("指定%1下一點（點擊左鍵新增頂點，Enter 或 Space 完成）:").arg(label));
+    clm->waitForInput(core::InputType::Option);
+
+    // 切換模式當下立即以目前滑鼠位置刷新一次預覽線＋高亮，不等待下一次
+    // mouseMoveEvent 才顯示——確保按下 F/WP/CP 的當下（不必先移動滑鼠）
+    // 就能立刻看到預覽效果。
+    updateBoxSelectPolyPreview(mapFromGlobal(QCursor::pos()));
+}
+
+void CadView::addBoxSelectPolyVertex(const QPoint& screenPos)
+{
+    if (!d->boxSelectArmed || d->boxSelectShape == BoxSelectShape::Rectangle) return;
+    if (d->boxSelectPolyQt.isEmpty()) return;
+
+    // 忽略與最後一個已確認頂點幾乎重合的點擊，避免產生零長度線段
+    const QPoint delta = screenPos - d->boxSelectPolyQt.last();
+    if (delta.manhattanLength() < kBoxSelectDragThreshold) return;
+
+    d->boxSelectPolyQt.push_back(screenPos);
+    updateBoxSelectPolyPreview(screenPos);
+}
+
+void CadView::updateBoxSelectPolyPreview(const QPoint& screenPos)
+{
+    if (!d->boxSelectArmed || d->boxSelectShape == BoxSelectShape::Rectangle) return;
+    if (d->context.IsNull() || d->view.IsNull() || d->boxSelectPolyQt.isEmpty()) return;
+
+    cad::Plane* plane = boxSelectReferencePlane();
+    if (!plane) return;
+
+    // 已確定的頂點 + 目前滑鼠位置（尚未確認的橡皮筋段）
+    // realPts：實際頂點，供 SelectPolygon 判斷選取範圍使用（SelectPolygon 本身
+    //          就會自動以最後一點連回第一點封閉，不需要額外重複起點）。
+    // drawPts：純粹供畫面繪製使用；多邊形窗選/多邊形框選額外加上封閉邊，
+    //          讓畫面上看起來是完整封閉的多邊形（籬選維持開放路徑）。
+    QVector<QPoint> realPts = d->boxSelectPolyQt;
+    realPts.push_back(screenPos);
+
+    QVector<QPoint> drawPts = realPts;
+    if (d->boxSelectShape != BoxSelectShape::Fence) {
+        drawPts.push_back(d->boxSelectPolyQt.first());
+    }
+
+    const bool isCrossingStyle = (d->boxSelectShape != BoxSelectShape::WPolygon);
+
+    Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(drawPts.size());
+    for (const QPoint& p : drawPts) {
+        QVector2D planePt = screenToPlane(p);
+        QVector3D worldPt = plane->toWorld(planePt.x(), planePt.y());
+        polyline->AddVertex(gp_Pnt(worldPt.x(), worldPt.y(), worldPt.z()));
+    }
+
+    if (!d->boxSelectPresentation.IsNull()) {
+        d->boxSelectPresentation->Clear();
+        d->boxSelectPresentation->Erase();
+    }
+    d->boxSelectPresentation = new Prs3d_Presentation(d->context->MainPrsMgr()->StructureManager());
+
+    Handle(Prs3d_LineAspect) aspect = new Prs3d_LineAspect(
+        isCrossingStyle ? Quantity_Color(0.25, 0.75, 0.30, Quantity_TOC_RGB)   // 綠 = 穿越類（籬選/多邊形框選）
+                        : Quantity_Color(0.25, 0.55, 1.00, Quantity_TOC_RGB),  // 藍 = 窗選（多邊形窗選）
+        isCrossingStyle ? Aspect_TOL_DASH : Aspect_TOL_SOLID,
+        1.5);
+
+    Handle(Graphic3d_Group) group = d->boxSelectPresentation->NewGroup();
+    group->SetGroupPrimitivesAspect(aspect->Aspect());
+    group->AddPrimitiveArray(polyline);
+
+    d->boxSelectPresentation->SetZLayer(Graphic3d_ZLayerId_Top);
+    d->boxSelectPresentation->SetDisplayPriority(Graphic3d_DisplayPriority_Topmost);
+    d->boxSelectPresentation->Display();
+
+    // ── 預覽高亮：頂點數足夠時即時反映目前範圍會選中哪些物件 ──────────────
+    // 多邊形（WPolygon/CPolygon）至少需要 3 點才有面積；籬選至少需要 2 點
+    // （即已有一段路徑）就能進行相交測試。
+    const int minPtsForPreview = (d->boxSelectShape == BoxSelectShape::Fence) ? 2 : 3;
+    if (realPts.size() >= minPtsForPreview) {
+        applyPolygonSelectionScheme(realPts, isCrossingStyle, d->boxSelectAdditive);
+    }
+
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::applyPolygonSelectionScheme(const QVector<QPoint>& ptsQt, bool crossing, bool additive)
+{
+    if (d->context.IsNull() || d->view.IsNull() || ptsQt.size() < 2) return;
+
+    if (additive) {
+        // 疊加選取（Shift）：每次套用前都先還原成框選開始前的原始選取狀態，
+        // 邏輯與 applyBoxSelectionScheme 的矩形版本一致。
+        restoreBoxSelectSavedSelection();
+    }
+
+    // OCCT 的 SelectPolygon 需要至少 3 個頂點，且該多邊形不能是零面積的退化
+    // 形狀。籬選路徑只有 2 點（單一線段）時，若直接重複最後一點補成 3 點，
+    // 形成的是「面積剛好為零」的退化三角形，很可能被 OCCT 內部判斷為無效
+    // 多邊形而整個忽略、完全不會選到任何東西（這正是先前「籬選要點到第 3
+    // 點才有效果」的根本原因——2 點時的補點方式其實從未真正生效，只是恰好
+    // 使用者之後點了真正的第 3 點才開始work）。
+    // 修正做法：往垂直方向偏移極小距離（2 個螢幕像素）取代直接重複同一點，
+    // 讓多邊形有一個非零但可忽略不計的面積，使 OCCT 能將其視為有效多邊形，
+    // 同時因為偏移量極小，實際判斷效果幾乎等同純粹的線段相交測試。
+    QVector<QPoint> effectivePts = ptsQt;
+    if (effectivePts.size() == 2) {
+        const QPoint a = effectivePts[0];
+        const QPoint b = effectivePts[1];
+        const QPoint dir = b - a;
+        const double len = std::sqrt(double(dir.x()) * dir.x() + double(dir.y()) * dir.y());
+        if (len > 0.5) {
+            // 垂直於 a→b 的單位向量，偏移 2 像素
+            const double ux = -dir.y() / len;
+            const double uy =  dir.x() / len;
+            const QPoint c(qRound((a.x() + b.x()) / 2.0 + ux * 2.0),
+                           qRound((a.y() + b.y()) / 2.0 + uy * 2.0));
+            effectivePts.push_back(c);
+        } else {
+            // a、b 幾乎重合（理論上不會發生，addBoxSelectPolyVertex 已濾除
+            // 過近的點），保底仍重複最後一點避免陣列大小不符預期。
+            effectivePts.push_back(b);
+        }
+    }
+
+    TColgp_Array1OfPnt2d polygon(1, effectivePts.size());
+    for (int i = 0; i < effectivePts.size(); ++i) {
+        Standard_Integer px, py;
+        qtToOCCT(effectivePts[i], px, py);
+        polygon.SetValue(i + 1, gp_Pnt2d(px, py));
+    }
+
+    Handle(SelectMgr_ViewerSelector) selector = d->context->MainSelector();
+    if (!selector.IsNull()) selector->AllowOverlapDetection(crossing);
+
+    d->context->SelectPolygon(polygon, d->view,
+                               additive ? AIS_SelectionScheme_Add
+                                        : AIS_SelectionScheme_Replace);
+
+    if (!selector.IsNull()) selector->AllowOverlapDetection(Standard_False);
+
+    // 非疊加模式下，若目前範圍沒有選中任何物件，不清除原本已有的選取
+    // ——與矩形窗選的規則一致，維持「選不到不清除，一律以 ESC 清除」。
+    if (!additive && d->context->NbSelected() == 0 && !d->boxSelectSavedOwners.isEmpty()) {
+        restoreBoxSelectSavedSelection();
+    }
+}
+
+void CadView::finishBoxSelectPolygon()
+{
+    if (!d->boxSelectArmed || d->boxSelectShape == BoxSelectShape::Rectangle) return;
+
+    const int minPts = (d->boxSelectShape == BoxSelectShape::Fence) ? 2 : 3;
+    if (d->boxSelectPolyQt.size() < minPts) {
+        // 點數不足以構成有效的籬選路徑／多邊形，比照 AutoCAD：直接取消整個框選。
+        cancelBoxSelectCandidate();
+        return;
+    }
+
+    if (!d->boxSelectPresentation.IsNull()) {
+        d->boxSelectPresentation->Clear();
+        d->boxSelectPresentation->Erase();
+        d->boxSelectPresentation.Nullify();
+    }
+
+    const bool isCrossingStyle = (d->boxSelectShape != BoxSelectShape::WPolygon);
+    if (!d->context.IsNull()) {
+        applyPolygonSelectionScheme(d->boxSelectPolyQt, isCrossingStyle, d->boxSelectAdditive);
+        publishBoxSelectionResult(d->boxSelectSketchMode);
+        d->context->UpdateCurrentViewer();
+    }
+
+    auto* clm = core::CommandLineManager::instance();
+    clm->clearPrompt();
+    clm->resetInputWait();
+
+    d->boxSelectArmed               = false;
+    d->boxSelectActive              = false;
+    d->boxSelectWaitingSecondClick  = false;
+    d->boxSelectShape               = BoxSelectShape::Rectangle;
+    d->boxSelectPolyQt.clear();
+    d->boxSelectShapeKeyBuffer.clear();
+}
+
 void CadView::paintEvent(QPaintEvent* event) {
     Q_UNUSED(event);
 
@@ -1812,6 +2432,23 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     d->lastMousePos = event->pos();
     d->mousePressed = true;
     d->pressedButton = event->button();
+
+    // ── 籬選 / 多邊形窗選 / 多邊形框選：每次左鍵點擊新增一個頂點 ──────────────
+    if (event->button() == Qt::LeftButton && d->boxSelectArmed &&
+        d->boxSelectShape != BoxSelectShape::Rectangle) {
+        addBoxSelectPolyVertex(event->pos());
+        event->accept();
+        return;
+    }
+
+    // ── 窗選 / 穿越窗選：第二次點擊完成選取 ──────────────────────────────
+    // 不論這次點擊點到什麼（空白處或幾何物件），只要正在等待第二次點擊，
+    // 一律以起點～目前位置的矩形範圍完成窗選/穿越窗選（比照 AutoCAD 慣例）。
+    if (event->button() == Qt::LeftButton && d->boxSelectWaitingSecondClick) {
+        finishBoxSelect(event->pos());
+        event->accept();
+        return;
+    }
 
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
@@ -1950,7 +2587,10 @@ void CadView::mousePressEvent(QMouseEvent* event) {
             // ② 點到幾何   → 累加選取（不需按 Shift）
             // Shift 鍵 = XOR（可反選已選物件）
             if (!d->context->HasDetected()) {
-                // ✅ 點擊空白處不再清除選取，維持目前選取/grips 狀態
+                // ✅ 點擊空白處：先記錄起點，若接下來形成拖曳則啟動窗選/
+                //    穿越窗選；若只是單純點擊則維持原行為（不清除選取）。
+                bool shiftHeld = (event->modifiers() & Qt::ShiftModifier);
+                beginBoxSelectCandidate(event->pos(), shiftHeld, /*sketchMode=*/true);
                 return;
             }
 
@@ -2086,6 +2726,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         // ✅ Shift = add to selection, otherwise replace
         bool additive = (event->modifiers() & Qt::ShiftModifier);
 
+        // ✅ 點擊空白處：可能是窗選/穿越窗選的起點，先記錄；
+        //    若後續形成拖曳則啟動框選，否則於放開時比照原行為處理
+        //    （非草圖模式，例如 H-Alignment edit：未選中任何物件則清除選取）。
+        if (!d->context->HasDetected()) {
+            beginBoxSelectCandidate(event->pos(), additive, /*sketchMode=*/false);
+            return;
+        }
+
         // ② Tell OCCT to perform selection at this pixel
         d->context->SelectDetected(
             additive ? AIS_SelectionScheme_Add
@@ -2164,6 +2812,23 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
+
+    // ── 籬選 / 多邊形窗選 / 多邊形框選：更新橡皮筋預覽線＋即時高亮 ──────────
+    if (d->boxSelectArmed && d->boxSelectShape != BoxSelectShape::Rectangle) {
+        updateBoxSelectPolyPreview(event->pos());
+        event->accept();
+        return;
+    }
+
+    // ── 窗選 / 穿越窗選：更新選取框（拖曳中，或已放開等待第二次點擊皆適用）───
+    if (d->boxSelectArmed) {
+        updateBoxSelectDrag(event->pos());
+        if (d->boxSelectActive) {
+            event->accept();
+            return;   // 框選進行中，不處理 hover / rubberband 等其他滑鼠移動邏輯
+        }
+    }
+
     bool gripActive = d->gripManager && d->gripManager->isGripSelected();
     if (!gripActive) {
         d->context->MoveTo(xp, yp, d->view, Standard_True);
@@ -2383,6 +3048,31 @@ void CadView::startViewCubeAnimation()
 }
 
 void CadView::mouseReleaseEvent(QMouseEvent* event) {
+    // ── 籬選 / 多邊形窗選 / 多邊形框選：頂點已在 mousePressEvent 新增，
+    //    放開滑鼠不做任何事。──────────────────────────────────────────────
+    if (event->button() == Qt::LeftButton && d->boxSelectArmed &&
+        d->boxSelectShape != BoxSelectShape::Rectangle) {
+        d->mousePressed = false;
+        event->accept();
+        return;
+    }
+
+    // ── 窗選 / 穿越窗選：放開滑鼠時的行為 ────────────────────────────────────
+    if (event->button() == Qt::LeftButton && d->boxSelectArmed) {
+        if (d->boxSelectActive) {
+            // 按住拖曳超過門檻後放開：立即完成窗選/穿越窗選（傳統拖曳方式）。
+            finishBoxSelect(event->pos());
+        } else {
+            // 快速點一下就放開（尚未形成拖曳）：轉為「等待第二次點擊」模式，
+            // 選取框改為跟隨滑鼠自由移動，直到使用者再點一下為止。
+            d->boxSelectActive             = true;
+            d->boxSelectWaitingSecondClick = true;
+        }
+        d->mousePressed = false;
+        event->accept();
+        return;
+    }
+
     // ── 尺寸線拖曳結束 ────────────────────────────────────────────────────────
     if (event->button() == Qt::LeftButton &&
         d->mode == InteractionMode::DimLineDrag &&
@@ -2475,6 +3165,39 @@ void CadView::wheelEvent(QWheelEvent* event) {
 }
 
 void CadView::keyPressEvent(QKeyEvent* event) {
+    // ── 窗選提示階段：直接攔截鍵盤輸入 F / WP / CP（備援路徑）──────────────
+    // 主要路徑其實是 CommandLineWidget 對 qApp 安裝的全域事件過濾器，會把
+    // 所有非修飾鍵的按鍵導向命令列輸入框（見 CommandLineWidget::eventFilter），
+    // 所以正常情況下這裡通常收不到這些按鍵事件。保留這段作為備援，
+    // 以防命令列隱藏或事件過濾器未生效等情況。
+    if (d->boxSelectArmed && d->boxSelectShape == BoxSelectShape::Rectangle) {
+        const QString text = event->text().toUpper();
+        if (!text.isEmpty() && text.at(0).isLetter()) {
+            d->boxSelectShapeKeyBuffer += text.at(0);
+            if (d->boxSelectShapeKeyBuffer.size() > 2) {
+                d->boxSelectShapeKeyBuffer = d->boxSelectShapeKeyBuffer.right(2);
+            }
+
+            if (d->boxSelectShapeKeyBuffer.endsWith("WP")) {
+                beginBoxSelectShapeMode(BoxSelectShape::WPolygon);
+                event->accept();
+                return;
+            }
+            if (d->boxSelectShapeKeyBuffer.endsWith("CP")) {
+                beginBoxSelectShapeMode(BoxSelectShape::CPolygon);
+                event->accept();
+                return;
+            }
+            if (text == "F") {
+                beginBoxSelectShapeMode(BoxSelectShape::Fence);
+                event->accept();
+                return;
+            }
+            // 其餘字母（例如打到一半的 W/C）：先累積在緩衝區，事件本身不消費，
+            // 讓其餘既有按鍵邏輯（如快捷鍵）仍可正常運作。
+        }
+    }
+
     // 在 keyPressEvent 的 ESC 判斷之前加入：
     if (event->key() == Qt::Key_F3) {
         if (m_snapManager) {
@@ -2494,6 +3217,13 @@ void CadView::keyPressEvent(QKeyEvent* event) {
     }
 
     if (event->key() == Qt::Key_Escape) {
+        // 窗選 / 穿越窗選進行中：取消框選，不做其他事
+        if (d->boxSelectArmed) {
+            cancelBoxSelectCandidate();
+            d->mousePressed = false;
+            event->accept();
+            return;
+        }
         if (m_selectionFilter == "plane") {
             qDebug() << "[CadView] Plane selection cancelled";
 
@@ -2529,6 +3259,11 @@ void CadView::keyPressEvent(QKeyEvent* event) {
     }
 
     if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (d->boxSelectArmed && d->boxSelectShape != BoxSelectShape::Rectangle) {
+            finishBoxSelectPolygon();
+            event->accept();
+            return;
+        }
         if (d->mode == InteractionMode::Sketching) {
             // TODO: 完成當前繪圖
         }
@@ -2536,6 +3271,11 @@ void CadView::keyPressEvent(QKeyEvent* event) {
     }
 
     if (event->key() == Qt::Key_Space) {
+        if (d->boxSelectArmed && d->boxSelectShape != BoxSelectShape::Rectangle) {
+            finishBoxSelectPolygon();
+            event->accept();
+            return;
+        }
         if (d->mode == InteractionMode::Sketching) {
             qDebug() << "[CadView] Spacebar pressed - finishing command";
             EventBus* bus = Application::instance()->eventBus();

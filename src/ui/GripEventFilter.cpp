@@ -115,6 +115,9 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
     switch (event->type()) {
 
     case QEvent::MouseMove: {
+        // 窗選/穿越窗選進行中：放行給 CadView 處理選取框，不做 grip 命中檢測。
+        if (m_boxSelectActiveQuery && m_boxSelectActiveQuery()) return false;
+
         auto* e = static_cast<QMouseEvent*>(event);
         int px, py;
         toPhys(e->pos(), px, py);
@@ -139,6 +142,9 @@ bool GripEventFilter::eventFilter(QObject* obj, QEvent* event)
     case QEvent::MouseButtonPress: {
         auto* e = static_cast<QMouseEvent*>(event);
         if (e->button() != Qt::LeftButton) break;
+        // 窗選/穿越窗選進行中：這次點擊是完成選取的第二次點擊，
+        // 放行給 CadView 處理，不要被 grip 命中檢測攔截。
+        if (m_boxSelectActiveQuery && m_boxSelectActiveQuery()) break;
         int px, py;
         toPhys(e->pos(), px, py);
         gp_Pnt wp = screenToWorld(px, py);

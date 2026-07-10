@@ -11,6 +11,7 @@
 #include "cad/Document.h"
 #include "railway/RailwayAlignment.h"
 #include "railway/AldFileIO.h"
+#include "core/geometry/ProjectOrigin.h"
 
 #include <QFileDialog>
 #include <QSettings>
@@ -162,7 +163,7 @@ CommandResult ImportAlignmentCommand::execute(const CommandContext& /*context*/)
         }
 
         QString hErr;
-        const QVector<railway::AlignmentPoint> hPts =
+        QVector<railway::AlignmentPoint> hPts =
             AldFileIO::readHorizontalALD(hPath, &hErr);
         if (hPts.size() < 2) {
             ++skippedTooFewPts;
@@ -171,6 +172,25 @@ CommandResult ImportAlignmentCommand::execute(const CommandContext& /*context*/)
                     .arg(entry.hFileName)
                     .arg(hErr.isEmpty() ? QString() : QStringLiteral(" — %1").arg(hErr)));
             continue;
+        }
+
+        // ── TM2 → Local ──────────────────────────────────────────────────
+        // ALD 檔內的 easting/northing 是原始 TM2 絕對座標；但整個應用程式的
+        // 架構原則是「OCCT/CAD 內部只使用 Local 座標，TM2 大數值只在輸入框／
+        // 顯示文字／檔案 I/O 三個邊界出現」（見 ProjectOrigin.h）。匯入流程本身
+        // 就是這三個邊界之一，因此在存入 TrackCenterLine 之前先扣掉 TM2
+        // origin（若專案尚未設定，套用預設值）換算成 Local，避免大量級 TM2
+        // 數字被下游（3D 算圖、AlignmentDataTableDialog 等）誤當成 Local
+        // 座標直接使用，造成 fitAll()/座標顯示異常。
+        {
+            using aicad::core::geometry::ProjectOrigin;
+            ProjectOrigin::ensureDefault();
+            auto& origin = ProjectOrigin::instance();
+            for (railway::AlignmentPoint& pt : hPts) {
+                const QPointF local = origin.toLocal(pt.easting, pt.northing);
+                pt.easting  = local.x();
+                pt.northing = local.y();
+            }
         }
 
         const QString trackName = entry.trackId.isEmpty() ? entry.hFileName : entry.trackId;

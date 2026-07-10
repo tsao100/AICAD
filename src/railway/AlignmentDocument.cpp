@@ -645,6 +645,19 @@ void HorizontalAlignmentEdit::solve()
     //  same QVector we own.
     AlignmentSolver solver;
     m_result = solver.solve(m_elems);
+
+    // ── 套用起始里程偏移（純顯示/輸出用途，不影響幾何）──────────────────────
+    if (m_result && !m_result->isEmpty() &&
+        (m_startChainage != 0.0 || m_startContChainage != 0.0)) {
+        QVector<AlignmentPoint> pts = m_result->rawPoints();
+        const double contOffset = m_startContChainage - m_startChainage;
+        for (AlignmentPoint& p : pts) {
+            p.chainage    += m_startChainage;
+            p.contChainage = p.chainage + contOffset;
+        }
+        m_result->load(pts);
+    }
+
     emit changed();
 }
 
@@ -689,6 +702,8 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
         arr.append(elem);
     }
     obj["elements"] = arr;
+    obj["startChainage"]     = m_startChainage;
+    obj["startContChainage"] = m_startContChainage;
     return obj;
 }
 
@@ -717,6 +732,8 @@ bool HorizontalAlignmentEdit::fromJson(const QJsonObject& obj)
         elem.tangentIdxAfter  = e["tangentIdxAfter"].toInt(-1);
         m_elems.append(elem);
     }
+    m_startChainage     = obj["startChainage"].toDouble(0.0);
+    m_startContChainage = obj["startContChainage"].toDouble(0.0);
     return true;
 }
 

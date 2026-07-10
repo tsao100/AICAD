@@ -33,10 +33,13 @@
 #include <QLocale>
 #include <QBrush>
 #include <QColor>
+#include <QPen>
 #include <QFont>
 #include <QMenu>
 #include <QAction>
 #include <QtMath>
+#include <QPainter>
+#include <QStyledItemDelegate>
 #include <cmath>
 
 using namespace aicad::railway;
@@ -126,6 +129,162 @@ QTableWidgetItem* editItem(double v, int decimals = 5)
     return item;
 }
 
+/// 可編輯文字儲存格（淡黃底），供 Text1/Text2/CircularCurveNo 使用
+QTableWidgetItem* editTextItem(const QString& text)
+{
+    auto* item = new QTableWidgetItem(text);
+    item->setBackground(QBrush(QColor(255, 255, 210)));
+    return item;
+}
+
+/// 「不適用」儲存格（末列的點位間欄位；無背景色、唯讀、空白）
+QTableWidgetItem* naItem()
+{
+    auto* item = new QTableWidgetItem(QString());
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    item->setBackground(QBrush(QColor(250, 250, 250)));
+    return item;
+}
+
+// ── 平面線形資料表欄位配置（共 16 欄）───────────────────────────────────────
+enum HCol {
+    kColTsc = 0,
+    kColEasting,
+    kColNorthing,
+    kColChainage,
+    kColContChainage,
+    kColAzimuth,
+    kColLength,             ///< 以下欄位為「本點 → 下一點」之間的線元資訊
+    kColRadiusCurveType,
+    kColCircularCurveNo,
+    kColCant,
+    kColGaugeWidenning,
+    kColSpeedLimit,
+    kColText1,
+    kColText2,
+    kColReal1,
+    kColReal2,
+    kHColCount
+};
+
+/// 第一個「點位間」欄位（length）；此欄以後的資料表現整體下移半列高，
+/// 表示其歸屬於本點與下一點之間，而非單一點位本身。
+constexpr int kFirstBetweenCol = kColLength;
+
+/**
+ * @brief 支援「點位間」欄位下移半格繪製的水平線形表格。
+ *
+ * Qt 的標準逐格繪製流程（QAbstractItemView）會將每個 delegate 的繪製動作
+ * 裁切（clip）在該格「原始（未位移）」的矩形範圍內，即使 delegate 本身把
+ * QStyleOptionViewItem::rect 位移半列高，超出原格範圍的下半部仍會被外層
+ * 裁切掉——這正是「文字只顯示上半部」的成因。
+ *
+ * 因此「點位間」欄位（kColLength..kColReal2）改為：
+ *   1. BetweenPointDelegate 完全不繪製內容（僅保留可編輯性／選取狀態邏輯），
+ *      避免在錯誤（未位移）位置留下殘影。
+ *   2. 本類別的 paintEvent() 在基底繪製完成後，直接以 viewport() 的
+ *      QPainter 手動畫出這些欄位的背景與文字，並整體下移半列高——因為是
+ *      在 paintEvent 中直接畫、不經過 QAbstractItemView 的逐格裁切機制，
+ *      文字可以完整跨越列邊界顯示，不會被裁掉下半部。
+ *   3. 格線同樣手動繪製：一般欄位（點位屬性）對齊正常列邊界；點位間欄位
+ *      對齊下移半列高的位置，恰好銜接相鄰列，形成「錯位半格」的視覺效果；
+ *      最後一列無下一點，故不繪製、也不延伸至該列。
+ */
+class HAlignTableWidget : public QTableWidget
+{
+public:
+    explicit HAlignTableWidget(QWidget* parent = nullptr) : QTableWidget(parent) {}
+
+protected:
+    void paintEvent(QPaintEvent* event) override
+    {
+        QTableWidget::paintEvent(event);
+
+        const int rows = rowCount();
+        const int cols = columnCount();
+        if (rows == 0 || cols == 0)
+            return;
+
+        QPainter painter(viewport());
+
+        // ── 手動繪製「點位間」欄位的背景 + 文字（下移半列高）───────────────
+        // 直接在此處繪製，不透過 delegate/裁切機制，文字才能完整顯示。
+        for (int row = 0; row < rows; ++row) {
+            for (int c = kFirstBetweenCol; c < cols; ++c) {
+                QTableWidgetItem* it = item(row, c);
+                if (!it) continue;
+
+                QRect r = visualItemRect(it);
+                r.translate(0, r.height() / 2);
+
+                painter.fillRect(r, it->background());
+                if (!it->text().isEmpty()) {
+                    painter.setPen(Qt::black);
+                    painter.setFont(it->font());
+                    painter.drawText(r.adjusted(4, 0, -4, 0),
+                                      Qt::AlignLeft | Qt::AlignVCenter, it->text());
+                }
+            }
+        }
+
+        // ── 格線 ─────────────────────────────────────────────────────────
+        painter.setPen(QPen(QColor(215, 215, 215)));
+
+        const int leftX      = columnViewportPosition(0);
+        const int betweenX   = columnViewportPosition(qMin(kFirstBetweenCol, cols - 1));
+        const int rightX     = columnViewportPosition(cols - 1) + columnWidth(cols - 1);
+
+        // ── 垂直欄分隔線（貫穿全表高度）──────────────────────────────────
+        int x = leftX;
+        for (int c = 0; c < cols; ++c) {
+            painter.drawLine(x, rowViewportPosition(0), x, rowViewportPosition(rows - 1) + rowHeight(rows - 1));
+            x += columnWidth(c);
+        }
+        painter.drawLine(x, rowViewportPosition(0), x, rowViewportPosition(rows - 1) + rowHeight(rows - 1));
+
+        // ── 一般欄位（點位本身屬性）：正常列邊界 ─────────────────────────
+        for (int row = 0; row <= rows; ++row) {
+            const int y = (row < rows) ? rowViewportPosition(row)
+                                        : rowViewportPosition(rows - 1) + rowHeight(rows - 1);
+            painter.drawLine(leftX, y, betweenX, y);
+        }
+
+        // ── 點位間欄位：下移半列高的格線（首尾各少畫半格，最後一列不延伸）──
+        for (int row = 0; row < rows; ++row) {
+            const int y = rowViewportPosition(row) + rowHeight(row) / 2;
+            painter.drawLine(betweenX, y, rightX, y);
+        }
+    }
+};
+
+/**
+ * @brief 「點位間」欄位的委派：不繪製任何內容（實際顯示由
+ *        HAlignTableWidget::paintEvent() 手動處理，見上方類別註解），
+ *        但雙擊編輯時把編輯器位置一併下移半列高，與視覺顯示對齊。
+ */
+class BetweenPointDelegate : public QStyledItemDelegate
+{
+public:
+    explicit BetweenPointDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
+
+    void paint(QPainter* /*painter*/, const QStyleOptionViewItem& /*option*/,
+               const QModelIndex& /*index*/) const override
+    {
+        // 刻意不繪製任何東西：Qt 會將本函式的繪製結果裁切在「原始（未位移）」
+        // 格子範圍內，若在此處畫下移後的內容，超出原格範圍的部分會被裁掉。
+        // 實際可見內容改由 HAlignTableWidget::paintEvent() 直接在
+        // viewport() 上繪製，不受此裁切限制。
+    }
+
+    void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
+                               const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem opt(option);
+        opt.rect.translate(0, opt.rect.height() / 2);
+        QStyledItemDelegate::updateEditorGeometry(editor, opt, index);
+    }
+};
+
 } // namespace
 
 // ============================================================================
@@ -141,7 +300,8 @@ AlignmentDataTableDialog::AlignmentDataTableDialog(AlignmentDocument* doc,
 {
     setWindowTitle(tcl ? tr("線形資料表 — %1").arg(tcl->name())
                        : tr("線形資料表"));
-    resize(1020, 580);
+    resize(1560, 620);
+    setMinimumWidth(1400);
     buildUi();
     populateHorizontalTable();
     initVerticalVipsIfEmpty();
@@ -168,11 +328,14 @@ void AlignmentDataTableDialog::buildUi()
     mainLayout->addWidget(m_tabs);
 
     // ── 水平線形 ──────────────────────────────────────────────────────────────
-    m_hTable = new QTableWidget(this);
-    m_hTable->setColumnCount(7);
+    m_hTable = new HAlignTableWidget(this);
+    m_hTable->setColumnCount(kHColCount);
     m_hTable->setHorizontalHeaderLabels({
-        tr("點位"), tr("Easting (m)"), tr("Northing (m)"),
-        tr("里程 (m)"), tr("方位角"), tr("長度 (m)"), tr("曲線類型 / 半徑 (m)")
+        tr("點位"), tr("東座標 (m)"), tr("北座標 (m)"),
+        tr("里程 (m)"), tr("連續里程 (m)"), tr("方位角"),
+        tr("長度 (m)"), tr("曲線類型/半徑"), tr("圓曲線編號"),
+        tr("超高 (mm)"), tr("軌距加寬 (mm)"), tr("速限 (km/h)"),
+        tr("備註一"), tr("備註二"), tr("數值一"), tr("數值二")
     });
     m_hTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     m_hTable->horizontalHeader()->setStretchLastSection(true);
@@ -181,6 +344,14 @@ void AlignmentDataTableDialog::buildUi()
     m_hTable->setEditTriggers(QAbstractItemView::DoubleClicked |
                               QAbstractItemView::EditKeyPressed);
     m_hTable->setAlternatingRowColors(true);
+    m_hTable->setShowGrid(false);  // 格線改由 HAlignTableWidget::paintEvent 手動繪製
+
+    // length（含）以後的欄位代表「點位間」的線元資訊，整體下移半列高顯示，
+    // 呼應 HAlignTableWidget 手動繪製的下移格線。
+    auto* betweenDelegate = new BetweenPointDelegate(m_hTable);
+    for (int c = kFirstBetweenCol; c < kHColCount; ++c)
+        m_hTable->setItemDelegateForColumn(c, betweenDelegate);
+
     connect(m_hTable, &QTableWidget::itemChanged,
             this, &AlignmentDataTableDialog::onHCellChanged);
     connect(m_hTable, &QTableWidget::cellDoubleClicked,
@@ -207,7 +378,11 @@ void AlignmentDataTableDialog::buildUi()
 
     // ── 提示文字 ─────────────────────────────────────────────────────────────
     auto* hint = new QLabel(
-        tr("提示：雙擊黃色儲存格可編輯（灰色欄位為計算結果，唯讀）。修改後立即套用，可使用 Ctrl+Z 復原。"),
+        tr("提示：雙擊黃色儲存格可編輯（灰色欄位為計算結果，唯讀）。"
+           "第一列的「里程」／「連續里程」可編輯起始里程；"
+           "「圓曲線編號」／「超高」／「軌距加寬」／「速限」／"
+           "「備註一」／「備註二」／「數值一」／「數值二」各列皆可編輯（末列除外）。"
+           "修改後立即套用，可使用 Ctrl+Z 復原。"),
         this);
     hint->setWordWrap(true);
     mainLayout->addWidget(hint);
@@ -229,6 +404,11 @@ void AlignmentDataTableDialog::populateHorizontalTable()
     m_hTable->setRowCount(0);
     m_hMeta.clear();
 
+    // 確保 ProjectOrigin 已設定（若尚未設定，套用預設 TM2 origin），
+    // 這樣 toGlobal() 轉換才能得到合理量級的 TM2 座標，而不會因 origin 未
+    // 設定而退化成恆等轉換（顯示出遠小於 TM2 量級的數字）。
+    aicad::core::geometry::ProjectOrigin::ensureDefault();
+
     // 優先用 m_doc 的 solver result；若尚未 solve，fallback 到 TCL 已載入的 rawPoints
     const HorizontalAlignment* ha = m_doc->horizontal()->result();
     const QVector<AlignmentPoint>* rawSrc = nullptr;
@@ -238,11 +418,16 @@ void AlignmentDataTableDialog::populateHorizontalTable()
         rawSrc = &ha->rawPoints();
         usingSolverResult = true;
     } else if (m_tcl && !m_tcl->horizontal()->isEmpty()) {
+        // ALD 直接匯入、尚未 solve 的 fallback：ImportAlignmentCommand 在匯入
+        // 邊界已把 easting/northing 從 TM2 轉成 Local（扣掉 TM2 origin，未
+        // 設定時套用預設值），所以這裡 rawPoints() 已經和 solver 分支一樣是
+        // Local 座標，不需要（也不應該）再轉換一次。
         fallback = m_tcl->horizontal()->rawPoints();
         rawSrc   = &fallback;
-        usingSolverResult = false;  // ALD 直接載入：座標已是 TM2
+        usingSolverResult = false;
     }
     if (!rawSrc || rawSrc->isEmpty()) {
+        m_hAux.clear();
         m_populating = false;
         return;
     }
@@ -272,6 +457,14 @@ void AlignmentDataTableDialog::populateHorizontalTable()
     }
     const QVector<AlignmentPoint>* pts = &filteredPts;
 
+    // ── 輔助欄位快取 ─────────────────────────────────────────────────────────
+    // CircularCurveNo/Cant/GaugeWidenning/SpeedLimit/Text1/Text2/Real1/Real2
+    // 並非幾何求解的一部分：每次 solve() 都會以預設值（0 / 空字串）重新產生
+    // AlignmentPoint 序列。若列數與快取相符，保留使用者先前輸入；否則（結構
+    // 性變動，例如新增/刪除元素）改由目前來源資料重新播種。
+    if (m_hAux.size() != pts->size())
+        m_hAux = *pts;
+
     // ── 建立 HRowMeta 映射：掃描 EditableElements，與 rawPoints tsc 序列對齊 ─
     // 計數：第幾個 SpiralIn / CircularArc / SpiralOut 尚未被映射
     const auto& elems = m_doc->horizontal()->elements();
@@ -293,9 +486,12 @@ void AlignmentDataTableDialog::populateHorizontalTable()
     m_hTable->setRowCount(pts->size());
     m_hMeta.resize(pts->size());
 
+    const int lastRow = pts->size() - 1;
+
     for (int row = 0; row < pts->size(); ++row) {
         const AlignmentPoint& p = (*pts)[row];
         HRowMeta meta;
+        meta.isLastPoint = (row == lastRow);
 
         // ── 點位（tsc）──────────────────────────────────────────────────────
         // 粗體標示 TS/SC/CS/ST 等特殊點
@@ -306,20 +502,52 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             f.setBold(true);
             tscItem->setFont(f);
         }
-        m_hTable->setItem(row, 0, tscItem);
+        m_hTable->setItem(row, kColTsc, tscItem);
 
-        // ── TM2 座標（LOCAL → TM2 via ProjectOrigin）────────────────────────
-        // solver result 為 Local 座標；ALD 直接載入時座標已是 TM2（identity 轉換）。
-        // ProjectOrigin::toGlobal() 在未設定時為恆等轉換，安全呼叫。
+        // ── TM2 座標 ─────────────────────────────────────────────────────────
+        // 架構原則（見 ProjectOrigin.h）：OCCT/CAD 內部只使用 Local 座標，
+        // TM2 大數值只在輸入框／顯示文字／檔案 I/O 這三個邊界出現。
+        // 不論資料來源是 solver 結果，還是 ALD 直接匯入的 fallback（匯入時
+        // ImportAlignmentCommand 已在檔案 I/O 邊界把 TM2 換算成 Local），
+        // 到這裡 p.easting/p.northing 一律是 Local 座標，統一透過
+        // ProjectOrigin::toGlobal() 轉回真正的 TM2 顯示；若專案尚未設定
+        // origin，populateHorizontalTable() 開頭的 ProjectOrigin::ensureDefault()
+        // 已套用預設值，因此一定能得到合理量級的 TM2 座標。
         using aicad::core::geometry::ProjectOrigin;
-        const QPointF tm2 = usingSolverResult
-                                ? ProjectOrigin::instance().toGlobal(p.easting, p.northing)
-                                : QPointF(p.easting, p.northing);
+        const QPointF tm2 = ProjectOrigin::instance().toGlobal(p.easting, p.northing);
 
-        m_hTable->setItem(row, 1, roItem(QString::number(tm2.x(), 'f', 5)));
-        m_hTable->setItem(row, 2, roItem(QString::number(tm2.y(), 'f', 5)));
-        m_hTable->setItem(row, 3, roItem(QString::number(p.chainage, 'f', 5)));
-        m_hTable->setItem(row, 4, roItem(azimuthToDMS(p.azimuth)));
+        m_hTable->setItem(row, kColEasting,  roItem(QString::number(tm2.x(), 'f', 5)));
+        m_hTable->setItem(row, kColNorthing, roItem(QString::number(tm2.y(), 'f', 5)));
+
+        // ── Chainage / ContinuousChainage：僅第一列可編輯（起始里程）────────
+        // 不論資料來源是否已透過 solver 求解皆可編輯：已求解時透過
+        // HorizontalAlignmentEdit 的起始里程偏移量套用；尚未求解（例如 ALD
+        // 直接匯入、尚未進行任何幾何編輯）則直接平移 TCL 的原始點位。
+        if (row == 0) {
+            auto* chItem = editItem(p.chainage);
+            m_hTable->setItem(row, kColChainage, chItem);
+            meta.editStartChainage = true;
+
+            auto* contItem = editItem(p.contChainage);
+            m_hTable->setItem(row, kColContChainage, contItem);
+            meta.editStartContChainage = true;
+
+            meta.startChainageUsesSolver = usingSolverResult;
+        } else {
+            m_hTable->setItem(row, kColChainage,     roItem(QString::number(p.chainage, 'f', 5)));
+            m_hTable->setItem(row, kColContChainage, roItem(QString::number(p.contChainage, 'f', 5)));
+        }
+
+        m_hTable->setItem(row, kColAzimuth, roItem(azimuthToDMS(p.azimuth)));
+
+        // ── length（含）以後：點位間（本點 → 下一點）的線元資訊 ─────────────
+        // 最後一列之後沒有下一點，故不顯示這些欄位。
+        if (meta.isLastPoint) {
+            for (int c = kFirstBetweenCol; c < kHColCount; ++c)
+                m_hTable->setItem(row, c, naItem());
+            m_hMeta[row] = meta;
+            continue;
+        }
 
         // ── 長度欄：TS / CS 可編輯（緩和曲線長度）──────────────────────────
         if (p.tsc == QLatin1String("TS")) {
@@ -328,7 +556,7 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             meta.editLen  = true;
             meta.editType = true;
             ++spiralInCount;
-            m_hTable->setItem(row, 5, editItem(p.length));
+            m_hTable->setItem(row, kColLength, editItem(p.length));
         } else if (p.tsc == QLatin1String("CS")) {
             // CS 點的出緩和曲線類型來源：
             //   SCS 群組：由 SpiralIn.spiralType2 決定（solver 讀取 SpiralIn 元素）
@@ -349,9 +577,9 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             meta.editLen  = true;
             meta.editType = true;
             ++spiralOutCount;
-            m_hTable->setItem(row, 5, editItem(p.length));
+            m_hTable->setItem(row, kColLength, editItem(p.length));
         } else {
-            m_hTable->setItem(row, 5, roItem(p.length > 1e-9
+            m_hTable->setItem(row, kColLength, roItem(p.length > 1e-9
                                                  ? QString::number(p.length, 'f', 5) : QStringLiteral("—")));
         }
 
@@ -365,27 +593,56 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             meta.editRad = true;
             // 儲存格顯示半徑數值（黃底可編輯）
             const double absR = std::abs(p.radius);
-            m_hTable->setItem(row, 6, editItem(absR > 1e-9 ? absR : 0.0, 5));
-        } else if (p.tsc == QLatin1String("TS") || p.tsc == QLatin1String("CS")) {
-            // 緩和曲線類型：唯讀文字（雙擊觸發選單）
-            m_hTable->setItem(row, 6, roItem(curveTypeToDisplay(p.curveType)));
+            m_hTable->setItem(row, kColRadiusCurveType, editItem(absR > 1e-9 ? absR : 0.0, 5));
         } else {
-            m_hTable->setItem(row, 6, roItem(curveTypeToDisplay(p.curveType)));
+            // 直線（STRAIGHT）或緩和曲線類型：唯讀文字（TS/CS 雙擊可觸發選單）
+            m_hTable->setItem(row, kColRadiusCurveType, roItem(curveTypeToDisplay(p.curveType)));
         }
+
+        // ── 輔助欄位（所有非末列皆可編輯，值來自 m_hAux 快取）───────────────
+        const AlignmentPoint& aux = m_hAux[row];
+        m_hTable->setItem(row, kColCircularCurveNo, editTextItem(aux.circularCurveNo));
+        m_hTable->setItem(row, kColCant,             editItem(aux.cant, 3));
+        m_hTable->setItem(row, kColGaugeWidenning,   editItem(aux.gaugeWidening, 3));
+        m_hTable->setItem(row, kColSpeedLimit,       editItem(aux.speedLimit, 1));
+        m_hTable->setItem(row, kColText1,            editTextItem(aux.text1));
+        m_hTable->setItem(row, kColText2,            editTextItem(aux.text2));
+        m_hTable->setItem(row, kColReal1,            editItem(aux.real1, 5));
+        m_hTable->setItem(row, kColReal2,            editItem(aux.real2, 5));
 
         m_hMeta[row] = meta;
     }
 
     // 調整列寬
     m_hTable->resizeColumnsToContents();
+
+    // 將輔助欄位快取回寫至 TCL（見 pushAuxToTcl() 注解）。
+    // 注意：m_hAux 只用來保存使用者輸入的「輔助欄位」；幾何相關欄位（尤其
+    // chainage）一律以 *pts 目前最新的值為準——若幾何剛被編輯（長度/半徑/
+    // 起始里程），m_hAux 內快取的里程可能已經過時，若直接拿去比對會在
+    // pushAuxToTcl() 的里程匹配邏輯中錯位。這裡以「列序」（m_hAux 與 *pts
+    // 一一對應）合併出正確的里程 + 最新輔助欄位後再回寫。
+    QVector<AlignmentPoint> merged = *pts;
+    for (int i = 0; i < merged.size() && i < m_hAux.size(); ++i) {
+        merged[i].circularCurveNo = m_hAux[i].circularCurveNo;
+        merged[i].cant            = m_hAux[i].cant;
+        merged[i].gaugeWidening   = m_hAux[i].gaugeWidening;
+        merged[i].speedLimit      = m_hAux[i].speedLimit;
+        merged[i].text1           = m_hAux[i].text1;
+        merged[i].text2           = m_hAux[i].text2;
+        merged[i].real1           = m_hAux[i].real1;
+        merged[i].real2           = m_hAux[i].real2;
+    }
+    pushAuxToTcl(merged);
+
     m_populating = false;
 }
 
 void AlignmentDataTableDialog::onHCellDoubleClicked(int row, int col)
 {
-    // 僅攔截「曲線類型」欄（col 6）的緩和曲線行 → 彈出類型選擇選單。
-    // 其他可編輯欄（長度 col5、半徑 col6 的弧線行）由 Qt DoubleClicked 觸發器直接處理。
-    if (col != 6) return;
+    // 僅攔截「RadiusCurveType」欄的緩和曲線行 → 彈出類型選擇選單。
+    // 其他可編輯欄（length、半徑）由 Qt DoubleClicked 觸發器直接處理。
+    if (col != kColRadiusCurveType) return;
     if (!m_doc || row < 0 || row >= m_hMeta.size()) return;
 
     const HRowMeta& meta = m_hMeta[row];
@@ -396,7 +653,7 @@ void AlignmentDataTableDialog::onHCellDoubleClicked(int row, int col)
 
     const auto& e = elems[meta.elemIdx];
     // 從表格第 0 欄取得 tsc 字串（col 0 = 點位）
-    const QString tsc = m_hTable->item(row, 0) ? m_hTable->item(row, 0)->text() : QString();
+    const QString tsc = m_hTable->item(row, kColTsc) ? m_hTable->item(row, kColTsc)->text() : QString();
     // SCS 群組 CS：meta.elemIdx 指向 SpiralIn，讀 spiralType2（exit type）
     // CA  群組 CS：meta.elemIdx 指向 SpiralOut，讀 spiralType2（exit type）
     // TS 行：meta.elemIdx 指向 SpiralIn，讀 spiralType1（entry type）
@@ -442,6 +699,81 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
     if (row < 0 || row >= m_hMeta.size()) return;
 
     const HRowMeta& meta = m_hMeta[row];
+
+    // ── 輔助欄位（CircularCurveNo/Cant/GaugeWidenning/SpeedLimit/Text1/Text2/
+    //    Real1/Real2）：所有非末列皆可編輯，不需要 EditableElement，也不觸發
+    //    幾何 solve()／Undo，直接寫回快取並同步至 TCL。────────────────────────
+    if (!meta.isLastPoint && col >= kColCircularCurveNo && col < kHColCount) {
+        if (row >= m_hAux.size()) return;
+        AlignmentPoint& aux = m_hAux[row];
+
+        if (col == kColCircularCurveNo) {
+            aux.circularCurveNo = item->text();
+        } else if (col == kColText1) {
+            aux.text1 = item->text();
+        } else if (col == kColText2) {
+            aux.text2 = item->text();
+        } else {
+            bool ok = false;
+            const double value = item->text().toDouble(&ok);
+            if (!ok) { populateHorizontalTable(); return; }
+            if      (col == kColCant)           aux.cant           = value;
+            else if (col == kColGaugeWidenning)  aux.gaugeWidening  = value;
+            else if (col == kColSpeedLimit)      aux.speedLimit     = value;
+            else if (col == kColReal1)           aux.real1          = value;
+            else if (col == kColReal2)           aux.real2          = value;
+            else return;
+        }
+
+        // 輔助欄位不影響幾何，直接同步至 TCL（不進 Undo 堆疊，也不需 re-solve）。
+        pushAuxToTcl(m_hAux);
+        Q_EMIT dataCommitted();
+        return;
+    }
+
+    // ── 起始里程（僅第一列）───────────────────────────────────────────────
+    if (row == 0 && (col == kColChainage || col == kColContChainage) &&
+        (meta.editStartChainage || meta.editStartContChainage)) {
+        bool ok = false;
+        const double value = item->text().toDouble(&ok);
+        if (!ok) { populateHorizontalTable(); return; }
+
+        if (meta.startChainageUsesSolver) {
+            // ── 已透過 solver 求解：以 HorizontalAlignmentEdit 的起始里程
+            //    偏移量套用（純顯示/輸出用途，見 AlignmentDocument.h 注解）。
+            const QJsonObject before = m_doc->toJson();
+            QString actionText;
+            if (col == kColChainage) {
+                m_doc->horizontal()->setStartChainage(value);
+                actionText = tr("編輯起始里程");
+            } else {
+                m_doc->horizontal()->setStartContinuousChainage(value);
+                actionText = tr("編輯起始連續里程");
+            }
+            m_doc->horizontal()->solve();
+            command::AlignmentEditCommand::push(m_doc, before, m_doc->toJson(), actionText);
+        } else if (m_tcl) {
+            // ── 尚未求解（例如 ALD 直接匯入、尚未進行任何幾何編輯）：
+            //    沒有 EditableElement/solver 可用，直接平移 TCL 的原始點位。
+            QVector<AlignmentPoint> raw = m_tcl->horizontal()->rawPoints();
+            if (!raw.isEmpty()) {
+                if (col == kColChainage) {
+                    const double delta = value - raw.first().chainage;
+                    for (AlignmentPoint& pt : raw) pt.chainage += delta;
+                } else {
+                    const double delta = value - raw.first().contChainage;
+                    for (AlignmentPoint& pt : raw) pt.contChainage += delta;
+                }
+                m_tcl->loadHorizontal(raw);
+            }
+        }
+
+        populateHorizontalTable();
+        Q_EMIT dataCommitted();
+        return;
+    }
+
+    // ── 幾何欄位（長度／半徑）：需對應 EditableElement ───────────────────────
     if (meta.elemIdx < 0) return;
 
     bool ok = false;
@@ -454,11 +786,11 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
     const QJsonObject before = m_doc->toJson();
     QString actionText;
 
-    if (col == 5 && meta.editLen) {
+    if (col == kColLength && meta.editLen) {
         const int lenIdx = (meta.lenElemIdx >= 0) ? meta.lenElemIdx : meta.elemIdx;
         m_doc->horizontal()->setLength(lenIdx, value);
         actionText = tr("編輯緩和曲線長度");
-    } else if (col == 6 && meta.editRad) {
+    } else if (col == kColRadiusCurveType && meta.editRad) {
         m_doc->horizontal()->setRadius(meta.elemIdx, value);
         actionText = tr("編輯圓曲線半徑");
     } else {
@@ -469,6 +801,62 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
     command::AlignmentEditCommand::push(m_doc, before, m_doc->toJson(), actionText);
     populateHorizontalTable();
     Q_EMIT dataCommitted();
+}
+
+// ============================================================================
+//  Auxiliary field sync — dialog cache → TCL persisted horizontal alignment
+// ============================================================================
+
+void AlignmentDataTableDialog::pushAuxToTcl(const QVector<AlignmentPoint>& displayPts)
+{
+    if (!m_tcl) return;
+
+    // 取得 TCL 目前實際持有的水平線形原始點清單（尚未經過本對話框的重複點
+    // 過濾），依里程比對寫回輔助欄位，確保存檔／匯出讀到使用者最新編輯值。
+    //
+    // 背景：UIManager 在 HorizontalAlignmentEdit::changed()（即每次 solve()）
+    // 時會用 solver 結果整批覆寫 m_tcl->horizontal()（見 UIManager.cpp），
+    // 因此每次幾何編輯後 tcl 上的輔助欄位都會被重置為預設值；本函式在
+    // populateHorizontalTable() 結尾固定呼叫一次，把 m_hAux 快取的使用者
+    // 輸入「補回去」，避免與 UIManager 的同步時序互相覆蓋。
+    QVector<AlignmentPoint> tclPts = m_tcl->horizontal()->rawPoints();
+    if (tclPts.isEmpty() || displayPts.size() > tclPts.size())
+        return;  // 尚無對應的 TCL 資料（例如僅在 solver 端編輯過、尚未提交）
+
+    bool anyChanged = false;
+    for (int i = 0; i < displayPts.size(); ++i) {
+        const AlignmentPoint& src = displayPts[i];
+        int bestIdx = -1;
+        double bestDelta = 1.0;  // 里程容許誤差 [m]
+        for (int j = 0; j < tclPts.size(); ++j) {
+            const double d = std::abs(tclPts[j].chainage - src.chainage);
+            if (d < bestDelta) { bestDelta = d; bestIdx = j; }
+        }
+        if (bestIdx < 0) continue;
+
+        AlignmentPoint& dst = tclPts[bestIdx];
+        if (dst.circularCurveNo != src.circularCurveNo ||
+            dst.cant            != src.cant            ||
+            dst.gaugeWidening    != src.gaugeWidening    ||
+            dst.speedLimit       != src.speedLimit       ||
+            dst.text1            != src.text1            ||
+            dst.text2            != src.text2            ||
+            dst.real1            != src.real1            ||
+            dst.real2            != src.real2) {
+            dst.circularCurveNo = src.circularCurveNo;
+            dst.cant            = src.cant;
+            dst.gaugeWidening   = src.gaugeWidening;
+            dst.speedLimit      = src.speedLimit;
+            dst.text1           = src.text1;
+            dst.text2           = src.text2;
+            dst.real1           = src.real1;
+            dst.real2           = src.real2;
+            anyChanged = true;
+        }
+    }
+
+    if (anyChanged)
+        m_tcl->loadHorizontal(tclPts);
 }
 
 // ============================================================================

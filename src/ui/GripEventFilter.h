@@ -2,6 +2,7 @@
 #pragma once
 #include <QObject>
 #include <QMouseEvent>
+#include <functional>
 #include "../cad/grips/GripManager.h"
 #include "../cad/Plane.h"
 
@@ -32,6 +33,13 @@ public:
         return m_gripManager && m_gripManager->isGripSelected();
     }
 
+    /// 供 CadView 註冊：查詢窗選/穿越窗選是否正在進行中（拖曳或等待第二次點擊）。
+    /// 若為 true，本 filter 讓滑鼠事件直接放行給 CadView，不做 grip 命中檢測，
+    /// 避免第二次點擊剛好落在 grip 上時卡住選取流程。
+    void setBoxSelectActiveQuery(std::function<bool()> query) {
+        m_boxSelectActiveQuery = std::move(query);
+    }
+
 private:
     gp_Pnt screenToWorld(int x, int y) const;
 
@@ -40,6 +48,7 @@ private:
     cad::Plane*        m_sketchPlane  = nullptr;
     bool m_lastHovered = false;    
     bool m_enabled = false;
+    std::function<bool()> m_boxSelectActiveQuery;
 };
 
 } // namespace aicad::ui

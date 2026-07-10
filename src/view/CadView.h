@@ -154,6 +154,13 @@ public:
     /// （GetGeom 模式下 command 已結束，需要區分 idle 與 pick 路徑）
     void setConstraintPickActive(bool active);
 
+    /// 窗選 / 穿越窗選是否正在進行中（包含拖曳中或等待第二次點擊）。
+    /// 供 GripEventFilter 判斷是否應暫時避開 grip 命中檢測，避免卡住流程。
+    bool isBoxSelectArmed() const;
+    /// 取消進行中的窗選/穿越窗選/籬選/多邊形選取（供 ESC 全域處理路徑呼叫，
+    /// 例如 UIManager 對 CommandInputEdit::escapePressed 的處理）。
+    void cancelActiveBoxSelect();
+
     /// ✅ Task E: 啟動 PlaceDimLine 模式，設定用於計算偏移的錨點（兩端點中心，草圖平面座標）
     void beginPlaceDimLine(const QVector2D& anchorPos2D);
 
@@ -539,6 +546,51 @@ private:
      * @brief 將 Qt 座標轉換為 OCCT 座標
      */
     void qtToOCCT(const QPoint& qtPos, Standard_Integer& occX, Standard_Integer& occY) const;
+
+    // ── 窗選 / 穿越窗選（Window / Crossing box selection）────────────────────
+    /// 記錄拖曳候選起點（點擊到空白處時呼叫）。screenPos 為 Qt 邏輯座標。
+    /// sketchMode 決定放開時未形成拖曳的 fallback 行為，以及框選結果要不要
+    /// 發布 SKETCH_GEOM_SELECTED。
+    void beginBoxSelectCandidate(const QPoint& screenPos, bool additive, bool sketchMode);
+    /// mouseMoveEvent 呼叫；超過拖曳門檻後才會顯示選取框並依方向決定窗選/穿越窗選樣式。
+    void updateBoxSelectDrag(const QPoint& screenPos);
+    /// mouseReleaseEvent 呼叫；若曾形成拖曳則執行框選，否則比照原本單擊行為。
+    void finishBoxSelect(const QPoint& screenPos);
+    /// 取消進行中的框選候選（ESC、模式切換等情況呼叫）。
+    void cancelBoxSelectCandidate();
+    /// 還原框選開始前的選取狀態（供預覽取消/疊加選取的最終合併使用）。
+    void restoreBoxSelectSavedSelection();
+    /// 依窗選/穿越窗選規則對矩形範圍套用選取（供預覽與正式完成共用，確保
+    /// Shift（疊加）狀態在拖曳過程中與最終結果完全一致）。additive 為 true 時，
+    /// 會先還原成框選開始前的原始選取，再以 Add scheme 疊加矩形命中的物件，
+    /// 避免已選取的物件在預覽或重複框選過程中被誤判為未選取。
+    void applyBoxSelectionScheme(Standard_Integer x0, Standard_Integer y0,
+                                  Standard_Integer x1, Standard_Integer y1,
+                                  bool additive);
+    /// 執行矩形選取並比照既有單擊選取邏輯發布事件（物理像素座標，供 OCCT SelectRectangle 使用）。
+    void performRectangleSelection(Standard_Integer x0, Standard_Integer y0,
+                                    Standard_Integer x1, Standard_Integer y1,
+                                    bool additive, bool sketchMode);
+    /// 收集目前 context 選取結果並發布事件（矩形／籬選／多邊形選取共用邏輯）。
+    void publishBoxSelectionResult(bool sketchMode);
+
+    // ── 籬選(Fence) / 多邊形窗選(WPolygon) / 多邊形框選(CPolygon) ─────────────
+    // 在矩形窗選提示「指定對角點或 [籬選(F)/多邊形窗選(WP)/多邊形框選(CP)]:」
+    // 階段，透過命令列輸入 F/WP/CP 切換為多點式選取：每次左鍵點一下新增一個
+    // 頂點，Enter 或 Space 完成，ESC 取消。
+    enum class BoxSelectShape { Rectangle, Fence, WPolygon, CPolygon };
+    /// 由命令列 F/WP/CP 選項觸發，切換為籬選/多邊形窗選/多邊形框選的頂點收集模式。
+    void beginBoxSelectShapeMode(BoxSelectShape shape);
+    /// 新增一個多邊形/籬選頂點（點擊確認）。
+    void addBoxSelectPolyVertex(const QPoint& screenPos);
+    /// 更新多邊形/籬選的橡皮筋預覽線＋即時高亮（尚未確認的最後一段）。
+    void updateBoxSelectPolyPreview(const QPoint& screenPos);
+    /// 完成多邊形/籬選並執行選取（Enter / Space 觸發）。
+    void finishBoxSelectPolygon();
+    /// 依窗選/穿越窗選規則對多邊形/籬選範圍套用選取（供預覽與正式完成共用）。
+    void applyPolygonSelectionScheme(const QVector<QPoint>& ptsQt, bool crossing, bool additive);
+    /// 取得目前視角對應的參考平面（與 screenToPlane() 相同規則，供窗選/籬選/多邊形視覺共用）。
+    cad::Plane* boxSelectReferencePlane() const;
 
     QString m_selectionFilter;
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面

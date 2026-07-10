@@ -111,9 +111,18 @@ void CommandInputEdit::keyPressEvent(QKeyEvent* event) {
         const bool waitingForInput = core::CommandLineManager::instance()->isWaitingForInput();
 
         if (waitingForInput) {
-            // 等待資料輸入時（例如字串型別可能包含空白字元），維持原本行為：
-            // 僅輸入為空時，空白鍵才等同 Enter（送出空字串套用預設值）；
-            // 有內容時讓 QLineEdit 正常插入空白字元，避免破壞多字詞輸入。
+            // 等待「選項」輸入時（例如窗選提示的 F/WP/CP 這類單一選項代碼）：
+            // Space 視同 Enter，直接送出，不把空白字元插入文字框——這類輸入
+            // 本來就不會用到空白字元，維持原本行為只會讓使用者以為沒反應。
+            if (core::CommandLineManager::instance()->expectedInputType() == core::InputType::Option) {
+                submitCurrentLine();
+                return;
+            }
+
+            // 其餘等待資料輸入的型別（例如字串型別可能包含空白字元），維持
+            // 原本行為：僅輸入為空時，空白鍵才等同 Enter（送出空字串套用
+            // 預設值）；有內容時讓 QLineEdit 正常插入空白字元，避免破壞
+            // 多字詞輸入。
             if (text().trimmed().isEmpty()) {
                 emit commandSubmitted(QString());
                 return;

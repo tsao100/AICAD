@@ -54,6 +54,10 @@ public:
     void waitForInput(InputType type);
     bool isWaitingForInput() const { return m_isWaitingForInput; }
     InputType expectedInputType() const { return m_expectedInputType; }
+    // 重設「等待輸入」狀態，但不會像 cancelCommand() 一樣廣播 COMMAND_CANCELLED。
+    // 供非 Command 系統的呼叫端使用（例如 CadView 的窗選/籬選/多邊形選取），
+    // 避免誤觸其他模組對 COMMAND_CANCELLED 的副作用（例如強制切回 Idle 檢視模式）。
+    void resetInputWait();
 
     // 歷史記錄
     QStringList commandHistory() const { return m_commandHistory; }

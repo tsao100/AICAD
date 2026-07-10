@@ -2050,11 +2050,20 @@ void UIManager::connectCommandLineEvents() {
 
     connect(d->commandLine->inputEdit(), &CommandInputEdit::escapePressed,
             this, [this]() {
-                // ✅ Grips on 時，ESC 優先關閉 grips（Sketch / HAlign edit 共用），
-                //    不應該連帶取消目前命令；此檢查不受目前鍵盤焦點落在
-                //    CommandInputEdit 或 CadView 影響，確保行為一致。
-                if (d->cadView && d->cadView->hasActiveGrips()) {
-                    d->cadView->turnOffActiveGrips();
+                // ✅ 窗選 / 穿越窗選 / 籬選 / 多邊形窗選 / 多邊形框選進行中：
+                //    ESC 優先取消框選本身，不做其他事。
+                if (d->cadView && d->cadView->isBoxSelectArmed()) {
+                    d->cadView->cancelActiveBoxSelect();
+                    return;
+                }
+                // ✅ 一律呼叫 turnOffActiveGrips()：該函式內部已一併處理
+                //    grips 關閉「與」底層 AIS 選取清除（不論當下是否真的有
+                //    active grips），確保 ESC 能可靠清除所有選取——包含
+                //    H-Alignment edit（3D alignment）中選取了不會產生 grip
+                //    的物件（例如 alignment overlay）的情況。過去只在
+                //    hasActiveGrips() 為 true 時才呼叫，導致這類選取無法被
+                //    ESC 清除。
+                if (d->cadView && d->cadView->turnOffActiveGrips()) {
                     return;
                 }
                 d->commandLineManager->onEscapePressed();

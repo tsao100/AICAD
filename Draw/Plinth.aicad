@@ -1,0 +1,854 @@
+{
+    "features": [
+        {
+            "constraints": [
+                {
+                    "dimOffX": -45.26409912109375,
+                    "dimOffY": -62.26513671875,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "867c0aca-8933-4edb-895e-e8b3bab78581",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 18,
+                    "uuid": "e6588470-6c8e-409d-bd2f-1315a75231ac",
+                    "value": -400,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": -33.650970458984375,
+                    "dimOffY": 168.15444946289062,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "0b74b91b-1b6b-4b2a-aeb4-7e1aff27cd11",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 18,
+                    "uuid": "58f619b5-3948-438d-af69-0c3cfdda917f",
+                    "value": -232,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "0a259593-d927-4b67-b3cd-778822c4e137",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 5,
+                    "uuid": "44676803-f771-4e0c-a8ad-101cff71516c",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "2d38f3b7-cda4-42db-8221-7d1a289c68c2",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 5,
+                    "uuid": "b1ece31b-fee3-44f3-9e74-81aa926bea70",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "9ff86a23-3907-4adb-89e6-6e1982b8822d",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "0b74b91b-1b6b-4b2a-aeb4-7e1aff27cd11",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "ab9cc5ba-e75d-4192-9437-798354d5ac2b",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "a3e52fe5-5850-4992-9ed6-b7f8ae5f3985",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "867c0aca-8933-4edb-895e-e8b3bab78581",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "4b9c4bc8-fc74-42a3-bef2-8eb4d3c81163",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "4e998ebd-7966-45ce-9875-16d9fea69388",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 6,
+                    "uuid": "afb1f30c-20fa-4595-a7bb-d9055efeb84e",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "cd6e3194-7665-4ba9-836a-624372aa4875",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "d218cac4-1161-4062-bb09-8f1d36d2ccb7",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "674ac535-4fa4-4098-a41a-33a504e72c0f",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "750e5cb4-3caa-4612-b9bd-a670925e3425",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "6a4d8790-15f4-4c69-968d-00bddf03efe7",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "631d9a15-bff4-4f63-b939-e803992fc550",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "f3952e73-73f9-4203-b386-fbebdb0f36a7",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 6,
+                    "uuid": "b3d778cf-f44d-42ea-bad1-6a985d4118aa",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 9.76739501953125,
+                    "dimOffY": -63.347137451171875,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "867c0aca-8933-4edb-895e-e8b3bab78581",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 17,
+                    "uuid": "29e7a9ec-1eb6-48be-a31a-f26ad12b15eb",
+                    "value": 300,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 1264.9629516601562,
+                    "dimOffY": -290.0030212402344,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "2d38f3b7-cda4-42db-8221-7d1a289c68c2",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 21,
+                    "uuid": "06a5df32-2827-4fb2-98e5-cf22843dc837",
+                    "value": 900,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "9a44689a-7ed4-490d-9ca0-fedb59334e00",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 5,
+                    "uuid": "eb7f431f-01a6-4fa1-ad58-980a3b3080b9",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "0a259593-d927-4b67-b3cd-778822c4e137",
+                            "handle": 8
+                        },
+                        {
+                            "geomUuid": "9a44689a-7ed4-490d-9ca0-fedb59334e00",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 9,
+                    "uuid": "96ce7854-be46-465d-8d0f-2fddf2cd99a9",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 145.98580932617188,
+                    "dimOffY": 549.9961013793945,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "56e51c43-b205-4dfc-8661-0de780525ad4",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "0b74b91b-1b6b-4b2a-aeb4-7e1aff27cd11",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 15,
+                    "uuid": "04a26392-a905-4b74-9089-032989ed280a",
+                    "value": 600,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "9fadda4a-602b-46d8-a273-ef2dcf7a66b3",
+                            "handle": 8
+                        },
+                        {
+                            "geomUuid": "2d38f3b7-cda4-42db-8221-7d1a289c68c2",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 9,
+                    "uuid": "b29f2820-b015-4440-bb53-963b122fe73a",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "5d1a803a-e5f1-4cc7-9526-01ef9f1ee008",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "fef137e3-7000-4c90-97d4-4ce12b955c7e",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "69a6ac77-1162-489c-a52b-fc384d732ad1",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "56e51c43-b205-4dfc-8661-0de780525ad4",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "6248d667-1f0b-418f-9a2b-c519bda989df",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "2faf3b02-712e-458f-893d-3ec4d9096bf3",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "28223d79-39bd-42d7-a701-295b5b229580",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "d5b3784f-6209-40c6-b38e-1030ac460914",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "f870116a-849f-441a-959c-f8e422462f00",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "5affdad0-23cc-427a-a1a2-e21ad1fb2f07",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "c5a856e8-afce-4364-8077-2f470c90b8fa",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "c62b69c4-0e3d-49de-8ed7-0977de60d081",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "d1670018-3fa9-49cf-bb8a-3d6c428929d2",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 6,
+                    "uuid": "72de16c9-2743-474c-b683-0b790682611f",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "ccca027d-9eaf-4574-b39b-c6a420933b73",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 6,
+                    "uuid": "b9e7ffc9-4fb8-41ad-8722-3b8f2b97936d",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 385.371826171875,
+                    "dimOffY": -283.557373046875,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "9fadda4a-602b-46d8-a273-ef2dcf7a66b3",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 21,
+                    "uuid": "0381f4c7-faa9-4ec2-9a72-d6d704d44e35",
+                    "value": 900,
+                    "value2": 0
+                }
+            ],
+            "geometries": [
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -400
+                        }
+                    ],
+                    "px": 300,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "867c0aca-8933-4edb-895e-e8b3bab78581"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 1200,
+                            "y": -400
+                        }
+                    ],
+                    "px": 1200,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "750e5cb4-3caa-4612-b9bd-a670925e3425"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -232
+                        }
+                    ],
+                    "px": 300,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "0b74b91b-1b6b-4b2a-aeb4-7e1aff27cd11"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 1200,
+                            "y": -232
+                        }
+                    ],
+                    "px": 1200,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "cd6e3194-7665-4ba9-836a-624372aa4875"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -232
+                        }
+                    ],
+                    "px": 300,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "9ff86a23-3907-4adb-89e6-6e1982b8822d"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -400
+                        }
+                    ],
+                    "px": 300,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "a3e52fe5-5850-4992-9ed6-b7f8ae5f3985"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 1200,
+                            "y": -232
+                        }
+                    ],
+                    "px": 1200,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "d218cac4-1161-4062-bb09-8f1d36d2ccb7"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 1200,
+                            "y": -400
+                        }
+                    ],
+                    "px": 1200,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "6a4d8790-15f4-4c69-968d-00bddf03efe7"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -1173.2928466796875,
+                            "y": -232
+                        }
+                    ],
+                    "px": -1200,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "fef137e3-7000-4c90-97d4-4ce12b955c7e"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -300,
+                            "y": -232
+                        }
+                    ],
+                    "px": -300,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "56e51c43-b205-4dfc-8661-0de780525ad4"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -1181.296630859375,
+                            "y": -400
+                        }
+                    ],
+                    "px": -1200,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "c5a856e8-afce-4364-8077-2f470c90b8fa"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -224.40988159179688,
+                            "y": -400
+                        }
+                    ],
+                    "px": -300,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "28223d79-39bd-42d7-a701-295b5b229580"
+                },
+                {
+                    "endUuid": "750e5cb4-3caa-4612-b9bd-a670925e3425",
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -400
+                        },
+                        {
+                            "x": 1200,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "867c0aca-8933-4edb-895e-e8b3bab78581",
+                    "type": 0,
+                    "uuid": "2d38f3b7-cda4-42db-8221-7d1a289c68c2"
+                },
+                {
+                    "endUuid": "cd6e3194-7665-4ba9-836a-624372aa4875",
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -232
+                        },
+                        {
+                            "x": 1200,
+                            "y": -232
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "0b74b91b-1b6b-4b2a-aeb4-7e1aff27cd11",
+                    "type": 0,
+                    "uuid": "0a259593-d927-4b67-b3cd-778822c4e137"
+                },
+                {
+                    "endUuid": "a3e52fe5-5850-4992-9ed6-b7f8ae5f3985",
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -232
+                        },
+                        {
+                            "x": 300,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "9ff86a23-3907-4adb-89e6-6e1982b8822d",
+                    "type": 0,
+                    "uuid": "4e998ebd-7966-45ce-9875-16d9fea69388"
+                },
+                {
+                    "endUuid": "6a4d8790-15f4-4c69-968d-00bddf03efe7",
+                    "points": [
+                        {
+                            "x": 1200,
+                            "y": -232
+                        },
+                        {
+                            "x": 1200,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "d218cac4-1161-4062-bb09-8f1d36d2ccb7",
+                    "type": 0,
+                    "uuid": "f3952e73-73f9-4203-b386-fbebdb0f36a7"
+                },
+                {
+                    "endUuid": "56e51c43-b205-4dfc-8661-0de780525ad4",
+                    "points": [
+                        {
+                            "x": -1200,
+                            "y": -232
+                        },
+                        {
+                            "x": -300,
+                            "y": -232
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "fef137e3-7000-4c90-97d4-4ce12b955c7e",
+                    "type": 0,
+                    "uuid": "9a44689a-7ed4-490d-9ca0-fedb59334e00"
+                },
+                {
+                    "endUuid": "28223d79-39bd-42d7-a701-295b5b229580",
+                    "points": [
+                        {
+                            "x": -1200,
+                            "y": -400
+                        },
+                        {
+                            "x": -300,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "c5a856e8-afce-4364-8077-2f470c90b8fa",
+                    "type": 0,
+                    "uuid": "9fadda4a-602b-46d8-a273-ef2dcf7a66b3"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -1188.4893798828125,
+                            "y": -247.63755798339844
+                        }
+                    ],
+                    "px": -1200,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "5d1a803a-e5f1-4cc7-9526-01ef9f1ee008"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -1214.024658203125,
+                            "y": -394.8913879394531
+                        }
+                    ],
+                    "px": -1200,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "5affdad0-23cc-427a-a1a2-e21ad1fb2f07"
+                },
+                {
+                    "endUuid": "5affdad0-23cc-427a-a1a2-e21ad1fb2f07",
+                    "points": [
+                        {
+                            "x": -1200,
+                            "y": -232
+                        },
+                        {
+                            "x": -1200,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "5d1a803a-e5f1-4cc7-9526-01ef9f1ee008",
+                    "type": 0,
+                    "uuid": "d1670018-3fa9-49cf-bb8a-3d6c428929d2"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -264.1369934082031,
+                            "y": -229.2076873779297
+                        }
+                    ],
+                    "px": -300,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "6248d667-1f0b-418f-9a2b-c519bda989df"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -169.5496368408203,
+                            "y": -396.4490966796875
+                        }
+                    ],
+                    "px": -300,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "d5b3784f-6209-40c6-b38e-1030ac460914"
+                },
+                {
+                    "endUuid": "d5b3784f-6209-40c6-b38e-1030ac460914",
+                    "points": [
+                        {
+                            "x": -300,
+                            "y": -232
+                        },
+                        {
+                            "x": -300,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "6248d667-1f0b-418f-9a2b-c519bda989df",
+                    "type": 0,
+                    "uuid": "ccca027d-9eaf-4574-b39b-c6a420933b73"
+                }
+            ],
+            "id": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "Sketch 1",
+            "planeData": {
+                "createdTime": "2026-07-07T14:03:39",
+                "geometry": {
+                    "normal": [
+                        0,
+                        0,
+                        1
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        1,
+                        0,
+                        0
+                    ]
+                },
+                "id": "3d7a8158-5a21-4db5-b2c2-ecd74764dbe6",
+                "isLocked": true,
+                "modifiedTime": "2026-07-07T14:03:39",
+                "name": "XY",
+                "type": 0
+            },
+            "planeId": "3d7a8158-5a21-4db5-b2c2-ecd74764dbe6",
+            "planeName": "XY",
+            "suppressed": false,
+            "type": "Sketch",
+            "visible": true
+        }
+    ],
+    "fileName": "Plinth.aicad",
+    "parameters": {
+    },
+    "version": "1.0",
+    "viewState": {
+        "atX": -371.56826148998175,
+        "atY": 26.504032737832972,
+        "atZ": 0,
+        "eyeX": -371.56826148998175,
+        "eyeY": 26.504032737832972,
+        "eyeZ": 0,
+        "scale": 0.25795093201034186,
+        "upX": 0,
+        "upY": 1,
+        "upZ": 0,
+        "viewType": 1
+    }
+}

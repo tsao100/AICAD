@@ -75,6 +75,13 @@ void ProjectOrigin::clear()
     publishChanged();
 }
 
+void ProjectOrigin::ensureDefault()
+{
+    ProjectOrigin& self = instance();
+    if (!self.isSet())
+        self.setOrigin(kDefaultOriginE, kDefaultOriginN, 0.0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Global(TM2) → Local(CAD)
 // ─────────────────────────────────────────────────────────────────────────────

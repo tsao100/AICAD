@@ -79,6 +79,76 @@ double AldFileIO::readLEDouble(const char* p)
 }
 
 // ============================================================================
+//  Write-side field helpers
+// ============================================================================
+
+QByteArray AldFileIO::packField(const QString& text, int width)
+{
+    QByteArray b = text.toLatin1();
+    if (b.size() > width)
+        b = b.left(width);
+    if (b.size() < width)
+        b.append(width - b.size(), ' ');
+    return b;
+}
+
+QByteArray AldFileIO::packNumericField(double value, int width, int maxDecimals)
+{
+    for (int dec = maxDecimals; dec >= 0; --dec) {
+        const QString s = QString::number(value, 'f', dec);
+        if (s.size() <= width)
+            return packField(s, width);
+    }
+    // 極端情況（數值本身超出欄寬）：以整數截斷，避免記錄長度錯位。
+    const QString s = QString::number(value, 'f', 0);
+    return packField(s.left(width), width);
+}
+
+QByteArray AldFileIO::packAzimuthField(double radians, int width)
+{
+    // 反算 "DDD-MM-SS.sss"（度-分-秒），與 parseAzimuthDMS 對稱。
+    double deg = radians * 180.0 / M_PI;
+    deg = std::fmod(deg, 360.0);
+    if (deg < 0.0)
+        deg += 360.0;
+
+    int dd = static_cast<int>(deg);
+    double remMin = (deg - dd) * 60.0;
+    int mm = static_cast<int>(remMin);
+    double ss = (remMin - mm) * 60.0;
+
+    QString secStr = QString::number(ss, 'f', 3);
+    if (secStr.toDouble() >= 60.0) {
+        ss = 0.0;
+        ++mm;
+        secStr = QString::number(ss, 'f', 3);
+    }
+    if (mm >= 60) {
+        mm -= 60;
+        ++dd;
+    }
+    if (dd >= 360)
+        dd -= 360;
+
+    // 秒欄位固定 6 字元寬（"SS.sss"），前端補零。
+    secStr = secStr.rightJustified(6, QLatin1Char('0'));
+
+    const QString s = QStringLiteral("%1-%2-%3")
+        .arg(dd, 3, 10, QLatin1Char('0'))
+        .arg(mm, 2, 10, QLatin1Char('0'))
+        .arg(secStr);
+
+    return packField(s, width);
+}
+
+QByteArray AldFileIO::packLEDouble(double v)
+{
+    QByteArray b(sizeof(double), '\0');
+    std::memcpy(b.data(), &v, sizeof(double));
+    return b;
+}
+
+// ============================================================================
 //  readPrj
 // ============================================================================
 
@@ -137,6 +207,39 @@ QString AldFileIO::verticalFileNameFor(const QString& hFileName)
     // 副檔名沿用原檔名最後 4 個字元的大小寫風格（".ALD" 或 ".ald"）。
     const QString ext = hFileName.right(4);
     return base + QStringLiteral("V") + ext;
+}
+
+// ============================================================================
+//  writePrj
+// ============================================================================
+
+bool AldFileIO::writePrj(const QString& prjFilePath,
+                          const QVector<PrjEntry>& entries,
+                          QString* errorMessage)
+{
+    QFile f(prjFilePath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        if (errorMessage)
+            *errorMessage = QStringLiteral("無法開啟 PRJ 檔以寫入: %1").arg(prjFilePath);
+        return false;
+    }
+
+    QTextStream ts(&f);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    ts.setCodec("UTF-8");
+#endif
+
+    for (const PrjEntry& entry : entries)
+        ts << entry.hFileName << "\r\n";
+
+    ts.flush();
+    if (f.error() != QFile::NoError) {
+        if (errorMessage)
+            *errorMessage = QStringLiteral("寫入 PRJ 檔失敗: %1 (%2)")
+                .arg(prjFilePath, f.errorString());
+        return false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -222,6 +325,65 @@ QVector<AlignmentPoint> AldFileIO::readHorizontalALD(const QString& filePath,
 }
 
 // ============================================================================
+//  writeHorizontalALD
+// ============================================================================
+
+bool AldFileIO::writeHorizontalALD(const QString& filePath,
+                                    const QVector<AlignmentPoint>& points,
+                                    QString* errorMessage)
+{
+    QFile f(filePath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errorMessage)
+            *errorMessage = QStringLiteral("無法開啟水平線形檔以寫入: %1").arg(filePath);
+        return false;
+    }
+
+    QByteArray data;
+    data.reserve(points.size() * kHRecordSize);
+
+    for (const AlignmentPoint& pt : points) {
+        data += packField(pt.plat, 3);
+        data += packField(pt.upDown, 1);
+        data += packField(pt.tsc, 2);
+        data += packNumericField(pt.easting, 16);
+        data += packNumericField(pt.northing, 17);
+        data += packNumericField(pt.chainage, 15);
+        data += packNumericField(pt.contChainage, 15);
+        data += packAzimuthField(pt.azimuth, 13);
+        data += packNumericField(pt.length, 15);
+
+        // RadiusCurveType (8 bytes): 直線 → "STRAIGHT"；緩和曲線 → curveType 文字
+        // （CLOTHOID/HALFSINE/PARABOLA/CUBICJPN/CUBICECI 皆恰為 8 字元）；
+        // 圓弧 → 半徑數字文字。
+        if (!pt.curveType.isEmpty())
+            data += packField(pt.curveType, 8);
+        else if (pt.radius != 0.0)
+            data += packNumericField(std::abs(pt.radius), 8, 3);
+        else
+            data += packField(QStringLiteral("STRAIGHT"), 8);
+
+        data += packField(pt.circularCurveNo, 9);
+        data += packLEDouble(pt.cant);
+        data += packLEDouble(pt.gaugeWidening);
+        data += packLEDouble(pt.speedLimit);
+        data += packField(pt.text1, 25);
+        data += packField(pt.text2, 25);
+        data += packLEDouble(pt.real1);
+        data += packLEDouble(pt.real2);
+    }
+
+    const qint64 written = f.write(data);
+    if (written != data.size()) {
+        if (errorMessage)
+            *errorMessage = QStringLiteral("寫入水平線形檔失敗: %1 (%2)")
+                .arg(filePath, f.errorString());
+        return false;
+    }
+    return true;
+}
+
+// ============================================================================
 //  readVerticalALD
 // ============================================================================
 
@@ -273,6 +435,51 @@ QVector<VerticalAlignmentPoint> AldFileIO::readVerticalALD(const QString& filePa
     }
 
     return pts;
+}
+
+// ============================================================================
+//  writeVerticalALD
+// ============================================================================
+
+bool AldFileIO::writeVerticalALD(const QString& filePath,
+                                  const QVector<VerticalAlignmentPoint>& points,
+                                  QString* errorMessage)
+{
+    QFile f(filePath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errorMessage)
+            *errorMessage = QStringLiteral("無法開啟垂直線形檔以寫入: %1").arg(filePath);
+        return false;
+    }
+
+    // 空清單 → 寫出空檔案（對稱於 readVerticalALD 對空檔的容錯處理，例如無豎向
+    // 資料的線路）。
+    if (points.isEmpty())
+        return true;
+
+    QByteArray data;
+    data.reserve(points.size() * kVRecordSize);
+
+    for (const VerticalAlignmentPoint& pt : points) {
+        data += packField(pt.plat, 3);
+        data += packField(pt.upDown, 1);
+        data += packNumericField(pt.chainage, 15);
+        data += packNumericField(pt.elevation, 10);
+        data += packNumericField(pt.grade, 10);
+        data += packNumericField(pt.kValue, 15);
+        data += packNumericField(pt.pviElevation, 10);
+        data += packNumericField(pt.lvc, 10);
+        data += packNumericField(pt.mo, 10);
+    }
+
+    const qint64 written = f.write(data);
+    if (written != data.size()) {
+        if (errorMessage)
+            *errorMessage = QStringLiteral("寫入垂直線形檔失敗: %1 (%2)")
+                .arg(filePath, f.errorString());
+        return false;
+    }
+    return true;
 }
 
 } // namespace railway

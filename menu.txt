@@ -149,6 +149,7 @@ command|setorigin||0
 
 menu|Railway|track|New Track Centerline||
 menu|Railway|importalignment|Import PRJ/ALD…||
+menu|Railway|exportalignment|Export/Update PRJ/ALD…||
 menu|Railway|separator|||
 menu|Railway|alignmentfixtangent|Fixed Tangent||
 menu|Railway|alignmentfixcurve|Fixed Curve||
@@ -167,6 +168,7 @@ menu|Railway|valigncheckgrade|Check Grade||
 
 command|track|tcl|0
 command|importalignment|iald|0
+command|exportalignment|eald|0
 
 command|valignfloatvcurve||0
 command|valignmovepvi||0

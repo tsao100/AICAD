@@ -99,6 +99,30 @@ public:
      */
     static QString verticalFileNameFor(const QString& hFileName);
 
+    /**
+     * @brief 寫出 .prj 純文字檔（CRLF 換行），每行一個 *H.ALD 檔名。
+     * @return 成功與否；失敗時 *errorMessage 說明原因。
+     */
+    static bool writePrj(const QString& prjFilePath,
+                         const QVector<PrjEntry>& entries,
+                         QString* errorMessage = nullptr);
+
+    /**
+     * @brief 將 AlignmentPoint 清單寫出為 *H.ALD 二進位檔（204 bytes/筆，
+     *        欄位配置與 readHorizontalALD 完全對稱）。
+     */
+    static bool writeHorizontalALD(const QString& filePath,
+                                    const QVector<AlignmentPoint>& points,
+                                    QString* errorMessage = nullptr);
+
+    /**
+     * @brief 將 VerticalAlignmentPoint 清單寫出為 *V.ALD 二進位檔（84 bytes/筆，
+     *        欄位配置與 readVerticalALD 完全對稱）。空清單會寫出空檔案。
+     */
+    static bool writeVerticalALD(const QString& filePath,
+                                  const QVector<VerticalAlignmentPoint>& points,
+                                  QString* errorMessage = nullptr);
+
     /** AlignmentData 記錄長度（bytes）。 */
     static constexpr int kHRecordSize = 204;
     /** VerticalAlignment 記錄長度（bytes）。 */
@@ -109,6 +133,12 @@ private:
     static double   parseAsciiDouble(const QByteArray& field);
     static double   parseAzimuthDMS(const QByteArray& field);
     static double   readLEDouble(const char* p);
+
+    // ── write-side helpers ──────────────────────────────────────────────────
+    static QByteArray packField(const QString& text, int width);
+    static QByteArray packNumericField(double value, int width, int maxDecimals = 3);
+    static QByteArray packAzimuthField(double radians, int width);
+    static QByteArray packLEDouble(double v);
 };
 
 } // namespace railway

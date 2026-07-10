@@ -60,6 +60,21 @@ public:
     /// 清除 origin，回到恆等轉換狀態（isSet() == false）。
     void clear();
 
+    // ── 預設 origin ──────────────────────────────────────────────────────────
+    // 台灣 TM2 二度分帶常見量級（E≈250,000 / N≈2,650,000）。當專案／檔案未
+    // 明確設定 origin 時（例如直接匯入 ALD、尚未執行過 SetOriginCommand），
+    // 以此值當作預設 origin，避免 toLocal()/toGlobal() 因未設定而退化成恆等
+    // 轉換，讓大量級 TM2 數字直接被當成 Local 座標使用（OCCT float32 精度
+    // 問題、視圖 fitAll()/座標顯示異常的根因）。
+    static constexpr double kDefaultOriginE = 250000.0;
+    static constexpr double kDefaultOriginN = 2650000.0;
+
+    /// 若 isSet()==false，套用預設 origin（kDefaultOriginE/N，Z=0）；
+    /// 已設定則不做任何事。所有「可能是第一次接觸 TM2 座標」的入口
+    /// （ALD 匯入、進入 Alignment edit、開啟線形資料表…）都應呼叫本函式，
+    /// 確保 toLocal()/toGlobal() 全域行為一致。
+    static void ensureDefault();
+
     // ── Global(TM2) → Local(CAD) ─────────────────────────────────────────────
     /// 將 TM2 東向 / 北向（E, N）轉成 CAD Local XY 平面座標。
     QPointF toLocal(const QPointF& globalEN) const;

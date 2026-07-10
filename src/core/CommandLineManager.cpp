@@ -227,6 +227,13 @@ void CommandLineManager::waitForInput(InputType type) {
     emit inputRequired(type);
 }
 
+void CommandLineManager::resetInputWait() {
+    m_isWaitingForInput = false;
+    m_expectedInputType = InputType::None;
+    m_currentOptions.clear();
+    emit promptOptionsChanged({});
+}
+
 void CommandLineManager::addToHistory(const QString& command) {
     if (command.isEmpty()) return;
 
