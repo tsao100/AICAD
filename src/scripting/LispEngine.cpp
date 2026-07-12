@@ -87,6 +87,19 @@ bool LispEngine::initialize() {
         sigaction(SIGFPE, NULL, &d->oldSigfpe);
 #endif
         
+        // ⚠️ ECL 預設會安裝「整個行程」層級的 SIGSEGV/SIGBUS handler
+        //    （用於它自己的 stack-overflow 偵測與 Boehm GC），不是只在真的
+        //    執行 Lisp 程式碼時才生效——只要程式的任何地方（包括跟 Lisp
+        //    完全無關的 Qt/OCCT 程式碼）發生真正的記憶體錯誤，都會被 ECL
+        //    攔截，然後嘗試透過 Lisp 的 condition system 回報，結果往往是
+        //    ECL 自己的回報機制又出錯（例如 "GO found an inexistent tag"），
+        //    最後行程還是死掉，但完全看不到真正出事的 C++ 呼叫堆疊。
+        //    在 cl_boot() 之前關掉這兩個攔截，讓真正的記憶體錯誤照 OS 預設
+        //    行為當掉，這樣用偵錯器（gdb/Qt Creator）或 core dump 才能看到
+        //    真正出問題的那一行程式碼，而不是被 ECL 的錯誤處理機制蓋掉。
+        ecl_set_option(ECL_OPT_TRAP_SIGSEGV, 0);
+        ecl_set_option(ECL_OPT_TRAP_SIGBUS, 0);
+
         // 初始化 ECL
         char* argv[1] = {(char*)"AICAD"};
         cl_boot(1, argv);

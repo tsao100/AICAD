@@ -75,6 +75,8 @@
 #include "cad/SketchInstance.h"   // Phase 3
 #include "cad/ConstraintPickSession.h"  // Point-pick for dimension constraints
 #include "ui/AlignmentDataTableDialog.h"  // 線形資料表對話框
+#include "ui/ProfileArrayStationTableDialog.h"  // Step 8：站位資料表對話框
+#include "cad/AlignedProfileArray.h"
 
 using namespace aicad::core;
 using namespace aicad::cad;
@@ -1558,6 +1560,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     // 不在此附加 provider，grips 只在 Sketching mode 幾何被選取時才顯示
                     d->gripManager->detach();
 
+                    // ✅ 讓互動式指令（例如 PROFILEARRAY / PROFILELOFT 詢問要選哪個
+                    //    草圖／線路／陣列時）也能收到這次點選，不用只能打字輸入名稱。
+                    if (auto* bus = core::Application::instance()->eventBus())
+                        bus->publish(core::Events::FEATURE_SELECTED, featureId);
+
                     cad::Feature* f = docMgr->currentDocument()->findFeature(featureId);
                     if (!f){
                         if (d->propertyPanel) d->propertyPanel->clear();
@@ -1816,6 +1823,26 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                 doc->setModified(true);
                             });
 
+                    dlg->show();
+                    dlg->raise();
+                    dlg->activateWindow();
+                });
+
+        // ── AlignedProfileArray — showProfileArrayTableRequested (Step 8) ──────
+        connect(d->featureBrowser, &FeatureBrowser::showProfileArrayTableRequested,
+                this, [this, docMgr](const QString& featureId) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) {
+                        qWarning() << "[UIManager] showProfileArrayTableRequested: no currentDocument";
+                        return;
+                    }
+                    auto* arr = qobject_cast<cad::AlignedProfileArray*>(doc->findFeature(featureId));
+                    if (!arr) {
+                        qWarning() << "[UIManager] showProfileArrayTableRequested: feature not found id=" << featureId;
+                        return;
+                    }
+                    auto* dlg = new ProfileArrayStationTableDialog(arr, d->mainWindow);
+                    dlg->setAttribute(Qt::WA_DeleteOnClose);
                     dlg->show();
                     dlg->raise();
                     dlg->activateWindow();

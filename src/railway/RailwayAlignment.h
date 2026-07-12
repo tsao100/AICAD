@@ -41,9 +41,37 @@
 #include <memory>
 #include <vector>
 #include <limits>
+#include <cmath>
 
 namespace aicad {
 namespace railway {
+
+/**
+ * @brief Standard track gauge [mm] used as the default lever-arm for
+ *        cant→rotation-angle conversion (@c cantToAngle).
+ *
+ * No project-level gauge setting exists yet in this codebase (checked); this
+ * constant is the interim source until a project setting / ALD-sourced value
+ * replaces it. Track gauge is the distance between the two rail running
+ * faces; 1435 mm is UIC standard gauge.
+ */
+constexpr double kStandardGaugeMM = 1435.0;
+
+/**
+ * @brief Convert a superelevation (cant) value to a rotation angle about the
+ *        track's tangent direction.
+ *
+ * @param cantValueMM  Superelevation [mm], as returned by @c getCant(p).
+ * @param gaugeWidthMM Track gauge / lever arm [mm]; defaults to
+ *                     @c kStandardGaugeMM when not supplied by the caller.
+ * @return Rotation angle [rad]. Small-angle geometry: cant is the vertical
+ *         rise between the two rails separated by @p gaugeWidthMM, so the
+ *         tilt angle is atan2(cant, gauge).
+ */
+inline double cantToAngle(double cantValueMM, double gaugeWidthMM = kStandardGaugeMM)
+{
+    return std::atan2(cantValueMM, gaugeWidthMM);
+}
 
 // ============================================================================
 //  Raw data records
@@ -192,6 +220,9 @@ public:
     /** Gauge widening [mm]. */
     double   getGaugeWidening  (double p, bool signed_ = true) const;
 
+    /** Horizontal (lateral) distance from centreline for tunnel/structure offset H. */
+    double   getAppliedH       (double p) const;
+
     /** Two-character TSC code of the element at chainage @p p. */
     QString  getTSC            (double p) const;
 
@@ -212,6 +243,7 @@ private:
     double  computeRadius          (int rawIdx, double p, bool signed_) const;
     double  interpolateCant        (int rawIdx, double p) const;
     double  interpolateGaugeWidening(int rawIdx, double p) const;
+    double  interpolateAppliedH    (int rawIdx, double p) const;
     int     leftRightSign          (int rawIdx) const;
 
     QVector<AlignmentPoint>                   m_pts;
@@ -357,6 +389,9 @@ public:
 
     double getCant         (double p, bool signed_ = true) const;
     double getGaugeWidening(double p, bool signed_ = true) const;
+
+    /** Horizontal (lateral) distance from centreline for tunnel/structure offset H. */
+    double getAppliedH     (double p) const;
 
     // ── Offset polyline (for OCCT / DXF output) ───────────────────────────────
 

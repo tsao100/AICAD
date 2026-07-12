@@ -373,6 +373,8 @@ QIcon FeatureBrowser::getIconForType(ItemType type) {
     case ItemType::Railway:         return QIcon(":/icons/folder.png");      // 路線資料夾
     case ItemType::TrackCenterLine: return QIcon(":/icons/sketch.png");      // 單線路
     case ItemType::VAlignment:      return QIcon(":/icons/plane.png");       // 縱斷面
+    case ItemType::Pattern:         return QIcon(":/icons/sketch.png");      // 沿線斷面陣列（暫沿用 sketch 圖示）
+    case ItemType::Loft:            return QIcon(":/icons/extrude.png");     // 放樣實體（暫沿用 extrude 圖示）
     default:                        return QIcon();
     }
 }
@@ -519,9 +521,23 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
         return;
     }
 
-    QMenu menu(this);
+    // ── AlignedProfileArray（Step 8：唯讀站位資料表）───────────────────────
+    if (itemType == ItemType::Pattern) {
+        QMenu menu(this);
+        QAction* actTable = menu.addAction(tr("站位資料表 (Station Table)"));
+        connect(actTable, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT showProfileArrayTableRequested(itemId);
+        });
+        menu.addSeparator();
+        QAction* actDelete = menu.addAction(QIcon(":/icons/cut.png"), tr("刪除"));
+        connect(actDelete, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT deleteFeatureRequested(itemId);
+        });
+        menu.exec(globalPos);
+        return;
+    }
 
-    // ── 編輯草圖（僅 Sketch）────────────────────────────────────────────────
+    QMenu menu(this);
     if (itemType == ItemType::Sketch) {
         QAction* actEdit = menu.addAction(
             QIcon(":/icons/sketch.png"), tr("編輯草圖"));

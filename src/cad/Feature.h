@@ -33,7 +33,8 @@ enum class FeatureType {
     Chamfer,        ///< 倒角特徵
     Boolean,        ///< 布林運算
     Pattern,        ///< 陣列特徵
-    SketchInstance  ///< 草圖副本（Phase 3）
+    SketchInstance, ///< 草圖副本（Phase 3）
+    Loft            ///< 斷面放樣特徵（Profile Loft Solid）
 };
 
 /**

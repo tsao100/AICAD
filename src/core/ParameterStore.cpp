@@ -118,6 +118,15 @@ std::pair<bool, double> ParameterStore::evaluate(const QString& exprStr) const {
     for (auto it = m_params.cbegin(); it != m_params.cend(); ++it)
         engine.globalObject().setProperty(it.key(), it.value().value);
 
+    // 讓運算式可以使用裸露的三角/數學函式名（sin/cos/...），對應到 Math.*。
+    // extractDependencies() 的關鍵字表已經假設這些名稱可以裸用，這裡補上對應的別名，
+    // 讓 evaluate() 的行為與該假設一致。
+    engine.evaluate(QStringLiteral(
+        "var sin=Math.sin, cos=Math.cos, tan=Math.tan, sqrt=Math.sqrt, "
+        "abs=Math.abs, pow=Math.pow, floor=Math.floor, ceil=Math.ceil, "
+        "round=Math.round, min=Math.min, max=Math.max, log=Math.log, "
+        "PI=Math.PI;"));
+
     QJSValue result = engine.evaluate(exprStr);
     if (result.isError() || !result.isNumber()) {
         qWarning() << "[ParameterStore] eval failed:" << exprStr << result.toString();

@@ -261,6 +261,7 @@ SOURCES += \
     src/command/alignment/TrackCenterLineCommands.cpp \
     src/command/alignment/ImportAlignmentCommand.cpp \
     src/command/alignment/ExportAlignmentCommand.cpp \
+    src/command/alignment/ProfileArrayCommand.cpp \
     src/command/alignment/VAlignFloatVCurveCommand.cpp \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
@@ -294,6 +295,8 @@ SOURCES += \
     src/cad/Sketch.cpp \
     src/cad/SketchEntity.cpp \
     src/cad/Extrude.cpp \
+    src/cad/AlignedProfileArray.cpp \
+    src/cad/ProfileLoftSolid.cpp \
     src/cad/FeatureTree.cpp \
     src/cad/Plane.cpp \
     \
@@ -321,6 +324,7 @@ SOURCES += \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/AlignmentDataTableDialog.cpp \
+    src/ui/ProfileArrayStationTableDialog.cpp \
     src/ui/ParameterPanel.cpp \
     src/ui/PropertyPanel.cpp \
     src/ui/SketchPanel.cpp \
@@ -396,6 +400,7 @@ HEADERS += \
     src/command/alignment/TrackCenterLineCommands.h \
     src/command/alignment/ImportAlignmentCommand.h \
     src/command/alignment/ExportAlignmentCommand.h \
+    src/command/alignment/ProfileArrayCommand.h \
     src/command/alignment/VAlignCheckGradeCommand.h \
     src/command/alignment/VAlignFloatVCurveCommand.h \
     src/command/alignment/VAlignMovePVICommand.h \
@@ -421,6 +426,8 @@ HEADERS += \
     src/cad/Sketch.h \
     src/cad/SketchEntity.h \
     src/cad/Extrude.h \
+    src/cad/AlignedProfileArray.h \
+    src/cad/ProfileLoftSolid.h \
     src/cad/FeatureTree.h \
     src/cad/Plane.h \                # ✅ 添加
     \
@@ -456,6 +463,7 @@ HEADERS += \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
     src/ui/AlignmentDataTableDialog.h \
+    src/ui/ProfileArrayStationTableDialog.h \
     src/ui/ParameterPanel.h \
     src/ui/PropertyPanel.h \
     src/ui/SketchPanel.h \

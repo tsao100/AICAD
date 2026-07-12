@@ -99,11 +99,25 @@ cad::Document* DocumentManager::openDocument(const QString& filePath) {
 
     qDebug() << "[DocumentManager] Opening document:" << filePath;
 
-    // 檢查是否已開啟
-    QString fileName = fileInfo.fileName();
+    // 檢查是否已開啟：
+    // ⚠️ 修正：原本拿 docPtr->fileName()（load() 存的是完整路徑，例如
+    // "/home/x/Draw/Plinth.aicad"）去跟 fileInfo.fileName()（只有檔名，
+    // 例如 "Plinth.aicad"）比較，兩者格式不同，比對永遠不會相等，導致
+    // 這段「已開啟就重用」的邏輯形同虛設——每次重新載入同一個檔案都會
+    // 建立一個全新的 Document，舊的那個既不在 d->documents 移除、也沒有
+    // 任何地方會 delete 它，就這樣被洩漏在記憶體裡。舊 Document 底下的
+    // AlignedProfileArray 因為永遠不會被解構，也就永遠不會呼叫
+    // PlaneManager::deletePlane() 清掉它建立的測站平面，於是每次重新載入
+    // 都在 PlaneManager 這個全域單例裡留下一批不會再用到、名稱重複的
+    // Plane——這正是 log 裡「...Station0 (1)」這種重複命名的來源，也是
+    // 多次重新載入同一個檔案後偶發當掉的根本原因之一。改用完整路徑（正規
+    // 化過）比較，讓「已開啟」判斷真的生效。
+    const QString canonicalNewPath = QFileInfo(filePath).canonicalFilePath();
     for (const QPointer<cad::Document>& docPtr : d->documents) {
-        if (!docPtr.isNull() && docPtr->fileName() == fileName) {
-            qDebug() << "[DocumentManager] Document already open:" << fileName;
+        if (docPtr.isNull()) continue;
+        const QString canonicalOpenPath = QFileInfo(docPtr->fileName()).canonicalFilePath();
+        if (!canonicalOpenPath.isEmpty() && canonicalOpenPath == canonicalNewPath) {
+            qDebug() << "[DocumentManager] Document already open:" << filePath;
             setCurrentDocument(docPtr.data());
             return docPtr.data();
         }

@@ -555,7 +555,7 @@
                     "origin": 1,
                     "points": [
                         {
-                            "x": -1173.2928466796875,
+                            "x": -1200,
                             "y": -232
                         }
                     ],
@@ -583,7 +583,7 @@
                     "origin": 1,
                     "points": [
                         {
-                            "x": -1181.296630859375,
+                            "x": -1200,
                             "y": -400
                         }
                     ],
@@ -597,7 +597,7 @@
                     "origin": 1,
                     "points": [
                         {
-                            "x": -224.40988159179688,
+                            "x": -300,
                             "y": -400
                         }
                     ],
@@ -606,6 +606,62 @@
                     "role": 0,
                     "type": 6,
                     "uuid": "28223d79-39bd-42d7-a701-295b5b229580"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -1200,
+                            "y": -232
+                        }
+                    ],
+                    "px": -1200,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "5d1a803a-e5f1-4cc7-9526-01ef9f1ee008"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -1200,
+                            "y": -400
+                        }
+                    ],
+                    "px": -1200,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "5affdad0-23cc-427a-a1a2-e21ad1fb2f07"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -300,
+                            "y": -232
+                        }
+                    ],
+                    "px": -300,
+                    "py": -232,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "6248d667-1f0b-418f-9a2b-c519bda989df"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -300,
+                            "y": -400
+                        }
+                    ],
+                    "px": -300,
+                    "py": -400,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "d5b3784f-6209-40c6-b38e-1030ac460914"
                 },
                 {
                     "endUuid": "750e5cb4-3caa-4612-b9bd-a670925e3425",
@@ -710,34 +766,6 @@
                     "uuid": "9fadda4a-602b-46d8-a273-ef2dcf7a66b3"
                 },
                 {
-                    "origin": 1,
-                    "points": [
-                        {
-                            "x": -1188.4893798828125,
-                            "y": -247.63755798339844
-                        }
-                    ],
-                    "px": -1200,
-                    "py": -232,
-                    "role": 0,
-                    "type": 6,
-                    "uuid": "5d1a803a-e5f1-4cc7-9526-01ef9f1ee008"
-                },
-                {
-                    "origin": 1,
-                    "points": [
-                        {
-                            "x": -1214.024658203125,
-                            "y": -394.8913879394531
-                        }
-                    ],
-                    "px": -1200,
-                    "py": -400,
-                    "role": 0,
-                    "type": 6,
-                    "uuid": "5affdad0-23cc-427a-a1a2-e21ad1fb2f07"
-                },
-                {
                     "endUuid": "5affdad0-23cc-427a-a1a2-e21ad1fb2f07",
                     "points": [
                         {
@@ -753,34 +781,6 @@
                     "startUuid": "5d1a803a-e5f1-4cc7-9526-01ef9f1ee008",
                     "type": 0,
                     "uuid": "d1670018-3fa9-49cf-bb8a-3d6c428929d2"
-                },
-                {
-                    "origin": 1,
-                    "points": [
-                        {
-                            "x": -264.1369934082031,
-                            "y": -229.2076873779297
-                        }
-                    ],
-                    "px": -300,
-                    "py": -232,
-                    "role": 0,
-                    "type": 6,
-                    "uuid": "6248d667-1f0b-418f-9a2b-c519bda989df"
-                },
-                {
-                    "origin": 1,
-                    "points": [
-                        {
-                            "x": -169.5496368408203,
-                            "y": -396.4490966796875
-                        }
-                    ],
-                    "px": -300,
-                    "py": -400,
-                    "role": 0,
-                    "type": 6,
-                    "uuid": "d5b3784f-6209-40c6-b38e-1030ac460914"
                 },
                 {
                     "endUuid": "d5b3784f-6209-40c6-b38e-1030ac460914",
@@ -803,7 +803,7 @@
             "id": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "Sketch 1",
             "planeData": {
-                "createdTime": "2026-07-07T14:03:39",
+                "createdTime": "2026-07-12T14:44:57",
                 "geometry": {
                     "normal": [
                         0,
@@ -821,34 +821,478 @@
                         0
                     ]
                 },
-                "id": "3d7a8158-5a21-4db5-b2c2-ecd74764dbe6",
+                "id": "693b65f2-b9dc-4e86-b31d-12bd49b838dd",
                 "isLocked": true,
-                "modifiedTime": "2026-07-07T14:03:39",
+                "modifiedTime": "2026-07-12T14:44:57",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "3d7a8158-5a21-4db5-b2c2-ecd74764dbe6",
+            "planeId": "693b65f2-b9dc-4e86-b31d-12bd49b838dd",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
+            "visible": false
+        },
+        {
+            "id": "{c06d8e14-3103-4f9a-8699-54202236e259}",
+            "name": "ProfileLoft 3",
+            "sourceArrayId": "",
+            "suppressed": false,
+            "type": "Loft",
+            "visible": true
+        },
+        {
+            "endChainage": 267,
+            "id": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "interval": 1.5,
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "masterUnitScale": 0.001,
+            "name": "ProfileArray 9",
+            "startChainage": 252.3,
+            "suppressed": false,
+            "trackCenterLineId": "374a28a2-4b76-4d87-aed9-81dbf65e8f6f",
+            "type": "Pattern",
+            "visible": true
+        },
+        {
+            "id": "{a790a3be-8b6d-4902-819f-3c2f4d11ec5b}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station0",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "ce646563-c315-4337-a85a-0fb8864998b5",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{1dbdb790-3d05-4fe8-b605-057dffb983e3}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station1",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "49bf883b-a26b-46e5-8cc4-dc717fd4cbca",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{1587915d-6833-4f92-b4c2-150260f67fcf}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station2",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "e4496cd2-cf58-4f68-82a0-ffa2c51d0a82",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{33d8c08d-b4ef-48a7-b611-e69e27a0aaa5}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station3",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "f49c6fab-4fa0-4de5-8bce-cb44cfea6ac0",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{80fad7f8-9c50-4f08-a080-afe4a54b69c3}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station4",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "230195e4-a613-4e9c-9a80-7db61dfb3a76",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{a4238f55-e2f8-497c-9af6-b0cf812f898d}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station5",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "d98725d0-856b-4e0e-bb3d-8bac12e02e75",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{a2371c95-ea9b-46f5-912c-8ae7cb061e5f}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station6",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "bd58827e-8836-4f5c-997a-33ef650e8781",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{dfa6929f-c712-41b2-b7be-e20f2ac56181}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station7",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "a900b4d3-6b7f-4597-96cb-e736901af018",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{bcbde490-be66-4527-8520-fa0fa2291206}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station8",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "f0d02ae9-9454-4d83-b3fa-d165b2bd9f23",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{72bb82e3-cf12-41b1-a952-21aa7c730c60}",
+            "instanceParams": {
+                "H": "0",
+                "cant": "0"
+            },
+            "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
+            "name": "ProfileArray 9_Station9",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "planeId": "e0825e58-8018-45da-97d3-a1b62fdccf83",
+            "suppressed": false,
+            "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "id": "{10c9a233-f3d7-4c08-92a2-054f68802b56}",
+            "name": "ProfileLoft 10",
+            "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "sourceArrayId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
+            "suppressed": false,
+            "type": "Loft",
             "visible": true
         }
     ],
     "fileName": "Plinth.aicad",
     "parameters": {
     },
+    "trackCenterLines": [
+        {
+            "alignmentEdit": {
+                "horizontal": {
+                    "elements": [
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": -278.86395263671875,
+                            "endY": 69.11463165283203,
+                            "length": 299.0853346759055,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": -426.4147322751324,
+                            "startY": -191.0407158730159,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 50,
+                            "mode": 1,
+                            "radius": 300,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 4,
+                            "tangentIdxBefore": 0,
+                            "type": 2
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 0,
+                            "mode": 1,
+                            "radius": 300,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 4,
+                            "tangentIdxBefore": 0,
+                            "type": 1
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": 0,
+                            "endY": 0,
+                            "length": 50,
+                            "mode": 1,
+                            "radius": 300,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 4,
+                            "tangentIdxBefore": 0,
+                            "type": 3
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "endX": -18.70859338624343,
+                            "endY": 173.95335132275153,
+                            "length": 280.4852368463835,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": -278.86395263671875,
+                            "startY": 69.11463165283203,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        }
+                    ],
+                    "startChainage": 0,
+                    "startContChainage": 0
+                },
+                "projectOrigin": {
+                    "epsgCode": "EPSG:3826",
+                    "isSet": true,
+                    "originE": 250000,
+                    "originN": 2650000,
+                    "originZ": 0
+                },
+                "vertical": {
+                    "vips": [
+                        {
+                            "chainage": 0,
+                            "elevation": 15,
+                            "lvc": 0
+                        },
+                        {
+                            "chainage": 571.40168,
+                            "elevation": 15,
+                            "lvc": 0
+                        }
+                    ]
+                }
+            },
+            "hAlignVisible": false,
+            "horizontal": {
+                "rawPoints": [
+                    {
+                        "azimuth": 0.5159254713506746,
+                        "cant": 0,
+                        "chainage": 0,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": -426.4147322751324,
+                        "gaugeWidening": 0,
+                        "length": 169.23181679081083,
+                        "northing": -191.0407158730159,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.5159254713506745,
+                        "cant": 0,
+                        "chainage": 169.23181679081083,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -342.925896106794,
+                        "gaugeWidening": 0,
+                        "length": 50,
+                        "northing": -43.83670081372847,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.5992588046840078,
+                        "cant": 0,
+                        "chainage": 219.23181679081083,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": -317.06850986017963,
+                        "gaugeWidening": 0,
+                        "length": 151.538144107206,
+                        "northing": -1.0599223607310009,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "SC",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.104385951708028,
+                        "cant": 0,
+                        "chainage": 370.76996089801685,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -204.2472339153193,
+                        "gaugeWidening": 0,
+                        "length": 50,
+                        "northing": 97.68737234907476,
+                        "plat": "",
+                        "radius": 300,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "CS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.1877192850413612,
+                        "cant": 0,
+                        "chainage": 420.76996089801685,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": -158.42236014806792,
+                        "gaugeWidening": 0,
+                        "length": 150.6317189612888,
+                        "northing": 117.65079246034101,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "ST",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 1.1877192850413612,
+                        "cant": 0,
+                        "chainage": 571.4016798593057,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": -18.70859338624343,
+                        "gaugeWidening": 0,
+                        "length": 0,
+                        "northing": 173.95335132275153,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    }
+                ]
+            },
+            "id": "374a28a2-4b76-4d87-aed9-81dbf65e8f6f",
+            "name": "Track 1",
+            "vAlignVisible": false,
+            "vertical": {
+                "points": [
+                    {
+                        "chainage": 0,
+                        "elevation": 15,
+                        "grade": 0,
+                        "kValue": 0,
+                        "lvc": 0,
+                        "mo": 0,
+                        "pviElevation": 0
+                    },
+                    {
+                        "chainage": 571.40168,
+                        "elevation": 15,
+                        "grade": 0,
+                        "kValue": 0,
+                        "lvc": 0,
+                        "mo": 0,
+                        "pviElevation": 0
+                    }
+                ]
+            }
+        }
+    ],
     "version": "1.0",
     "viewState": {
-        "atX": -371.56826148998175,
-        "atY": 26.504032737832972,
-        "atZ": 0,
-        "eyeX": -371.56826148998175,
-        "eyeY": 26.504032737832972,
-        "eyeZ": 0,
-        "scale": 0.25795093201034186,
-        "upX": 0,
-        "upY": 1,
-        "upZ": 0,
-        "viewType": 1
+        "atX": -276.8810131673578,
+        "atY": -14.046938044193615,
+        "atZ": 41.27299831793529,
+        "eyeX": -276.72203491100004,
+        "eyeY": -14.329796086789615,
+        "eyeZ": 41.50691809574307,
+        "scale": 5.804501886060893,
+        "upX": -0.42223784359508015,
+        "upY": 0.42488657956533143,
+        "upZ": 0.8007412802781245,
+        "viewType": 7
     }
 }

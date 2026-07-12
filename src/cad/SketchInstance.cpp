@@ -18,8 +18,30 @@
 #include <gp_Dir.hxx>
 #include <Standard_Failure.hxx>
 #include <Precision.hxx>
+#include <cmath>
 
 namespace aicad::cad {
+
+namespace {
+/**
+ * @brief 求解後任何一個幾何點的座標若非有限值（NaN/Inf），代表求解器已經
+ *        發散（例如反覆對同一個 instance 連續 solve、每次都拿上一次壞掉的
+ *        解當初始猜測）。這種幾何若被 buildWires()/setShape() 用來組出
+ *        TopoDS 形狀，OCCT 在稍後 tessellate／顯示這個形狀時可能直接
+ *        丟出未捕捉的例外讓整個程式當掉，而不是像 SolveStatus::Conflict
+ *        那樣被溫和地擋下來——所以這裡要在建 wire 之前就先擋。
+ */
+bool allGeometryFinite(const QList<SketchGeometry*>& geoms) {
+    for (const SketchGeometry* g : geoms) {
+        if (!g) continue;
+        for (const QVector2D& p : g->points) {
+            if (!std::isfinite(p.x()) || !std::isfinite(p.y()))
+                return false;
+        }
+    }
+    return true;
+}
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 構造 / 析構
@@ -227,8 +249,8 @@ QList<TopoDS_Wire> SketchInstance::buildWires(
 
         try {
             if (geom->type == SketchGeometryType::Line && geom->points.size() >= 2) {
-                QVector3D p1 = plane->toWorld(geom->points[0].x(), geom->points[0].y());
-                QVector3D p2 = plane->toWorld(geom->points[1].x(), geom->points[1].y());
+                QVector3D p1 = plane->toWorld(geom->points[0].x() * m_scale, geom->points[0].y() * m_scale);
+                QVector3D p2 = plane->toWorld(geom->points[1].x() * m_scale, geom->points[1].y() * m_scale);
 
                 BRepBuilderAPI_MakeEdge edgeMk(
                     gp_Pnt(p1.x(), p1.y(), p1.z()),
@@ -244,10 +266,10 @@ QList<TopoDS_Wire> SketchInstance::buildWires(
                 BRepBuilderAPI_MakeWire wireMk;
                 int nSeg = pl->closed ? geom->points.size() : geom->points.size() - 1;
                 for (int i = 0; i < nSeg; ++i) {
-                    QVector3D p1 = plane->toWorld(geom->points[i].x(), geom->points[i].y());
+                    QVector3D p1 = plane->toWorld(geom->points[i].x() * m_scale, geom->points[i].y() * m_scale);
                     QVector3D p2 = plane->toWorld(
-                        geom->points[(i + 1) % geom->points.size()].x(),
-                        geom->points[(i + 1) % geom->points.size()].y());
+                        geom->points[(i + 1) % geom->points.size()].x() * m_scale,
+                        geom->points[(i + 1) % geom->points.size()].y() * m_scale);
 
                     BRepBuilderAPI_MakeEdge e(
                         gp_Pnt(p1.x(), p1.y(), p1.z()),
@@ -282,6 +304,7 @@ bool SketchInstance::rebuild() {
     QHash<QString, QString> uuidRemap;
     qDeleteAll(m_geomClones);
     m_geomClones = cloneGeometries(m_master, uuidRemap);
+    m_uuidRemap  = uuidRemap;  // 供 orderedWireFrom() 換算 master→clone UUID
 
     // 2. 拷貝並重映射約束
     m_constraintClones = cloneConstraints(m_master, uuidRemap);
@@ -299,8 +322,56 @@ bool SketchInstance::rebuild() {
         normal = gp_Dir(n.x(), n.y(), n.z());
     }
     SolveResult result = m_solver.solve(m_geomClones, m_constraintClones, normal);
-    if (result.status == SolveStatus::Conflict) {
-        setError("Constraint conflict in SketchInstance.");
+    bool solveOk = (result.status != SolveStatus::Conflict) && allGeometryFinite(m_geomClones);
+
+    if (!solveOk) {
+        // ✅ 這裡觀察到的現象：同一份 master 幾何、同樣的約束，在不同次執行
+        //    有時收斂、有時 CONFLICT——不是幾何本身有問題，而是求解器對這種
+        //    （絕對座標 FixX/FixY + 相對 Distance/Coincident 並存的）over-
+        //    constrained 系統偶爾數值不穩定。求解失敗時 m_geomClones 已經被
+        //    solve() 就地改壞（發散掉），不能直接拿來 buildWires()，但也不該
+        //    整個 instance 直接放棄——那會讓 ProfileLoftSolid 因為缺一站就
+        //    整個放樣失敗、Loft 完全不顯示。
+        //    做法：重新從 master clone 一份乾淨幾何，換一個全新的
+        //    ConstraintSolver 再試一次；還是不行的話，直接使用「未求解」的
+        //    master 原始座標當作這一站的幾何——對沒有用 cant/H 參數化尺寸的
+        //    斷面來說，這就是完全正確的答案；對有用到 cant/H 的斷面，這只是
+        //    退化成「顯示 cant=H=0 時的形狀」的近似值，好過完全不顯示。
+        qWarning() << "[SketchInstance]" << name()
+                   << "solve failed (status=" << static_cast<int>(result.status)
+                   << "), retrying with a fresh solver...";
+
+        qDeleteAll(m_geomClones);
+        m_geomClones = cloneGeometries(m_master, uuidRemap);
+        m_uuidRemap  = uuidRemap;
+        // ⚠️ constraint clones 裡的 geomUuid 參照的是「clone」的 UUID，每次
+        // cloneGeometries() 都會產生全新的 clone UUID，所以幾何重 clone 後
+        // 約束也必須跟著用同一份新 uuidRemap 重 clone，否則約束會指到不存在
+        // 的舊 UUID、悄悄地變成完全沒套用任何約束。
+        m_constraintClones = cloneConstraints(m_master, uuidRemap);
+        for (auto& c : m_constraintClones)
+            if (c.isDimensional()) c.evaluateValue(m_instanceStore);
+
+        ConstraintSolver retrySolver;
+        SolveResult retryResult = retrySolver.solve(m_geomClones, m_constraintClones, normal);
+        solveOk = (retryResult.status != SolveStatus::Conflict) && allGeometryFinite(m_geomClones);
+
+        if (!solveOk) {
+            qWarning() << "[SketchInstance]" << name()
+                       << "retry also failed — falling back to raw (unsolved) master geometry"
+                          " for this station.";
+            qDeleteAll(m_geomClones);
+            m_geomClones = cloneGeometries(m_master, uuidRemap);  // 乾淨、未求解，但一定有限、拓樸正確
+            m_uuidRemap  = uuidRemap;
+            m_constraintClones = cloneConstraints(m_master, uuidRemap);  // 保持與 m_geomClones 一致
+            solveOk = allGeometryFinite(m_geomClones);
+        }
+    }
+
+    if (!solveOk) {
+        // 連未求解的原始 master 幾何都不是有限值——這不可能發生於正常資料，
+        // 但還是留一道防線，避免任何非有限座標流進 buildWires()/setShape()。
+        setError("Solver diverged to non-finite coordinates in SketchInstance.");
         return false;
     }
 
@@ -333,6 +404,189 @@ bool SketchInstance::hasClosedProfile() const {
     for (const TopoDS_Wire& w : m_wires)
         if (w.Closed()) return true;
     return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// orderedWireFrom / allClosedWires — 封閉 wire 走訪（供 Loft 使用）
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// 2D 座標比對容差（草圖單位，通常為 mm）。
+constexpr double kWirePosTol = 1e-5;
+
+/// 有向線段：from → to。
+struct DirSegment {
+    QVector2D from;
+    QVector2D to;
+};
+
+bool nearlyEqual(const QVector2D& a, const QVector2D& b) {
+    return (a - b).lengthSquared() < (kWirePosTol * kWirePosTol);
+}
+
+/// 收集所有有向線段（支援範圍與 buildWires() 一致：Line + 封閉 Polyline）。
+/// 順序 = m_geomClones 的原始順序，master 每次 clone 出來的順序都相同，
+/// 這是後面「用第一個未走訪線段當迴圈起點」能在各測站間保持一致的關鍵。
+QList<DirSegment> collectSegments(const QList<SketchGeometry*>& geoms) {
+    QList<DirSegment> segments;
+    for (const SketchGeometry* geom : geoms) {
+        if (!geom || geom->isConstruction()) continue;
+
+        if (geom->type == SketchGeometryType::Line && geom->points.size() >= 2) {
+            segments.append({ geom->points[0], geom->points[1] });
+
+        } else if (geom->type == SketchGeometryType::Polyline && geom->points.size() >= 2) {
+            const SketchPolyline* pl = static_cast<const SketchPolyline*>(geom);
+            int n = geom->points.size();
+            int nSeg = pl->closed ? n : n - 1;
+            for (int i = 0; i < nSeg; ++i)
+                segments.append({ geom->points[i], geom->points[(i + 1) % n] });
+        }
+    }
+    return segments;
+}
+
+/// 從 startPos 出發走一圈：每步優先選「from == 目前點」的未使用線段（維持
+/// 原方向），找不到才退而求其次選「to == 目前點」的線段並反向使用。
+/// 走回 startPos 就算成功；`used` 由呼叫端提供並會被本函式標記。
+/// 回傳空 list 代表走不出封閉迴圈（開放輪廓）。
+QList<DirSegment> walkLoopFrom(const QList<DirSegment>& segments,
+                                QVector<bool>& used,
+                                const QVector2D& startPos) {
+    QVector2D current = startPos;
+    QList<DirSegment> ordered;
+    const int maxSteps = segments.size() + 1;
+
+    for (int step = 0; step < maxSteps; ++step) {
+        int chosen = -1;
+        bool flip = false;
+
+        for (int i = 0; i < segments.size(); ++i) {
+            if (used[i]) continue;
+            if (nearlyEqual(segments[i].from, current)) { chosen = i; flip = false; break; }
+        }
+        if (chosen < 0) {
+            for (int i = 0; i < segments.size(); ++i) {
+                if (used[i]) continue;
+                if (nearlyEqual(segments[i].to, current)) { chosen = i; flip = true; break; }
+            }
+        }
+        if (chosen < 0) break;
+
+        used[chosen] = true;
+        DirSegment seg = segments[chosen];
+        if (flip) std::swap(seg.from, seg.to);
+        ordered.append(seg);
+        current = seg.to;
+
+        if (nearlyEqual(current, startPos))
+            break;
+    }
+
+    if (ordered.isEmpty() || !nearlyEqual(current, startPos))
+        return {};
+    return ordered;
+}
+
+/// 依走訪順序（DirSegment list）建立 3D TopoDS_Wire。
+TopoDS_Wire makeWireFromSegments(const QList<DirSegment>& ordered, Plane* plane, double scale) {
+    TopoDS_Wire result;
+    if (!plane || ordered.isEmpty()) return result;
+    try {
+        BRepBuilderAPI_MakeWire wireMk;
+        for (const DirSegment& seg : ordered) {
+            QVector3D p1 = plane->toWorld(seg.from.x() * scale, seg.from.y() * scale);
+            QVector3D p2 = plane->toWorld(seg.to.x()   * scale, seg.to.y()   * scale);
+            BRepBuilderAPI_MakeEdge edgeMk(
+                gp_Pnt(p1.x(), p1.y(), p1.z()),
+                gp_Pnt(p2.x(), p2.y(), p2.z()));
+            if (edgeMk.IsDone())
+                wireMk.Add(edgeMk.Edge());
+        }
+        if (wireMk.IsDone())
+            result = wireMk.Wire();
+    } catch (const Standard_Failure& ex) {
+        qWarning() << "[SketchInstance] makeWireFromSegments OCC error:" << ex.GetMessageString();
+    }
+    return result;
+}
+
+} // namespace
+
+TopoDS_Wire SketchInstance::orderedWireFrom(const QString& masterPointUuid) const {
+    TopoDS_Wire result;
+    if (!m_plane || masterPointUuid.isEmpty())
+        return result;
+
+    // 1. master 起點 UUID → 本副本 clone UUID → 起點座標
+    QString cloneUuid = m_uuidRemap.value(masterPointUuid);
+    if (cloneUuid.isEmpty()) {
+        qWarning() << "[SketchInstance] orderedWireFrom: no clone mapping for"
+                   << masterPointUuid;
+        return result;
+    }
+
+    QVector2D startPos;
+    bool foundStart = false;
+    for (const SketchGeometry* g : m_geomClones) {
+        if (g && g->uuid == cloneUuid && !g->points.isEmpty()) {
+            startPos = g->points[0];
+            foundStart = true;
+            break;
+        }
+    }
+    if (!foundStart) {
+        qWarning() << "[SketchInstance] orderedWireFrom: clone geometry not found for"
+                   << cloneUuid;
+        return result;
+    }
+
+    const QList<DirSegment> segments = collectSegments(m_geomClones);
+    if (segments.isEmpty())
+        return result;
+
+    QVector<bool> used(segments.size(), false);
+    const QList<DirSegment> ordered = walkLoopFrom(segments, used, startPos);
+    if (ordered.isEmpty()) {
+        qWarning() << "[SketchInstance] orderedWireFrom: profile not closed from given start point";
+        return result;
+    }
+
+    return makeWireFromSegments(ordered, m_plane, m_scale);
+}
+
+QList<TopoDS_Wire> SketchInstance::allClosedWires() const {
+    QList<TopoDS_Wire> result;
+    if (!m_plane) return result;
+
+    // 支援一個草圖裡有多個互不相連的封閉輪廓（例如左右兩個獨立的墊塊斷面）：
+    // 依 m_geomClones 的原始順序掃描，每碰到一個還沒被用過的線段，就以它的
+    // from 點當作一個新迴圈的起點去走。因為 clone 順序在每個測站都相同，
+    // 這個「第一個未走訪線段」的選法在各測站之間是穩定、一致的，不需要
+    // 額外指定「起點 UUID」。
+    const QList<DirSegment> segments = collectSegments(m_geomClones);
+    if (segments.isEmpty()) return result;
+
+    QVector<bool> used(segments.size(), false);
+    for (int i = 0; i < segments.size(); ++i) {
+        if (used[i]) continue;
+
+        const QVector2D startPos = segments[i].from;
+        const QList<DirSegment> ordered = walkLoopFrom(segments, used, startPos);
+        if (ordered.isEmpty()) {
+            // 這條線段所屬的鏈走不成封閉迴圈（開放輪廓，例如未封閉的草圖線）。
+            // 這條線段本身已經被 walkLoopFrom 標記過（若它是第一步）或維持
+            // 未標記；為避免無窮迴圈，至少把 segments[i] 標記掉再繼續掃描。
+            used[i] = true;
+            continue;
+        }
+
+        TopoDS_Wire w = makeWireFromSegments(ordered, m_plane, m_scale);
+        if (!w.IsNull())
+            result.append(w);
+    }
+    return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

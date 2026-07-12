@@ -27,6 +27,8 @@ namespace cad {
 class Feature;
 class Sketch;
 class Extrude;
+class AlignedProfileArray;
+class ProfileLoftSolid;
 
 /**
  * @brief 參考幾何類型
@@ -188,6 +190,30 @@ public:
      * @brief 建立擠出
      */
     Extrude* createExtrude(Sketch* sketch, double height, const QString& name = QString());
+
+    /**
+     * @brief 建立沿線斷面草圖陣列（ProfileArrayAlongAlignment 規劃 §2.2）
+     * @param master         斷面 master Sketch（含 cant/H 具名參數）
+     * @param tcl            佈置所依循的 TrackCenterLine
+     * @param startChainage  起始樁號 [m]
+     * @param endChainage    終止樁號上限 [m]（實際最後一站可能小於此值，見 §2.2）
+     * @param interval       樁號間距 [m]
+     * @param name           特徵名稱（空則自動命名）
+     */
+    AlignedProfileArray* createAlignedProfileArray(
+        Sketch* master,
+        railway::TrackCenterLine* tcl,
+        double startChainage,
+        double endChainage,
+        double interval,
+        const QString& name = QString());
+
+    /**
+     * @brief 將 AlignedProfileArray 各測站輪廓放樣成實體（Step 9）
+     */
+    ProfileLoftSolid* createProfileLoftSolid(
+        AlignedProfileArray* sourceArray,
+        const QString& name = QString());
     
     /**
      * @brief 重建所有特徵
@@ -263,6 +289,19 @@ public:
      * @brief 取得 Feature Tree 結構
      */
     QVector<ui::FeatureTreeItem> getFeatureTreeItems() const;
+
+    /**
+     * @brief 更改指定 tree item 的父節點（例如 SketchInstance 依規劃書 §2.5
+     *        改掛在其所屬的 AlignedProfileArray 底下，而非 master sketch）。
+     *        找不到對應 id 時什麼都不做。呼叫後會發出 treeStructureChanged()。
+     */
+    void setTreeItemParent(const QString& itemId, const QString& newParentId);
+
+    /**
+     * @brief 更改指定 tree item 的顯示名稱（例如 AlignedProfileArray 每次
+     *        rebuild() 後把測站數量寫進節點名稱）。呼叫後會發出 treeStructureChanged()。
+     */
+    void setTreeItemName(const QString& itemId, const QString& newName);
 
     /**
      * @brief 初始化原點幾何（包含 tree 結構）

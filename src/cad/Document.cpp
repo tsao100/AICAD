@@ -13,6 +13,8 @@
 #include "Extrude.h"
 #include "Plane.h"
 #include "SketchInstance.h"
+#include "AlignedProfileArray.h"
+#include "ProfileLoftSolid.h"
 #include "ui/FeatureTreeItem.h"
 
 #include <AIS_Point.hxx>
@@ -278,6 +280,8 @@ bool Document::load(const QString& fileName) {
                 Feature* feature = nullptr;
                 if (typeStr == "Sketch")  feature = new Sketch(this);
                 else if (typeStr == "Extrude") feature = new Extrude(this);
+                else if (typeStr == "Pattern") feature = new AlignedProfileArray(this);
+                else if (typeStr == "Loft") feature = new ProfileLoftSolid(this);
 
                 if (feature) {
                     if (feature->fromJson(featureJson)) {
@@ -343,6 +347,34 @@ bool Document::load(const QString& fileName) {
             if (!m_trackCenterLines.isEmpty()) {
                 Q_EMIT trackCenterLinesChanged();
                 Q_EMIT treeStructureChanged();
+            }
+        }
+
+        // ✅ AlignedProfileArray 同時依賴 Sketch 與 TrackCenterLine，後者要等上面
+        //    的 trackCenterLines 區塊載入完才存在，所以在此單獨補一輪
+        //    resolveReferences + rebuild（前面第三階段對它的 rebuild() 嘗試
+        //    會因 TCL 尚未解析而失敗，屬預期行為，不影響這裡的正確重建）。
+        for (Feature* feature : m_features) {
+            if (auto* arr = qobject_cast<AlignedProfileArray*>(feature))
+                arr->resolveReferences(this);
+        }
+        for (Feature* feature : m_features) {
+            if (auto* arr = qobject_cast<AlignedProfileArray*>(feature)) {
+                arr->rebuild();
+                arr->clearDirty();
+            }
+        }
+
+        // ✅ ProfileLoftSolid 依賴 AlignedProfileArray，必須在後者 rebuild 完成後
+        //    才能取得 stationWireLoops()，故再補一輪。
+        for (Feature* feature : m_features) {
+            if (auto* loft = qobject_cast<ProfileLoftSolid*>(feature))
+                loft->resolveReferences(this);
+        }
+        for (Feature* feature : m_features) {
+            if (auto* loft = qobject_cast<ProfileLoftSolid*>(feature)) {
+                loft->rebuild();
+                loft->clearDirty();
             }
         }
 
@@ -439,6 +471,13 @@ void Document::rebuildFeatureTreeItems() {
             treeItem.type = ui::ItemType::Sketch;
         } else if (qobject_cast<Extrude*>(feature)) {
             treeItem.type = ui::ItemType::Extrude;
+        } else if (auto* arr = qobject_cast<AlignedProfileArray*>(feature)) {
+            treeItem.type = ui::ItemType::Pattern;
+            treeItem.name = QString("%1 (%2 stations)").arg(arr->name()).arg(arr->stationCount());
+        } else if (qobject_cast<ProfileLoftSolid*>(feature)) {
+            treeItem.type = ui::ItemType::Loft;
+        } else if (qobject_cast<SketchInstance*>(feature)) {
+            treeItem.type = ui::ItemType::Sketch;  // 副本沿用草圖圖示
         } else {
             treeItem.type = ui::ItemType::Base;
         }
@@ -686,6 +725,91 @@ SketchInstance* Document::createSketchInstance(
     qDebug() << "[Document] SketchInstance created:" << inst->name()
              << "from master:" << master->name();
     return inst;
+}
+
+AlignedProfileArray* Document::createAlignedProfileArray(
+    Sketch* master,
+    railway::TrackCenterLine* tcl,
+    double startChainage,
+    double endChainage,
+    double interval,
+    const QString& name)
+{
+    if (!master) {
+        qWarning() << "[Document] createAlignedProfileArray: master is null";
+        return nullptr;
+    }
+    if (!tcl) {
+        qWarning() << "[Document] createAlignedProfileArray: tcl is null";
+        return nullptr;
+    }
+
+    auto* arr = new AlignedProfileArray(this);
+    arr->setName(name.isEmpty()
+        ? QString("ProfileArray %1").arg(m_nextFeatureNumber++)
+        : name);
+
+    arr->setMasterSketch(master);
+    arr->setTrackCenterLine(tcl);
+    arr->setRange(startChainage, endChainage, interval);
+
+    addFeature(arr);
+
+    // ✅ 陣列自己的 tree item 要在呼叫 rebuildFeature() 之前先加進去：rebuild()
+    // 內部會逐一建立測站 SketchInstance 並把它們的 parentId 指到這個陣列的
+    // id，如果陣列自己的 item 這時候還不存在，FeatureBrowser 每次
+    // treeStructureChanged() 重建畫面時都會找不到父節點（"Parent not found"），
+    // 站位數量的名稱會在 rebuild() 結束時透過 setTreeItemName() 自動補上。
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::Pattern;
+    item.id         = arr->id();
+    item.name       = arr->name();
+    item.parentId   = "";
+    item.visible    = arr->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(arr));
+    m_treeItems.append(item);
+
+    rebuildFeature(arr);
+    Q_EMIT treeStructureChanged();
+
+    qDebug() << "[Document] AlignedProfileArray created:" << arr->name()
+             << "stations:" << arr->stationCount();
+    return arr;
+}
+
+ProfileLoftSolid* Document::createProfileLoftSolid(
+    AlignedProfileArray* sourceArray,
+    const QString& name)
+{
+    if (!sourceArray) {
+        qWarning() << "[Document] createProfileLoftSolid: sourceArray is null";
+        return nullptr;
+    }
+
+    auto* loft = new ProfileLoftSolid(this);
+    loft->setName(name.isEmpty()
+        ? QString("ProfileLoft %1").arg(m_nextFeatureNumber++)
+        : name);
+    loft->setSourceArray(sourceArray);
+
+    addFeature(loft);
+
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::Loft;
+    item.id         = loft->id();
+    item.name       = loft->name();
+    item.parentId   = sourceArray->id();
+    item.visible    = loft->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(loft));
+    m_treeItems.append(item);
+
+    rebuildFeature(loft);
+    Q_EMIT treeStructureChanged();
+
+    qDebug() << "[Document] ProfileLoftSolid created:" << loft->name();
+    return loft;
 }
 
 Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& name) {
@@ -1400,6 +1524,26 @@ void Document::createOriginFolderItems() {
 
     qDebug() << "[Document] Origin folder items created:"
              << m_treeItems.size() << "total tree items";
+}
+
+void Document::setTreeItemParent(const QString& itemId, const QString& newParentId) {
+    for (ui::FeatureTreeItem& item : m_treeItems) {
+        if (item.id == itemId) {
+            item.parentId = newParentId;
+            Q_EMIT treeStructureChanged();
+            return;
+        }
+    }
+}
+
+void Document::setTreeItemName(const QString& itemId, const QString& newName) {
+    for (ui::FeatureTreeItem& item : m_treeItems) {
+        if (item.id == itemId) {
+            item.name = newName;
+            Q_EMIT treeStructureChanged();
+            return;
+        }
+    }
 }
 
 QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {

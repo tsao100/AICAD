@@ -489,6 +489,72 @@ double HorizontalAlignment::getGaugeWidening(double p, bool signed_) const
     return signed_ ? gw * leftRightSign(i) : gw;
 }
 
+double HorizontalAlignment::interpolateAppliedH(int i, double p) const
+{
+    if (i < 0 || i >= m_pts.size()) return 0.0;
+    const AlignmentPoint& pt = m_pts[i];
+    if (pt.tsc.size() < 2) return 0.0;
+
+    const QChar elem = pt.tsc[1];
+    double H = 0.0;
+
+    if (elem == 'T') {
+        // TODO (ported from C#): tangent-side cant/H transition before TC or
+        // after CT has three possible profiles per the design manual; not
+        // yet implemented there either. Direct value only, same as source.
+        H = pt.real1;
+
+    } else if (elem == 'C') {
+        H = pt.real1;
+
+    } else if (elem == 'S') {
+        // Guard against a zero-length spiral (source assumes length > 0).
+        if (std::abs(pt.length) < kTol) return pt.real1;
+
+        double Hvalue = 0.0;
+        double L      = 0.0;
+        double base   = 0.0;
+        // NOTE: ported exactly from C# — both branches read
+        // m_pts[i+1].curveType (not m_pts[i].curveType). In ALD data the two
+        // endpoints of one spiral run normally carry the same curveType, so
+        // this is expected to be equivalent to reading pt.curveType, but the
+        // source's exact indexing is preserved rather than "corrected".
+        const bool haveNext = (i + 1 < m_pts.size());
+        const bool havePrev = (i > 0);
+        const QString ct    = haveNext ? m_pts[i+1].curveType : pt.curveType;
+
+        if (pt.tsc == "CS") {
+            const double prevReal1 = havePrev ? m_pts[i-1].real1 : 0.0;
+            const double nextReal1 = haveNext ? m_pts[i+1].real1 : 0.0;
+            const double nextChain = haveNext ? m_pts[i+1].chainage
+                                               : pt.chainage + pt.length;
+            Hvalue = prevReal1 - nextReal1;
+            L      = nextChain - p;
+            base   = nextReal1;
+        } else {
+            const double prevReal1 = havePrev ? m_pts[i-1].real1 : 0.0;
+            const double nextReal1 = haveNext ? m_pts[i+1].real1 : 0.0;
+            Hvalue = nextReal1 - prevReal1;
+            L      = p - pt.chainage;
+            base   = prevReal1;
+        }
+
+        if (ct == "HALFSINE")
+            H = Hvalue / 2.0 * (1.0 - std::cos(L / pt.length * M_PI)) + base;
+        else
+            H = Hvalue / pt.length * L + base;
+    }
+    // default (unknown tsc[1]): H stays 0.0, same as C# `default: break;`
+
+    return H;
+}
+
+double HorizontalAlignment::getAppliedH(double p) const
+{
+    int i = rawIndexAt(p);
+    return interpolateAppliedH(i, p);
+}
+
 QString HorizontalAlignment::getTSC(double p) const
 {
     int i = rawIndexAt(p);
@@ -760,6 +826,7 @@ double TrackCenterLine::getRadius (double p, bool signed_) const { return m_h->g
 double TrackCenterLine::getVerticalRadius(double p) const { return m_v->getRadius(p); }
 double TrackCenterLine::getCant         (double p, bool s) const { return m_h->getCant(p, s);          }
 double TrackCenterLine::getGaugeWidening(double p, bool s) const { return m_h->getGaugeWidening(p, s); }
+double TrackCenterLine::getAppliedH     (double p)         const { return m_h->getAppliedH(p);         }
 
 // ── Offset polyline ───────────────────────────────────────────────────────────
 

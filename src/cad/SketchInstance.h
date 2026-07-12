@@ -46,6 +46,15 @@ public:
     void   setPlane(Plane* plane);
     Plane* plane() const { return m_plane; }
 
+    /**
+     * @brief master 草圖座標 → 本副本世界座標的等比縮放係數（例如 master 以
+     *        mm 繪製、要對齊以 m 為單位的 TrackCenterLine 時設為 0.001）。
+     *        僅影響本副本輸出的幾何（buildWires()/orderedWireFrom()），
+     *        不動 master 本身；預設 1.0（不縮放，與既有行為相容）。
+     */
+    void   setScale(double scale) { m_scale = scale; }
+    double scale() const { return m_scale; }
+
     // ── Instance ParameterStore（本地覆寫）──────────────────────────────
     /**
      * 取得 instance 層的 ParameterStore。
@@ -77,6 +86,31 @@ public:
     // ── 副本幾何（唯讀，供 Extrude 等使用）────────────────────────────
     QList<TopoDS_Wire> wires() const { return m_wires; }
     bool hasClosedProfile() const;
+
+    /**
+     * @brief 以 master 中指定 SketchPoint 的 UUID 為起點，固定繞線方向輸出
+     *        封閉 wire（供 Loft 等對繞線起點/方向敏感的操作使用）。
+     *
+     * 直接用 master UUID 呼叫（不需呼叫端自行換算成 clone UUID）：內部透過
+     * rebuild() 時記錄的 master→clone UUID 映射換算成此副本對應的幾何，
+     * 再依已求解後的座標比對做圖走訪，找出封閉迴圈並以該起點、原始繪製方向
+     * 輸出單一 TopoDS_Wire。若起點找不到對應幾何或迴圈不封閉，回傳空 wire。
+     *
+     * 目前僅支援由 Line／封閉 Polyline 組成的輪廓（與 buildWires() 目前的
+     * 支援範圍一致）。
+     */
+    TopoDS_Wire orderedWireFrom(const QString& masterPointUuid) const;
+
+    /**
+     * @brief 自動偵測並回傳草圖中「每一個」互不相連的封閉輪廓（例如同一個
+     *        斷面草圖裡有左右兩個獨立墊塊的情況）。不需要指定起點 UUID：
+     *        走訪順序固定依 m_geomClones 的原始幾何順序決定，master 每次
+     *        clone 出來的順序都相同，因此各測站之間的迴圈順序、繞行方向都
+     *        會保持一致，可直接按索引與其他測站的對應迴圈配對放樣。
+     *        目前僅支援由 Line／封閉 Polyline 組成的輪廓（與 buildWires()
+     *        現有支援範圍一致）。
+     */
+    QList<TopoDS_Wire> allClosedWires() const;
 
     // ── 序列化 ───────────────────────────────────────────────────────────
     QJsonObject toJson()  const override;
@@ -111,6 +145,7 @@ private:
 
     Sketch*                         m_master        = nullptr;
     Plane*                          m_plane         = nullptr;
+    double                          m_scale         = 1.0;
     aicad::core::ParameterStore*    m_instanceStore = nullptr;
     ConstraintSolver                m_solver;
 
@@ -118,6 +153,10 @@ private:
     QList<SketchGeometry*>          m_geomClones;
     QList<SketchConstraint>         m_constraintClones;
     QList<TopoDS_Wire>              m_wires;
+
+    /// master 幾何 UUID → 本副本 clone 幾何 UUID 的映射（rebuild() 時填入），
+    /// 供 orderedWireFrom() 換算「master 起點 UUID」用。
+    QHash<QString, QString>         m_uuidRemap;
 
     QMetaObject::Connection         m_masterRebuildConn;
     QMetaObject::Connection         m_masterDestroyConn;

@@ -53,6 +53,7 @@ QString Feature::typeString() const {
     case FeatureType::Chamfer:  return "Chamfer";
     case FeatureType::Boolean:  return "Boolean";
     case FeatureType::Pattern:  return "Pattern";
+    case FeatureType::Loft:     return "Loft";
     default:                    return "Unknown";
     }
 }

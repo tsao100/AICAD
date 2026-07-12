@@ -111,6 +111,9 @@ Q_SIGNALS:
     void renameTrackRequested(const QString& tclId);
     void deleteTrackRequested(const QString& tclId);
     void showAlignmentDataTableRequested(const QString& tclId);
+
+    /** Step 8：右鍵 AlignedProfileArray 節點 → 顯示唯讀站位資料表。 */
+    void showProfileArrayTableRequested(const QString& featureId);
     
 private Q_SLOTS:
     void onItemClicked(QTreeWidgetItem* item, int column);
