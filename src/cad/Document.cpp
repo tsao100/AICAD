@@ -314,7 +314,18 @@ bool Document::load(const QString& fileName) {
                 }
             }
             // 再 rebuild 不在依賴圖中的（孤立 Sketch 等）
-            for (Feature* f : m_features) {
+            // ⚠️ 對快照（副本）迭代，不可直接對 m_features 迭代：某些 feature
+            //    的 rebuild()（例如 AlignedProfileArray）內部會呼叫
+            //    Document::addFeature() 動態新增子 feature（SketchInstance），
+            //    這會使 m_features 這個 QList 重新配置記憶體，讓 range-based
+            //    for 迴圈中殘留的內部迭代器/指標失效 —— 下一輪迭代解參考到
+            //    已釋放或未初始化的記憶體，導致 qobject_cast 內部讀到壞掉的
+            //    vtable 指標而 SIGSEGV（曾在載入含 Pattern feature 的檔案時
+            //    重現）。此處固定用 const 副本迭代，新增的 feature 不會被
+            //    這一輪處理到也沒關係，因為它們稍後會在各自建立流程中被
+            //    正確 rebuild 一次。
+            const QList<Feature*> featuresSnapshot = m_features;
+            for (Feature* f : featuresSnapshot) {
                 if (f && !f->isSuppressed() && !rebuilt.contains(f->id())) {
                     f->rebuild();
                     f->clearDirty();
@@ -354,27 +365,53 @@ bool Document::load(const QString& fileName) {
         //    的 trackCenterLines 區塊載入完才存在，所以在此單獨補一輪
         //    resolveReferences + rebuild（前面第三階段對它的 rebuild() 嘗試
         //    會因 TCL 尚未解析而失敗，屬預期行為，不影響這裡的正確重建）。
-        for (Feature* feature : m_features) {
+        // ⚠️ 先取快照再迭代：AlignedProfileArray::rebuild() 會呼叫
+        //    Document::createSketchInstance() → addFeature()，對 m_features
+        //    做 append()，若直接對 m_features 本身做 range-based for，
+        //    append 觸發的重新配置會讓迴圈迭代到一半就失效，導致下一輪
+        //    對垃圾記憶體呼叫 qobject_cast、讀到壞掉的 vtable 指標而
+        //    SIGSEGV（即本次回報的 crash：Document::load 在
+        //    qobject_cast<AlignedProfileArray*> 內部墜毀）。
+        //    新增出來的 SketchInstance 不需要被這裡的迴圈再處理一次，
+        //    它們已在 arr->rebuild() 內部自行建立並 rebuild 完成。
+        const QList<Feature*> apaSnapshot = m_features;
+        for (Feature* feature : apaSnapshot) {
             if (auto* arr = qobject_cast<AlignedProfileArray*>(feature))
                 arr->resolveReferences(this);
         }
-        for (Feature* feature : m_features) {
+        for (Feature* feature : apaSnapshot) {
             if (auto* arr = qobject_cast<AlignedProfileArray*>(feature)) {
-                arr->rebuild();
-                arr->clearDirty();
+                // ⚠️ 用 rebuildFeature() 而非直接呼叫 rebuild()：後者只更新資料
+                //    （setShape()/shapeChanged()），不會 Q_EMIT featureShapeUpdated，
+                //    CadView 是靠這個訊號（Qt::QueuedConnection）才知道要
+                //    displayAllFeatures() 重繪。這正是 setMasterSketch()／
+                //    setTrackCenterLine() 註解裡描述的「Loft 有時看得到、有時
+                //    看不到」根因——load() 這裡先前正是唯一還在直接呼叫
+                //    rebuild() 而繞過這個訊號的地方，導致重新載入檔案後只能
+                //    依賴 CadView::setDocument() 裡那唯一一次 QTimer::singleShot
+                //    來補顯示，一旦有任何時序落差，多份 Pattern/Loft 中除了
+                //    最後被處理到的之外都可能顯示不出來。
+                rebuildFeature(arr);
             }
         }
 
         // ✅ ProfileLoftSolid 依賴 AlignedProfileArray，必須在後者 rebuild 完成後
         //    才能取得 stationWireLoops()，故再補一輪。
-        for (Feature* feature : m_features) {
+        // ⚠️ 同上，改用快照迭代以策安全，避免未來若 ProfileLoftSolid::rebuild()
+        //    也開始動態新增 feature 時重蹈覆轍。
+        const QList<Feature*> loftSnapshot = m_features;
+        for (Feature* feature : loftSnapshot) {
             if (auto* loft = qobject_cast<ProfileLoftSolid*>(feature))
                 loft->resolveReferences(this);
         }
-        for (Feature* feature : m_features) {
+        for (Feature* feature : loftSnapshot) {
             if (auto* loft = qobject_cast<ProfileLoftSolid*>(feature)) {
-                loft->rebuild();
-                loft->clearDirty();
+                // ⚠️ 同上：改用 rebuildFeature() 確保 Q_EMIT featureShapeUpdated，
+                //    讓 CadView 的 Qt::QueuedConnection 監聽者能在 load() 結束、
+                //    事件迴圈恢復後確實收到通知並重繪，而不是只能賭
+                //    CadView::setDocument() 裡那唯一一次 QTimer::singleShot
+                //    是否還沒被其他時序蓋掉。
+                rebuildFeature(loft);
             }
         }
 
@@ -893,8 +930,14 @@ void Document::rebuildAll() {
         else        f->clearError();
     }
     // 未在圖中的特徵（孤立）線性補跑
-    for (Feature* f : m_features) {
-        if (!order.contains(f->id()) && f->isDirty() && !f->isSuppressed()) {
+    // ⚠️ 同 Document::load 的教訓：先取快照再迭代。f->rebuild() 對某些
+    //    feature（例如 AlignedProfileArray）會呼叫 addFeature() 動態新增
+    //    子 feature（SketchInstance），若直接對 m_features 做 range-based
+    //    for，append 觸發的記憶體重新配置會讓迴圈迭代到一半就失效，導致
+    //    對垃圾記憶體呼叫虛擬函式而 SIGSEGV。
+    const QList<Feature*> orphanSnapshot = m_features;
+    for (Feature* f : orphanSnapshot) {
+        if (f && !order.contains(f->id()) && f->isDirty() && !f->isSuppressed()) {
             f->rebuild();
             f->clearDirty();
         }

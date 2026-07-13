@@ -17,6 +17,8 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <gp_Pnt.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <cmath>
 
 namespace aicad {
@@ -162,6 +164,17 @@ bool ProfileLoftSolid::rebuild() {
                      .arg(ex.GetMessageString() ? ex.GetMessageString() : "unknown"));
         return false;
     }
+}
+
+double ProfileLoftSolid::volume() const {
+    const TopoDS_Shape s = shape();
+    if (s.IsNull())
+        return 0.0;
+    GProp_GProps gp;
+    // VolumeProperties 對 compound 內每個 solid 各自計算後加總，不需要
+    // 自己再跑 TopExp_Explorer 迭代 compound 底下的每個 loop/solid。
+    BRepGProp::VolumeProperties(s, gp);
+    return gp.Mass();
 }
 
 QJsonObject ProfileLoftSolid::toJson() const {

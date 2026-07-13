@@ -41,6 +41,16 @@ public:
 
     bool rebuild() override;
 
+    /**
+     * @brief 目前 shape() 的實體體積（document 座標單位的立方，通常是 m³，
+     *        因為 rebuild() 產生的 compound 座標已經是 TrackCenterLine/
+     *        document 慣用的公尺制）。用 BRepGProp::VolumeProperties 對
+     *        shape() 整個 compound 一次計算——compound 底下不論是一個或
+     *        多個 loop 各自放樣出的 solid，VolumeProperties 都會自動加總。
+     *        shape() 為空（例如 rebuild() 失敗過）時回傳 0。
+     */
+    double volume() const;
+
     QJsonObject toJson()  const override;
     bool fromJson(const QJsonObject& json) override;
     QSet<QString> featureDependencies() const override;

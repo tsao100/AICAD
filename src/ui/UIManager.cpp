@@ -32,6 +32,8 @@
 #include "cad/Plane.h"
 #include "cad/PlaneManager.h"
 #include "cad/Extrude.h"
+#include "cad/AlignedProfileArray.h"
+#include "cad/ProfileLoftSolid.h"
 #include "cad/grips/GripManager.h"
 #include "cad/grips/SketchGripProvider.h"
 #include "cad/grips/AlignmentGripProvider.h"
@@ -2920,6 +2922,21 @@ void UIManager::showFeatureProperties(cad::Feature* feature) {
                                ? QString::number(extrude->height())
                                : heightExpr,
                            /*editable*/true);
+        return;
+    }
+
+    // ── Loft (ProfileLoftSolid) 專屬 ─────────────────────────
+    if (auto* loft = qobject_cast<cad::ProfileLoftSolid*>(feature)) {
+        panel->addProperty(tr("來源陣列"),
+                           loft->sourceArray() ? loft->sourceArray()->name() : tr("(無)"), false);
+        // 體積為 shape() 的即時計算結果（m³，因為 loft 產生的座標沿用
+        // document/TrackCenterLine 的公尺制），不是存檔欄位，所以每次開啟
+        // 屬性面板都會反映 rebuild() 後的最新形狀。
+        const double vol = loft->volume();
+        panel->addProperty(tr("體積 (m³)"),
+                           loft->hasValidShape() ? QString::number(vol, 'f', 4)
+                                                 : tr("(尚未成功放樣)"),
+                           false);
         return;
     }
 
