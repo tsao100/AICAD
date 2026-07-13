@@ -76,6 +76,21 @@ struct EditableElement
     // spiralType2 = 出螺旋類型（SpiralOut 元素使用；SpiralIn 元素也同時攜帶以便查詢）
     SpiralType spiralType1 = SpiralType::Clothoid;  ///< 入螺旋類型，預設 Clothoid
     SpiralType spiralType2 = SpiralType::Clothoid;  ///< 出螺旋類型，預設 Clothoid
+
+    // ── 建構線標記（僅供 seedFromRawPoints() 反推匯入線形使用；手動編輯 ──
+    //    （AFC/SCS 等指令）建立的元素一律維持預設 false，不受影響）
+    //
+    //   isConstructionLine — 此 Fixed Tangent 是由線形起訖點（或 SS 交會點）
+    //     的量測座標＋方位角虛擬延伸出來，用來錨定邊界緩和曲線的「建構
+    //     線」，而非真正連續量測到的切線段。
+    //   constructionIsArc  — 僅線形起訖點的建構線適用：建構線另一側（不在
+    //     本檔案資料範圍內）的型別。false＝切線（T，曲率 0，SS 交會點恆為
+    //     此值）；true＝圓弧（C，曲率非 0）。此圓弧本身的半徑（若原始資料
+    //     碰巧有記錄）會存在對應的 Fixed SpiralIn/SpiralOut 元素自身的
+    //     radius 欄位（Tangent 型別的 radius 恆為 0，無法承載），而非存在
+    //     這個建構線 Tangent 元素上。
+    bool isConstructionLine = false;
+    bool constructionIsArc  = false;
 };
 
 // Forward declaration (AlignmentDocument is defined later in this file)
@@ -104,6 +119,31 @@ public:
      *  arcCenter = 外接圓圓心（由命令層計算後傳入）。 */
     int addFixedCurve(QPointF arcStart, QPointF arcEnd,
                       QPointF arcCenter, double radius);
+
+    /**
+     * @brief 新增一個「Fixed 獨立緩和曲線」元素：座標／長度／半徑／類型皆
+     *        直接取自原始資料，不依附任何 Tangent（tangentIdxBefore/After
+     *        維持 -1），也不會被 solver 的 Floating 群組偵測（SCS/LC/CA/
+     *        ACA 皆僅處理 mode==Floating 的緩和曲線）誤判為那些群組的一員。
+     *
+     *        用於 seedFromRawPoints() 反推線形起訖點的邊界緩和曲線群組中，
+     *        該緩和曲線另一側銜接的是虛擬（不在檔案資料範圍內）圓弧、且該
+     *        圓弧半徑恰好可從原始資料取得的情況：此時無法比照一般 SCS 建立
+     *        Floating 群組（缺少可供 solver 依附的第二個 Tangent／圓弧元
+     *        素），故直接以量測到的兩端座標建立為 Fixed 元素，確保 3D 顯示
+     *        與資料表仍能正確呈現，但不會隨鄰近錨點連動（因為另一側本來
+     *        就沒有可連動的對象）。
+     *
+     * @param dir         SpiralIn 或 SpiralOut（僅供方向標示，不影響求解）。
+     * @param start       緩和曲線起點（量測座標）。
+     * @param end         緩和曲線終點（量測座標）。
+     * @param length      緩和曲線長度 [m]。
+     * @param spiralType  緩和曲線類型。
+     * @param radius      虛擬圓弧那一端的半徑。
+     * @return 新元素的 index。
+     */
+    int addFixedSpiral(EditableElementType dir, QPointF start, QPointF end,
+                       double length, SpiralType spiralType, double radius);
 
     /** 新增 Floating 圓弧（依附前後切線），回傳元素 index */
     int addFloatingCurve(int tangentIdxBefore, int tangentIdxAfter, double radius);
@@ -219,6 +259,49 @@ public:
     const HorizontalAlignment* result() const;
 
     const QVector<EditableElement>& elements() const { return m_elems; }
+
+    /**
+     * @brief 若目前尚無元素資料，嘗試從稠密的 TS/SC/CS/CC/TC/ST 關鍵點序列
+     *        （例如 ALD 匯入、尚未經過任何編輯器的情況）反推出可互動編輯的
+     *        元素鏈（Tangent/CircularArc/SpiralIn/SpiralOut），供資料表對話框
+     *        與 grip 編輯使用。這是「由稠密關鍵點反推可編輯元素鏈」的唯一
+     *        實作，與 VerticalAlignmentEdit::seedFromDensePoints() 對應。
+     *
+     * 反推規則：
+     *   1. 兩個真正 Tangent（或 SS 虛擬零長度切線）之間夾有 C／SCS／SC／CS
+     *      等曲線群組（一段或多段皆可）時，兩側 Tangent 的座標一律取為
+     *      「兩切線（各自依記錄方位角延伸為無限直線）之交點」（IP），而非
+     *      原始資料中量測到的 TS/ST 座標。曲線群組本身一律建為 Floating
+     *      （依附前後 Fixed Tangent，由 solver 反算 PC/PT），半徑與螺旋
+     *      長度取自原始關鍵點資料。
+     *   2. 線形起點或終點若不是以真正 Tangent 開始/結束（即該端的 C／S
+     *      群組只有一側有 Tangent，常見於線形本身即以曲線起訖），將該端點
+     *      本身（座標＋方位角，皆為量測所得）視為一條固定不動的「虛擬
+     *      Tangent 直線」（建構線，isConstructionLine=true），與相鄰的真正
+     *      Tangent 依規則 1 計算 IP 作為該群組另一側的角點；solver 在此處
+     *      只會沿這條虛擬直線的方向調整面向曲線群組那一端的角點，虛擬直線
+     *      本身（起點/終點座標與方位角）永遠固定。若該端最外側元素本身是
+     *      緩和曲線（S）：
+     *        - 群組內若仍有圓弧（C）成員 → 半徑正常取自該圓弧，不受影響。
+     *        - 群組內完全沒有圓弧成員（裸露 S）→ 讀取線形起訖點自身 tsc
+     *          的另一側字元，記錄「建構線另一側是 T 還是 C」
+     *          （constructionIsArc）。若為 C 且原始資料剛好記錄了半徑，
+     *          直接以量測到的兩端座標建立為 Fixed SpiralIn/SpiralOut
+     *          （見 addFixedSpiral()）；若半徑不可考（原始資料未記錄，
+     *          此為目前最常見的情況），記錄警告並略過該群組。
+     *   3. "SS"（兩段緩和曲線直接相接的虛擬零長度切線點，複合反向曲線
+     *      常見）等同規則 1 的一個 Tangent 錨點（同樣標記為建構線，但
+     *      constructionIsArc 恆為 false），兩側同樣依 IP 計算角點。
+     *   4. 複合曲線（CC：弧-弧直接相接，可能夾帶 Egg 型緩和曲線）目前的
+     *      可編輯元素型別尚無對應（EditableElementType 沒有 Egg），退化
+     *      為個別的 Fixed CircularArc（座標/半徑取自原始資料，不會隨鄰近
+     *      錨點連動），中間的 Egg 緩和曲線會被略過並記錄警告。
+     *
+     * @param rawPts 稠密關鍵點序列（例如 tcl->horizontal()->rawPoints()）。
+     * @return 已有元素資料（不覆蓋）或 rawPts 不足兩點時回傳 false；
+     *         成功建立新元素鏈時回傳 true。
+     */
+    bool seedFromRawPoints(const QVector<AlignmentPoint>& rawPts);
 
     // ── 起始里程（僅影響顯示/輸出的里程偏移，不影響幾何解算）───────────────────
     //

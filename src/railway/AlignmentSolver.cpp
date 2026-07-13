@@ -2007,6 +2007,41 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                     pts.append(ptWaypoint);
                 }
             }
+        } else if ((e.type == EditableElementType::SpiralIn
+                    || e.type == EditableElementType::SpiralOut)
+                   && e.mode == ConstraintMode::Fixed) {
+            // ── 獨立 Fixed 緩和曲線（seedFromRawPoints() 規則 2：線形起訖點
+            //    的邊界群組銜接虛擬圓弧，且半徑可從原始資料取得的情況）。
+            //    座標／長度／半徑皆直接取自元素自身，不需 solver 推導，也
+            //    不屬於任何 SCS/LC/CA/ACA 群組（addFixedSpiral() 建立時
+            //    tangentIdxBefore/After 恆為 -1）。
+            const double len = e.length;
+            if (len < 1e-9) continue;
+
+            auto spiralTypeName = [](SpiralType t) -> QString {
+                switch (t) {
+                case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
+                case SpiralType::Parabola: return QStringLiteral("PARABOLA");
+                case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
+                case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
+                default:                   return QStringLiteral("SPIRAL");
+                }
+            };
+
+            // tsc 碼：SpiralIn（虛擬圓弧在前，即線形起點）→ "CS"（抵達本點
+            // 的是檔案資料範圍外的虛擬圓弧）；SpiralOut（虛擬圓弧在後，即
+            // 線形終點）→ "TS"（抵達本點的是前一個真正 Tangent／SS）。
+            pt.tsc       = (e.type == EditableElementType::SpiralIn)
+                           ? QStringLiteral("CS") : QStringLiteral("TS");
+            pt.curveType = spiralTypeName(e.spiralType1);
+            pt.easting   = e.startPI.x();
+            pt.northing  = e.startPI.y();
+            pt.azimuth   = azimuthOf(e.startPI, e.endPI);
+            pt.length    = len;
+            pt.radius    = e.radius;
+            pt.chainage  = chainage;
+            chainage    += len;
+            pts.append(pt);
         }
     }
 
@@ -2062,6 +2097,15 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                                               ? arc_delta : -arc_delta;
                     sentinel.azimuth = arcData[i].azPC + signedDelta;
                 }
+                break;
+            } else if ((elems[i].type == EditableElementType::SpiralIn
+                        || elems[i].type == EditableElementType::SpiralOut)
+                       && elems[i].mode == ConstraintMode::Fixed) {
+                // 獨立 Fixed 緩和曲線（seedFromRawPoints() 規則 2 邊界群組）
+                // 為整條線形最後一個元素：直接以其自身終點作為 sentinel。
+                sentinel.easting  = elems[i].endPI.x();
+                sentinel.northing = elems[i].endPI.y();
+                sentinel.azimuth  = azimuthOf(elems[i].startPI, elems[i].endPI);
                 break;
             }
         }

@@ -9,6 +9,7 @@
 #include <QMessageBox>
 #include <QLineF>
 #include <QtDebug>
+#include <algorithm>
 #include <cmath>
 
 namespace aicad {
@@ -137,6 +138,32 @@ int HorizontalAlignmentEdit::addFixedCurve(QPointF arcStart, QPointF arcEnd,
         command::AlignmentEditCommand::push(parentDocument(),
                                             before, parentDocument()->toJson(),
                                             "Add Fixed Curve");
+    }
+    return m_elems.size() - 1;
+}
+
+int HorizontalAlignmentEdit::addFixedSpiral(EditableElementType dir, QPointF start, QPointF end,
+                                            double length, SpiralType spiralType, double radius)
+{
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    EditableElement e;
+    e.type        = dir;   // SpiralIn 或 SpiralOut（僅供方向標示，不影響求解）
+    e.mode        = ConstraintMode::Fixed;
+    e.startPI     = start;
+    e.endPI       = end;
+    e.length      = length;
+    e.radius      = std::abs(radius);
+    e.spiralType1 = spiralType;
+    e.spiralType2 = spiralType;
+    // tangentIdxBefore/After 維持 -1：不依附任何 Tangent，Pass 2b/2c/2e 的
+    // Floating 群組偵測皆先檢查 mode==Floating，此元素為 Fixed 故必然略過。
+    m_elems.append(e);
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add Fixed Spiral");
     }
     return m_elems.size() - 1;
 }
@@ -466,6 +493,388 @@ int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
     return firstIdx;
 }
 
+// ── seedFromRawPoints ────────────────────────────────────────────────────────
+//  由稠密的 TS/SC/CS/CC/TC/ST 關鍵點序列反推可互動編輯的元素鏈。
+//
+//  Tangent 錨點與 IP 交點規則（詳見標頭檔註解）：
+//    規則 1：兩個真正 Tangent（或 SS 虛擬零長度切線）之間夾有 C／SCS／
+//            SC／CS 等曲線群組時，兩側 Tangent 的座標一律改為「兩切線
+//            （依各自記錄的方位角延伸為無限直線）之交點」，而非原始資料
+//            中量測到的 TS/ST 座標——這樣 Tangent 的 startPI/endPI 才是
+//            真正的 IP（Intersection Point），grip／資料表看到的角點才會
+//            落在設計意圖的轉折點上，而不是曲線邊界上。
+//    規則 2：線形起點或終點若不是以真正 Tangent 開始/結束（即該端的 C／S
+//            群組只有一側有 Tangent），將該端點本身（座標＋方位角，均為
+//            量測所得，視為絕對固定）視為一條「虛擬 Tangent 直線」，與
+//            相鄰的真正 Tangent 依規則 1 計算 IP，作為該群組另一側的角
+//            點；虛擬直線本身固定不動（Fixed，solve() 不會移動它），只有
+//            面向曲線群組那一端的角點會隨鄰近 Tangent／半徑變動而改變。
+//            若該端最外側元素本身是緩和曲線（S），因為虛擬線另一側完全
+//            沒有資料，無法得知原始設計上它是接續 Tangent 還是圓弧；目前
+//            仍依群組內是否存在圓弧（C）成員來決定半徑來源（與內部 SCS
+//            群組相同邏輯），若群組內完全沒有圓弧成員（裸露 S，無從得知
+//            半徑）才會記錄警告並略過。
+namespace {
+SpiralType rawCurveTypeToSpiralType(const QString& s)
+{
+    if (s == QLatin1String("HALFSINE")) return SpiralType::HalfSine;
+    if (s == QLatin1String("PARABOLA")) return SpiralType::Parabola;
+    if (s == QLatin1String("CUBICJPN")) return SpiralType::CubicJPN;
+    if (s == QLatin1String("CUBICECI")) return SpiralType::CubicECI;
+    return SpiralType::Clothoid;
+}
+
+/**
+ * @brief 兩條「點 + 方位角」定義的無限直線之交點（IP）。
+ * @param ok  平行（或近似平行，無唯一交點）時回傳 false。
+ */
+QPointF intersectAzLines(const QPointF& p1, double az1,
+                         const QPointF& p2, double az2, bool* ok)
+{
+    const double dx1 = std::sin(az1), dy1 = std::cos(az1);
+    const double dx2 = std::sin(az2), dy2 = std::cos(az2);
+    const double denom = dx1 * dy2 - dy1 * dx2;
+    if (std::abs(denom) < 1e-9) {
+        if (ok) *ok = false;
+        return 0.5 * (p1 + p2);
+    }
+    const double ex = p2.x() - p1.x();
+    const double ey = p2.y() - p1.y();
+    const double t  = (ex * dy2 - ey * dx2) / denom;
+    if (ok) *ok = true;
+    return QPointF(p1.x() + t * dx1, p1.y() + t * dy1);
+}
+} // namespace
+
+bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& rawPts)
+{
+    if (!m_elems.isEmpty()) return false;   // 已有資料，不覆蓋
+    if (rawPts.size() < 2)  return false;
+
+    // 建置期間不寫入 Undo（避免匯入直接灌爆 undo stack）；完成後才還原。
+    AlignmentDocument* savedParent = m_parentDoc;
+    m_parentDoc = nullptr;
+
+    struct BufItem   { QChar elemType; int ptIdx; };
+    struct GroupSpec { QVector<BufItem> items; int anchorBefore; int anchorAfter; };
+
+    // 一個 Anchor 代表一條「Tangent 直線」的錨點：
+    //   pt/azimuth   — 用來與鄰近 Anchor 計算 IP 的（點＋方位角）。
+    //   ownStart/End — 該側沒有曲線群組可算 IP 時的備援端點：
+    //                    真正 Tangent（isRealTangent=true）用其量測到的
+    //                    實際起訖點；SS／首尾虛擬錨點則用同一個點。
+    struct AnchorSpec {
+        int     ptIdx = -1;
+        QPointF pt;
+        double  azimuth = 0.0;
+        QPointF ownStart;
+        QPointF ownEnd;
+        bool    isRealTangent = false;
+        // 僅線形起訖點的虛擬建構線適用：另一側（不在檔案資料範圍內）是否
+        // 為圓弧（規則 2 的 T/C 判斷）。SS／真正 Tangent 恆為 false。
+        bool    boundaryIsArc = false;
+    };
+
+    QVector<AnchorSpec> anchors;
+    QVector<GroupSpec>  groups;
+    QVector<BufItem>    curBuffer;
+    int lastAnchorIdx = -1;
+
+    auto ptXY = [](const AlignmentPoint& p) { return QPointF(p.easting, p.northing); };
+
+    auto pushPointAnchor = [&](int ptIdx) -> int {
+        AnchorSpec a;
+        a.ptIdx    = ptIdx;
+        a.pt       = ptXY(rawPts[ptIdx]);
+        a.azimuth  = rawPts[ptIdx].azimuth;
+        a.ownStart = a.pt;
+        a.ownEnd   = a.pt;
+        a.isRealTangent = false;
+        anchors.append(a);
+        return anchors.size() - 1;
+    };
+
+    auto pushTangentAnchor = [&](int startIdx, int endIdx) -> int {
+        AnchorSpec a;
+        a.ptIdx    = startIdx;
+        a.pt       = ptXY(rawPts[startIdx]);
+        a.azimuth  = rawPts[startIdx].azimuth;
+        a.ownStart = ptXY(rawPts[startIdx]);
+        a.ownEnd   = ptXY(rawPts[endIdx]);
+        a.isRealTangent = true;
+        anchors.append(a);
+        return anchors.size() - 1;
+    };
+
+    auto flushToAnchor = [&](int newAnchorIdx) {
+        if (!curBuffer.isEmpty()) {
+            groups.append({ curBuffer, lastAnchorIdx, newAnchorIdx });
+            curBuffer.clear();
+        }
+        lastAnchorIdx = newAnchorIdx;
+    };
+
+    const int n = rawPts.size();
+
+    // 開頭若非以真正 Tangent 起始，且不是 SS（由迴圈內的 SS 分支處理），
+    // 先補上一個「虛擬 Tangent 直線」錨點（規則 2），固定於首點座標＋
+    // 方位角，供第一段曲線群組計算 IP。規則 2：讀取首點 tsc 的第一碼
+    // （抵達本點的元素型別，即檔案資料範圍外的「虛擬」鄰居）判斷該建構
+    // 線另一側是 T 還是 C。
+    const AlignmentPoint& firstPt = rawPts.first();
+    const bool firstIsRealTangent = firstPt.tsc.size() >= 2 && firstPt.tsc[1] == QChar('T');
+    const bool firstIsSS          = firstPt.tsc == QLatin1String("SS");
+    if (!firstIsRealTangent && !firstIsSS) {
+        lastAnchorIdx = pushPointAnchor(0);
+        anchors[lastAnchorIdx].boundaryIsArc =
+            (firstPt.tsc.size() >= 1 && firstPt.tsc[0] == QChar('C'));
+    }
+
+    // ── Pass 1：掃描關鍵點，建立 Anchor／曲線群組清單（尚未建立元素）───────
+    for (int i = 0; i < n - 1; ++i) {
+        const AlignmentPoint& cur = rawPts[i];
+
+        if (cur.tsc == QLatin1String("SS")) {
+            // 兩段緩和曲線在此直接相接：先把目前累積的曲線群組收尾到這個
+            // 新的零長度虛擬 Tangent 錨點，再從這個錨點開始累積下一段。
+            const int ssAnchor = pushPointAnchor(i);
+            flushToAnchor(ssAnchor);
+        }
+
+        if (cur.tsc.size() < 2) {
+            qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: invalid"
+                          " TSC code at raw point" << i << "-- skipped";
+            continue;
+        }
+        const QChar elemType = cur.tsc[1];
+
+        if (elemType == QChar('T')) {
+            if (lastAnchorIdx >= 0 && curBuffer.isEmpty() && anchors[lastAnchorIdx].isRealTangent) {
+                // 與上一個真正 Tangent 直接相連（中間沒有曲線群組）：視為
+                // 同一段直線的延伸，只更新其備援終點，不新增 Anchor。
+                anchors[lastAnchorIdx].ownEnd = ptXY(rawPts[i + 1]);
+            } else {
+                const int tanAnchor = pushTangentAnchor(i, i + 1);
+                flushToAnchor(tanAnchor);
+            }
+        } else {
+            curBuffer.append({ elemType, i });
+        }
+    }
+
+    // 收尾：若序列不是以真正 Tangent 結束（仍有累積中的曲線群組），補上
+    // 末端的虛擬 Tangent 直線錨點（規則 2）。規則 2：讀取末點 tsc 的第二碼
+    // （離開本點的元素型別，即檔案資料範圍外的「虛擬」鄰居）判斷該建構
+    // 線另一側是 T 還是 C。
+    if (!curBuffer.isEmpty()) {
+        const AlignmentPoint& lastPt = rawPts.last();
+        const int endAnchor = pushPointAnchor(n - 1);
+        anchors[endAnchor].boundaryIsArc =
+            (lastPt.tsc.size() >= 2 && lastPt.tsc[1] == QChar('C'));
+        flushToAnchor(endAnchor);
+    }
+
+    if (anchors.isEmpty()) {
+        m_parentDoc = savedParent;
+        return false;
+    }
+
+    // ── Pass 2a：計算每個 Anchor 兩側的角點（規則 1／2 的 IP 交點）───────
+    QVector<bool> groupBefore(anchors.size(), false), groupAfter(anchors.size(), false);
+    for (const GroupSpec& g : groups) {
+        if (g.anchorBefore >= 0) groupAfter[g.anchorBefore] = true;
+        if (g.anchorAfter  >= 0) groupBefore[g.anchorAfter] = true;
+    }
+
+    QVector<QPointF> cornerBefore(anchors.size()), cornerAfter(anchors.size());
+    for (int k = 0; k < anchors.size(); ++k) {
+        if (groupBefore[k] && k > 0) {
+            bool ok = false;
+            QPointF ip = intersectAzLines(anchors[k - 1].pt, anchors[k - 1].azimuth,
+                                          anchors[k].pt,     anchors[k].azimuth, &ok);
+            if (!ok) {
+                qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: tangents"
+                              " parallel around raw point" << anchors[k].ptIdx
+                           << "-- IP undefined, falling back to raw boundary point";
+                ip = anchors[k].ownStart;
+            }
+            cornerBefore[k] = ip;
+        } else {
+            cornerBefore[k] = anchors[k].ownStart;
+        }
+
+        if (groupAfter[k] && k + 1 < anchors.size()) {
+            bool ok = false;
+            QPointF ip = intersectAzLines(anchors[k].pt,     anchors[k].azimuth,
+                                          anchors[k + 1].pt, anchors[k + 1].azimuth, &ok);
+            if (!ok) {
+                qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: tangents"
+                              " parallel around raw point" << anchors[k].ptIdx
+                           << "-- IP undefined, falling back to raw boundary point";
+                ip = anchors[k].ownEnd;
+            }
+            cornerAfter[k] = ip;
+        } else {
+            cornerAfter[k] = anchors[k].ownEnd;
+        }
+    }
+
+    // ── Pass 2b：依角點建立 Fixed Tangent 元素 ───────────────────────────
+    QVector<int> tangentElemIdx(anchors.size(), -1);
+    for (int k = 0; k < anchors.size(); ++k) {
+        tangentElemIdx[k] = addFixedTangent(cornerBefore[k], cornerAfter[k]);
+        // 非真正 Tangent（SS 交會點／線形起訖點的虛擬建構線）：標記
+        // isConstructionLine，並記錄規則 2 的 T/C 判斷（僅線形起訖點適用，
+        // SS 恆為 false）。
+        if (!anchors[k].isRealTangent) {
+            EditableElement& te = m_elems[tangentElemIdx[k]];
+            te.isConstructionLine = true;
+            te.constructionIsArc  = anchors[k].boundaryIsArc;
+        }
+    }
+
+    // ── Pass 2c：依附曲線群組到對應的 Fixed Tangent 之間 ──────────────────
+    // 無法對應的複合／Egg 型態（cCount>=2）退化為個別 Fixed CircularArc
+    // （略過中間的 Egg 緩和曲線並記錄警告）。
+    for (const GroupSpec& g : groups) {
+        const QVector<BufItem>& buf = g.items;
+        if (buf.isEmpty()) continue;
+
+        const int tanBefore = (g.anchorBefore >= 0) ? tangentElemIdx[g.anchorBefore] : -1;
+        const int tanAfter  = (g.anchorAfter  >= 0) ? tangentElemIdx[g.anchorAfter]  : -1;
+        if (tanBefore < 0 || tanAfter < 0) {
+            qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: curve group"
+                          " without a bounding tangent -- skipped at raw point"
+                       << buf.first().ptIdx;
+            continue;
+        }
+
+        const int cCount = static_cast<int>(std::count_if(buf.begin(), buf.end(),
+            [](const BufItem& b) { return b.elemType == QChar('C'); }));
+
+        if (cCount == 1) {
+            // 標準型態：0~1 段入螺旋 + 1 段圓弧 + 0~1 段出螺旋
+            // （TC/CT、TS-SC-CS-ST 及其不對稱組合 SC/CS；規則 2 的邊界
+            //  群組同樣適用 -- 半徑一律取自群組內的圓弧成員）。
+            int cPos = -1;
+            for (int k = 0; k < buf.size(); ++k)
+                if (buf[k].elemType == QChar('C')) { cPos = k; break; }
+
+            const AlignmentPoint& cPt = rawPts[buf[cPos].ptIdx];
+            const double radius = std::abs(cPt.radius);
+            if (radius < 1e-6) {
+                qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints:"
+                              " degenerate radius at raw point" << buf[cPos].ptIdx
+                           << "-- curve group skipped";
+                continue;
+            }
+
+            double L1 = 0.0, L2 = 0.0;
+            SpiralType t1 = SpiralType::Clothoid, t2 = SpiralType::Clothoid;
+            if (cPos - 1 >= 0 && buf[cPos - 1].elemType == QChar('S')) {
+                const AlignmentPoint& sPt = rawPts[buf[cPos - 1].ptIdx];
+                L1 = sPt.length;
+                t1 = rawCurveTypeToSpiralType(sPt.curveType);
+            }
+            if (cPos + 1 < buf.size() && buf[cPos + 1].elemType == QChar('S')) {
+                const AlignmentPoint& sPt = rawPts[buf[cPos + 1].ptIdx];
+                L2 = sPt.length;
+                t2 = rawCurveTypeToSpiralType(sPt.curveType);
+            }
+
+            addSCS(tanBefore, tanAfter, radius, L1, L2, t1, t2);
+            continue;
+        }
+
+        if (cCount == 0) {
+            // 裸露緩和曲線（群組內完全沒有圓弧成員）：常見於規則 2 的邊界
+            // 群組，也就是這個曲線群組的其中一端是線形起訖點的虛擬建構線
+            // （isConstructionLine），另一側完全沒有資料。查詢兩端建構線是
+            // 否已標記「另一側是圓弧」（constructionIsArc，規則 2 的 T/C
+            // 判斷），據此決定能否、以及如何建立。
+            const bool beforeIsArcConstruction =
+                m_elems[tanBefore].isConstructionLine && m_elems[tanBefore].constructionIsArc;
+            const bool afterIsArcConstruction =
+                m_elems[tanAfter].isConstructionLine && m_elems[tanAfter].constructionIsArc;
+
+            if (!beforeIsArcConstruction && !afterIsArcConstruction) {
+                // 兩端都不是「已知另一側是圓弧」的建構線：可能單純是內部
+                // 的裸露 S（極罕見的 T-S-T 型態），或建構線另一側其實是
+                // 切線（constructionIsArc=false）——這兩種情況都沒有圓弧
+                // 半徑來源，無從重建。
+                qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: bare"
+                              " spiral group with no circular arc member at raw point"
+                           << buf.first().ptIdx << "-- radius/orientation unknown"
+                              " (neither boundary is an arc-type construction line),"
+                              " skipped";
+                continue;
+            }
+            if (buf.size() != 1) {
+                // 理論上規則 2 的邊界群組裸露時只會有單一 S 成員（若有第二
+                // 個 S 應該已經被 SS 錨點切開）；多於一個成員代表遇到未預期
+                // 的組合，保守起見不猜測，記錄警告並略過。
+                qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: bare"
+                              " spiral group at raw point" << buf.first().ptIdx
+                           << "has" << buf.size() << "elements (expected exactly 1)"
+                              " -- unexpected pattern, skipped";
+                continue;
+            }
+
+            // 規則 2（S 的情況）：已確認另一側是圓弧型建構線。半徑本應存在
+            // 該虛擬圓弧上，但緩和曲線關鍵點自身的 radius 欄位依慣例恆為
+            // 0（見標頭檔註解）；仍防禦性地嘗試讀取，若原始資料例外地有
+            // 記錄則直接使用，否則已無其他來源可查，只能記錄警告並略過。
+            const BufItem& sItem = buf.first();
+            const AlignmentPoint& sPt = rawPts[sItem.ptIdx];
+            const double radius = std::abs(sPt.radius);
+            if (radius < 1e-6) {
+                qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: bare"
+                              " spiral at raw point" << sItem.ptIdx << "connects to a"
+                              " virtual (off-file) circular arc (construction line"
+                              " T/C recorded), but its radius is not present in the"
+                              " source data -- cannot reconstruct geometry, skipped";
+                continue;
+            }
+
+            // 依虛擬建構線在群組哪一側，決定方向標示（僅供顯示，不影響
+            // 幾何）：建構線在前（線形起點）→ SpiralIn；在後（線形終點）
+            // → SpiralOut。以 Fixed 元素直接記錄量測到的兩端座標，不依附
+            // 任何 Tangent，也不會被 Floating 群組偵測誤判。
+            const bool constructionIsBefore = beforeIsArcConstruction;
+            const QPointF p0 = ptXY(sPt);
+            const QPointF p1 = ptXY(rawPts[sItem.ptIdx + 1]);
+            const SpiralType stype = rawCurveTypeToSpiralType(sPt.curveType);
+            const EditableElementType dir = constructionIsBefore
+                ? EditableElementType::SpiralIn
+                : EditableElementType::SpiralOut;
+            addFixedSpiral(dir, p0, p1, sPt.length, stype, radius);
+            continue;
+        }
+
+        // cCount >= 2：複合弧（CC，可能夾帶 Egg 緩和曲線）。目前的可編輯
+        // 元素型別（Tangent/CircularArc/SpiralIn/SpiralOut）沒有 Egg 對應，
+        // 故將每段圓弧個別建為 Fixed CircularArc，中間的緩和曲線予以略過。
+        qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: compound"
+                      " curve (CC / Egg) at raw point" << buf.first().ptIdx
+                   << "has no floating-model equivalent yet -- arcs added as"
+                      " Fixed, transition curve(s) between them skipped";
+        for (const BufItem& item : buf) {
+            if (item.elemType != QChar('C')) continue;
+            const AlignmentPoint& p0 = rawPts[item.ptIdx];
+            const AlignmentPoint& p1 = rawPts[item.ptIdx + 1];
+            CircularArcElement arcElem(p0.radius);
+            Placement place{ p0.chainage, p0.easting, p0.northing, p0.azimuth };
+            arcElem.setPlacement(place);
+            arcElem.setLength(p0.length);
+            addFixedCurve(ptXY(p0), ptXY(p1), arcElem.centreXY(), std::abs(p0.radius));
+        }
+    }
+
+    solve();
+    m_parentDoc = savedParent;
+    return true;
+}
+
 // ── 元素操作 ──────────────────────────────────────────────────────────────────
 
 void HorizontalAlignmentEdit::movePI(int idx, QPointF newPos)
@@ -687,6 +1096,8 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
         elem["spiralType2"]  = static_cast<int>(e.spiralType2);
         elem["tangentIdxBefore"]  = e.tangentIdxBefore;
         elem["tangentIdxAfter"]   = e.tangentIdxAfter;
+        elem["isConstructionLine"] = e.isConstructionLine;
+        elem["constructionIsArc"]  = e.constructionIsArc;
         // LC/CA group markers: a SpiralIn with tangentIdxAfter==-1 adjacent to
         // a Fixed Arc is an LC group.  A SpiralOut with tangentIdxBefore==-1
         // adjacent to a Fixed Arc is a CA group.  Store explicit flags to
@@ -730,6 +1141,8 @@ bool HorizontalAlignmentEdit::fromJson(const QJsonObject& obj)
         elem.spiralType2 = static_cast<SpiralType>(e["spiralType2"].toInt(0));
         elem.tangentIdxBefore = e["tangentIdxBefore"].toInt(-1);
         elem.tangentIdxAfter  = e["tangentIdxAfter"].toInt(-1);
+        elem.isConstructionLine = e["isConstructionLine"].toBool(false);
+        elem.constructionIsArc  = e["constructionIsArc"].toBool(false);
         m_elems.append(elem);
     }
     m_startChainage     = obj["startChainage"].toDouble(0.0);

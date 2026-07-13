@@ -1676,6 +1676,13 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         QJsonObject editJson = doc->tclAlignmentData(tclId);
                         if (!editJson.isEmpty())
                             aDoc->fromJson(editJson);
+
+                        // 若載入後（或本來就）尚無元素資料，嘗試從 TCL 既有的
+                        // 稠密 TS/SC/CS/CC/TC/ST 關鍵點序列反推一次（例如 ALD
+                        // 匯入、尚未經過任何編輯器的情況），讓 grip 有東西可編。
+                        // 已有資料時為 no-op。
+                        aDoc->horizontal()->seedFromRawPoints(tcl->horizontal()->rawPoints());
+                        aDoc->horizontal()->solve();
                     }
                     d->alignmentDoc = aDoc;  // set active
 
@@ -1761,6 +1768,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         if (!editJson.isEmpty()) {
                             aDoc->fromJson(editJson);
                         }
+
+                        // 若載入後（或本來就）尚無元素資料，嘗試從 TCL 既有的
+                        // 稠密 TS/SC/CS/CC/TC/ST 關鍵點序列反推一次（例如 ALD
+                        // 匯入、尚未經過任何編輯器的情況）。已有資料時為 no-op。
+                        aDoc->horizontal()->seedFromRawPoints(tcl->horizontal()->rawPoints());
 
                         // 若載入後（或本來就）尚無 VIP 資料，嘗試從 TCL 既有的
                         // 稠密 VerticalAlignment 點位反推一次（例如 ALD 匯入、
