@@ -96,6 +96,33 @@ bool AlignmentRenderer::containsObject(const AIS_InteractiveObject* obj) const
     return false;
 }
 
+int AlignmentRenderer::editableIndexForObject(const AIS_InteractiveObject* obj) const
+{
+    if (!m_edit || !obj) return -1;
+
+    int overlayIdx = -1;
+    for (int i = 0; i < m_overlays.size(); ++i) {
+        if (m_overlays[i].get() == obj) { overlayIdx = i; break; }
+    }
+    if (overlayIdx < 0 || overlayIdx >= m_overlayFingerprints.size()) return -1;
+
+    const ElemFingerprint& fp = m_overlayFingerprints[overlayIdx];
+
+    // Nearest-start-point match against the editable element list — see
+    // header doc comment for why this can't just be m_elems[overlayIdx].
+    const QVector<railway::EditableElement>& elems = m_edit->elements();
+    constexpr double kMaxDist = 0.05;   // 5 cm — generous vs. real point spacing
+    int    best      = -1;
+    double bestDist2 = kMaxDist * kMaxDist;
+    for (int i = 0; i < elems.size(); ++i) {
+        const double dx = elems[i].startPI.x() - fp.easting;
+        const double dy = elems[i].startPI.y() - fp.northing;
+        const double d2 = dx * dx + dy * dy;
+        if (d2 < bestDist2) { bestDist2 = d2; best = i; }
+    }
+    return best;
+}
+
 void AlignmentRenderer::showPIGrips()
 {
     m_piGripsVisible = true;

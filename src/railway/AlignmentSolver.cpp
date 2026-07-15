@@ -1680,6 +1680,54 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         }
     }
 
+    // ── 邊界建構線判定（供 Tangent 發點區塊使用）───────────────────────────
+    //  seedFromRawPoints() 建立的 Fixed Tangent 只要 isConstructionLine==true
+    //  就不是真正量測到的直線，但這個 flag 同時涵蓋了兩種完全不同的情況：
+    //    1. 線形起訖點的邊界虛擬 Tangent —— 只被「一側」的 Floating 群組
+    //       參照（起點只當某群組的 tangentIdxBefore；終點只當某群組的
+    //       tangentIdxAfter），另一側落到資料範圍外，沒有對應的群組。
+    //    2. 兩段緩和曲線直接相接的 SS 交會點 —— 兩側都各自被一個 Floating
+    //       群組參照（同時是前一群組的 tangentIdxAfter、也是後一群組的
+    //       tangentIdxBefore），是線形「中間」真實存在的一個點，不是邊界。
+    //  平面線形資料表只需要隱藏第 1 種（純屬求解用的邊界佔位線，起訖點
+    //  本身的資訊已由 sentinel 收尾列涵蓋），第 2 種 SS 交會點仍要正常顯示
+    //  （其長度已由 seedFromRawPoints() 的 SS 精度修正釘在近乎 0，會正常
+    //  顯示成一個長度~0 的路徑點）。用「是否同時被兩側的 Floating 群組
+    //  參照」來分辨，不需要額外欄位。
+    QVector<bool> refAsTangentBefore(n, false);  // 這個 Tangent 是某群組的 tangentIdxBefore（其後緊接著一個群組）
+    QVector<bool> refAsTangentAfter(n, false);   // 這個 Tangent 是某群組的 tangentIdxAfter（其前緊接著一個群組）
+    for (int i = 0; i < n; ++i) {
+        if (elems[i].mode != ConstraintMode::Floating) continue;
+        const int tb = elems[i].tangentIdxBefore;
+        const int ta = elems[i].tangentIdxAfter;
+        if (tb >= 0 && tb < n && elems[tb].type == EditableElementType::Tangent)
+            refAsTangentBefore[tb] = true;
+        if (ta >= 0 && ta < n && elems[ta].type == EditableElementType::Tangent)
+            refAsTangentAfter[ta] = true;
+    }
+    QVector<bool> isBoundaryConstruction(n, false);
+    for (int i = 0; i < n; ++i) {
+        if (elems[i].type != EditableElementType::Tangent) continue;
+        if (!elems[i].isConstructionLine) continue;
+        isBoundaryConstruction[i] = !(refAsTangentBefore[i] && refAsTangentAfter[i]);
+    }
+    // 找出與某個邊界建構線緊鄰的真正量測曲線半徑（供 constructionIsArc==true
+    // 時顯示用；該建構線本身沒有半徑，半徑來自它所銜接的那段 Floating
+    // CircularArc / SCS 群組）。
+    auto adjacentArcRadius = [&](int tangentIdx) -> double {
+        for (int j = 0; j < n; ++j) {
+            if (elems[j].mode != ConstraintMode::Floating) continue;
+            if (elems[j].tangentIdxBefore != tangentIdx && elems[j].tangentIdxAfter != tangentIdx)
+                continue;
+            if (elems[j].type == EditableElementType::CircularArc)
+                return elems[j].radius;
+            if (elems[j].type == EditableElementType::SpiralIn
+                && j + 1 < n && elems[j + 1].type == EditableElementType::CircularArc)
+                return elems[j + 1].radius;
+        }
+        return 0.0;
+    };
+
     for (int i = 0; i < n; ++i) {
         const auto& e = elems[i];
         AlignmentPoint pt;
@@ -1784,6 +1832,36 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         if (handledBySCS[i]) continue;
 
         if (e.type == EditableElementType::Tangent) {
+            if (isBoundaryConstruction[i]) {
+                // 線形起訖點的邊界虛擬 Tangent：純屬求解用的佔位線，不是
+                // 實際量測到的直線段，不該出現在平面線形資料表裡（起訖點
+                // 本身的座標／里程已由本函式最末端的 sentinel 收尾列涵蓋，
+                // 不會遺失）。
+                //
+                // 若這條邊界建構線的 constructionIsArc==true（規則 2：檔案
+                // 資料範圍外的另一側其實是圓弧，代表原始資料在圓弧中途被
+                // 截斷，而不是乾淨地在切線上結束），改發一列「虛擬弧」
+                // 提示列，讓工程師在資料表上看得出這裡的線形其實還在
+                // 彎道上，並帶出緊鄰那段真正量測到的圓弧半徑供參考（檔案
+                // 資料範圍外的真實延伸半徑並未記錄，只能以此作為提示）。
+                if (e.constructionIsArc) {
+                    const double R = adjacentArcRadius(i);
+                    AlignmentPoint vapt;
+                    vapt.tsc       = QStringLiteral("VA");   // Virtual Arc 提示列，不計入 SC/CC/TC 半徑編輯計數
+                    vapt.curveType = QStringLiteral("VIRTUAL_ARC:%1").arg(R, 0, 'f', 3);
+                    vapt.easting   = tanStart[i].x();
+                    vapt.northing  = tanStart[i].y();
+                    vapt.azimuth   = azimuthOf(tanStart[i], tanEnd[i]);
+                    vapt.length    = 0.0;
+                    vapt.radius    = R;
+                    vapt.chainage  = chainage;
+                    pts.append(vapt);
+                }
+                // 不推進 chainage：這條建構線的長度只是求解殘留的極小誤差
+                // （通常 < 1cm），不代表真實資料的延伸長度。
+                continue;
+            }
+
             const double len = QLineF(tanStart[i], tanEnd[i]).length();
             if (len < 1e-9) continue;
 

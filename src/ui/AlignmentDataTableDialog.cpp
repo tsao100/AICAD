@@ -90,6 +90,12 @@ QString curveTypeToDisplay(const QString& ct)
     if (ct == QLatin1String("CUBICJPN")) return QObject::tr("CubicJPN");
     if (ct == QLatin1String("CUBICECI")) return QObject::tr("CubicECI");
     if (ct == QLatin1String("SPIRAL"))   return QObject::tr("Clothoid");
+    // 線形起訖點的邊界建構線，其虛擬（檔案資料範圍外）延伸另一側是圓弧
+    // （seedFromRawPoints() 規則 2）：AlignmentSolver::solve() 以
+    // "VIRTUAL_ARC:<radius>" 編碼半徑，這裡解析出來顯示，讓工程師看得出
+    // 線形資料其實是在圓弧中途截斷，而非乾淨地在切線上結束。
+    if (ct.startsWith(QLatin1String("VIRTUAL_ARC:")))
+        return QObject::tr("建構弧 R=%1").arg(ct.mid(12));
     return QObject::tr("STRAIGHT");
 }
 

@@ -573,6 +573,12 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
         // 僅線形起訖點的虛擬建構線適用：另一側（不在檔案資料範圍內）是否
         // 為圓弧（規則 2 的 T/C 判斷）。SS／真正 Tangent 恆為 false。
         bool    boundaryIsArc = false;
+        // 是否為兩段緩和曲線直接相接的 SS 交會點（迴圈內偵測 tsc=="SS"
+        // 時建立）。與線形起訖點的邊界虛擬 Tangent 不同：SS 兩側都緊鄰著
+        // 曲線群組，錨點座標／方位角本身就是實際量測到的資料（相接點本
+        // 身就是精確已知的），不是靠外推得到的邊界猜測值，Pass 2a 據此
+        // 走精度更高的專用路徑（見下方）。
+        bool    isSS = false;
     };
 
     QVector<AnchorSpec> anchors;
@@ -638,6 +644,7 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
             // 兩段緩和曲線在此直接相接：先把目前累積的曲線群組收尾到這個
             // 新的零長度虛擬 Tangent 錨點，再從這個錨點開始累積下一段。
             const int ssAnchor = pushPointAnchor(i);
+            anchors[ssAnchor].isSS = true;
             flushToAnchor(ssAnchor);
         }
 
@@ -688,6 +695,30 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
 
     QVector<QPointF> cornerBefore(anchors.size()), cornerAfter(anchors.size());
     for (int k = 0; k < anchors.size(); ++k) {
+        if (anchors[k].isSS) {
+            // SS 交會點：兩側都緊鄰曲線群組，理論上 cornerBefore/cornerAfter
+            // 應該重合於同一點（緩和曲線在此直接相接，中間沒有直線）。但
+            // 若各自獨立用 intersectAzLines() 對前一個/後一個 Anchor 做線
+            // 交點運算，會把「鄰近 Tangent 的量測誤差」也牽連進來，兩次
+            // 交點算出來的結果不會恰好相同，於是在兩段緩和曲線中間插入一
+            // 小段本不存在的直線（長度通常只有數公釐～數公分，但在圖面
+            // 上看得出來）。
+            //
+            // SS 點本身的座標／方位角是原始資料裡最精確、最直接量測到的
+            // 值（不是外推出來的），沒有理由捨棄它去換算一個精度更差的
+            // 交點。因此這裡不做 intersectAzLines()，直接把 cornerBefore／
+            // cornerAfter 都釘在 SS 點自己的座標上；為了讓 addFixedTangent()
+            // 建出的 Fixed Tangent 仍有明確方向（azimuthOf() 需要頭尾兩點
+            // 不同，否則退化成 atan2(0,0)=0，方位角會整個錯掉），沿著 SS
+            // 點自己的方位角外插一個遠低於任何實際繪圖／資料表顯示精度
+            // 的極小位移（1 微米），實務上等同於同一點。
+            constexpr double kSSEpsilon = 1.0e-6;
+            const QPointF unit(std::sin(anchors[k].azimuth), std::cos(anchors[k].azimuth));
+            cornerBefore[k] = anchors[k].pt;
+            cornerAfter[k]  = anchors[k].pt + kSSEpsilon * unit;
+            continue;
+        }
+
         if (groupBefore[k] && k > 0) {
             bool ok = false;
             QPointF ip = intersectAzLines(anchors[k - 1].pt, anchors[k - 1].azimuth,
@@ -736,6 +767,20 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
     // ── Pass 2c：依附曲線群組到對應的 Fixed Tangent 之間 ──────────────────
     // 無法對應的複合／Egg 型態（cCount>=2）退化為個別 Fixed CircularArc
     // （略過中間的 Egg 緩和曲線並記錄警告）。
+    //
+    // 重要：addSCS()/addFloatingCurve() 內部透過 insertElementsOrdered()
+    // 把新元素插入 tanBefore+1 的位置，這會把「插入點之後」所有既有元素在
+    // m_elems 裡的實際 index 往後推移。insertElementsOrdered() 只會修正
+    // m_elems 內每個元素自身的 tangentIdxBefore/After 欄位，並不知道、也
+    // 無法觸及這裡的區域變數 tangentElemIdx（anchor index -> m_elems
+    // index 的對照表）。若不手動同步，第一個曲線群組建立後，
+    // tangentElemIdx 裡「插入點之後」的每一筆都會過期一格（或多格），導致
+    // 後續群組（例如線形中第二段以後的彎道）附掛到錯的元素上（往往落在
+    // 剛插入的 Floating CircularArc/Spiral 本身，型別檢查失敗，
+    // addFloatingCurve()/addSCS() 直接回傳 -1 並記錄警告，該曲線群組於是
+    // 整段被靜默略過，既不會出現在資料表也不會有 grip）。因此每次呼叫
+    // 完 addSCS()/addFloatingCurve() 後，都必須依實際插入的元素數量同步
+    // 更新 tangentElemIdx，才能讓後面的群組取得正確的 tangent index。
     for (const GroupSpec& g : groups) {
         const QVector<BufItem>& buf = g.items;
         if (buf.isEmpty()) continue;
@@ -782,7 +827,22 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
                 t2 = rawCurveTypeToSpiralType(sPt.curveType);
             }
 
-            addSCS(tanBefore, tanAfter, radius, L1, L2, t1, t2);
+            {
+                const int sizeBefore = m_elems.size();
+                addSCS(tanBefore, tanAfter, radius, L1, L2, t1, t2);
+                const int inserted = m_elems.size() - sizeBefore;
+                if (inserted > 0) {
+                    // Mirror the shift insertElementsOrdered() just applied
+                    // (insertion position = tanBefore + 1) onto our own
+                    // anchor->m_elems index table, or every later group in
+                    // this loop will resolve to the wrong element (see the
+                    // Pass 2c comment above).
+                    const int insertPos = tanBefore + 1;
+                    for (int& idx : tangentElemIdx) {
+                        if (idx >= insertPos) idx += inserted;
+                    }
+                }
+            }
             continue;
         }
 
@@ -1007,6 +1067,47 @@ void HorizontalAlignmentEdit::removeElement(int idx)
     if (idx < 0 || idx >= m_elems.size()) return;
     m_elems.removeAt(idx);
 }
+
+bool HorizontalAlignmentEdit::eraseElementAt(int elemIndex)
+{
+    if (elemIndex < 0 || elemIndex >= m_elems.size()) return false;
+
+    const EditableElement el = m_elems.at(elemIndex);   // copy — m_elems mutates below
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    if (el.mode == ConstraintMode::Floating) {
+        // Floating 元素一定屬於某個群組（AFC 單弧，或 SCS 入螺旋／弧／
+        // 出螺旋三者共用同一組 tangentIdxBefore/After）；整組一起移除，
+        // 讓兩側 Fixed Tangent 直接以直線相接。
+        if (el.tangentIdxBefore < 0 || el.tangentIdxAfter < 0) return false;
+        const int removed = removeFloatingBetween(el.tangentIdxBefore, el.tangentIdxAfter);
+        if (removed <= 0) return false;
+    } else {
+        // Fixed 元素：只有在沒有任何其他元素以它為 tangentIdxBefore/After
+        // 時才能單獨刪除，否則會讓依附在它上面的 Floating 群組失去依附
+        // 對象、幾何無法求解。
+        for (const auto& other : m_elems) {
+            if (other.tangentIdxBefore == elemIndex || other.tangentIdxAfter == elemIndex) {
+                qWarning() << "[HorizontalAlignmentEdit] eraseElementAt:"
+                              " element" << elemIndex
+                           << "still anchors a floating curve group"
+                              " -- erase that curve first.";
+                return false;
+            }
+        }
+        removeElement(elemIndex);
+    }
+
+    if (parentDocument()) {
+        const QJsonObject after = parentDocument()->toJson();
+        command::AlignmentEditCommand::push(parentDocument(), before, after, "Erase Alignment Element");
+    }
+
+    solve();   // emit changed() → AlignmentRenderer::refresh()
+    return true;
+}
+
 
 // ── solve() ──────────────────────────────────────────────────────────────────
 

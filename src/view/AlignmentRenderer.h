@@ -74,6 +74,25 @@ public:
      */
     bool containsObject(const AIS_InteractiveObject* obj) const;
 
+    /**
+     * @brief Map a clicked overlay object back to its owning EditableElement
+     *        index in the attached HorizontalAlignmentEdit (setAlignment()),
+     *        for interactive erase (Delete key).
+     *
+     * m_overlays[i] corresponds to the *solved* HorizontalAlignment::elements()
+     * list (rebuilt from sampled points every solve()), which can have a
+     * different count/order than the editable m_elems — e.g. a near-zero-
+     * length construction-line Tangent is dropped by HorizontalAlignment::
+     * load(). So the lookup matches by nearest start point (placement /
+     * startPI, the same physical point on both sides) instead of assuming
+     * the overlay index equals the m_elems index.
+     *
+     * @return index into HorizontalAlignmentEdit::elements() (m_elems),
+     *         or -1 if @p obj isn't one of ours, no edit model is attached,
+     *         or no element starts near enough to it.
+     */
+    int editableIndexForObject(const AIS_InteractiveObject* obj) const;
+
     /** Show PI marker grips in the CadView. */
     void showPIGrips();
 

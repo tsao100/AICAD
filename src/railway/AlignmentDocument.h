@@ -241,6 +241,25 @@ public:
     void setConstraintMode(int idx, ConstraintMode mode);
     void removeElement(int idx);
 
+        /**
+     * @brief 互動刪除入口：刪除使用者選取的單一元素 m_elems[elemIndex]，
+     *        並自動選擇安全的刪除策略。
+     *
+     * - Floating 元素（單弧 AFC，或 SCS 入螺旋／弧／出螺旋三者之一）：
+     *   刪除整個群組（呼叫 removeFloatingBetween()），使兩側 Fixed Tangent
+     *   直接以直線相接，等同「復原」該群組原本是怎麼加上去的。
+     * - Fixed 元素（Tangent／CircularArc／Spiral）：僅在沒有任何其他元素
+     *   以它為 tangentIdxBefore/After（亦即它不是任何 Floating 群組的錨點）
+     *   時才允許刪除；否則會使相依的群組失去依附對象、幾何無法求解，因此
+     *   拒絕刪除並回傳 false（呼叫端可提示使用者：請先刪除依附在其上的
+     *   曲線群組）。
+     *
+     * 成功時會 push Undo、重新 solve()（emit changed() 觸發重繪）。
+     *
+     * @return true 表示成功刪除；false 表示 index 無效或該元素目前不可安全刪除。
+     */
+    bool eraseElementAt(int elemIndex);
+
     /** 直接設定元素長度（主要供 SpiralIn/SpiralOut 緩和曲線長度編輯使用）。 */
     void setLength(int idx, double length);
 

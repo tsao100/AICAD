@@ -148,6 +148,12 @@ public:
 
     /// B.3 TM2 座標原點是否已由使用者設定（若否，進入 alignment edit 時自動套用預設值）
     bool originSet = false;
+
+    /// Alignment 編輯模式下，目前於 CadView 中被點選的元素（供 Delete 鍵刪除用）。
+    /// -1 = 尚未選取任何元素。索引對應 selectedAlignRenderer 所依附之
+    /// HorizontalAlignmentEdit::elements()（即 m_elems）。
+    int selectedAlignElemIdx = -1;
+    view::AlignmentRenderer* selectedAlignRenderer = nullptr;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -220,6 +226,8 @@ void UIManager::initGripSystem()
                            d->gripManager->cancelGrip();
 
                        d->gripManager->detach();
+                       d->selectedAlignRenderer = nullptr;
+                       d->selectedAlignElemIdx  = -1;
                        qDebug() << "[UIManager] Grips detached (selection cleared)";
                    });
 
@@ -255,11 +263,23 @@ void UIManager::initGripSystem()
                        // Check all per-TCL renderers
                        for (auto* r : d->tclRenderers) {
                            if (r->containsObject(rawPtr)) {
+                               // 記錄被點選到的具體元素（供 Delete 鍵刪除用）；
+                               // editableIndexForObject() 找不到對應元素時
+                               // （例如點到 PI grip 球體）回傳 -1，仍視為
+                               // 「已點選到 Alignment 物件」但沒有可刪除的
+                               // 具體元素。
+                               d->selectedAlignRenderer = r;
+                               d->selectedAlignElemIdx  = r->editableIndexForObject(rawPtr);
+
                                core::Application::instance()->eventBus()->publish(
                                    "alignment.elementSelected", QVariant{});
                                return;
                            }
                        }
+                       // 點選到的不是任何 Alignment overlay → 清除殘留的選取記錄，
+                       // 避免 Delete 鍵誤刪上一次點選到的 Alignment 元素。
+                       d->selectedAlignRenderer = nullptr;
+                       d->selectedAlignElemIdx  = -1;
                    });
 
     // ── C) Document closed / new document → detach grips ─────────────
@@ -2028,7 +2048,9 @@ void UIManager::setupCommandLine() {
                        bus->unsubscribe(core::Events::VIEW_READY, d->commandLine);
                    });
 
-    // ⑤ Delete 鍵 — 草圖編輯模式下，若有選取幾何則等同 ERASE 命令
+    // ⑤ Delete 鍵 — 草圖編輯模式下，若有選取幾何則等同 ERASE 命令；
+    //    Alignment 編輯模式下，若有選取元素則直接刪除，否則提示使用者
+    //    先在視圖中點選要刪除的元素。
     //    使用 WidgetWithChildrenShortcut 綁定在 cadView 上，只在 cadView
     //    （或其子元件）持有焦點時才會觸發，避免吃掉命令列輸入框中
     //    Delete 鍵原本的「刪除字元」行為。
@@ -2038,20 +2060,55 @@ void UIManager::setupCommandLine() {
         auto* app = core::Application::instance();
         if (!app || !d->cadView) return;
 
-        // 僅在草圖編輯模式（有 active sketch）下，Delete 鍵才等同 ERASE。
-        // 非草圖模式（例如 FeatureBrowser 選取）維持現有行為，不受影響。
-        if (!app->activeSketch()) return;
+        auto* cmdMgr = app->commandManager();          // executeCommand("ERASE", ...)
+        auto* cmdLine = d->commandLineManager;          // printWarning/printSuccess/...
 
-        QStringList sel = d->cadView->selectedGeomUuids();
-        if (sel.isEmpty()) return;  // 沒有選取任何幾何，不做任何事
+        // ── 草圖編輯模式：Delete 鍵等同 ERASE 命令 ─────────────────────
+        if (app->activeSketch()) {
+            QStringList sel = d->cadView->selectedGeomUuids();
+            if (sel.isEmpty()) return;  // 沒有選取任何幾何，不做任何事
 
-        command::CommandContext ctx;
-        ctx.args      = sel;
-        ctx.uiManager = this;
-        ctx.cadView   = d->cadView;
+            command::CommandContext ctx;
+            ctx.args      = sel;
+            ctx.uiManager = this;
+            ctx.cadView   = d->cadView;
 
-        auto* cmdMgr = app->commandManager();
-        if (cmdMgr) cmdMgr->executeCommand("ERASE", ctx);
+            if (cmdMgr) cmdMgr->executeCommand("ERASE", ctx);
+            return;
+        }
+
+        // ── Alignment 編輯模式：有選取到具體元素則直接刪除；否則提示
+        //    使用者先在視圖中點選要刪除的元素（下一次點選會被 B3 handler
+        //    記錄下來，之後再按一次 Delete 即可完成刪除）。
+        if (d->alignmentDoc) {
+            if (d->selectedAlignElemIdx < 0) {
+                if (cmdLine)
+                    cmdLine->printWarning(
+                        "⚠️  No alignment element selected — click a tangent "
+                        "or curve in the viewport first, then press Delete.");
+                return;
+            }
+
+            const bool ok = d->alignmentDoc->horizontal()
+                                 ->eraseElementAt(d->selectedAlignElemIdx);
+
+            d->selectedAlignElemIdx  = -1;
+            d->selectedAlignRenderer = nullptr;
+
+            // 已刪除的元素不再存在，先前掛載的 grip provider 可能持有
+            // 過期的 index／幾何，直接 detach，等使用者下次點選再重新掛載。
+            if (d->gripManager) d->gripManager->detach();
+
+            if (cmdLine) {
+                if (ok)
+                    cmdLine->printSuccess("✅ Alignment element erased.");
+                else
+                    cmdLine->printWarning(
+                        "⚠️  Could not erase — this element still anchors a "
+                        "curve group; erase that curve first.");
+            }
+            return;
+        }
     });
 
     // 注意：show() 移到 VIEW_READY callback 內，這裡不呼叫
