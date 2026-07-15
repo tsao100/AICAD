@@ -2063,32 +2063,22 @@ void UIManager::setupCommandLine() {
         auto* cmdMgr = app->commandManager();          // executeCommand("ERASE", ...)
         auto* cmdLine = d->commandLineManager;          // printWarning/printSuccess/...
 
-        // ── 草圖編輯模式：Delete 鍵等同 ERASE 命令 ─────────────────────
-        if (app->activeSketch()) {
-            QStringList sel = d->cadView->selectedGeomUuids();
-            if (sel.isEmpty()) return;  // 沒有選取任何幾何，不做任何事
+        // ── 依「實際選取到什麼」決定 Delete 鍵行為 ──────────────────────
+        // 原本的判斷順序是「只要有 activeSketch() 就一律走 sketch-erase，
+        // 且 sketch 幾何未選取時直接 return」，這會導致：即使使用者點選的
+        // 是 Alignment overlay（B3 handler 已把 d->selectedAlignElemIdx
+        // 設好），只要同時有 sketch 開著（例如剛用 Spline/Polyline 等指令
+        // 畫過草圖、sketch 尚未關閉），sketch 分支會因為
+        // selectedGeomUuids() 是空的而直接 return，永遠到不了下面的
+        // Alignment erase 分支——看起來就像「Delete 鍵刪不掉 alignment
+        // element」。
+        //
+        // 修正：優先看使用者「實際選取到的東西」而非「目前是否有 sketch
+        // 開著」——若已經點選了一個具體的 Alignment 元素，就直接刪除它；
+        // 否則才依 activeSketch() 是否存在，走 sketch-erase 或提示訊息。
 
-            command::CommandContext ctx;
-            ctx.args      = sel;
-            ctx.uiManager = this;
-            ctx.cadView   = d->cadView;
-
-            if (cmdMgr) cmdMgr->executeCommand("ERASE", ctx);
-            return;
-        }
-
-        // ── Alignment 編輯模式：有選取到具體元素則直接刪除；否則提示
-        //    使用者先在視圖中點選要刪除的元素（下一次點選會被 B3 handler
-        //    記錄下來，之後再按一次 Delete 即可完成刪除）。
-        if (d->alignmentDoc) {
-            if (d->selectedAlignElemIdx < 0) {
-                if (cmdLine)
-                    cmdLine->printWarning(
-                        "⚠️  No alignment element selected — click a tangent "
-                        "or curve in the viewport first, then press Delete.");
-                return;
-            }
-
+        // ── Alignment 元素已被實際選取 → 優先刪除它 ─────────────────────
+        if (d->alignmentDoc && d->selectedAlignElemIdx >= 0) {
             const bool ok = d->alignmentDoc->horizontal()
                                  ->eraseElementAt(d->selectedAlignElemIdx);
 
@@ -2107,6 +2097,29 @@ void UIManager::setupCommandLine() {
                         "⚠️  Could not erase — this element still anchors a "
                         "curve group; erase that curve first.");
             }
+            return;
+        }
+
+        // ── 草圖編輯模式：Delete 鍵等同 ERASE 命令 ─────────────────────
+        if (app->activeSketch()) {
+            QStringList sel = d->cadView->selectedGeomUuids();
+            if (sel.isEmpty()) return;  // 沒有選取任何幾何，不做任何事
+
+            command::CommandContext ctx;
+            ctx.args      = sel;
+            ctx.uiManager = this;
+            ctx.cadView   = d->cadView;
+
+            if (cmdMgr) cmdMgr->executeCommand("ERASE", ctx);
+            return;
+        }
+
+        // ── Alignment 編輯模式：沒有選取到具體元素 → 提示使用者先點選 ─────
+        if (d->alignmentDoc) {
+            if (cmdLine)
+                cmdLine->printWarning(
+                    "⚠️  No alignment element selected — click a tangent "
+                    "or curve in the viewport first, then press Delete.");
             return;
         }
     });

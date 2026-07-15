@@ -144,41 +144,27 @@ ViewManager::ViewManager(QObject* parent)
                 qDebug() << "[ViewManager] View setup completed:" << mode;
             });
 
-        // ✅ Handle rubber band updates
-        bus->subscribe("command.update-rubber-band", this,
-            [this](const QVariant& data) {
-                QVariantMap update = data.toMap();
-                CadView* view = activeView();
-                if (!view) return;
-
-                view::RubberBand* rubber = view->rubberBand();
-                if (!rubber) return;
-
-                QString action = update["action"].toString();
-
-                if (action == "clearAndAdd") {
-                    rubber->clearPoints();
-                    rubber->clear();
-
-                    if (update.contains("point")) {
-                        QPointF point = update["point"].value<QPointF>();
-                        rubber->addPoint(point);
-                    }
-                    rubber->update();   // ✅ 新增：立即重繪
-                } else if (action == "addPoint") {
-                    if (update.contains("point")) {
-                        QPointF point = update["point"].value<QPointF>();
-                        rubber->addPoint(point);
-                    }
-                } else if (action == "clear") {
-                    rubber->clearPoints();
-                    rubber->clear();
-                } else if (action == "update") {
-                    rubber->update();
-                }
-
-                qDebug() << "[ViewManager] Rubber band updated:" << action;
-            });
+        // NOTE: "command.update-rubber-band" 的訂閱已移除。
+        //
+        // 根本問題（本次 Spline rubber band 仍不顯示的真正原因）：
+        // UIManager::initialize() 也訂閱了同一個 "command.update-rubber-band"
+        // 事件（見 UIManager.cpp）。EventBus::publish() 會呼叫「所有」訂閱者，
+        // 所以先前 ViewManager 與 UIManager 這兩個 handler 會同時觸發：
+        //   - 每次 SplineCommand/PolylineCommand/... publish 一次 "addPoint"，
+        //     d->points 實際上被 addPoint() 呼叫兩次，導致控制點在陣列裡
+        //     重複（[p0,p0,p1,p1,...]）。
+        //   - 對 updateSpline()：GeomAPI_Interpolate 對兩個座標重合（距離
+        //     幾乎為 0）的相鄰控制點會丟出 Standard_Failure，被 try/catch
+        //     吞掉後直接 return，橡皮筋因此完全不顯示——這正是「加了
+        //     RubberBand.cpp 的修正後，Spline 仍然沒有預覽」的原因：問題根本
+        //     不在 RubberBand.cpp 內部的判斷式，而在事件重複訂閱造成的重複點。
+        //   - 對 SCS/FloatCurve/FixCurve 等以固定索引（points[0]/points[1]）
+        //     存取控制點的模式，重複點還會讓索引整個錯位，屬於更隱性的錯誤。
+        //
+        // UIManager 的版本（UIManager.cpp: bus->subscribe("command.update-rubber-band", ...)）
+        // 是功能完整的目前使用版本（額外支援 setParams / setCurrentPoint，
+        // 且 addPoint 之後會呼叫 rb->update()），因此保留該處單一訂閱來源，
+        // 移除這裡重複、較舊且較不完整的版本，避免事件被處理兩次。
 
         // ✅ Handle cleanup requests
         bus->subscribe("command.request-cleanup", this,

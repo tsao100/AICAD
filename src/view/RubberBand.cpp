@@ -387,7 +387,10 @@ void RubberBand::updatePolyline() {
 }
 
 void RubberBand::updateSpline() {
-    if (d->points.size() < 2 || !d->hasCurrentPoint) {
+    // 與 updateLine()/updatePolyline() 一致：只要放了第一個點、且有游標追蹤點
+    // 就該顯示預覽，不該等到第二個點才出現（原本 `< 2` 會讓第一段完全沒有
+    // rubber band，看起來像整個 spline 預覽消失了）。
+    if (d->points.isEmpty() || !d->hasCurrentPoint) {
         return;
     }
 
@@ -406,12 +409,13 @@ void RubberBand::updateSpline() {
         QVector3D currentP = planeToWorld(d->currentPoint);
         hControlPoints->SetValue(index, gp_Pnt(currentP.x(), currentP.y(), currentP.z()));
 
-        // 特殊處理：2點時顯示直線
-        if (numControlPoints == 2) {
+        // 特殊處理：只有 1 或 2 個控制點（即第一個點剛放下、或已放第二個點）
+        // 時，插值樣條至少需要 2 個相異點才有意義，直接顯示直線預覽。
+        if (numControlPoints <= 2) {
             Handle(Graphic3d_ArrayOfPolylines) polyline =
                 new Graphic3d_ArrayOfPolylines(2);
             polyline->AddVertex(hControlPoints->Value(1));
-            polyline->AddVertex(hControlPoints->Value(2));
+            polyline->AddVertex(hControlPoints->Value(numControlPoints));
             createAndDisplayPresentation(polyline);
             return;
         }
