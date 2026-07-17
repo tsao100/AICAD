@@ -1043,6 +1043,377 @@ SolvedACA AlignmentSolver::solveACA(
 }
 
 // ============================================================================
+//  solveCompoundChain  — S0 C0 S1 C1 ... Sn（N≥2 個圓弧），封閉解
+//
+//  結構上是 solveSCS 的直接推廣：
+//    Step 1  逐段計算每段緩和曲線的 (Xm, Ym, θs)。邊界兩段（index 0、N）
+//            用既有 makeTransitionElement()（曲率 0 ↔ 1/R，與 solveSCS
+//            entry/exit spiral 相同）；中段（index 1..N-1，介於兩個不同
+//            半徑的圓弧之間）用 EggTransitionElement(r1, r2, Ls) ——它的
+//            localFrame(Ls) 已經是「從入端切線量起的局部座標」，用法與
+//            TransitionElement::localFrame() 完全一致（見 solveACA 的
+//            evalF() 內對同一個 API 的用法），可以直接沿用同一套疊加公式。
+//  Step 2  Σthetas = 所有緩和曲線轉角總和；leftover = Δ − Σthetas；
+//          每段圓弧心角 = leftover / N（平分規則，見 AlignmentDocument.h
+//          CompoundChainSpec 的說明）。
+//  Step 3  以未修正的 TS = tanStartPrev 為起點，依序疊加緩和曲線／圓弧的
+//          局部偏移，走到初步 ST。
+//  Step 4  比照 solveSCS 的 d5：量測初步 ST 相對出口切線的橫向間隙，解析
+//          解出 TS 應沿入口切線平移的距離，修正後即可精確閉合。
+// ============================================================================
+
+SolvedCompoundChain AlignmentSolver::solveCompoundChain(
+    const QVector<double>&     arcRadii,
+    const QVector<double>&     spiralLengths,
+    const QVector<SpiralType>& spiralTypes,
+    const QPointF& tanStartPrev, const QPointF& tanEndPrev,
+    const QPointF& tanStartNext, const QPointF& tanEndNext,
+    const QVector<double>&     givenArcAngles,
+    const CompoundChainUnknown& unknown)
+{
+    SolvedCompoundChain result;
+
+    const int N = arcRadii.size();
+    if (N < 2) {
+        qWarning() << "[AlignmentSolver] solveCompoundChain: needs N>=2 arcs, got" << N;
+        return result;
+    }
+    if (spiralLengths.size() != N + 1 || spiralTypes.size() != N + 1) {
+        qWarning() << "[AlignmentSolver] solveCompoundChain: spiralLengths/spiralTypes size mismatch"
+                   << "(expected" << (N + 1) << ")";
+        return result;
+    }
+    if (!givenArcAngles.isEmpty() && givenArcAngles.size() != N) {
+        qWarning() << "[AlignmentSolver] solveCompoundChain: givenArcAngles size mismatch"
+                   << "(expected" << N << "or empty)";
+        return result;
+    }
+
+    // ── Phase 4：反解模式的前提驗證 ───────────────────────────────────────
+    //  見 CompoundChainUnknown 的說明：只有 1 條 Δθ 方程式可用，所以指定
+    //  未知數時，所有圓弧心角都必須是釘死的固定值（不可再混用自動平分，
+    //  否則 Δθ 會被平分吸收、變成恒成立、沒有方程式可反解）。
+    if (unknown.kind != CompoundChainUnknownKind::None) {
+        if (givenArcAngles.size() != N) {
+            qWarning() << "[AlignmentSolver] solveCompoundChain: unknown.kind != None requires"
+                          " givenArcAngles fully specified (size==" << N << "), got size="
+                       << givenArcAngles.size();
+            return result;
+        }
+        for (int k = 0; k < N; ++k) {
+            if (std::abs(givenArcAngles[k]) <= 1e-12) {
+                qWarning() << "[AlignmentSolver] solveCompoundChain: unknown.kind != None requires"
+                              " EVERY arc central angle to be pinned (non-zero); arc" << k
+                           << "is left to auto-split, which absorbs Δθ and leaves no equation"
+                              " to solve the unknown from.";
+                return result;
+            }
+        }
+        if (unknown.kind == CompoundChainUnknownKind::SpiralLength
+            && (unknown.index < 0 || unknown.index > N)) {
+            qWarning() << "[AlignmentSolver] solveCompoundChain: unknown spiral index out of range"
+                       << unknown.index;
+            return result;
+        }
+        if (unknown.kind == CompoundChainUnknownKind::ArcRadius
+            && (unknown.index < 0 || unknown.index >= N)) {
+            qWarning() << "[AlignmentSolver] solveCompoundChain: unknown arc index out of range"
+                       << unknown.index;
+            return result;
+        }
+    }
+
+    for (int k = 0; k < N; ++k) {
+        if (unknown.kind == CompoundChainUnknownKind::ArcRadius && k == unknown.index) continue;
+        if (std::abs(arcRadii[k]) < 1e-9) {
+            qWarning() << "[AlignmentSolver] solveCompoundChain: arcRadii[" << k << "] ≈ 0";
+            return result;
+        }
+    }
+
+    // ── Step 0: boundary tangent azimuths / turning angle ────────────────────
+    const double az1 = azimuthOf(tanStartPrev, tanEndPrev);
+    const double az2 = azimuthOf(tanStartNext, tanEndNext);
+    const double delta    = normaliseAngle(az2 - az1);
+    const double absDelta = std::abs(delta);
+    if (absDelta < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveCompoundChain: Δ ≈ 0 (parallel tangents)";
+        return result;
+    }
+    const int    signR = (delta >= 0.0) ? 1 : -1;
+
+    // ── Phase 4：若指定了未知數，先用「掃描找變號區間 + 二分法」反解 ────────
+    //  殘差函式 f(x) = Δ − Σ緩和曲線轉角(x) − Σ已釘死的圓弧心角。
+    //  x 是 spiralLengths[unknown.index] 或 arcRadii[unknown.index] 的試值。
+    QVector<double> resolvedArcRadii     = arcRadii;
+    QVector<double> resolvedSpiralLengths = spiralLengths;
+    int    solveIterations  = 0;
+    double solveResidual    = 0.0;
+
+    if (unknown.kind != CompoundChainUnknownKind::None) {
+        double sumPinnedFull = 0.0;
+        for (int k = 0; k < N; ++k) sumPinnedFull += signR * std::abs(givenArcAngles[k]);
+
+        // 輕量版 Step 1：只算 Σθ，不需要 Xm/Ym（二分法搜尋階段用，避免
+        // 重複建構完整節點序列）。
+        auto sumAllThetas = [&](const QVector<double>& radiiTry,
+                                 const QVector<double>& lensTry) -> double {
+            double sum = 0.0;
+            for (int k = 0; k <= N; ++k) {
+                const double Ls = lensTry[k];
+                if (Ls < 1e-9) continue;
+                double th = 0.0;
+                if (k == 0) {
+                    const auto elem = makeTransitionElement(spiralTypes[0], Ls, signR * radiiTry[0]);
+                    th = elem->localFrame(Ls).theta;
+                } else if (k == N) {
+                    const auto elem = makeTransitionElement(spiralTypes[N], Ls, signR * radiiTry[N - 1]);
+                    th = elem->localFrame(Ls).theta;
+                } else {
+                    EggTransitionElement egg(signR * radiiTry[k - 1], signR * radiiTry[k], Ls);
+                    th = egg.localFrame(Ls).theta;
+                }
+                sum += th;
+            }
+            return sum;
+        };
+
+        auto evalResidual = [&](double x) -> double {
+            QVector<double> radiiTry = arcRadii;
+            QVector<double> lensTry  = spiralLengths;
+            if (unknown.kind == CompoundChainUnknownKind::ArcRadius) radiiTry[unknown.index] = x;
+            else                                                     lensTry[unknown.index]  = x;
+            return delta - sumAllThetas(radiiTry, lensTry) - sumPinnedFull;
+        };
+
+        // 搜尋範圍：緩和曲線長度用「切線間距」量級估計上限（與 solveLC/CA
+        // 既有的 Ls_max 啟發式同精神）；圓弧半徑用「其餘已知半徑」量級估計。
+        double xLo, xHi;
+        if (unknown.kind == CompoundChainUnknownKind::SpiralLength) {
+            const double geomDist = std::hypot(tanStartNext.x() - tanStartPrev.x(),
+                                               tanStartNext.y() - tanStartPrev.y());
+            xLo = 1e-3;
+            xHi = std::max(500.0, geomDist);
+        } else {
+            double otherRadiiMax = 0.0;
+            for (int k = 0; k < N; ++k) {
+                if (k == unknown.index) continue;
+                otherRadiiMax = std::max(otherRadiiMax, std::abs(arcRadii[k]));
+            }
+            xLo = 1.0;
+            xHi = std::max(100000.0, otherRadiiMax * 50.0);
+        }
+
+        const int nScan = 400;
+        double x_lo = xLo, f_lo = evalResidual(xLo);
+        double x_hi = -1.0;
+        for (int k = 1; k <= nScan; ++k) {
+            const double x_k = xLo + (xHi - xLo) * k / static_cast<double>(nScan);
+            const double f_k = evalResidual(x_k);
+            if (f_lo * f_k < 0.0) { x_hi = x_k; break; }
+            f_lo = f_k;
+            x_lo = x_k;
+        }
+
+        if (x_hi < 0.0) {
+            qWarning() << "[AlignmentSolver] solveCompoundChain: no sign change found for the"
+                          " unknown (kind=" << static_cast<int>(unknown.kind)
+                       << ", index=" << unknown.index << ") over [" << xLo << "," << xHi << "]"
+                       << "-- pinned arc angles may be inconsistent with Δ="
+                       << qRadiansToDegrees(absDelta) << "deg";
+            return result;
+        }
+
+        double x_bisect_lo = x_lo, x_bisect_hi = x_hi;
+        int iter = 0;
+        for (; iter < 80; ++iter) {
+            const double x_mid = 0.5 * (x_bisect_lo + x_bisect_hi);
+            if (std::abs(x_bisect_hi - x_bisect_lo) < 1e-6) { x_bisect_lo = x_mid; break; }
+            if (evalResidual(x_bisect_lo) * evalResidual(x_mid) <= 0.0)
+                x_bisect_hi = x_mid;
+            else
+                x_bisect_lo = x_mid;
+        }
+        const double xSolved = x_bisect_lo;
+        solveIterations = iter + 1;
+        solveResidual   = std::abs(evalResidual(xSolved));
+
+        if (unknown.kind == CompoundChainUnknownKind::ArcRadius) {
+            resolvedArcRadii[unknown.index] = xSolved;
+        } else {
+            resolvedSpiralLengths[unknown.index] = xSolved;
+        }
+    }
+
+    // ── Step 1: per-spiral (Xm, Ym, theta), boundary via TransitionElement, ──
+    //            interior via EggTransitionElement (two-curvature segment).
+    //            使用 resolved 陣列：unknown.kind==None 時與 arcRadii/
+    //            spiralLengths 完全相同（零回歸）；否則已含反解結果。
+    QVector<double> Xm(N + 1, 0.0), Ym(N + 1, 0.0), theta(N + 1, 0.0);
+    for (int k = 0; k <= N; ++k) {
+        const double Ls = resolvedSpiralLengths[k];
+        if (Ls < 1e-9) continue;   // 省略此段緩和曲線：貢獻 0
+
+        if (k == 0) {
+            const auto elem = makeTransitionElement(spiralTypes[0], Ls, signR * resolvedArcRadii[0]);
+            const LocalFrame lf = elem->localFrame(Ls);
+            Xm[0] = lf.x; Ym[0] = lf.y; theta[0] = lf.theta;
+        } else if (k == N) {
+            const auto elem = makeTransitionElement(spiralTypes[N], Ls, signR * resolvedArcRadii[N - 1]);
+            const LocalFrame lf = elem->localFrame(Ls);
+            Xm[N] = lf.x; Ym[N] = lf.y; theta[N] = lf.theta;
+        } else {
+            EggTransitionElement egg(signR * resolvedArcRadii[k - 1], signR * resolvedArcRadii[k], Ls);
+            const LocalFrame lf = egg.localFrame(Ls);
+            Xm[k] = lf.x; Ym[k] = lf.y; theta[k] = lf.theta;
+        }
+    }
+
+    // ── Step 2: fixed (pinned) arc angles are used as-is; the turning angle
+    //            left over after subtracting all spiral thetas AND all pinned
+    //            arc angles is split equally among the remaining (auto) arcs.
+    //            With no givenArcAngles at all, this reduces to the original
+    //            "equal split over all N arcs" rule. When unknown.kind !=
+    //            None, autoCount is guaranteed 0 by the validation above, so
+    //            arcAngleEach is unused (every arc takes its pinned value).
+    double sumThetas = 0.0;
+    for (int k = 0; k <= N; ++k) sumThetas += theta[k];
+
+    QVector<double> pinnedAngle(N, 0.0);   // signed, 0 = not pinned
+    double sumPinned = 0.0;
+    int    autoCount = N;
+    if (!givenArcAngles.isEmpty()) {
+        for (int k = 0; k < N; ++k) {
+            if (std::abs(givenArcAngles[k]) > 1e-12) {
+                pinnedAngle[k] = signR * std::abs(givenArcAngles[k]);
+                sumPinned += pinnedAngle[k];
+                --autoCount;
+            }
+        }
+    }
+
+    const double leftover     = delta - sumThetas - sumPinned;
+    const double arcAngleEach = (autoCount > 0) ? (leftover / static_cast<double>(autoCount)) : 0.0;
+
+    if (autoCount > 0 && arcAngleEach * signR < -1e-9) {
+        qWarning() << "[AlignmentSolver] solveCompoundChain: spirals + pinned arcs overlap"
+                   << "(Δ=" << qRadiansToDegrees(absDelta)
+                   << "deg, Σθ+Σpinned=" << qRadiansToDegrees(std::abs(sumThetas + sumPinned)) << "deg)";
+        return result;
+    }
+
+    // ── Step 3: forward walk from the uncorrected TS = tanStartPrev ─────────
+    //  Nodes are appended inline (rather than reconstructed afterward from
+    //  index parity) so that omitted spirals — resolvedSpiralLengths[k] <
+    //  1e-9, which contribute no node of their own, exactly mirroring
+    //  solveSCS's L1=0/L2=0 degenerate handling — never desynchronise node
+    //  bookkeeping from segment bookkeeping.
+    struct RawNode { QPointF pt; double az; bool isArcStart; double segLength; double radius; };
+    QVector<RawNode> raw;
+    QVector<double>  arcAngles(N, 0.0);
+    QVector<double>  arcLens(N, 0.0);
+
+    QPointF pos = tanStartPrev;
+    double  az  = az1;
+
+    // TS: next segment is spiral 0 (or, if omitted, arc 0 directly).
+    raw.append({ pos, az, false, resolvedSpiralLengths[0], resolvedArcRadii[0] });
+
+    if (resolvedSpiralLengths[0] >= 1e-9) {
+        const double dx =  Xm[0] * std::sin(az1) + Ym[0] * std::cos(az1);
+        const double dy =  Xm[0] * std::cos(az1) - Ym[0] * std::sin(az1);
+        pos += QPointF(dx, dy);
+        az  += theta[0];
+        // SC0: next segment is arc 0.
+        raw.append({ pos, az, true, 0.0 /*filled below*/, resolvedArcRadii[0] });
+    } else {
+        // Entry spiral omitted: TS itself is where arc 0 begins.
+        raw.last().isArcStart = true;
+    }
+
+    for (int k = 0; k < N; ++k) {
+        const double thisArcAngle = (std::abs(pinnedAngle[k]) > 1e-12) ? pinnedAngle[k] : arcAngleEach;
+        const double azStart = az;
+        const double azEnd   = az + thisArcAngle;
+        const double R       = signR * resolvedArcRadii[k];
+
+        const double dx = R * (std::cos(azStart) - std::cos(azEnd));
+        const double dy = R * (std::sin(azEnd)   - std::sin(azStart));
+        pos += QPointF(dx, dy);
+        az   = azEnd;
+
+        arcAngles[k] = thisArcAngle;
+        arcLens[k]   = resolvedArcRadii[k] * std::abs(thisArcAngle);
+        if (!raw.isEmpty() && raw.last().isArcStart) raw.last().segLength = arcLens[k];
+
+        const bool isLastArc = (k == N - 1);
+        if (isLastArc) {
+            // CS(N-1): next segment is the exit spiral (or ST directly if omitted).
+            raw.append({ pos, az, false, resolvedSpiralLengths[N], resolvedArcRadii[N - 1] });
+        } else if (resolvedSpiralLengths[k + 1] >= 1e-9) {
+            // CS_k: next segment is interior spiral (k+1).
+            raw.append({ pos, az, false, resolvedSpiralLengths[k + 1], resolvedArcRadii[k] });
+
+            const double dxs =  Xm[k + 1] * std::sin(az) + Ym[k + 1] * std::cos(az);
+            const double dys =  Xm[k + 1] * std::cos(az) - Ym[k + 1] * std::sin(az);
+            pos += QPointF(dxs, dys);
+            az  += theta[k + 1];
+            // SC_{k+1}: next segment is arc (k+1).
+            raw.append({ pos, az, true, 0.0 /*filled at next arc iter*/, resolvedArcRadii[k + 1] });
+        }
+        // else: interior spiral (k+1) omitted — arc k+1 starts immediately at
+        // this same CS_k point; the arc-start node for arc(k+1) is simply the
+        // CS_k node just appended above with isArcStart still false. Retag it:
+        else {
+            raw.last().isArcStart = true;
+            raw.last().radius     = resolvedArcRadii[k + 1];
+        }
+    }
+
+    // Final (exit) spiral: mirrored formula referenced at the KNOWN target
+    // azimuth az2 (identical role to solveSCS Step 7c / solveCA's stDx/stDy).
+    QPointF stRaw = pos;
+    if (resolvedSpiralLengths[N] >= 1e-9) {
+        const double stDx =  Xm[N] * std::sin(az2) + Ym[N] * std::cos(az2);
+        const double stDy =  Xm[N] * std::cos(az2) - Ym[N] * std::sin(az2);
+        stRaw = pos + QPointF(stDx, stDy);
+    }
+    // ST: terminal node, no following segment.
+    raw.append({ stRaw, az2, false, 0.0, resolvedArcRadii[N - 1] });
+
+    // ── Step 4: cross-track gap → analytic along-tangent slide correction ───
+    const double sA2 = std::sin(az2), cA2 = std::cos(az2);
+    const double twDist = (stRaw.x() - tanStartNext.x()) * cA2
+                        - (stRaw.y() - tanStartNext.y()) * sA2;
+    const double d5 = twDist / std::sin(absDelta) * signR;
+
+    const QPointF shift(d5 * std::sin(az1), d5 * std::cos(az1));
+
+    // ── Populate result: nodes = raw + shift ─────────────────────────────────
+    result.valid = true;
+    result.spiralLengths = resolvedSpiralLengths;
+    result.spiralTypes   = spiralTypes;
+    result.arcRadii       = resolvedArcRadii;
+    result.arcAngles     = arcAngles;
+    result.arcLengths    = arcLens;
+    result.iterations    = solveIterations;
+    result.residualNorm  = solveResidual;
+
+    result.nodes.reserve(raw.size());
+    for (const RawNode& rn : raw) {
+        CompoundChainNode node;
+        node.pt         = rn.pt + shift;
+        node.az         = rn.az;
+        node.isArcStart = rn.isArcStart;
+        node.segLength  = rn.segLength;
+        node.radius     = rn.radius;
+        result.nodes.append(node);
+    }
+
+    return result;
+}
+
+// ============================================================================
 //  solve()  — main entry point
 // ============================================================================
 
@@ -1079,6 +1450,15 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         int       spiralOutIdx = -1; ///< index of the SpiralOut element
     };
     QVector<SCSData> scsData(n);
+
+    // Compound chain group data (N>=2 arcs) — stored per SpiralIn element
+    // index, alongside (and mutually exclusive with) scsData.
+    struct CompoundData {
+        bool                 valid   = false;
+        SolvedCompoundChain  chain;
+        int                  lastIdx = -1;  ///< index of the final SpiralOut element
+    };
+    QVector<CompoundData> compoundData(n);
 
     // LC group data — stored per SpiralIn element index
     // (SpiralIn sits between Fixed Tangent and Fixed Arc)
@@ -1219,14 +1599,21 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    //  Pass 2b — SCS group (SpiralIn + CircularArc + SpiralOut)
+    //  Pass 2b — SCS group (SpiralIn + CircularArc + SpiralOut), extended to
+    //            S0 C0 S1 C1 ... Sn compound chains (N≥2 arcs).
     //
-    //  An SCS group is identified by:
-    //    elems[i]   : SpiralIn   (Floating) with tangentIdxBefore / After
-    //    elems[i+1] : CircularArc (Floating), same tangent references
-    //    elems[i+2] : SpiralOut  (Floating), same tangent references
+    //  A group is identified by:
+    //    elems[i]     : SpiralIn   (Floating) with tangentIdxBefore / After
+    //    elems[i+1]   : CircularArc (Floating), same tangent references
+    //    elems[i+2]   : SpiralOut  (Floating), same tangent references
+    //    elems[i+3]   : CircularArc (Floating), same tangent references  ┐
+    //    elems[i+4]   : SpiralOut  (Floating), same tangent references  ┘ repeat…
     //
-    //  The entire group is solved as a unit using solveSCS().
+    //  Exactly one (CircularArc, SpiralOut) pair after the initial SpiralIn
+    //  is the pre-existing SCS case, solved unchanged via solveSCS() (zero
+    //  regression risk — see AlignmentDocument.h addCompoundChain() doc).
+    //  Two or more pairs is a compound chain (built by addCompoundChain()),
+    //  solved via solveCompoundChain() instead.
     // ════════════════════════════════════════════════════════════════════════
     for (int i = 0; i < n - 2; ++i) {
         if (elems[i].type != EditableElementType::SpiralIn)  continue;
@@ -1251,41 +1638,129 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             continue;
         }
 
-        const double R  = std::abs(elems[i+1].radius);
-        const double L1 = elems[i].length;    // entry spiral length
-        const double L2 = elems[i+2].length;  // exit  spiral length
+        // ── Count how many (CircularArc, SpiralOut) pairs belong to this
+        //    group: keep consuming pairs sharing the same tb/ta boundary. ──
+        int arcCount = 1;
+        while (true) {
+            const int nextArcIdx = i + 1 + 2 * arcCount;
+            const int nextSprIdx = i + 2 + 2 * arcCount;
+            if (nextSprIdx >= n) break;
+            if (elems[nextArcIdx].type != EditableElementType::CircularArc) break;
+            if (elems[nextArcIdx].mode  != ConstraintMode::Floating)        break;
+            if (elems[nextArcIdx].tangentIdxBefore != tb || elems[nextArcIdx].tangentIdxAfter != ta) break;
+            if (elems[nextSprIdx].type != EditableElementType::SpiralOut) break;
+            if (elems[nextSprIdx].mode != ConstraintMode::Floating)       break;
+            if (elems[nextSprIdx].tangentIdxBefore != tb || elems[nextSprIdx].tangentIdxAfter != ta) break;
+            ++arcCount;
+        }
 
-        // Spiral types: SpiralIn element (index i) carries both type1 and type2.
-        const SpiralType type1 = elems[i].spiralType1;
-        const SpiralType type2 = elems[i].spiralType2;
+        if (arcCount == 1) {
+            // ── Original single-arc SCS path (unchanged) ─────────────────
+            const double R  = std::abs(elems[i+1].radius);
+            const double L1 = elems[i].length;    // entry spiral length
+            const double L2 = elems[i+2].length;  // exit  spiral length
 
-        const SolvedSCS scs = solveSCS(
-            R, L1, L2,
-            type1, type2,
+            // Spiral types: SpiralIn element (index i) carries both type1 and type2.
+            const SpiralType type1 = elems[i].spiralType1;
+            const SpiralType type2 = elems[i].spiralType2;
+
+            const SolvedSCS scs = solveSCS(
+                R, L1, L2,
+                type1, type2,
+                tanStart[tb], tanEnd[tb],
+                tanStart[ta], tanEnd[ta]);
+
+            if (!scs.valid) continue;
+
+            // Store SCS data against the SpiralIn index
+            SCSData sd;
+            sd.valid        = true;
+            sd.scs          = scs;
+            sd.arcIdx       = i + 1;
+            sd.spiralOutIdx = i + 2;
+            scsData[i] = sd;
+
+            // Trim adjacent tangents
+            tanEnd[tb]   = scs.tsPoint;  // incoming tangent ends at TS
+            tanStart[ta] = scs.stPoint;  // outgoing tangent starts at ST
+
+            // Skip past arc and spiral-out in the outer loop
+            // (i++ in the for-loop body makes it i+1 next, but we need i+3)
+            // We tag them as handled so Pass 3 knows to skip them.
+            arcData[i+1].valid = false; // will be rendered via scsData
+            arcData[i+2].valid = false;
+
+            i += 2; // skip arc and SpiralOut
+            continue;
+        }
+
+        // ── Compound chain path (arcCount >= 2) ──────────────────────────
+        const int N = arcCount;
+        QVector<double>     arcRadii(N);
+        QVector<double>     spiralLens(N + 1);
+        QVector<SpiralType> spiralTys(N + 1);
+        QVector<double>     arcAngles(N, 0.0);   // 0 = 交給 solveCompoundChain 自動平分
+        bool                anyPinned = false;
+
+        // Phase 4：偵測群組內是否有元素標記 isCompoundUnknown（最多 1 個，
+        // 由 addCompoundChain() 的驗證保證）。
+        CompoundChainUnknown unknown;
+
+        spiralLens[0] = elems[i].length;
+        spiralTys[0]  = elems[i].spiralType1;
+        if (elems[i].isCompoundUnknown) {
+            unknown.kind  = CompoundChainUnknownKind::SpiralLength;
+            unknown.index = 0;
+        }
+        for (int k = 0; k < N; ++k) {
+            const int arcIdx = i + 1 + 2 * k;
+            const int sprIdx = i + 2 + 2 * k;
+            arcRadii[k]       = std::abs(elems[arcIdx].radius);
+            arcAngles[k]      = elems[arcIdx].centralAngle;   // 0 = 未釘死
+            if (std::abs(arcAngles[k]) > 1e-12) anyPinned = true;
+            if (elems[arcIdx].isCompoundUnknown) {
+                unknown.kind  = CompoundChainUnknownKind::ArcRadius;
+                unknown.index = k;
+            }
+            spiralLens[k + 1] = elems[sprIdx].length;
+            spiralTys[k + 1]  = elems[sprIdx].spiralType2;   // SpiralOut 慣例：type 存於 spiralType2（見 setSpiralType()）
+            if (elems[sprIdx].isCompoundUnknown) {
+                unknown.kind  = CompoundChainUnknownKind::SpiralLength;
+                unknown.index = k + 1;
+            }
+        }
+
+        const SolvedCompoundChain chain = solveCompoundChain(
+            arcRadii, spiralLens, spiralTys,
             tanStart[tb], tanEnd[tb],
-            tanStart[ta], tanEnd[ta]);
+            tanStart[ta], tanEnd[ta],
+            anyPinned ? arcAngles : QVector<double>(),
+            unknown);
 
-        if (!scs.valid) continue;
+        if (!chain.valid) {
+            qWarning() << "[AlignmentSolver] Pass2b compound chain idx" << i
+                       << ": solveCompoundChain() failed (N=" << N << ", unknown.kind="
+                       << static_cast<int>(unknown.kind) << ")";
+            continue;
+        }
 
-        // Store SCS data against the SpiralIn index
-        SCSData sd;
-        sd.valid        = true;
-        sd.scs          = scs;
-        sd.arcIdx       = i + 1;
-        sd.spiralOutIdx = i + 2;
-        scsData[i] = sd;
+        CompoundData cd;
+        cd.valid    = true;
+        cd.chain    = chain;
+        cd.lastIdx  = i + 2 * N;   // index of the final SpiralOut element
+        compoundData[i] = cd;
 
         // Trim adjacent tangents
-        tanEnd[tb]   = scs.tsPoint;  // incoming tangent ends at TS
-        tanStart[ta] = scs.stPoint;  // outgoing tangent starts at ST
+        tanEnd[tb]   = chain.nodes.first().pt;  // incoming tangent ends at TS
+        tanStart[ta] = chain.nodes.last().pt;   // outgoing tangent starts at ST
 
-        // Skip past arc and spiral-out in the outer loop
-        // (i++ in the for-loop body makes it i+1 next, but we need i+3)
-        // We tag them as handled so Pass 3 knows to skip them.
-        arcData[i+1].valid = false; // will be rendered via scsData
-        arcData[i+2].valid = false;
+        // Suppress every consumed element from the generic Pass 3 emission
+        // (mirrors the arcData[..].valid=false pattern used for plain SCS).
+        for (int k = 1; k <= 2 * N; ++k) {
+            if (i + k < n) arcData[i + k].valid = false;
+        }
 
-        i += 2; // skip arc and SpiralOut
+        i += 2 * N; // skip all consumed arcs/spirals (i++ in for-loop lands one past lastIdx)
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1678,6 +2153,18 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         if (acaData[i].valid) {
             handledBySCS[i] = true;  // SpiralIn handled inside arc emission
         }
+        // Compound chain group (N>=2 arcs): every consumed element (SpiralIn
+        // + all interior CircularArc/SpiralOut pairs) plus the exit tangent
+        // is emitted inline by the compound-chain block, mirroring the SCS
+        // suppression above.
+        if (compoundData[i].valid) {
+            for (int k = i; k <= compoundData[i].lastIdx && k < n; ++k)
+                handledBySCS[k] = true;
+
+            const int ta = elems[i].tangentIdxAfter;
+            if (ta >= 0 && ta < n && elems[ta].type == EditableElementType::Tangent)
+                handledBySCS[ta] = true;
+        }
     }
 
     // ── 邊界建構線判定（供 Tangent 發點區塊使用）───────────────────────────
@@ -1731,6 +2218,74 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     for (int i = 0; i < n; ++i) {
         const auto& e = elems[i];
         AlignmentPoint pt;
+
+        // ── Compound chain group (N≥2 arcs): SpiralIn drives emission of ──
+        //    the entire node sequence. Generalizes the SCS block below to
+        //    an arbitrary number of arcs/spirals (see solveCompoundChain()).
+        if (e.type == EditableElementType::SpiralIn && compoundData[i].valid) {
+            const SolvedCompoundChain& chain = compoundData[i].chain;
+
+            auto spiralTypeName = [](SpiralType t) -> QString {
+                switch (t) {
+                case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
+                case SpiralType::Parabola: return QStringLiteral("PARABOLA");
+                case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
+                case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
+                case SpiralType::Clothoid: // fall-through — default
+                default:                    return QStringLiteral("SPIRAL");
+                }
+            };
+
+            const int nodeCount = chain.nodes.size();
+            int spiralIdx = 0;   // index into chain.spiralTypes (0..N)
+            for (int ni = 0; ni < nodeCount - 1; ++ni) {
+                const CompoundChainNode& node = chain.nodes[ni];
+                AlignmentPoint np;
+                if (ni == 0) {
+                    np.tsc = QStringLiteral("TS");
+                } else if (node.isArcStart) {
+                    np.tsc = QStringLiteral("SC");
+                } else {
+                    np.tsc = QStringLiteral("CS");
+                }
+                np.curveType = node.isArcStart
+                    ? QStringLiteral("ARC")
+                    : spiralTypeName(spiralIdx < chain.spiralTypes.size()
+                                      ? chain.spiralTypes[spiralIdx] : SpiralType::Clothoid);
+                np.easting  = node.pt.x();
+                np.northing = node.pt.y();
+                np.azimuth  = node.az;
+                np.length   = node.segLength;
+                np.radius   = node.radius;
+                np.chainage = chainage;
+                chainage   += node.segLength;
+                pts.append(np);
+
+                if (!node.isArcStart) ++spiralIdx;  // consumed one spiral segment
+            }
+
+            // Emit trimmed exit tangent (ST → tanEnd[ta]) inline, mirroring
+            // the SCS block's stTT emission immediately below.
+            {
+                const int ta = e.tangentIdxAfter;
+                if (ta >= 0 && ta < n && elems[ta].type == EditableElementType::Tangent) {
+                    const QPointF& stPt  = tanStart[ta];   // = chain.nodes.last().pt
+                    const QPointF& endPt = tanEnd[ta];
+                    const double   tlen  = QLineF(stPt, endPt).length();
+
+                    AlignmentPoint stTT;
+                    stTT.tsc      = QStringLiteral("ST");
+                    stTT.easting  = stPt.x();
+                    stTT.northing = stPt.y();
+                    stTT.azimuth  = chain.nodes.last().az;
+                    stTT.length   = tlen;
+                    stTT.chainage = chainage;
+                    chainage     += tlen;
+                    pts.append(stTT);
+                }
+            }
+            continue;
+        }
 
         // ── SCS group: SpiralIn drives emission of all three sub-elements ──
         if (e.type == EditableElementType::SpiralIn && scsData[i].valid) {

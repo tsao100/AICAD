@@ -136,7 +136,10 @@ private:
 
     // ── write-side helpers ──────────────────────────────────────────────────
     static QByteArray packField(const QString& text, int width);
-    static QByteArray packNumericField(double value, int width, int maxDecimals = 3);
+    // 預設 5 位小數，對齊舊系統 .ALD 檔案原始精度（例如 TM2 座標常見到
+    // 小數第 5 位，如 "276449.00290"）。實際寫出時若欄寬不足會自動遞減
+    // 小數位數（見 .cpp 實作），故提高預設值不會造成欄位溢位風險。
+    static QByteArray packNumericField(double value, int width, int maxDecimals = 5);
     static QByteArray packAzimuthField(double radians, int width);
     static QByteArray packLEDouble(double v);
 };

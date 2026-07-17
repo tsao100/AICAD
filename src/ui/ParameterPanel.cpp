@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QShortcut>
 #include <QKeySequence>
+#include <QSet>
 
 namespace aicad::ui {
 
@@ -387,33 +388,55 @@ void ParameterPanel::onAddOrOverride() {
         target = m_instance->parameterStore();
     if (!target) return;
 
-    // 從選取列取得名稱（若有選取），否則在末尾新增空列
+    // 「覆寫」路徑：只有在選取列是「本層尚未定義」的繼承列（來源為
+    // master/global，表格中為唯讀）時才適用──把目前顯示的繼承值複製
+    // 一份成為本層的本地值。已經是本層本地值的列可直接雙擊儲存格編輯，
+    // 不需要透過按鈕；因此這裡一律 fall through 去新增一列，
+    // 這樣連續按按鈕才能持續新增多個參數，而不是每次都覆寫同一列。
     int row = m_table->currentRow();
-    QString name, expr;
     if (row >= 0) {
         QTableWidgetItem* ni = m_table->item(row, COL_NAME);
         QTableWidgetItem* ei = m_table->item(row, COL_EXPR);
-        name = ni ? ni->text().trimmed() : QString();
-        expr = ei ? ei->text().trimmed() : QString();
+        QString name = ni ? ni->text().trimmed() : QString();
+        QString expr = ei ? ei->text().trimmed() : QString();
+
+        if (!name.isEmpty() && !expr.isEmpty() && !target->hasLocal(name)) {
+            if (validateExpression(name, expr, target)) {
+                target->setLocal(name, expr);
+                Q_EMIT parameterEdited(name, expr);
+                if (m_mode == PanelMode::Master) rebuildMasterTable();
+                else                             rebuildInstanceTable();
+            }
+            return;
+        }
     }
 
-    if (name.isEmpty()) {
-        // 新增空列，讓使用者直接在表格裡輸入
-        m_updating = true;
-        int newRow = m_table->rowCount();
-        m_table->insertRow(newRow);
-        m_table->setItem(newRow, COL_NAME,   new QTableWidgetItem("new_param"));
-        m_table->setItem(newRow, COL_EXPR,   new QTableWidgetItem("0"));
-        m_table->setItem(newRow, COL_VALUE,  new QTableWidgetItem("0.0000"));
-        m_table->setItem(newRow, COL_SOURCE, new QTableWidgetItem(
-            m_mode == PanelMode::Instance ? tr("副本覆寫") : tr("草圖")));
-        applyRowStyle(newRow, m_mode == PanelMode::Instance ? "override" : "local");
-        m_updating = false;
-        m_table->editItem(m_table->item(newRow, COL_NAME));
-    } else if (!expr.isEmpty() && validateExpression(name, expr, target)) {
-        target->setLocal(name, expr);
-        Q_EMIT parameterEdited(name, expr);
+    // 新增一列，讓使用者直接在表格裡輸入全新參數。
+    // 名稱需與目前表格中已存在的名稱不重複，避免使用者尚未改名前
+    // 就被 onCellChanged 誤判為「編輯既有參數」。
+    QSet<QString> existingNames;
+    for (int r = 0; r < m_table->rowCount(); ++r) {
+        if (QTableWidgetItem* existing = m_table->item(r, COL_NAME))
+            existingNames.insert(existing->text().trimmed());
     }
+    QString candidate = "new_param";
+    int suffix = 1;
+    while (existingNames.contains(candidate))
+        candidate = QString("new_param%1").arg(++suffix);
+
+    m_updating = true;
+    int newRow = m_table->rowCount();
+    m_table->insertRow(newRow);
+    m_table->setItem(newRow, COL_NAME,   new QTableWidgetItem(candidate));
+    m_table->setItem(newRow, COL_EXPR,   new QTableWidgetItem("0"));
+    m_table->setItem(newRow, COL_VALUE,  new QTableWidgetItem("0.0000"));
+    m_table->setItem(newRow, COL_SOURCE, new QTableWidgetItem(
+        m_mode == PanelMode::Instance ? tr("副本覆寫") : tr("草圖")));
+    applyRowStyle(newRow, m_mode == PanelMode::Instance ? "override" : "local");
+    m_updating = false;
+
+    m_table->setCurrentCell(newRow, COL_NAME);
+    m_table->editItem(m_table->item(newRow, COL_NAME));
 }
 
 void ParameterPanel::onClearOverride() {

@@ -1,830 +1,455 @@
 {
-    "alignment": {
-        "horizontal": {
-            "elements": [
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": -41.195613861083984,
-                    "endY": -7.780396461486816,
-                    "length": 176.82173362729844,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -112.75426483154297,
-                    "startY": -169.47543334960938,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 62.01398468017578,
-                    "endY": 98.18145751953125,
-                    "length": 147.9193554952921,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -41.195613861083984,
-                    "startY": -7.780396461486816,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 103.02106475830078,
-                    "endY": 252.22732543945312,
-                    "length": 159.41050793387421,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 62.01398468017578,
-                    "startY": 98.18145751953125,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 1,
-                    "tangentIdxBefore": 0,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 100,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 2,
-                    "tangentIdxBefore": 1,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 57.38692092895508,
-                    "endY": -12.093151092529297,
-                    "length": 0,
-                    "mode": 0,
-                    "radius": 155.5516673964487,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -2.2321267127990723,
-                    "startY": -134.34231567382812,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": -9.892202377319336,
-                    "endY": 116.13178253173828,
-                    "length": 0,
-                    "mode": 0,
-                    "radius": 109.44883611496986,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -136.16046142578125,
-                    "startY": 4.9403300285339355,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": -125.25747680664062,
-                    "endY": -197.44871520996094,
-                    "length": 105.6371355894959,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -95.20931243896484,
-                    "startY": -298.72216796875,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 100,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 0,
-                    "tangentIdxBefore": 7,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 106.14175415039062,
-                    "endY": 20.511226654052734,
-                    "length": 174.2300886947732,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -5.47833776473999,
-                    "startY": -113.26873779296875,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 139.79193115234375,
-                    "endY": 260.1661376953125,
-                    "length": 242.00580736514755,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 106.14175415039062,
-                    "startY": 20.511226654052734,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 25,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 10,
-                    "tangentIdxBefore": 9,
-                    "type": 2
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 10,
-                    "tangentIdxBefore": 9,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 35,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 10,
-                    "tangentIdxBefore": 9,
-                    "type": 3
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 141.78750610351562,
-                    "endY": 25.12362289428711,
-                    "length": 174.83499279177778,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 29.14183807373047,
-                    "startY": -108.58586883544922,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 177.50442504882812,
-                    "endY": 271.4787902832031,
-                    "length": 248.93084742186304,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 141.78750610351562,
-                    "startY": 25.12362289428711,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 35,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 15,
-                    "tangentIdxBefore": 14,
-                    "type": 2
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 15,
-                    "tangentIdxBefore": 14,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 35,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 15,
-                    "tangentIdxBefore": 14,
-                    "type": 3
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": -138.31793212890625,
-                    "endY": 145.1221160888672,
-                    "length": 115.8428941920669,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -174.95066833496094,
-                    "startY": 35.22389602661133,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": -23.840627670288086,
-                    "endY": 265.0943298339844,
-                    "length": 165.82637096377417,
-                    "mode": 0,
-                    "radius": 0,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": -138.31793212890625,
-                    "startY": 145.1221160888672,
-                    "tangentIdxAfter": -1,
-                    "tangentIdxBefore": -1,
-                    "type": 0
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 45,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 1,
-                    "spiralType2": 1,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 20,
-                    "tangentIdxBefore": 19,
-                    "type": 2
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 0,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 0,
-                    "spiralType2": 0,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 20,
-                    "tangentIdxBefore": 19,
-                    "type": 1
-                },
-                {
-                    "centerX": 0,
-                    "centerY": 0,
-                    "endX": 0,
-                    "endY": 0,
-                    "length": 45,
-                    "mode": 1,
-                    "radius": 200,
-                    "solved": false,
-                    "spiralType1": 1,
-                    "spiralType2": 1,
-                    "startX": 0,
-                    "startY": 0,
-                    "tangentIdxAfter": 20,
-                    "tangentIdxBefore": 19,
-                    "type": 3
-                }
-            ]
-        },
-        "vertical": {
-            "vips": [
-            ]
-        }
-    },
     "features": [
-        {
-            "constraints": [
-            ],
-            "geometries": [
-            ],
-            "id": "{4517f981-11f6-467c-a854-168e8d589b63}",
-            "name": "Sketch 6",
-            "planeData": {
-                "createdTime": "2026-05-24T19:14:32",
-                "geometry": {
-                    "normal": [
-                        0,
-                        0,
-                        1
-                    ],
-                    "origin": [
-                        0,
-                        0,
-                        0
-                    ],
-                    "xAxis": [
-                        1,
-                        0,
-                        0
-                    ]
-                },
-                "id": "0269f48c-f077-4890-b37e-f67e945e83d6",
-                "isLocked": true,
-                "modifiedTime": "2026-05-24T19:14:32",
-                "name": "XY",
-                "type": 0
-            },
-            "planeId": "0269f48c-f077-4890-b37e-f67e945e83d6",
-            "planeName": "XY",
-            "suppressed": false,
-            "type": "Sketch",
-            "visible": false
-        },
-        {
-            "constraints": [
-            ],
-            "geometries": [
-                {
-                    "centerX": -4.135470867156982,
-                    "centerY": 1.2163149118423462,
-                    "points": [
-                    ],
-                    "radius": 27.501632690429688,
-                    "role": 0,
-                    "type": 2,
-                    "uuid": "3fc2d1c5-fecb-457c-8187-86d2ecfe6d64"
-                }
-            ],
-            "id": "{ffacde30-0720-4953-aefe-6cfb151b9c83}",
-            "name": "Sketch 2",
-            "parentId": "{27cb2df7-7a28-49d1-96fd-9708afd07cd9}",
-            "planeData": {
-                "createdTime": "2026-05-24T19:14:32",
-                "geometry": {
-                    "normal": [
-                        1,
-                        0,
-                        0
-                    ],
-                    "origin": [
-                        0,
-                        0,
-                        0
-                    ],
-                    "xAxis": [
-                        0,
-                        1,
-                        0
-                    ]
-                },
-                "id": "ecafb641-c365-4ef6-849b-e3bda0f3ec7f",
-                "isLocked": true,
-                "modifiedTime": "2026-05-24T19:14:32",
-                "name": "YZ",
-                "type": 1
-            },
-            "planeId": "ecafb641-c365-4ef6-849b-e3bda0f3ec7f",
-            "planeName": "YZ",
-            "suppressed": false,
-            "type": "Sketch",
-            "visible": false
-        },
-        {
-            "constraints": [
-            ],
-            "geometries": [
-                {
-                    "endPt": {
-                        "x": 46.79531478881836,
-                        "y": 13.074090003967285
-                    },
-                    "midPt": {
-                        "x": -16.1507511138916,
-                        "y": 67.28707122802734
-                    },
-                    "points": [
-                    ],
-                    "role": 0,
-                    "startPt": {
-                        "x": -67.14058685302734,
-                        "y": 1.7028409242630005
-                    },
-                    "type": 1,
-                    "uuid": "1d51d0ca-6bfa-448a-ba6c-6036fbcebcec"
-                },
-                {
-                    "points": [
-                        {
-                            "x": -67.14058685302734,
-                            "y": 1.7028409242630005
-                        },
-                        {
-                            "x": -42.22465515136719,
-                            "y": -29.729936599731445
-                        },
-                        {
-                            "x": -28.88716697692871,
-                            "y": 8.421478271484375
-                        },
-                        {
-                            "x": 7.093029499053955,
-                            "y": 13.074090003967285
-                        },
-                        {
-                            "x": 29.11539077758789,
-                            "y": -22.28575897216797
-                        },
-                        {
-                            "x": 46.79531478881836,
-                            "y": 13.074090003967285
-                        }
-                    ],
-                    "role": 0,
-                    "type": 5,
-                    "uuid": "24709ece-9322-4cb5-9788-621686996c18"
-                },
-                {
-                    "points": [
-                        {
-                            "x": -39.43308639526367,
-                            "y": 40.98976135253906
-                        },
-                        {
-                            "x": 17.94912338256836,
-                            "y": 44.09150314331055
-                        }
-                    ],
-                    "role": 0,
-                    "type": 0,
-                    "uuid": "f126ffb5-90b0-474f-953e-3dbd55c29d0f"
-                }
-            ],
-            "id": "{53c30f20-74d2-4665-9a96-9c6dcce775f9}",
-            "name": "Sketch 1",
-            "planeData": {
-                "createdTime": "2026-05-24T19:14:32",
-                "geometry": {
-                    "normal": [
-                        0,
-                        0,
-                        1
-                    ],
-                    "origin": [
-                        0,
-                        0,
-                        0
-                    ],
-                    "xAxis": [
-                        1,
-                        0,
-                        0
-                    ]
-                },
-                "id": "0269f48c-f077-4890-b37e-f67e945e83d6",
-                "isLocked": true,
-                "modifiedTime": "2026-05-24T19:14:32",
-                "name": "XY",
-                "type": 0
-            },
-            "planeId": "0269f48c-f077-4890-b37e-f67e945e83d6",
-            "planeName": "XY",
-            "suppressed": false,
-            "type": "Sketch",
-            "visible": false
-        },
-        {
-            "constraints": [
-            ],
-            "geometries": [
-                {
-                    "closed": true,
-                    "points": [
-                        {
-                            "x": -19.704301834106445,
-                            "y": -24.3262996673584
-                        },
-                        {
-                            "x": 19.704301834106445,
-                            "y": -24.3262996673584
-                        },
-                        {
-                            "x": 19.704301834106445,
-                            "y": 23.109983444213867
-                        },
-                        {
-                            "x": -19.704301834106445,
-                            "y": 23.109983444213867
-                        }
-                    ],
-                    "role": 0,
-                    "type": 4,
-                    "uuid": "eda0eee9-d868-4543-8e19-88cf253882f1"
-                }
-            ],
-            "id": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
-            "name": "Sketch 4",
-            "parentId": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
-            "planeData": {
-                "createdTime": "2026-05-24T19:14:32",
-                "geometry": {
-                    "normal": [
-                        0,
-                        -1,
-                        0
-                    ],
-                    "origin": [
-                        0,
-                        0,
-                        0
-                    ],
-                    "xAxis": [
-                        0,
-                        0,
-                        1
-                    ]
-                },
-                "id": "58c3ad27-6ceb-4bcb-bc9c-16e880878086",
-                "isLocked": true,
-                "modifiedTime": "2026-05-24T19:14:32",
-                "name": "XZ",
-                "type": 3
-            },
-            "planeId": "58c3ad27-6ceb-4bcb-bc9c-16e880878086",
-            "planeName": "XZ",
-            "suppressed": false,
-            "type": "Sketch",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "42.1",
-            "id": "{27cb2df7-7a28-49d1-96fd-9708afd07cd9}",
-            "name": "Extrude 1",
-            "reversed": false,
-            "sketchId": "{ffacde30-0720-4953-aefe-6cfb151b9c83}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": false
-        },
-        {
-            "draftAngle": 0,
-            "heightExpression": "21.5",
-            "id": "{9f6604ed-c414-4fdd-9993-29908fc51330}",
-            "name": "Extrude 3",
-            "reversed": false,
-            "sketchId": "{a6b934aa-b04a-452a-9bc4-03b96f2ef9b8}",
-            "suppressed": false,
-            "symmetric": false,
-            "type": "Extrude",
-            "visible": false
-        }
     ],
     "fileName": "1.aicad",
     "parameters": {
     },
     "trackCenterLines": [
         {
-            "editorVips": [
-                {
-                    "ch": 0,
-                    "el": 0,
-                    "lvc": 0
+            "alignmentEdit": {
+                "horizontal": {
+                    "elements": [
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
+                            "endX": -12.498441696166992,
+                            "endY": 112.2092514038086,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 419.6847133724602,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": -212.97109985351562,
+                            "startY": -256.499267578125,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
+                            "endX": 0,
+                            "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 20,
+                            "mode": 1,
+                            "radius": 800,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 8,
+                            "tangentIdxBefore": 0,
+                            "type": 2
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0.017453292519943295,
+                            "constructionIsArc": false,
+                            "endX": 0,
+                            "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 0,
+                            "mode": 1,
+                            "radius": 800,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 8,
+                            "tangentIdxBefore": 0,
+                            "type": 1
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
+                            "endX": 0,
+                            "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 20,
+                            "mode": 1,
+                            "radius": 800,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 8,
+                            "tangentIdxBefore": 0,
+                            "type": 3
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0.017453292519943295,
+                            "constructionIsArc": false,
+                            "endX": 0,
+                            "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 0,
+                            "mode": 1,
+                            "radius": 400,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 8,
+                            "tangentIdxBefore": 0,
+                            "type": 1
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
+                            "endX": 0,
+                            "endY": 0,
+                            "isCompoundUnknown": true,
+                            "isConstructionLine": false,
+                            "length": 0,
+                            "mode": 1,
+                            "radius": 400,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 8,
+                            "tangentIdxBefore": 0,
+                            "type": 3
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0.03490658503988659,
+                            "constructionIsArc": false,
+                            "endX": 0,
+                            "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 0,
+                            "mode": 1,
+                            "radius": 200,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 8,
+                            "tangentIdxBefore": 0,
+                            "type": 1
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
+                            "endX": 0,
+                            "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 20,
+                            "mode": 1,
+                            "radius": 200,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": 0,
+                            "startY": 0,
+                            "tangentIdxAfter": 8,
+                            "tangentIdxBefore": 0,
+                            "type": 3
+                        },
+                        {
+                            "centerX": 0,
+                            "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
+                            "endX": 250.4330291748047,
+                            "endY": 292.5339050292969,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 318.82587579982425,
+                            "mode": 0,
+                            "radius": 0,
+                            "solved": false,
+                            "spiralType1": 0,
+                            "spiralType2": 0,
+                            "startX": -12.498441696166992,
+                            "startY": 112.2092514038086,
+                            "tangentIdxAfter": -1,
+                            "tangentIdxBefore": -1,
+                            "type": 0
+                        }
+                    ],
+                    "startChainage": 0,
+                    "startContChainage": 0
                 },
-                {
-                    "ch": 66.9,
-                    "el": 0.593,
-                    "lvc": 100
+                "projectOrigin": {
+                    "epsgCode": "EPSG:3826",
+                    "isSet": false,
+                    "originE": 0,
+                    "originN": 0,
+                    "originZ": 0
                 },
-                {
-                    "ch": 239.6,
-                    "el": -0.236,
-                    "lvc": 100
-                },
-                {
-                    "ch": 337,
-                    "el": 1.163,
-                    "lvc": 30
-                },
-                {
-                    "ch": 524.9,
-                    "el": 0.204,
-                    "lvc": 100
-                },
-                {
-                    "ch": 696.8,
-                    "el": 1.944,
-                    "lvc": 100
-                },
-                {
-                    "ch": 1000,
-                    "el": 0,
-                    "lvc": 0
+                "vertical": {
+                    "vips": [
+                    ]
                 }
-            ],
+            },
+            "hAlignVisible": false,
             "horizontal": {
                 "rawPoints": [
+                    {
+                        "azimuth": 0.49800571263545657,
+                        "cant": 0,
+                        "chainage": 0,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": -212.97109985351562,
+                        "gaugeWidening": 0,
+                        "length": 274.51909408741244,
+                        "northing": -256.499267578125,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.49800571263545657,
+                        "cant": 0,
+                        "chainage": 274.51909408741244,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -81.84034680697832,
+                        "gaugeWidening": 0,
+                        "length": 20,
+                        "northing": -15.324105871904408,
+                        "plat": "",
+                        "radius": 800,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.5105057126354565,
+                        "cant": 0,
+                        "chainage": 294.51909408741244,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": -72.21379679417151,
+                        "gaugeWidening": 0,
+                        "length": 13.962634015954636,
+                        "northing": 2.2065523966388128,
+                        "plat": "",
+                        "radius": 800,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "SC",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.5279590051553998,
+                        "cant": 0,
+                        "chainage": 308.48172810336706,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -65.28543280035706,
+                        "gaugeWidening": 0,
+                        "length": 20,
+                        "northing": 14.328762268952914,
+                        "plat": "",
+                        "radius": 800,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "CS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.5779590051553999,
+                        "cant": 0,
+                        "chainage": 328.48172810336706,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": -44.56382919595919,
+                        "gaugeWidening": 0,
+                        "length": 6.981317007977318,
+                        "northing": 48.537819876074934,
+                        "plat": "",
+                        "radius": 400,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "SC",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.5954122976753432,
+                        "cant": 0,
+                        "chainage": 335.4630451113444,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": -40.698993612745625,
+                        "gaugeWidening": 0,
+                        "length": 57.865844404109126,
+                        "northing": 54.351647863686,
+                        "plat": "",
+                        "radius": 400,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "CS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.8847415196958889,
+                        "cant": 0,
+                        "chainage": 393.3288895154535,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "ARC",
+                        "easting": 32.85359661031333,
+                        "gaugeWidening": 0,
+                        "length": 6.981317007977318,
+                        "northing": 143.14632082686137,
+                        "plat": "",
+                        "radius": 200,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "SC",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.9196481047357755,
+                        "cant": 0,
+                        "chainage": 400.31020652343085,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "SPIRAL",
+                        "easting": 38.33148351854943,
+                        "gaugeWidening": 0,
+                        "length": 20,
+                        "northing": 147.47374425113094,
+                        "plat": "",
+                        "radius": 200,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "CS",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.9696481046911848,
+                        "cant": 0,
+                        "chainage": 420.31020652343085,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 55.00959154223099,
+                        "gaugeWidening": 0,
+                        "length": 236.96687372046497,
+                        "northing": 158.50786552682416,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "ST",
+                        "upDown": ""
+                    },
+                    {
+                        "azimuth": 0.9696481046911849,
+                        "cant": 0,
+                        "chainage": 657.2770802438959,
+                        "contChainage": 0,
+                        "curveNo": "",
+                        "curveType": "",
+                        "easting": 250.4330291748047,
+                        "gaugeWidening": 0,
+                        "length": 0,
+                        "northing": 292.5339050292969,
+                        "plat": "",
+                        "radius": 0,
+                        "real1": 0,
+                        "real2": 0,
+                        "speedLimit": 0,
+                        "text1": "",
+                        "text2": "",
+                        "tsc": "TT",
+                        "upDown": ""
+                    }
                 ]
             },
-            "id": "da0799c9-0bee-4434-b252-3d681728fd50",
+            "id": "752e749d-bbbd-4fb2-b9ec-17c22af40da8",
             "name": "Track 1",
+            "vAlignVisible": false,
             "vertical": {
                 "points": [
-                    {
-                        "chainage": 0,
-                        "elevation": 0,
-                        "grade": 0.8863976083707025,
-                        "kValue": 0,
-                        "lvc": 0,
-                        "mo": 0,
-                        "pviElevation": 0
-                    },
-                    {
-                        "chainage": 66.9,
-                        "elevation": 0.593,
-                        "grade": -0.480023161551824,
-                        "kValue": 0,
-                        "lvc": 100,
-                        "mo": 0,
-                        "pviElevation": 0.593
-                    },
-                    {
-                        "chainage": 239.6,
-                        "elevation": -0.236,
-                        "grade": 1.4363449691991785,
-                        "kValue": 0,
-                        "lvc": 100,
-                        "mo": 0,
-                        "pviElevation": -0.236
-                    },
-                    {
-                        "chainage": 337,
-                        "elevation": 1.163,
-                        "grade": -0.51037786056413,
-                        "kValue": 0,
-                        "lvc": 30,
-                        "mo": 0,
-                        "pviElevation": 1.163
-                    },
-                    {
-                        "chainage": 524.9,
-                        "elevation": 0.204,
-                        "grade": 1.012216404886562,
-                        "kValue": 0,
-                        "lvc": 100,
-                        "mo": 0,
-                        "pviElevation": 0.204
-                    },
-                    {
-                        "chainage": 696.8,
-                        "elevation": 1.944,
-                        "grade": -0.6411609498680738,
-                        "kValue": 0,
-                        "lvc": 100,
-                        "mo": 0,
-                        "pviElevation": 1.944
-                    },
-                    {
-                        "chainage": 1000,
-                        "elevation": 0,
-                        "grade": -0.6411609498680738,
-                        "kValue": 0,
-                        "lvc": 0,
-                        "mo": 0,
-                        "pviElevation": 0
-                    }
                 ]
             }
         }
     ],
     "version": "1.0",
     "viewState": {
-        "atX": 11.679164890229625,
-        "atY": -76.17460598196394,
+        "atX": 31.827170741322476,
+        "atY": -2.6343846254750014,
         "atZ": 0,
-        "eyeX": 11.679164890229625,
-        "eyeY": -76.17460598196394,
+        "eyeX": 31.827170741322476,
+        "eyeY": -2.6343846254750014,
         "eyeZ": 204.32865065155448,
         "scale": 1.4640915479060315,
         "upX": 0,
         "upY": 1,
         "upZ": 0,
-        "viewType": 1
+        "viewType": 7
     }
 }

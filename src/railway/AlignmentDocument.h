@@ -77,6 +77,22 @@ struct EditableElement
     SpiralType spiralType1 = SpiralType::Clothoid;  ///< 入螺旋類型，預設 Clothoid
     SpiralType spiralType2 = SpiralType::Clothoid;  ///< 出螺旋類型，預設 Clothoid
 
+    // ── 複合鏈結專用（僅 CompoundChainSpec 產生的 CircularArc 元素使用；──
+    //    其餘元素忽略，預設 0 與既有存檔完全相容）
+    //   centralAngle — 弧心角絕對值 [rad]；0 = 由 solveCompoundChain() 依
+    //     「剩餘轉角平分」規則自動決定（見 CompoundChainSpec 註解）；非 0
+    //     時視為使用者／ALD 匯入指定的固定弧心角，不參與平分（用於忠實還
+    //     原量測資料的真實弧心角，而非套用平分近似值）。
+    double centralAngle = 0.0;
+
+    // Phase 4：此元素的 radius（CircularArc）或 length（SpiralIn/SpiralOut）
+    // 是否交給 solveCompoundChain() 用二分法反解，而非直接當常數輸入。
+    // 群組內最多只能有一個元素設 true（見 AlignmentSolver.h 的
+    // CompoundChainUnknown 說明：只有 1 條 Δθ 方程式，最多解 1 個未知
+    // 數）；設 true 時，該群組所有 CircularArc 元素的 centralAngle 都必須
+    // 非 0（不可再混用自動平分），否則 addCompoundChain() 會拒絕建立。
+    bool isCompoundUnknown = false;
+
     // ── 建構線標記（僅供 seedFromRawPoints() 反推匯入線形使用；手動編輯 ──
     //    （AFC/SCS 等指令）建立的元素一律維持預設 false，不受影響）
     //
@@ -215,6 +231,74 @@ public:
      */
     int addACA(int arc1Idx, int arc2Idx,
                SpiralType spiralType = SpiralType::Clothoid);
+
+    // ============================================================================
+    //  CompoundChainSpec — S0 C0 S1 C1 S2 ... Sn 複合鏈結（N≥2 個圓弧）
+    //
+    //  參見 SCS複合線形求解昇級計畫.md Phase 0～1，以及 Phase 4 的後續實作
+    //  （見下方 lengthIsUnknown / radiusIsUnknown）。與計畫文件的落差說明：
+    //
+    //  計畫文件 Phase 0 原先設想「首尾兩段螺旋長度是 solver 未知數，用
+    //  Newton-Raphson 求解」。實際推導後發現：只要圓弧心角是「自動平分剩
+    //  餘轉角」（預設規則），Δθ 方程式會被平分吸收、恒成立，不存在可反解
+    //  的未知數——此時（也只有此時）整條鏈結是 solveSCS 的直接封閉解推廣
+    //  （橫向間隙用 d5 沿切線平移精確閉合，不需要迭代）。
+    //
+    //  但如果使用者改為把每段圓弧心角都「釘死」（見 ArcSeg::centralAngle
+    //  皆非 0），Δθ 就不再自動滿足，變成一條真正的方程式——這時（也只有
+    //  這時）才能指定「恰好一個」lengthIsUnknown 或 radiusIsUnknown 交給
+    //  solveCompoundChain() 用二分法反解（Phase 4，見 AlignmentSolver.h 的
+    //  CompoundChainUnknown 說明）。兩種模式互斥：留自動平分角度就不能反
+    //  解任何長度/半徑；要反解就必須先把全部弧心角釘死。
+    // ============================================================================
+    struct CompoundChainSpec {
+        struct SpiralSeg {
+            double     length = 0.0;   ///< 緩和曲線長度 [m]；0 = 省略此段緩和曲線（圓弧與
+                                        ///< 切線／相鄰圓弧直接相切，貢獻角度 0），比照既有
+                                        ///< addSCS() 的 L1=0/L2=0 慣例；並非「未知數」。
+                                        ///< 若 lengthIsUnknown==true，此值僅為佔位，會被
+                                        ///< solveCompoundChain() 的反解結果覆寫。
+            SpiralType type = SpiralType::Clothoid;
+            bool lengthIsUnknown = false;  ///< Phase 4：這段緩和曲線長度交給 solver 反解。
+                                            ///< 整個 CompoundChainSpec 內，lengthIsUnknown 與
+                                            ///< radiusIsUnknown 加總最多只能有 1 個 true（見上）。
+        };
+        struct ArcSeg {
+            double radius       = 0.0; ///< 半徑絕對值 [m]，使用者輸入，solver 視為常數。
+                                        ///< 若 radiusIsUnknown==true，此值僅為佔位，會被
+                                        ///< solveCompoundChain() 的反解結果覆寫。
+            double centralAngle = 0.0; ///< 弧心角絕對值 [rad]；0（預設）＝由 solver 自動
+                                        ///< 平分剩餘轉角決定（見上）；非 0 時固定使用此角度，
+                                        ///< 不參與平分——主要供 seedFromRawPoints() 忠實還原
+                                        ///< ALD 量測到的真實弧心角使用，一般手動建立複合曲線
+                                        ///< （Command 層）留 0 用自動平分即可。指定任何
+                                        ///< lengthIsUnknown/radiusIsUnknown 時，本欄位在「每一
+                                        ///< 段」圓弧都必須非 0（見上方模式互斥說明）。
+            bool radiusIsUnknown = false;  ///< Phase 4：這段圓弧半徑交給 solver 反解。
+        };
+        // 交錯序列： S0 C0 S1 C1 S2 ... Sn
+        QVector<SpiralSeg> spirals;   ///< size = arcs.size() + 1
+        QVector<ArcSeg>    arcs;      ///< size >= 1；size==1 時 addCompoundChain() 直接退化
+                                       ///< 呼叫既有 addSCS()，零回歸風險。
+    };
+
+    /**
+     * @brief 新增「S0 C0 S1 C1 ... Sn」複合緩和曲線鏈結（N≥1 個圓弧）。
+     *
+     *  spec.arcs.size()==1 時直接轉呼叫既有 addSCS(tangentIdxBefore,
+     *  tangentIdxAfter, radius, L1, L2, type1, type2)，保證單弧案例與既有
+     *  行為逐 bit 一致（見 SCS複合線形求解昇級計畫.md Phase 8 測試計畫第 1 項）。
+     *
+     *  spec.arcs.size()>=2 時建立 2N+1 個 EditableElement（交錯 SpiralIn /
+     *  CircularArc / SpiralOut... 序列，除首尾外的中段緩和曲線一律標記為
+     *  SpiralOut，僅供 solve() Pass 2b 群組偵測使用，不影響幾何意義），
+     *  全部設為 Floating、tangentIdxBefore/After 指向同一組邊界切線，交由
+     *  AlignmentSolver::solveCompoundChain() 於 solve() 時求解。
+     *
+     * @return 第一個新建元素（SpiralIn）的 index；失敗時回傳 -1。
+     */
+    int addCompoundChain(int tangentIdxBefore, int tangentIdxAfter,
+                        const CompoundChainSpec& spec);
 
     void movePI(int idx, QPointF newPos);
 

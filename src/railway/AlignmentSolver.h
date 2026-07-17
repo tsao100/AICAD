@@ -200,6 +200,75 @@ struct SolvedACA
 };
 
 // ============================================================================
+//  CompoundChainUnknown  — Phase 4：讓「恰好一個」Rk 或 Lk 交給 solver 反解
+//
+//  數學上的限制（見與使用者的討論，直接寫在這裡避免日後遺忘）：整個
+//  複合鏈結群組的閉合方程式只有 3 條（ΔX/ΔY/Δθ），其中 ΔX/ΔY 這兩條
+//  永遠可以透過 TS 沿入切線自由滑動（d5 修正）精確滿足，不消耗任何未
+//  知數、也不因為 N 變大而多出可用方程式。真正「有資訊量」的方程式只
+//  剩 Δθ 這一條——但前提是所有圓弧心角都是使用者釘死的固定值（見
+//  CompoundChainSpec::ArcSeg::centralAngle）；只要有任何一段圓弧心角
+//  留給「自動平分剩餘轉角」，Δθ 方程式會自動被那段平分吸收掉、變成
+//  恒成立，等於沒有方程式可用。因此：
+//    - 最多只能有 1 個 Rk/Lk 是未知數（1 條方程式只能解 1 個未知數）。
+//    - 只要指定了未知數，所有圓弧心角都必須釘死（不可再用自動平分）。
+//  這兩條規則由 solveCompoundChain() 與 addCompoundChain() 共同驗證。
+// ============================================================================
+
+/** 未知數種類：留白的是哪一種量。 */
+enum class CompoundChainUnknownKind {
+    None,          ///< 沒有未知數（Phase 1-3 的封閉解模式，維持零回歸）
+    SpiralLength,  ///< 某一段緩和曲線長度未知（index 對應 spirals[]，0..N）
+    ArcRadius      ///< 某一段圓弧半徑未知（index 對應 arcs[]，0..N-1）
+};
+
+struct CompoundChainUnknown
+{
+    CompoundChainUnknownKind kind = CompoundChainUnknownKind::None;
+    int index = -1;   ///< SpiralLength: 0..N；ArcRadius: 0..N-1
+};
+
+// ============================================================================
+//  SolvedCompoundChain  — S0 C0 S1 C1 ... Sn 複合鏈結（N≥2 個圓弧）
+//
+//  參見 AlignmentDocument.h 的 CompoundChainSpec 註解（求解規則、與計畫
+//  文件的落差說明）。座標/角度慣例與 SolvedSCS 相同。
+// ============================================================================
+
+/**
+ * @brief 複合鏈結中的一個關鍵點（TS / SC_k / CS_k / ... / ST）。
+ */
+struct CompoundChainNode
+{
+    QPointF pt;                 ///< 世界座標
+    double  az        = 0.0;    ///< 該點切線方位角 [rad]
+    bool    isArcStart = false; ///< true = 此點之後緊接圓弧段；false = 緊接緩和曲線段
+    double  segLength  = 0.0;   ///< 此點之後那一段（弧或螺旋）的長度 [m]（末端點為 0）
+    double  radius     = 0.0;   ///< 此點之後那一段的（絕對）半徑；螺旋段填寫其終端半徑供顯示
+};
+
+struct SolvedCompoundChain
+{
+    bool    valid = false;
+
+    /** 節點序列：TS, SC0, CS0(=S1 起點), SC1, CS1, ..., CS(N-1), ST。共 2N+2 個節點。 */
+    QVector<CompoundChainNode> nodes;
+
+    QVector<double> spiralLengths; ///< 已求解的緩和曲線長度，size = arcs.size()+1（含已知與求解值；
+                                    ///< 若 unknown.kind==SpiralLength，對應 index 已填入反解結果）
+    QVector<SpiralType> spiralTypes; ///< 每段緩和曲線類型，size = arcs.size()+1（供 Pass 3 標示 curveType 用）
+    QVector<double> arcRadii;      ///< 已求解的圓弧半徑絕對值，size = arcs.size()（若
+                                    ///< unknown.kind==ArcRadius，對應 index 已填入反解結果）
+    QVector<double> arcAngles;     ///< 每段圓弧的弧心角（有號，[rad]），size = arcs.size()
+    QVector<double> arcLengths;    ///< 每段圓弧弧長 [m]，size = arcs.size()
+
+    int    iterations   = 0;       ///< unknown.kind==None 時恆為 0（封閉解，不需迭代）；
+                                    ///< 指定未知數時為二分法實際迭代次數。
+    double residualNorm = 0.0;     ///< unknown.kind==None 時恆 ≈ 0；指定未知數時為收斂後的
+                                    ///< 轉角殘差絕對值 [rad]（供上層顯示「無法收斂」訊息）。
+};
+
+// ============================================================================
 //  AlignmentSolver
 // ============================================================================
 
@@ -387,6 +456,53 @@ public:
         QPointF arc2Center, double arc2Radius,
         QPointF arc2End,    double arc2AzEnd,
         SpiralType spiralType = SpiralType::Clothoid);
+
+    /**
+     * @brief 求解 S0 C0 S1 C1 ... Sn 複合緩和曲線鏈結（N≥2 個圓弧）。
+     *
+     * 對應 SCS複合線形求解昇級計畫.md Phase 2～4。有兩種模式：
+     *
+     *  【封閉解模式】unknown.kind == None（預設，與最初交付版本相同）
+     *   ── solveSCS 的直接推廣，見 AlignmentDocument.h CompoundChainSpec：
+     *   所有緩和曲線長度都由呼叫端直接給定，圓弧心角依 givenArcAngles 決
+     *   定（留空的用剩餘轉角平分）。不需要迭代。
+     *
+     *  【反解模式】unknown.kind != None（Phase 4）
+     *   ── 恰好一個 Rk 或 Lk 交給 solver 用二分法反解，前提是
+     *   givenArcAngles 必須「全部」給定（size==N 且每個都非 0）：此時
+     *   角度閉合不再是恒成立的（見 CompoundChainUnknown 的說明），二分
+     *   法驅動的殘差就是「Δ − Σ緩和曲線轉角 − Σ圓弧心角」。找到根之後，
+     *   對應的 spiralLengths[unknown.index] 或 arcRadii[unknown.index]
+     *   會被反解結果覆寫（原始輸入值僅作為佔位，不影響結果）。
+     *
+     * @param arcRadii      每段圓弧的半徑絕對值，size = N（N≥2）。若
+     *                      unknown.kind==ArcRadius，對應 index 的值僅為
+     *                      佔位，會被反解結果覆寫。
+     * @param spiralLengths 每段緩和曲線長度，size = N+1；0 = 省略該段。若
+     *                      unknown.kind==SpiralLength，對應 index 的值僅
+     *                      為佔位，會被反解結果覆寫。
+     * @param spiralTypes   每段緩和曲線類型，size = N+1。
+     * @param tanStartPrev/tanEndPrev/tanStartNext/tanEndNext
+     *                      同 solveSCS：入/出邊界切線的有效端點。
+     * @param givenArcAngles 每段圓弧的固定弧心角絕對值 [rad]，size = N；
+     *                      留空（預設）＝全部自動平分（此時 unknown 必須
+     *                      是 None，見上）。非空時，0 的項目仍自動平分
+     *                      「扣除所有固定角度與所有緩和曲線轉角後」的剩
+     *                      餘角度；若 unknown.kind != None，則要求全部
+     *                      非 0（不可再混用自動平分）。
+     * @param unknown       Phase 4：指定恰好一個 Rk/Lk 交給 solver 反解；
+     *                      預設 None（維持封閉解、零回歸）。
+     * @return SolvedCompoundChain，valid==true 時 nodes 已含完整節點序列，
+     *         arcRadii/spiralLengths 已含反解後的最終值。
+     */
+    static SolvedCompoundChain solveCompoundChain(
+        const QVector<double>&     arcRadii,
+        const QVector<double>&     spiralLengths,
+        const QVector<SpiralType>& spiralTypes,
+        const QPointF& tanStartPrev, const QPointF& tanEndPrev,
+        const QPointF& tanStartNext, const QPointF& tanEndNext,
+        const QVector<double>&     givenArcAngles = QVector<double>(),
+        const CompoundChainUnknown& unknown = CompoundChainUnknown());
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 

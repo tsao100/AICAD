@@ -459,6 +459,30 @@ void AlignmentDataTableDialog::populateHorizontalTable()
                 continue;   // 同一切線段起始點重複 → 略過
             }
         }
+
+        // ── SS 交會點合併：ST → TS 間殘留短切線（< 1e-6 m）視為不存在，
+        //    合併為單一「SS」列 ─────────────────────────────────────────
+        // 背景：SS 交會點（兩段緩和曲線直接相接、中間無圓弧）在內部以
+        //   ST（前一群組出緩和曲線終點）+ TS（後一群組入緩和曲線起點）
+        //   兩個各自獨立求解的點表示，理論上應重合。AlignmentSolver 的
+        //   solveSSJunction() 已把兩者距離收斂到遠低於量測精度；但只要
+        //   還是兩個 AlignmentPoint，資料表上就會多出一列看起來像「一小
+        //   段直線」的 ST/TS，容易誤導。純顯示層面：這條 Tangent 長度
+        //   （= ST 點的 p.length）小於 1e-6 m 時，兩列合併為一列 tsc=
+        //   "SS"，沿用 TS 點（後一群組入緩和曲線）本身的座標／里程／
+        //   長度／類型資料——因為 TS 點才帶著「下一段緩和曲線」的完整
+        //   資訊，且座標已與 ST 點幾乎重合，直接沿用不影響精度。
+        if (!filteredPts.isEmpty()
+            && p.tsc == QLatin1String("TS")
+            && filteredPts.last().tsc == QLatin1String("ST")
+            && filteredPts.last().length < 1.0e-6) {
+            AlignmentPoint merged = p;
+            merged.tsc = QStringLiteral("SS");
+            filteredPts.removeLast();
+            filteredPts.append(merged);
+            continue;
+        }
+
         filteredPts.append(p);
     }
     const QVector<AlignmentPoint>* pts = &filteredPts;
@@ -487,6 +511,35 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             }
         }
         return -1;
+    };
+
+    // ── 判斷某個 SpiralIn 是否為「單弧 SCS 群組」的起點 ─────────────────────
+    // （SpiralIn → CircularArc → SpiralOut，恰好 3 個元素、共用同一組
+    //  tangentIdxBefore/After）。用來與 addCompoundChain() 產生的複合鏈結
+    // （N≥2 弧，元素數 2N+1 > 3）區分——後者每個 SpiralOut 元素自身就攜帶
+    // 正確的螺旋類型（spiralType1，見 addCompoundChain()），不像單弧 SCS
+    // 那樣把出螺旋類型另外存在配對的 SpiralIn.spiralType2 上。若不區分，
+    // 複合鏈結中段 CS 列的「曲線類型」雙擊編輯會錯誤指向該群組自己的入
+    // 螺旋元素，而非中段緩和曲線本身。
+    auto isSingleArcSCSHead = [&](int spiralInIdx) -> bool {
+        if (spiralInIdx < 0 || spiralInIdx + 2 >= elems.size()) return false;
+        if (elems[spiralInIdx].type   != EditableElementType::SpiralIn)    return false;
+        if (elems[spiralInIdx + 1].type != EditableElementType::CircularArc) return false;
+        if (elems[spiralInIdx + 2].type != EditableElementType::SpiralOut)  return false;
+        const int tb = elems[spiralInIdx].tangentIdxBefore;
+        const int ta = elems[spiralInIdx].tangentIdxAfter;
+        // 若第 4 個元素仍延續同一組邊界的 (CircularArc, SpiralOut) 配對，
+        // 代表這其實是複合鏈結的一部分，不是單弧 SCS。
+        if (spiralInIdx + 4 < elems.size()
+            && elems[spiralInIdx + 3].type == EditableElementType::CircularArc
+            && elems[spiralInIdx + 3].tangentIdxBefore == tb
+            && elems[spiralInIdx + 3].tangentIdxAfter  == ta
+            && elems[spiralInIdx + 4].type == EditableElementType::SpiralOut
+            && elems[spiralInIdx + 4].tangentIdxBefore == tb
+            && elems[spiralInIdx + 4].tangentIdxAfter  == ta) {
+            return false;
+        }
+        return true;
     };
 
     m_hTable->setRowCount(pts->size());
@@ -555,8 +608,10 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             continue;
         }
 
-        // ── 長度欄：TS / CS 可編輯（緩和曲線長度）──────────────────────────
-        if (p.tsc == QLatin1String("TS")) {
+        // ── 長度欄：TS / CS 可編輯（緩和曲線長度）；SS 為 ST/TS 合併列，──
+        //    比照 TS 處理（沿用其後一段緩和曲線的長度／SpiralIn 計數，
+        //    見上方 filteredPts 合併邏輯的說明）。
+        if (p.tsc == QLatin1String("TS") || p.tsc == QLatin1String("SS")) {
             meta.elemIdx  = nthElemIdx(EditableElementType::SpiralIn, spiralInCount);
             meta.lenElemIdx = meta.elemIdx;   // SpiralIn 自身持有 L1
             meta.editLen  = true;
@@ -565,18 +620,24 @@ void AlignmentDataTableDialog::populateHorizontalTable()
             m_hTable->setItem(row, kColLength, editItem(p.length));
         } else if (p.tsc == QLatin1String("CS")) {
             // CS 點的出緩和曲線類型來源：
-            //   SCS 群組：由 SpiralIn.spiralType2 決定（solver 讀取 SpiralIn 元素）
-            //   CA  群組：由 SpiralOut.spiralType2 決定（獨立 SpiralOut 元素）
-            // 判斷方式：若 spiralOutCount < spiralInCount，代表此 CS 屬於已配對的 SCS。
-            if (spiralOutCount < spiralInCount) {
-                // SCS 群組：spiralOutCount 個 SCS 的出螺旋 → 對應第 spiralOutCount 個 SpiralIn
-                meta.elemIdx = nthElemIdx(EditableElementType::SpiralIn, spiralOutCount);
+            //   單弧 SCS 群組：由 SpiralIn.spiralType2 決定（solver 讀取 SpiralIn 元素）
+            //   CA 群組／複合鏈結中段或末段：由 SpiralOut.spiralType1 自身決定
+            //     （複合鏈結每個 SpiralOut 元素在 addCompoundChain() 建立時
+            //      就已攜帶自己的類型，見 AlignmentDocument.cpp）
+            // 判斷方式：spiralOutCount < spiralInCount 且對應的 SpiralIn 經
+            // isSingleArcSCSHead() 確認「確實是單弧 SCS 群組」才走 SCS 分支；
+            // 否則（含複合鏈結）一律走 CA 分支，直接讀 SpiralOut 自身欄位。
+            const int candidateSpiralInIdx = nthElemIdx(EditableElementType::SpiralIn, spiralOutCount);
+            const bool isPairedSingleArcSCS =
+                (spiralOutCount < spiralInCount) && isSingleArcSCSHead(candidateSpiralInIdx);
+            if (isPairedSingleArcSCS) {
+                // 單弧 SCS 群組：spiralOutCount 個 SCS 的出螺旋 → 對應第 spiralOutCount 個 SpiralIn
+                meta.elemIdx = candidateSpiralInIdx;
                 // 但 L2（出螺旋長度）實際存在獨立的 SpiralOut 元素上，不能用
                 // SpiralIn 的索引寫入，否則會覆蓋掉 SpiralIn 自己的 L1。
                 meta.lenElemIdx = nthElemIdx(EditableElementType::SpiralOut, spiralOutCount);
             } else {
-                // CA 群組：SpiralOut 元素在 m_elems 中的順序 = spiralOutCount
-                // （前 spiralInCount 個 SpiralOut 屬於 SCS；後面的屬於 CA）
+                // CA 群組／複合鏈結：SpiralOut 元素在 m_elems 中的順序 = spiralOutCount
                 meta.elemIdx = nthElemIdx(EditableElementType::SpiralOut, spiralOutCount);
                 meta.lenElemIdx = meta.elemIdx;
             }
@@ -663,8 +724,9 @@ void AlignmentDataTableDialog::onHCellDoubleClicked(int row, int col)
     // SCS 群組 CS：meta.elemIdx 指向 SpiralIn，讀 spiralType2（exit type）
     // CA  群組 CS：meta.elemIdx 指向 SpiralOut，讀 spiralType2（exit type）
     // TS 行：meta.elemIdx 指向 SpiralIn，讀 spiralType1（entry type）
+    // SS 行：ST/TS 合併列（短切線 < 1e-6 m），比照 TS 處理
     SpiralType curType = SpiralType::Clothoid;
-    if (tsc == QLatin1String("TS")) {
+    if (tsc == QLatin1String("TS") || tsc == QLatin1String("SS")) {
         curType = e.spiralType1;
     } else if (tsc == QLatin1String("CS")) {
         curType = e.spiralType2;

@@ -140,6 +140,7 @@ command|alignmentfixtangent||0
 command|alignmentfixcurve||0
 command|alignmentfloatcurve||0
 command|alignmentscs||0
+command|scschain||0
 command|alignmentaddspiral||0
 command|profilearray||0
 command|profileloft||0
@@ -157,6 +158,7 @@ menu|Railway|alignmentfixtangent|Fixed Tangent||
 menu|Railway|alignmentfixcurve|Fixed Curve||
 menu|Railway|alignmentfloatcurve|Float Curve||
 menu|Railway|alignmentscs|SCS Curve||
+menu|Railway|scschain|SCS chain Curve||
 menu|Railway|separator|||
 menu|Railway|setorigin|Set TM2 Origin…||
 menu|Railway|separator|||

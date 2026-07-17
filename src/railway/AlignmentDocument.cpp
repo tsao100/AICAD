@@ -493,6 +493,158 @@ int HorizontalAlignmentEdit::addSCS(int        tangentIdxBefore,
     return firstIdx;
 }
 
+// ============================================================================
+//  addCompoundChain  ─  S0 C0 S1 C1 ... Sn 複合鏈結（Phase 1）
+//
+//  arcs.size()==1 → 直接 delegate 給既有 addSCS()，零回歸風險。
+//  arcs.size()>=2 → 建立 2N+1 個 Floating EditableElement，交由
+//    AlignmentSolver::solve() 內新增的 Pass 2b' 分支（偵測到 SpiralIn 之後
+//    緊接不只一組 (CircularArc, SpiralOut) 就走 solveCompoundChain()）求解。
+// ============================================================================
+int HorizontalAlignmentEdit::addCompoundChain(int tangentIdxBefore,
+                                              int tangentIdxAfter,
+                                              const CompoundChainSpec& spec)
+{
+    // ── 驗證邊界切線 ─────────────────────────────────────────────────────────
+    if (tangentIdxBefore < 0 || tangentIdxBefore >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: tangentIdxBefore out of range:"
+                   << tangentIdxBefore;
+        return -1;
+    }
+    if (tangentIdxAfter < 0 || tangentIdxAfter >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: tangentIdxAfter out of range:"
+                   << tangentIdxAfter;
+        return -1;
+    }
+    if (m_elems[tangentIdxBefore].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: tangentIdxBefore is not a Tangent";
+        return -1;
+    }
+    if (m_elems[tangentIdxAfter].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: tangentIdxAfter is not a Tangent";
+        return -1;
+    }
+
+    const int N = spec.arcs.size();
+    if (N < 1) {
+        qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: spec.arcs is empty";
+        return -1;
+    }
+    if (spec.spirals.size() != N + 1) {
+        qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: spec.spirals.size() must be"
+                   << (N + 1) << "got" << spec.spirals.size();
+        return -1;
+    }
+    for (int k = 0; k < N; ++k) {
+        if (spec.arcs[k].radiusIsUnknown) continue;   // 佔位值，允許任意（含 0）
+        if (std::abs(spec.arcs[k].radius) < 1e-9) {
+            qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: arcs[" << k << "].radius ≈ 0";
+            return -1;
+        }
+    }
+    // 所有緩和曲線長度皆由使用者直接給定（solveCompoundChain 為封閉解，
+    // 見 CompoundChainSpec 註解）；length==0 表示省略該段緩和曲線，任何
+    // 位置（含中段）皆可為 0，語意與既有 addSCS() 的 L1=0/L2=0 一致。
+
+    // ── Phase 4：驗證「未知數」設定（最多 1 個；指定時所有弧心角須釘死）──
+    int unknownCount = 0;
+    for (const auto& s : spec.spirals) if (s.lengthIsUnknown) ++unknownCount;
+    for (const auto& a : spec.arcs)    if (a.radiusIsUnknown) ++unknownCount;
+    if (unknownCount > 1) {
+        qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: at most 1 unknown"
+                      " (lengthIsUnknown/radiusIsUnknown) is supported, got" << unknownCount
+                   << "-- only 1 closure equation (Δθ) is available, see AlignmentSolver.h"
+                      " CompoundChainUnknown";
+        return -1;
+    }
+    if (unknownCount == 1) {
+        if (N == 1) {
+            qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: unknown solving requires"
+                          " N>=2 (single-arc case delegates to addSCS(), which has no unknown"
+                          " solving support)";
+            return -1;
+        }
+        for (int k = 0; k < N; ++k) {
+            if (std::abs(spec.arcs[k].centralAngle) <= 1e-12) {
+                qWarning() << "[HorizontalAlignmentEdit] addCompoundChain: an unknown is specified,"
+                              " so every arc's centralAngle must be pinned (non-zero); arc" << k
+                           << "is left at 0 (auto-split), which absorbs Δθ and leaves no equation"
+                              " to solve the unknown from";
+                return -1;
+            }
+        }
+    }
+
+    // ── N==1：退化為既有 addSCS()，保證單弧案例零回歸風險 ───────────────────
+    if (N == 1) {
+        return addSCS(tangentIdxBefore, tangentIdxAfter,
+                      spec.arcs[0].radius,
+                      spec.spirals[0].length, spec.spirals[1].length,
+                      spec.spirals[0].type,  spec.spirals[1].type);
+    }
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    // 比照 addSCS：先移除同一組邊界之間既有的 Floating 群組，避免疊加。
+    const int removed = removeFloatingBetween(tangentIdxBefore, tangentIdxAfter);
+    if (removed > 0) tangentIdxAfter -= removed;
+
+    // ── 建立 2N+1 個元素：S0 C0 S1 C1 ... C(N-1) SN ────────────────────────
+    //  中段緩和曲線（S1..S(N-1)）在 EditableElementType 裡沒有專屬型別，
+    //  一律標記為 SpiralOut——solve() Pass 2b' 只用「SpiralIn 開頭、後面
+    //  接連續 (CircularArc, SpiralOut) 配對」的結構做偵測，型別標記本身不
+    //  影響幾何求解（幾何完全由 solveCompoundChain() 依 spec 決定）。
+    QVector<EditableElement> group;
+    group.reserve(2 * N + 1);
+
+    {
+        EditableElement s0;
+        s0.type             = EditableElementType::SpiralIn;
+        s0.mode             = ConstraintMode::Floating;
+        s0.radius           = std::abs(spec.arcs[0].radius);
+        s0.length           = spec.spirals[0].length;   // 可能為 0（省略此段緩和曲線）
+        s0.tangentIdxBefore = tangentIdxBefore;
+        s0.tangentIdxAfter  = tangentIdxAfter;
+        s0.spiralType1      = spec.spirals[0].type;
+        s0.spiralType2      = spec.spirals[0].type;
+        s0.isCompoundUnknown = spec.spirals[0].lengthIsUnknown;
+        group.append(s0);
+    }
+
+    for (int k = 0; k < N; ++k) {
+        EditableElement arc;
+        arc.type             = EditableElementType::CircularArc;
+        arc.mode             = ConstraintMode::Floating;
+        arc.radius           = std::abs(spec.arcs[k].radius);
+        arc.centralAngle     = std::abs(spec.arcs[k].centralAngle);  // 0 = 自動平分
+        arc.isCompoundUnknown = spec.arcs[k].radiusIsUnknown;
+        arc.tangentIdxBefore = tangentIdxBefore;
+        arc.tangentIdxAfter  = tangentIdxAfter;
+        group.append(arc);
+
+        EditableElement sNext;
+        sNext.type             = EditableElementType::SpiralOut;
+        sNext.mode             = ConstraintMode::Floating;
+        sNext.radius           = std::abs(spec.arcs[k].radius);  // 僅供顯示參考；中段緩和曲線的雙曲率幾何由 solveCompoundChain 內部以 EggTransitionElement 處理
+        sNext.length           = spec.spirals[k + 1].length;     // 可能為 0（省略此段緩和曲線）
+        sNext.isCompoundUnknown = spec.spirals[k + 1].lengthIsUnknown;
+        sNext.tangentIdxBefore = tangentIdxBefore;
+        sNext.tangentIdxAfter  = tangentIdxAfter;
+        sNext.spiralType1      = spec.spirals[k + 1].type;
+        sNext.spiralType2      = spec.spirals[k + 1].type;
+        group.append(sNext);
+    }
+
+    const int firstIdx = insertElementsOrdered(tangentIdxBefore + 1, group);
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            QStringLiteral("Add Compound Chain (%1 arcs)").arg(N));
+    }
+    return firstIdx;
+}
+
 // ── seedFromRawPoints ────────────────────────────────────────────────────────
 //  由稠密的 TS/SC/CS/CC/TC/ST 關鍵點序列反推可互動編輯的元素鏈。
 //
@@ -911,13 +1063,90 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
             continue;
         }
 
-        // cCount >= 2：複合弧（CC，可能夾帶 Egg 緩和曲線）。目前的可編輯
-        // 元素型別（Tangent/CircularArc/SpiralIn/SpiralOut）沒有 Egg 對應，
-        // 故將每段圓弧個別建為 Fixed CircularArc，中間的緩和曲線予以略過。
+        // cCount >= 2：複合弧（CC，可能夾帶 Egg 緩和曲線）。優先嘗試以
+        // CompoundChainSpec 精確重建為單一可編輯的 Floating 複合曲線特徵
+        // （Phase 6）：每段圓弧的真實弧心角（= 該弧 AlignmentPoint.length /
+        // radius，直接來自量測資料）透過 EditableElement::centralAngle 釘
+        // 死，讓 solveCompoundChain() 忠實重現原始弧心角分配，而不是套用
+        // 「平分剩餘轉角」的近似值——後者只在使用者手動新建複合曲線、沒有
+        // 既有量測資料可參考時才適用。
+        //
+        // 若 buf 的排列不符合預期的交錯型態（例如非嚴格 S?/C 交替、半徑缺
+        // 漏，或 addCompoundChain 本身失敗），保留原本「個別 Fixed
+        // CircularArc、略過中間緩和曲線」的降級路徑，確保永遠有結果而非
+        //整段憑空消失。
+        {
+            bool patternOk = true;
+            for (const BufItem& b : buf) {
+                if (b.elemType != QChar('S') && b.elemType != QChar('C')) { patternOk = false; break; }
+            }
+            if (patternOk) {
+                for (int k = 0; k + 1 < buf.size(); ++k) {
+                    if (buf[k].elemType == QChar('S') && buf[k + 1].elemType == QChar('S')) {
+                        patternOk = false; break;
+                    }
+                }
+            }
+
+            if (patternOk) {
+                CompoundChainSpec spec;
+                spec.arcs.resize(cCount);
+                spec.spirals.resize(cCount + 1);   // 預設 length=0（省略）
+
+                bool geomOk = true;
+                int  cursor = 0;
+                if (buf[cursor].elemType == QChar('S')) {
+                    const AlignmentPoint& sPt = rawPts[buf[cursor].ptIdx];
+                    spec.spirals[0].length = sPt.length;
+                    spec.spirals[0].type   = rawCurveTypeToSpiralType(sPt.curveType);
+                    ++cursor;
+                }
+                for (int a = 0; a < cCount && geomOk; ++a) {
+                    if (cursor >= buf.size() || buf[cursor].elemType != QChar('C')) {
+                        geomOk = false; break;
+                    }
+                    const AlignmentPoint& cPt = rawPts[buf[cursor].ptIdx];
+                    const double R = std::abs(cPt.radius);
+                    if (R < 1e-6) { geomOk = false; break; }
+                    spec.arcs[a].radius       = R;
+                    spec.arcs[a].centralAngle = std::abs(cPt.length) / R;  // 真實弧心角（釘死）
+                    ++cursor;
+                    if (cursor < buf.size() && buf[cursor].elemType == QChar('S')) {
+                        const AlignmentPoint& sPt = rawPts[buf[cursor].ptIdx];
+                        spec.spirals[a + 1].length = sPt.length;
+                        spec.spirals[a + 1].type   = rawCurveTypeToSpiralType(sPt.curveType);
+                        ++cursor;
+                    }
+                    // 下一個緊接著又是 'C'（無中段緩和曲線）：spirals[a+1]
+                    // 維持預設 0（省略），語意上兩弧直接相切。
+                }
+                if (geomOk && cursor == buf.size()) {
+                    const int sizeBefore = m_elems.size();
+                    const int idx = addCompoundChain(tanBefore, tanAfter, spec);
+                    const int inserted = m_elems.size() - sizeBefore;
+                    if (idx >= 0 && inserted > 0) {
+                        // 比照 cCount==1 分支：同步 tangentElemIdx 位移。
+                        const int insertPos = tanBefore + 1;
+                        for (int& tidx : tangentElemIdx) {
+                            if (tidx >= insertPos) tidx += inserted;
+                        }
+                        qDebug() << "[HorizontalAlignmentEdit] seedFromRawPoints: compound"
+                                    " curve (CC) at raw point" << buf.first().ptIdx
+                                 << "reconstructed as" << cCount << "-arc CompoundChainSpec,"
+                                    " idx =" << idx;
+                        continue;   // 已處理，跳過下面的降級路徑
+                    }
+                }
+                // addCompoundChain 失敗或幾何資料不完整：繼續往下走降級路徑。
+            }
+        }
+
         qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints: compound"
                       " curve (CC / Egg) at raw point" << buf.first().ptIdx
-                   << "has no floating-model equivalent yet -- arcs added as"
-                      " Fixed, transition curve(s) between them skipped";
+                   << "could not be reconstructed as a CompoundChainSpec"
+                      " (unexpected pattern or addCompoundChain failure) --"
+                      " falling back to individual Fixed CircularArc,"
+                      " transition curve(s) between them skipped";
         for (const BufItem& item : buf) {
             if (item.elemType != QChar('C')) continue;
             const AlignmentPoint& p0 = rawPts[item.ptIdx];
@@ -1195,6 +1424,8 @@ QJsonObject HorizontalAlignmentEdit::toJson() const
         elem["solved"]       = e.solved;
         elem["spiralType1"]  = static_cast<int>(e.spiralType1);
         elem["spiralType2"]  = static_cast<int>(e.spiralType2);
+        elem["centralAngle"] = e.centralAngle;
+        elem["isCompoundUnknown"] = e.isCompoundUnknown;
         elem["tangentIdxBefore"]  = e.tangentIdxBefore;
         elem["tangentIdxAfter"]   = e.tangentIdxAfter;
         elem["isConstructionLine"] = e.isConstructionLine;
@@ -1240,6 +1471,8 @@ bool HorizontalAlignmentEdit::fromJson(const QJsonObject& obj)
         elem.solved      = false;
         elem.spiralType1 = static_cast<SpiralType>(e["spiralType1"].toInt(0));
         elem.spiralType2 = static_cast<SpiralType>(e["spiralType2"].toInt(0));
+        elem.centralAngle = e["centralAngle"].toDouble(0.0);  // 舊檔案無此欄位 → 0 = 自動平分（沿用既有行為）
+        elem.isCompoundUnknown = e["isCompoundUnknown"].toBool(false);  // 舊檔案無此欄位 → false（沿用既有行為）
         elem.tangentIdxBefore = e["tangentIdxBefore"].toInt(-1);
         elem.tangentIdxAfter  = e["tangentIdxAfter"].toInt(-1);
         elem.isConstructionLine = e["isConstructionLine"].toBool(false);

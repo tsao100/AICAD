@@ -258,6 +258,7 @@ SOURCES += \
     src/command/alignment/AlignmentFixTangentCommand.cpp \
     src/command/alignment/AlignmentFloatCurveCommand.cpp \
     src/command/alignment/AlignmentSCSCommand.cpp \
+    src/command/alignment/AlignmentSCSChainCommand.cpp \
     src/command/alignment/TrackCenterLineCommands.cpp \
     src/command/alignment/ImportAlignmentCommand.cpp \
     src/command/alignment/ExportAlignmentCommand.cpp \
@@ -324,6 +325,7 @@ SOURCES += \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/AlignmentDataTableDialog.cpp \
+    src/ui/CompoundChainCalcDialog.cpp \
     src/ui/ProfileArrayStationTableDialog.cpp \
     src/ui/ParameterPanel.cpp \
     src/ui/PropertyPanel.cpp \
@@ -396,6 +398,7 @@ HEADERS += \
     src/command/alignment/AlignmentFixTangentCommand.h \
     src/command/alignment/AlignmentFloatCurveCommand.h \
     src/command/alignment/AlignmentSCSCommand.h \
+    src/command/alignment/AlignmentSCSChainCommand.h \
     src/command/alignment/ProfileViewCommand.h \
     src/command/alignment/TrackCenterLineCommands.h \
     src/command/alignment/ImportAlignmentCommand.h \
@@ -463,6 +466,7 @@ HEADERS += \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
     src/ui/AlignmentDataTableDialog.h \
+    src/ui/CompoundChainCalcDialog.h \
     src/ui/ProfileArrayStationTableDialog.h \
     src/ui/ParameterPanel.h \
     src/ui/PropertyPanel.h \

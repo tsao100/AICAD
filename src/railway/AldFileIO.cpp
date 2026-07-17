@@ -346,12 +346,14 @@ bool AldFileIO::writeHorizontalALD(const QString& filePath,
         data += packField(pt.plat, 3);
         data += packField(pt.upDown, 1);
         data += packField(pt.tsc, 2);
-        data += packNumericField(pt.easting, 16);
-        data += packNumericField(pt.northing, 17);
-        data += packNumericField(pt.chainage, 15);
-        data += packNumericField(pt.contChainage, 15);
+        // 明確帶入 5 位小數（不依賴預設值），對齊舊系統 .ALD 原始精度，
+        // 避免座標／樁號／長度在寫檔時被靜默四捨五入到 3 位小數。
+        data += packNumericField(pt.easting, 16, 5);
+        data += packNumericField(pt.northing, 17, 5);
+        data += packNumericField(pt.chainage, 15, 5);
+        data += packNumericField(pt.contChainage, 15, 5);
         data += packAzimuthField(pt.azimuth, 13);
-        data += packNumericField(pt.length, 15);
+        data += packNumericField(pt.length, 15, 5);
 
         // RadiusCurveType (8 bytes): 直線 → "STRAIGHT"；緩和曲線 → curveType 文字
         // （CLOTHOID/HALFSINE/PARABOLA/CUBICJPN/CUBICECI 皆恰為 8 字元）；
@@ -463,7 +465,7 @@ bool AldFileIO::writeVerticalALD(const QString& filePath,
     for (const VerticalAlignmentPoint& pt : points) {
         data += packField(pt.plat, 3);
         data += packField(pt.upDown, 1);
-        data += packNumericField(pt.chainage, 15);
+        data += packNumericField(pt.chainage, 15, 5);
         data += packNumericField(pt.elevation, 10);
         data += packNumericField(pt.grade, 10);
         data += packNumericField(pt.kValue, 15);
