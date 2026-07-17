@@ -107,6 +107,17 @@ struct EditableElement
     //     這個建構線 Tangent 元素上。
     bool isConstructionLine = false;
     bool constructionIsArc  = false;
+
+    //   isSSJunction — 此 Fixed Tangent 是 SS 交會點（兩段緩和曲線直接
+    //     相接，中間無圓弧）的虛擬方向載體：長度僅 kSSEpsilon（約 1
+    //     微米），只用來讓 azimuthOf() 算出方向供兩側 SCS 群組的
+    //     solveSCS() 依附，不是真正量測到的直線段（isConstructionLine
+    //     對此類型恆為 true，但 isConstructionLine 亦涵蓋線形起訖點的
+    //     邊界建構線，兩者語意不同，故另立旗標區分）。
+    //     AlignmentSolver::solve() 會對此旗標做特殊處理：裁切其中一端
+    //     後，立刻依「原始方位角」重新外插另一端，避免極短線段的方向
+    //     被裁切位移（通常遠大於 kSSEpsilon）淹沒而失真。
+    bool isSSJunction = false;
 };
 
 // Forward declaration (AlignmentDocument is defined later in this file)

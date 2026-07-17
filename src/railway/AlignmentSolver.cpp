@@ -19,6 +19,7 @@
 #include <QtDebug>
 #include <QtMath>
 #include <cmath>
+#include <limits>
 
 namespace aicad {
 namespace railway {
@@ -366,6 +367,95 @@ SolvedSCS AlignmentSolver::solveSCS(
     result.thetaS1  = thetaS1;
     result.thetaS2  = thetaS2;
 
+    return result;
+}
+
+// ============================================================================
+//  solveSSJunction  —  消去 SS 交會點兩側 SCS 群組間的殘留短切線
+//  （演算法推導見 AlignmentSolver.h 的方法註解）
+// ============================================================================
+
+SolvedSSJunction AlignmentSolver::solveSSJunction(
+    const QPointF& ssPoint, double initialAzimuth,
+    double radius1, double spiralLen1In, double spiralLen1Out,
+    SpiralType type1In, SpiralType type1Out,
+    const QPointF& tanStartPrev1, const QPointF& tanEndPrev1,
+    double radius2, double spiralLen2In, double spiralLen2Out,
+    SpiralType type2In, SpiralType type2Out,
+    const QPointF& tanStartNext2, const QPointF& tanEndNext2,
+    double tol, int maxIter)
+{
+    SolvedSSJunction result;
+
+    // g(theta)：以候選方位角 theta 重解兩側 SCS 群組，回傳沿線帶號殘差。
+    // 順帶把最近一次成功求解的 group1/group2 存進 result，讓呼叫端在
+    // 「未收斂但已是目前最佳估計」的情況下仍能取得對應幾何。
+    auto evaluate = [&](double theta) -> double {
+        const QPointF lineEnd = ssPoint + QPointF(std::sin(theta), std::cos(theta));
+
+        const SolvedSCS g1 = solveSCS(
+            radius1, spiralLen1In, spiralLen1Out, type1In, type1Out,
+            tanStartPrev1, tanEndPrev1, ssPoint, lineEnd);
+        const SolvedSCS g2 = solveSCS(
+            radius2, spiralLen2In, spiralLen2Out, type2In, type2Out,
+            ssPoint, lineEnd, tanStartNext2, tanEndNext2);
+
+        if (!g1.valid || !g2.valid)
+            return std::numeric_limits<double>::quiet_NaN();
+
+        result.group1 = g1;
+        result.group2 = g2;
+
+        // 兩端點依構造都落在方位角 theta 的直線上，取沿線分量即為
+        // 帶號殘留間距（正負代表 group1 端相對 group2 端偏前或偏後）。
+        const QPointF d = g1.stPoint - g2.tsPoint;
+        return d.x() * std::sin(theta) + d.y() * std::cos(theta);
+    };
+
+    double theta0 = initialAzimuth;
+    double g0     = evaluate(theta0);
+    if (!std::isfinite(g0)) {
+        qWarning() << "[AlignmentSolver] solveSSJunction: initial geometry invalid"
+                      " (Δ≈0 or spirals overlap) -- cannot solve";
+        return result;
+    }
+    if (std::abs(g0) < tol) {
+        result.converged = true;
+        result.azimuth   = theta0;
+        result.gap       = g0;
+        return result;
+    }
+
+    // 正割法：以極小擾動（1e-5 rad）建立第二個取樣點後疊代逼近 g(theta)=0。
+    double theta1 = theta0 + 1.0e-5;
+    double g1v    = evaluate(theta1);
+
+    for (int iter = 0; iter < maxIter; ++iter) {
+        result.iterations = iter + 1;
+        if (!std::isfinite(g1v)) break;
+
+        const double denom = g1v - g0;
+        if (std::abs(denom) < 1e-15) break;   // 斜率退化，避免除以極小值
+
+        const double theta2 = theta1 - g1v * (theta1 - theta0) / denom;
+        const double g2v    = evaluate(theta2);
+
+        theta0 = theta1; g0 = g1v;
+        theta1 = theta2; g1v = g2v;
+
+        if (std::isfinite(g1v) && std::abs(g1v) < tol) {
+            result.converged = true;
+            result.azimuth   = theta1;
+            result.gap       = g1v;
+            return result;
+        }
+    }
+
+    qWarning() << "[AlignmentSolver] solveSSJunction: did not converge below"
+               << tol << "m after" << result.iterations << "iterations"
+               << "-- residual gap =" << g1v << "m";
+    result.azimuth = theta1;
+    result.gap      = g1v;
     return result;
 }
 
@@ -1432,6 +1522,22 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         tanEnd[i]   = elems[i].endPI;
     }
 
+    // ── SS 交會虛擬切線：快取原始（未受任何裁切污染的）方位角 ─────────
+    //
+    //  SS 交會點的 Fixed Tangent 只有 kSSEpsilon（約 1 微米）長，純粹是
+    //  方向載體。下面 Pass 2b 在裁切它其中一端（tanStart 或 tanEnd）時，
+    //  裁切位移量通常是毫米級 —— 遠大於 kSSEpsilon —— 若不連動修正另一
+    //  端，(tanEnd − tanStart) 這個方向向量會被裁切位移淹沒，
+    //  azimuthOf() 算出的方向形同雜訊，導致下一個依附這條切線的 SCS
+    //  群組解出錯誤位置的端點（外顯症狀：兩段緩和曲線間出現一小段方向
+    //  不合理的殘留短切線）。這裡先把原始方向存下來，供 Pass 2b 裁切後
+    //  重新外插使用。
+    QVector<double> ssOrigAzimuth(n, 0.0);
+    for (int i = 0; i < n; ++i) {
+        if (elems[i].isSSJunction)
+            ssOrigAzimuth[i] = azimuthOf(tanStart[i], tanEnd[i]);
+    }
+
     // ── Per-element solved-curve data ─────────────────────────────────────────
     struct ArcData {
         bool    valid   = false;
@@ -1684,6 +1790,18 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             tanEnd[tb]   = scs.tsPoint;  // incoming tangent ends at TS
             tanStart[ta] = scs.stPoint;  // outgoing tangent starts at ST
 
+            // SS 交會虛擬切線方向保護：見本函式開頭 ssOrigAzimuth 的說明。
+            // tanStart[ta] 剛被搬到本群組（group1）解出的 ST 點，若 ta 是
+            // SS 虛擬切線，立刻依原始方位角重新外插 tanEnd[ta]，確保稍後
+            // 共用這條切線的下一個群組（group2，其 tangentIdxBefore==ta）
+            // 讀到的仍是正確方向，而不是被裁切位移淹沒的雜訊方向。
+            if (elems[ta].isSSJunction) {
+                constexpr double kSSEpsilon = 1.0e-6;
+                tanEnd[ta] = tanStart[ta]
+                        + kSSEpsilon * QPointF(std::sin(ssOrigAzimuth[ta]),
+                                                std::cos(ssOrigAzimuth[ta]));
+            }
+
             // Skip past arc and spiral-out in the outer loop
             // (i++ in the for-loop body makes it i+1 next, but we need i+3)
             // We tag them as handled so Pass 3 knows to skip them.
@@ -1761,6 +1879,71 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         }
 
         i += 2 * N; // skip all consumed arcs/spirals (i++ in for-loop lands one past lastIdx)
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  Pass 2b-SS — 消去 SS 交會點兩側 SCS 群組間的殘留短切線
+    //
+    //  Pass 2b 已用「原始（ALD 記錄）方位角」各自解過 group1（進入 SS）
+    //  與 group2（離開 SS），且已修正了裁切造成的方向污染（見上方
+    //  ssOrigAzimuth 說明）。但兩群組仍是獨立求解，端點通常不會恰好
+    //  重合（ALD 原始資料獨立四捨五入所致），殘留一小段短切線。
+    //
+    //  這裡用 solveSSJunction()（使用者提出的方法：SS 點固定＋方位角
+    //  微調求根）重新聯立求解，把這條虛擬切線的方位角當作待解未知
+    //  數，驅動殘留間距收斂到 < 1e-6 m。收斂後，兩群組的端點已重合
+    //  到遠低於量測與繪圖精度，短切線可視為不存在（Pass 3 沿用既有
+    //  的 ST/TS 兩點表示法即可，其間距已 < 1e-6 m，等同直接 SS 相接）。
+    //
+    //  僅處理「兩側都是完整 SCS 群組」的 SS 交會點（G06U 等常見樣式）；
+    //  若某一側是裸露緩和曲線、LC/CA/ACA 群組或線形起訖邊界，不在此
+    //  求解範圍內，維持 Pass 2b 的結果（僅保留原始方向修正）。
+    // ════════════════════════════════════════════════════════════════════════
+    for (int t = 0; t < n; ++t) {
+        if (!elems[t].isSSJunction) continue;
+
+        int i0 = -1, i1 = -1;   // group1 (→SS) 與 group2 (SS→) 的 SpiralIn index
+        for (int i = 0; i < n; ++i) {
+            if (elems[i].type != EditableElementType::SpiralIn) continue;
+            if (!scsData[i].valid) continue;
+            if (elems[i].tangentIdxAfter  == t) i0 = i;
+            if (elems[i].tangentIdxBefore == t) i1 = i;
+        }
+        if (i0 < 0 || i1 < 0) continue;   // 至少一側不是完整 SCS 群組，跳過
+
+        const int tb1 = elems[i0].tangentIdxBefore;   // group1 上游穩定切線
+        const int ta2 = elems[i1].tangentIdxAfter;    // group2 下游穩定切線
+        if (tb1 < 0 || tb1 >= n || ta2 < 0 || ta2 >= n) continue;
+
+        const double R1  = std::abs(elems[i0 + 1].radius);
+        const double L1a = elems[i0].length;       // group1 入螺旋長
+        const double L1b = elems[i0 + 2].length;    // group1 出螺旋長（接 SS）
+        const double R2  = std::abs(elems[i1 + 1].radius);
+        const double L2a = elems[i1].length;        // group2 入螺旋長（接 SS）
+        const double L2b = elems[i1 + 2].length;    // group2 出螺旋長
+
+        const SolvedSSJunction fit = solveSSJunction(
+            /*ssPoint*/ elems[t].startPI, /*initialAzimuth*/ ssOrigAzimuth[t],
+            R1, L1a, L1b, elems[i0].spiralType1, elems[i0].spiralType2,
+            tanStart[tb1], tanEnd[tb1],
+            R2, L2a, L2b, elems[i1].spiralType1, elems[i1].spiralType2,
+            tanStart[ta2], tanEnd[ta2]);
+
+        if (!fit.converged) {
+            qWarning() << "[AlignmentSolver] Pass2b-SS: SS junction at tangent idx"
+                       << t << "did not converge below tolerance (residual gap ="
+                       << fit.gap << "m) -- keeping Pass 2b result";
+            continue;
+        }
+
+        // 採用收斂後的解，取代 Pass 2b 用初始方位角算出的結果
+        scsData[i0].scs = fit.group1;
+        scsData[i1].scs = fit.group2;
+
+        tanEnd[tb1]   = fit.group1.tsPoint;
+        tanStart[t]   = fit.group1.stPoint;
+        tanEnd[t]     = fit.group2.tsPoint;   // 收斂後與 tanStart[t] 幾乎重合（< 1e-6 m）
+        tanStart[ta2] = fit.group2.stPoint;
     }
 
     // ════════════════════════════════════════════════════════════════════════

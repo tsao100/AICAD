@@ -913,6 +913,7 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
             EditableElement& te = m_elems[tangentElemIdx[k]];
             te.isConstructionLine = true;
             te.constructionIsArc  = anchors[k].boundaryIsArc;
+            te.isSSJunction        = anchors[k].isSS;
         }
     }
 

@@ -262,10 +262,29 @@ struct SolvedCompoundChain
     QVector<double> arcAngles;     ///< 每段圓弧的弧心角（有號，[rad]），size = arcs.size()
     QVector<double> arcLengths;    ///< 每段圓弧弧長 [m]，size = arcs.size()
 
-    int    iterations   = 0;       ///< unknown.kind==None 時恆為 0（封閉解，不需迭代）；
-                                    ///< 指定未知數時為二分法實際迭代次數。
-    double residualNorm = 0.0;     ///< unknown.kind==None 時恆 ≈ 0；指定未知數時為收斂後的
-                                    ///< 轉角殘差絕對值 [rad]（供上層顯示「無法收斂」訊息）。
+    int    iterations   = 0;       ///< 保留供未來擴充（例如疊加 Fixed 圓弧需要求根）；目前恆為 0，
+                                    ///< 因為 solveCompoundChain 是封閉解，不需要迭代（見下方 solveCompoundChain 說明）。
+    double residualNorm = 0.0;     ///< 保留供未來擴充；目前恆 ≈ 0（僅浮點誤差量級）。
+};
+
+// ============================================================================
+//  SolvedSSJunction  — internal result of AlignmentSolver::solveSSJunction()
+// ============================================================================
+
+/**
+ * @brief SS 交會點（兩段緩和曲線直接相接，中間無圓弧）兩側 SCS 群組的
+ *        共用虛擬切線方位角求解結果。
+ *
+ * @see AlignmentSolver::solveSSJunction() 完整問題描述與演算法。
+ */
+struct SolvedSSJunction
+{
+    bool       converged  = false; ///< 是否已收斂到 |gap| < tol
+    double     azimuth    = 0.0;   ///< 收斂後的虛擬切線方位角 [rad]
+    double     gap        = 0.0;   ///< 收斂後的殘留間距（沿切線方向，帶號）[m]
+    int        iterations = 0;     ///< 實際疊代次數
+    SolvedSCS  group1;             ///< 以收斂方位角重解的 group1（進入 SS 的 SCS）
+    SolvedSCS  group2;             ///< 以收斂方位角重解的 group2（離開 SS 的 SCS）
 };
 
 // ============================================================================
@@ -503,6 +522,53 @@ public:
         const QPointF& tanStartNext, const QPointF& tanEndNext,
         const QVector<double>&     givenArcAngles = QVector<double>(),
         const CompoundChainUnknown& unknown = CompoundChainUnknown());
+    /**
+     * @brief 消去 SS 交會點兩側 SCS 群組間的殘留短切線（"short T"）。
+     *
+     * @par 問題背景
+     * ALD 匯入還原元素鏈時，SS 交會點（兩段緩和曲線直接相接、中間無
+     * 圓弧）會產生一條長度僅 kSSEpsilon（約 1 微米）的虛擬 Fixed
+     * Tangent，純粹作為 azimuthOf() 的方向載體，供交會點前後兩個獨立
+     * 的 SCS 群組（group1 進入 SS、group2 離開 SS）各自依附求解。因為
+     * ALD 原始資料（半徑、緩和曲線長度、方位角）各自獨立四捨五入，
+     * 兩群組獨立解出的端點通常不會恰好重合，殘留一小段實際不存在的
+     * 短直線（"short T"，量級通常數公釐～數公分）。
+     *
+     * @par 演算法（使用者提出的方法：SS 點固定＋方位角微調求根）
+     * 以 SS 點座標 @p ssPoint 為固定不動點，虛擬切線方位角 θ 視為待解
+     * 未知數（初始值＝ @p initialAzimuth，通常取 ALD 記錄的方位角）。
+     * 因為兩群組的端點依構造恆落在同一條方位角為 θ 的直線上（分別由
+     * solveSCS() 的 sliding-fit 機制保證 cross-track = 0），殘餘間距只有
+     * 「沿線」一個自由度，故只需一維求根，不需要二維牛頓法：
+     *
+     *   g(θ) = (ST_group1(θ) − TS_group2(θ)) · (sin θ, cos θ)
+     *
+     * 用正割法（secant method）疊代到 |g(θ)| < @p tol，或疊代次數超過
+     * @p maxIter 而回報未收斂（呼叫端應保留疊代前的結果，不強行採用）。
+     *
+     * @param ssPoint        SS 交會點座標（固定不動，來自 ALD 原始資料）。
+     * @param initialAzimuth 虛擬切線方位角初始猜測 [rad]（通常為 ALD 記錄的方位角）。
+     * @param radius1,spiralLen1In,spiralLen1Out,type1In,type1Out
+     *                       group1（進入 SS 的 SCS）的半徑／緩和曲線長度／類型。
+     * @param tanStartPrev1,tanEndPrev1
+     *                       group1 上游（已知、穩定）的 Fixed Tangent。
+     * @param radius2,spiralLen2In,spiralLen2Out,type2In,type2Out
+     *                       group2（離開 SS 的 SCS）的半徑／緩和曲線長度／類型。
+     * @param tanStartNext2,tanEndNext2
+     *                       group2 下游（已知、穩定）的 Fixed Tangent。
+     * @param tol            收斂容許誤差 [m]（預設 1e-6）。
+     * @param maxIter        最大疊代次數（預設 30）。
+     * @return SolvedSSJunction，converged==true 時 azimuth/group1/group2 為可用結果。
+     */
+    static SolvedSSJunction solveSSJunction(
+        const QPointF& ssPoint, double initialAzimuth,
+        double radius1, double spiralLen1In, double spiralLen1Out,
+        SpiralType type1In, SpiralType type1Out,
+        const QPointF& tanStartPrev1, const QPointF& tanEndPrev1,
+        double radius2, double spiralLen2In, double spiralLen2Out,
+        SpiralType type2In, SpiralType type2Out,
+        const QPointF& tanStartNext2, const QPointF& tanEndNext2,
+        double tol = 1.0e-6, int maxIter = 30);
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
