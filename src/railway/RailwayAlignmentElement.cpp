@@ -129,8 +129,14 @@ double AlignmentElement::worldAzimuth(double p) const
     double L, w_eff;
     resolvePW(p, 0.0, L, w_eff);
     double localTheta = localFrame(L).theta;
-    // For reversed elements, the traversal is "backwards", so negate theta
-    double dAz = m_reversed ? -localTheta : localTheta;
+    // Reversed (CT) transition elements: m_place is the far (ST) end, stored
+    // with azimuth = trueForwardAzimuth(ST) + π (see makeReversedPlacement),
+    // so that localToWorld()'s rotation-by-az produces the correct XY. To
+    // recover the true forward-travel azimuth here we must add that π back;
+    // localFrame()'s own internal R-negation for reversed elements already
+    // flips the sign of localTheta relative to a "normal" (unreversed) spiral
+    // of the same radius, so no additional sign flip is needed on top of it.
+    double dAz = m_reversed ? (M_PI + localTheta) : localTheta;
     return normalise(m_place.azimuth + dAz);
 }
 
@@ -148,7 +154,7 @@ QPointF AlignmentElement::inversePW(double x, double y) const
     auto perp = [&](double L) -> double {
         LocalFrame lf = localFrame(L);
         QPointF pt    = localToWorld(lf, 0.0);
-        double tangAz = normalise(az + (m_reversed ? -lf.theta : lf.theta));
+        double tangAz = normalise(az + (m_reversed ? (M_PI + lf.theta) : lf.theta));
         // Signed perpendicular: positive = left
         double dx = x - pt.x(), dy = y - pt.y();
         // Rotate (dx,dy) into local frame of this tangent
@@ -161,7 +167,7 @@ QPointF AlignmentElement::inversePW(double x, double y) const
     auto along = [&](double L) -> double {
         LocalFrame lf = localFrame(L);
         QPointF pt    = localToWorld(lf, 0.0);
-        double tangAz = normalise(az + (m_reversed ? -lf.theta : lf.theta));
+        double tangAz = normalise(az + (m_reversed ? (M_PI + lf.theta) : lf.theta));
         double dx = x - pt.x(), dy = y - pt.y();
         return dx * std::sin(tangAz) + dy * std::cos(tangAz);
     }; */
@@ -183,7 +189,7 @@ QPointF AlignmentElement::inversePW(double x, double y) const
     LocalFrame lf = localFrame(lens);
     QPointF    pt = localToWorld(lf, 0.0);
     double dx = x - pt.x(), dy = y - pt.y();
-    double tangAz = normalise(az + (m_reversed ? -lf.theta : lf.theta));
+    double tangAz = normalise(az + (m_reversed ? (M_PI + lf.theta) : lf.theta));
     double w_out = -dx * std::cos(tangAz) + dy * std::sin(tangAz);  // left positive
 
     return unresolveLocalPW(lens, w_out);

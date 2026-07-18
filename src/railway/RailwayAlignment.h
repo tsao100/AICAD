@@ -114,6 +114,32 @@ struct AlignmentPoint
 };
 
 /**
+ * @brief 將 @p oldPts 中「非幾何」輔助欄位合併進 @p newPts（依最近里程比對，
+ *        容許誤差 @p toleranceM）。
+ *
+ * 背景：AlignmentSolver／HorizontalAlignmentEdit 內部的元素鏈
+ * （TangentElement/CircularArcElement/ClothoidElement/…）只描述幾何，不
+ * 認得軌道代碼／上下行別／圓曲線編號／超高／軌距加寬／速限／備註一／
+ * 備註二／數值一／數值二這些欄位。每次 solve() 後重新展開的
+ * rawPoints()，這些欄位一律是預設值（空字串／0）。凡是要把 solve() 結果
+ * 整批寫回 TCL（tcl->loadHorizontal(newPts)）的地方，都必須先呼叫本函式
+ * 把舊資料裡的輔助欄位補回 newPts，否則每次幾何編輯都會把它們清空。
+ *
+ * 純幾何欄位（easting/northing/chainage/contChainage/azimuth/length/radius/
+ * curveType/tsc）不受影響，一律保留 @p newPts（即 solver 剛算出的最新值）。
+ *
+ * @param newPts     Solver 重新展開的關鍵點；就地修改。
+ * @param oldPts     合併前 TCL 既有的關鍵點（例如覆寫前的
+ *                   tcl->horizontal()->rawPoints()）。
+ * @param toleranceM 里程比對容許誤差 [m]；超出容許誤差則該點的輔助欄位維持
+ *                   newPts 原值（通常是預設值——例如全新插入的關鍵點，
+ *                   舊資料裡本來就沒有對應項）。
+ */
+void mergeAuxiliaryFields(QVector<AlignmentPoint>& newPts,
+                           const QVector<AlignmentPoint>& oldPts,
+                           double toleranceM = 1.0);
+
+/**
  * @brief One keypoint record from a vertical alignment (.VALD) file.
  *
  * Inside a parabolic VC the records come in triplets (entry, PVI, exit).
@@ -362,6 +388,31 @@ public:
     void loadHorizontal(const QVector<AlignmentPoint>&         pts);
     void loadVertical  (const QVector<VerticalAlignmentPoint>& pts);
 
+    // ── ALD-import preservation ────────────────────────────────────────────
+    //
+    // horizontal()/vertical() reflect whatever was loaded *most recently* —
+    // which, once the user opens the interactive alignment editor (even just
+    // to look, via EDITALIGNMENT / the alignment data table), gets
+    // overwritten by AlignmentDocument's seedFromRawPoints()+solve()
+    // reconstruction of an editable element chain (see UIManager.cpp). That
+    // reconstruction is a heuristic reverse-engineering pass and is not
+    // guaranteed to reproduce the original ALD file bit-for-bit.
+    //
+    // setAldHorizontalImport()/setAldVerticalImport() let the ALD import
+    // pipeline record the pristine imported keypoints separately; nothing
+    // else in the codebase should call them. Consumers that need the most
+    // authoritative geometry available (e.g. AlignedProfileArray) should
+    // query the "…ForCalc" methods below instead of the plain getters —
+    // those prefer the preserved ALD import when present and fall back to
+    // horizontal()/vertical() (element-chain-derived) only when this TCL was
+    // never ALD-imported.
+
+    bool hasAldHorizontalImport() const;
+    bool hasAldVerticalImport()   const;
+
+    void setAldHorizontalImport(const QVector<AlignmentPoint>&         pts);
+    void setAldVerticalImport  (const QVector<VerticalAlignmentPoint>& pts);
+
     QJsonObject toJson()               const;
     bool        fromJson(const QJsonObject&);
 
@@ -392,6 +443,22 @@ public:
 
     /** Horizontal (lateral) distance from centreline for tunnel/structure offset H. */
     double getAppliedH     (double p) const;
+
+    // ── "For calculation" queries — prefer ALD import ─────────────────────────
+    //
+    // Same semantics as the plain getters above, but sourced from the
+    // preserved ALD import (see setAldHorizontalImport()/
+    // setAldVerticalImport()) when one exists, falling back to
+    // horizontal()/vertical() otherwise. Use these for calculations that
+    // should stay pinned to the authoritative imported geometry regardless
+    // of what the interactive alignment editor currently holds (e.g.
+    // AlignedProfileArray).
+
+    QVector3D getXYZForCalc     (double p, double w = 0.0)        const;
+    double    getAzimuthForCalc (double p)                        const;
+    double    getSlopeForCalc   (double p)                        const;
+    double    getCantForCalc    (double p, bool signed_ = true)   const;
+    double    getAppliedHForCalc(double p)                        const;
 
     // ── Offset polyline (for OCCT / DXF output) ───────────────────────────────
 
@@ -424,6 +491,12 @@ private:
     QString              m_name;
     HorizontalAlignment* m_h = nullptr;
     VerticalAlignment*   m_v = nullptr;
+
+    /** Pristine ALD-imported geometry, preserved separately from m_h/m_v
+     *  (see setAldHorizontalImport()/setAldVerticalImport()). Empty
+     *  (isEmpty()==true) when this TCL was never ALD-imported. */
+    HorizontalAlignment* m_hAld = nullptr;
+    VerticalAlignment*   m_vAld = nullptr;
 
     bool                 m_hAlignVisible = false;  ///< 3D view visibility
     bool                 m_vAlignVisible = false;  ///< profile dock visibility

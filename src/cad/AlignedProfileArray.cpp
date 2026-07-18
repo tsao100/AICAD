@@ -18,17 +18,6 @@ namespace {
 
 constexpr double kEps = 1e-6;
 
-/// Rodrigues' 旋轉公式：將向量 v 繞單位軸 axis 旋轉 angle（弳度）。
-QVector3D rotateAboutAxis(const QVector3D& v, const QVector3D& axis, double angle)
-{
-    const QVector3D k = axis.normalized();
-    const double c = std::cos(angle);
-    const double s = std::sin(angle);
-    return v * c
-         + QVector3D::crossProduct(k, v) * s
-         + k * QVector3D::dotProduct(k, v) * (1.0 - c);
-}
-
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,12 +182,21 @@ bool AlignedProfileArray::rebuild() {
         Plane* pl = m_planes[i];
         if (!inst || !pl) continue;
 
-        const double h       = m_tcl->getAppliedH(p);
-        const double cantVal = m_tcl->getCant(p);
+        // 優先採用 ALD 匯入的線形資料；沒有 ALD 匯入時才退回目前 horizontal()/
+        // vertical()（可能是互動編輯器重建過的元素鏈）——見 TrackCenterLine
+        // 的 ForCalc 系列方法註解。
+        const double h       = m_tcl->getAppliedHForCalc(p);
+        const double cantVal = m_tcl->getCantForCalc(p);
 
-        const QVector3D origin = m_tcl->getXYZ(p, h);
-        const double az     = m_tcl->getAzimuth(p);   // [rad], CW from N
-        const double slopePc = m_tcl->getSlope(p);     // [%]
+        // 站位平面本身「離 TCL 的距離」與「角度」一律由純線形幾何決定
+        // （w=0：位於中心線上；xAxis 不套用 cant 旋轉），不受 cant/H 影響。
+        // cant/H 只當作 sketch instance 內部束制求解用的參數（見下方
+        // parameterStore()->setLocal()），由 master sketch 自己的約束決定
+        // 斷面幾何要怎麼吃這兩個值——兩件事分開，避免同一份 cant/H 被套用
+        // 兩次（一次在平面座標系、一次在 sketch 內部束制）。
+        const QVector3D origin = m_tcl->getXYZForCalc(p, 0.0);
+        const double az     = m_tcl->getAzimuthForCalc(p);   // [rad], CW from N
+        const double slopePc = m_tcl->getSlopeForCalc(p);     // [%]
 
         // 3D 切線：水平分量 (sin az, cos az, 0) 疊加縱坡分量（依約定：坡度[%] = 100*dz/dp）
         const QVector3D horizT(std::sin(az), std::cos(az), 0.0);
@@ -206,13 +204,9 @@ bool AlignedProfileArray::rebuild() {
         if (tangent.lengthSquared() < kEps) tangent = horizT;
         tangent.normalize();
 
-        // 未旋轉的左側橫向量（RailwayAlignmentElement.cpp 的既有慣例）
-        const QVector3D lateral0(-std::cos(az), std::sin(az), 0.0);
-
-        // cant → 繞切線的傾角，再旋轉橫向量（Plane::setCoordinateSystem 會再對
-        // xAxis 做 Gram-Schmidt 正交化，所以這裡不需要手動保證與 tangent 正交）。
-        const double cantAngle = railway::cantToAngle(cantVal);
-        const QVector3D xAxis = rotateAboutAxis(lateral0, tangent, cantAngle);
+        // 未旋轉的左側橫向量（RailwayAlignmentElement.cpp 的既有慣例），
+        // 直接作為平面 xAxis——不再依 cant 旋轉。
+        const QVector3D xAxis(-std::cos(az), std::sin(az), 0.0);
 
         pl->setCoordinateSystem(origin, tangent, xAxis);
 

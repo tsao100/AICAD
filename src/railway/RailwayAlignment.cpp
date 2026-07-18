@@ -80,6 +80,35 @@ bool AlignmentPoint::fromJson(const QJsonObject& o)
     return true;
 }
 
+void mergeAuxiliaryFields(QVector<AlignmentPoint>& newPts,
+                           const QVector<AlignmentPoint>& oldPts,
+                           double toleranceM)
+{
+    if (oldPts.isEmpty()) return;
+
+    for (AlignmentPoint& dst : newPts) {
+        int    bestIdx   = -1;
+        double bestDelta = toleranceM;
+        for (int j = 0; j < oldPts.size(); ++j) {
+            const double d = std::abs(oldPts[j].chainage - dst.chainage);
+            if (d < bestDelta) { bestDelta = d; bestIdx = j; }
+        }
+        if (bestIdx < 0) continue;  // 找不到對應舊點（例如新插入的關鍵點）——維持預設值
+
+        const AlignmentPoint& src = oldPts[bestIdx];
+        dst.plat            = src.plat;
+        dst.upDown          = src.upDown;
+        dst.circularCurveNo = src.circularCurveNo;
+        dst.cant            = src.cant;
+        dst.gaugeWidening   = src.gaugeWidening;
+        dst.speedLimit      = src.speedLimit;
+        dst.text1           = src.text1;
+        dst.text2           = src.text2;
+        dst.real1           = src.real1;
+        dst.real2           = src.real2;
+    }
+}
+
 // ============================================================================
 //  VerticalAlignmentPoint  serialisation
 // ============================================================================
@@ -746,9 +775,28 @@ TrackCenterLine::TrackCenterLine(QObject* parent)
     , m_name(QStringLiteral("Track"))
     , m_h(new HorizontalAlignment(this))
     , m_v(new VerticalAlignment(this))
+    , m_hAld(new HorizontalAlignment(this))
+    , m_vAld(new VerticalAlignment(this))
 {
     connect(m_h, &HorizontalAlignment::dataChanged, this, &TrackCenterLine::dataChanged);
     connect(m_v, &VerticalAlignment::dataChanged,   this, &TrackCenterLine::dataChanged);
+    // m_hAld/m_vAld are only ever (re)loaded by setAldHorizontalImport()/
+    // setAldVerticalImport(), which callers invoke alongside loadHorizontal()/
+    // loadVertical() — so m_h/m_v's dataChanged above already covers the
+    // "geometry changed" notification; no separate connection needed here.
+}
+
+bool TrackCenterLine::hasAldHorizontalImport() const { return !m_hAld->isEmpty(); }
+bool TrackCenterLine::hasAldVerticalImport()   const { return !m_vAld->isEmpty(); }
+
+void TrackCenterLine::setAldHorizontalImport(const QVector<AlignmentPoint>& pts)
+{
+    m_hAld->load(pts);
+}
+
+void TrackCenterLine::setAldVerticalImport(const QVector<VerticalAlignmentPoint>& pts)
+{
+    m_vAld->load(pts);
 }
 
 void TrackCenterLine::setName(const QString& n)
@@ -775,6 +823,10 @@ QJsonObject TrackCenterLine::toJson() const
     o["vAlignVisible"]  = m_vAlignVisible;
     o["horizontal"] = m_h->toJson();
     o["vertical"]   = m_v->toJson();
+    // 只在真的有 ALD 匯入資料時才寫出，讓沒有用到本功能的舊檔/新建線路
+    // 的存檔內容不受影響。
+    if (hasAldHorizontalImport()) o["aldHorizontal"] = m_hAld->toJson();
+    if (hasAldVerticalImport())   o["aldVertical"]   = m_vAld->toJson();
     return o;
 }
 
@@ -789,6 +841,12 @@ bool TrackCenterLine::fromJson(const QJsonObject& j)
         return false;
 
     m_v->fromJson(j["vertical"].toObject());
+
+    if (j.contains("aldHorizontal"))
+        m_hAld->fromJson(j["aldHorizontal"].toObject());
+    if (j.contains("aldVertical"))
+        m_vAld->fromJson(j["aldVertical"].toObject());
+
     return true;
 }
 
@@ -827,6 +885,38 @@ double TrackCenterLine::getVerticalRadius(double p) const { return m_v->getRadiu
 double TrackCenterLine::getCant         (double p, bool s) const { return m_h->getCant(p, s);          }
 double TrackCenterLine::getGaugeWidening(double p, bool s) const { return m_h->getGaugeWidening(p, s); }
 double TrackCenterLine::getAppliedH     (double p)         const { return m_h->getAppliedH(p);         }
+
+// ── "For calculation" queries — prefer ALD import ────────────────────────────
+
+QVector3D TrackCenterLine::getXYZForCalc(double p, double w) const
+{
+    const HorizontalAlignment* h = hasAldHorizontalImport() ? m_hAld : m_h;
+    const VerticalAlignment*   v = hasAldVerticalImport()   ? m_vAld : m_v;
+    const QPointF xy = h->getXY(p, w);
+    return { static_cast<float>(xy.x()),
+            static_cast<float>(xy.y()),
+            static_cast<float>(v->getElevation(p)) };
+}
+
+double TrackCenterLine::getAzimuthForCalc(double p) const
+{
+    return (hasAldHorizontalImport() ? m_hAld : m_h)->getAzimuth(p);
+}
+
+double TrackCenterLine::getSlopeForCalc(double p) const
+{
+    return (hasAldVerticalImport() ? m_vAld : m_v)->getSlope(p);
+}
+
+double TrackCenterLine::getCantForCalc(double p, bool signed_) const
+{
+    return (hasAldHorizontalImport() ? m_hAld : m_h)->getCant(p, signed_);
+}
+
+double TrackCenterLine::getAppliedHForCalc(double p) const
+{
+    return (hasAldHorizontalImport() ? m_hAld : m_h)->getAppliedH(p);
+}
 
 // ── Offset polyline ───────────────────────────────────────────────────────────
 

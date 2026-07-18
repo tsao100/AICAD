@@ -803,7 +803,7 @@
             "id": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "Sketch 1",
             "planeData": {
-                "createdTime": "2026-07-12T19:53:35",
+                "createdTime": "2026-07-18T11:56:28",
                 "geometry": {
                     "normal": [
                         0,
@@ -821,13 +821,13 @@
                         0
                     ]
                 },
-                "id": "29bb499a-e995-468e-a645-39a4a03609b9",
+                "id": "8eb27956-e154-42ff-83da-2de0185350dd",
                 "isLocked": true,
-                "modifiedTime": "2026-07-12T19:53:35",
+                "modifiedTime": "2026-07-18T11:56:28",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "29bb499a-e995-468e-a645-39a4a03609b9",
+            "planeId": "8eb27956-e154-42ff-83da-2de0185350dd",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
@@ -891,8 +891,6 @@
             "visible": true
         },
         {
-            "errorMessage": "Station 4 has 0 closed profile(s), expected 2 — cannot loft (check the master sketch for unclosed geometry)",
-            "hasError": true,
             "id": "{4c26ab19-b2ff-4992-b4a9-d37986e83450}",
             "name": "ProfileLoft 14",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
@@ -946,757 +944,757 @@
             "visible": true
         },
         {
-            "id": "{9a03bcd6-fa85-44c4-829c-e37b27a0fcd3}",
+            "id": "{5c3634a9-90f3-4a2d-8b4a-780e6510e544}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station0",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "cfd712f2-ac7f-4a42-b5fc-a84a234d52f8",
+            "planeId": "da899cf4-91d6-4035-9a0f-e52aeed6a509",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{f361da49-f996-40a2-bd77-4ed14148d424}",
+            "id": "{cb94844d-c344-4c9c-8f24-4d9057215e02}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station1",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "ee22c0ab-6440-43fb-9875-604e205662bd",
+            "planeId": "bf98632d-db4c-47a9-86fa-658d622b0759",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{e4d2ddda-ee2e-4caa-8c9d-47c1503c9c5a}",
+            "id": "{c5cc80ac-76a4-48c3-b2a8-0fdec55c4a0c}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station2",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "00273962-07f9-49cd-a48c-a3ae38551dff",
+            "planeId": "bc7dccaf-6d94-499e-b2b1-f3fe6ba8e6eb",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{4ba9d690-0f3a-47a2-87bc-1ea6e7d3dcc6}",
+            "id": "{8f7a94ff-37cc-4e2e-a7fa-c1f0ef41bd36}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station3",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "aace19b7-9bd4-4e2d-8fc0-840cb479fb25",
+            "planeId": "cf575d4f-6fae-40a7-b6a2-36e69f824766",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{24c06d3d-5425-4071-9652-c7d1c4508a93}",
+            "id": "{3d2c5f2f-defa-4d7f-88cf-3b8d5d6bb137}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station4",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "d713efff-bfc8-4a76-bd34-fb4854a66aeb",
+            "planeId": "1161df8c-72ae-4ba5-91b8-6ab33b5e6d2c",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{b6f93888-fb09-42e2-b59c-9cf811f71a95}",
+            "id": "{2f57828d-3f95-4507-becb-5ecf5f493a04}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station5",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "9d273a7e-22d6-4f6e-8335-8edb04457ca6",
+            "planeId": "44fd9489-486f-434d-bddc-5cc22e07de95",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{30e268c0-ebe1-41a5-8b34-49c0b3eee329}",
+            "id": "{32b1b4a0-51d5-4714-ba80-47321af8343a}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station6",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "58e9857a-a529-4ad2-b55d-044976228bd6",
+            "planeId": "c6b1ddea-3750-432c-a738-738ec8159036",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{1db008bd-634e-4fed-92d9-5301dc77689e}",
+            "id": "{4ac290a1-3a46-4e29-99c6-a6524f336aa6}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station7",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "29fc6d03-d21f-43d3-9a6c-95dd8070e6c8",
+            "planeId": "bfa91839-90ac-439d-aa30-ed23e111db85",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{8e55670c-7d66-485d-a18a-8d310b6742b7}",
+            "id": "{49f1be9b-3a78-47c1-b7d5-89a6376b6995}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station8",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "f1c766e3-7a0a-4da4-b6de-c3c4c57dc47d",
+            "planeId": "92283ce0-4ec4-434f-ab6a-e1efedc41590",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{75213467-53d0-49f1-bf9e-cb999fa2da38}",
+            "id": "{e3f24570-cc20-49c3-84c0-263a170919ff}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station9",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "eb95c68e-1fdb-4084-97aa-8542153814ea",
+            "planeId": "47c70ae1-b0db-40e6-8750-1809f2093635",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{4116c81a-1db4-4fec-8c4d-eff4ec704e96}",
+            "id": "{59ed459e-65ad-4550-9ddd-70dcc9df330b}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station0",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "8fb7ff41-b9bd-4837-83a1-7e67859218bb",
+            "planeId": "9d5a9970-c2a9-46b6-b46a-5bd6c9dbf36b",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{a58e413f-5195-4d21-9317-192597bf6e11}",
+            "id": "{e9cf5f17-6d91-447e-be47-40db7a130974}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station1",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "8e516ee1-f9d5-41dd-9e8e-a247b53fc7e0",
+            "planeId": "cfc44fbb-1377-4d9f-a4ce-e6e37d19ed9f",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{d67bbad1-2693-45b4-836f-90cf8c9e496c}",
+            "id": "{3492bab3-e6aa-476b-bb3e-59627881bc4a}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station2",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "02c44624-462e-47e4-9910-5e4080d605f2",
+            "planeId": "6b40be50-784a-4a06-b5a5-e11239c81167",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{b59f3c2a-1b19-4974-8ecd-108add7a28d7}",
+            "id": "{fe35ee36-c4d7-4660-9359-1d3756281660}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station3",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "99c216aa-0171-4852-9eb2-1923f245dba1",
+            "planeId": "62e08045-25ee-4b70-9142-e1634db49ca5",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{2dba9d17-c6b7-4a20-a152-1ba1a6b10d64}",
+            "id": "{c2356a58-2576-4737-a742-fed015ea2cb5}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station4",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "565b1357-7210-4015-9e3d-5bee9bef3f5e",
+            "planeId": "fe13ee5d-cc2c-44e5-b53b-e88af2253f9f",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{a514141d-6c47-4a80-84f0-c9ad58fe93cc}",
+            "id": "{914ae8aa-9df6-4df2-8091-f528366025a7}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station5",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "810539bb-efa2-4c24-90a4-1a88a9f6e6c8",
+            "planeId": "bb7434b9-b38f-4c90-9bd6-05c9d51e3947",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{84e0b707-ba12-4392-bf91-8259e99395c0}",
+            "id": "{3b71988c-5469-4f92-af9f-a72a76df54fd}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station6",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "c73c21b7-4c2b-4932-b0ad-4158e029fe7b",
+            "planeId": "fa078d84-c2cd-4d83-9cfc-c067dc811b43",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{8f740eda-c094-498d-9e9c-833af0e862ef}",
+            "id": "{13cd4577-6e0b-4fb4-a793-1fff59bcf373}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station7",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "0d3e947a-35f2-41d0-a3a5-03ad8be77f20",
+            "planeId": "e72e3ae7-2602-41d4-a118-ea893085a17c",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{5f27bc9d-3b71-4ffe-9af3-e8329c428f48}",
+            "id": "{c49ed3f1-79ca-4061-ac4f-32be7ba60374}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station8",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "8d2b1fbd-dd10-4ec2-a5d6-fee20e242147",
+            "planeId": "dd04d211-56cc-49dd-89f1-935b3ea5c6f1",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{f13e47b8-2ecd-42aa-973f-e39d70276a9d}",
+            "id": "{f1c5ab84-7bed-46af-adc6-09a1c613ee73}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station9",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "b20ae169-2e5f-4f86-b1a8-33940929693e",
+            "planeId": "eaed4436-5234-4cba-a6e1-49937bbd9e87",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{15492e67-3430-4ef0-ac0b-bc9f258b265c}",
+            "id": "{b7c7c200-8009-4ca0-aff5-11d36f2e921e}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station10",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "47a5af5c-f19b-4c5b-a403-6ef2d6505e4d",
+            "planeId": "d589f287-9e16-46a1-ae99-04882923db83",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{44681533-a55b-44db-b461-45848398ed8b}",
+            "id": "{05ad90f7-b51c-4108-a811-18b1a9fd5d55}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station0",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "b6ffc0f2-62d5-4ae1-8796-8922697ed605",
+            "planeId": "a4d3a1e8-7fdd-4837-9708-ecd9412ae2fa",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{625ce85d-cf3d-4304-81a6-bfb4fd7b4a93}",
+            "id": "{3161c1aa-a4f2-4e15-ba3d-02f1a603f357}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station1",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "d36bd7de-132e-4df7-8ccc-253a8bdf89b9",
+            "planeId": "d490b477-cc2d-4dce-ae97-a407c4b4cff2",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{a7a85dbf-6cf1-4d98-8b40-6ef3824bd50e}",
+            "id": "{9236a2ff-d98d-44f3-b061-b5746abef92b}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station2",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "0adda0a2-c83b-44a2-87ea-13dd9691a5a9",
+            "planeId": "118e67d4-e1d1-4fed-a455-5b8896934937",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{d3c3d738-24ef-4af2-96df-043541bb7c2c}",
+            "id": "{1c2803d0-d19b-4308-9e2d-5d4588f0acef}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station3",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "fb4e4ac8-5234-4f01-bcf7-8a484538de1e",
+            "planeId": "944ff1ea-872b-488a-8250-78f1bb509a31",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{d90b88ca-a96f-4b19-8ff4-1fbb6b263814}",
+            "id": "{6ebe8242-f173-42e4-bc75-38f6a05bcf1a}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station4",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "ec07c757-b158-47b9-805c-023533600885",
+            "planeId": "f8e92672-0fcc-4e91-a77e-4417fec72648",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{1f1ebb41-29c1-4182-b011-62d3266ab7a3}",
+            "id": "{cc1edaec-b401-4ee6-9ebe-312d1e35e0ac}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station5",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "e61f05e5-811f-4827-8445-7005bdea4f19",
+            "planeId": "15a8b937-05bc-497d-a0ee-c086023d76b3",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{09693f59-56f9-4b60-9be5-ac0735f6e489}",
+            "id": "{8bc9bdcc-a1ea-4a9f-a175-91ab129cad07}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station6",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "f9351534-0e80-4246-a161-e8ff203cd94c",
+            "planeId": "18a46ba2-6b0e-4f94-bea3-38475732626d",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{715893bc-c74d-4850-b1d9-04b698ad48ab}",
+            "id": "{273db783-69dd-4561-8bf1-ea9ae118a2d9}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station7",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "c3859c84-2fd3-43b9-a48a-9202b21e64f3",
+            "planeId": "1d061edd-d71f-4b97-bb35-14e0db7719c7",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{405d1bbc-2d01-425c-bd8d-ba7b9dbf3ebb}",
+            "id": "{af0b21e4-b933-469b-8a96-9779ec307262}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station8",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "09f7e912-cafb-4be1-ab3a-58e45c2c19c7",
+            "planeId": "5d63d058-c91a-463f-878e-3bdefa379806",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{f2f062a1-9c14-446d-8378-c743e72ebea7}",
+            "id": "{18af61dd-4ee7-467a-9cc7-79b30f13a0d6}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station9",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "66771fb3-9ac4-49c9-a892-28e28b08a0b9",
+            "planeId": "01e466b2-111b-4de3-96ab-a8abfe6630c0",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{17684a79-7b61-4911-a96a-64ddfd06b442}",
+            "id": "{9ee44966-53c4-49ff-b470-5751e97db0f0}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station10",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "e237a6f0-72a9-482b-877a-b0a8548e1701",
+            "planeId": "d820120c-b523-44b3-84cf-1f57ad0189bb",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{aff7c4a1-64e0-4285-84f1-925ed161c2d2}",
+            "id": "{8c68d47a-e71d-47ce-ae22-7753047257e6}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station0",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "a4dcec41-0941-4a40-b242-99e1b6b94dac",
+            "planeId": "87fa9815-815a-42c5-beb1-ef3517d7b27e",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{7fc5ec17-bfbb-4d1c-8533-3aa8ff29e9b1}",
+            "id": "{a45484c2-6e57-473e-ac27-89b208aba39c}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station1",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "03a519c8-8972-4941-a27d-5e3f395a0d8d",
+            "planeId": "83b33426-50d5-404f-b0a8-16d3404de45b",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{3ced18e9-5814-4cfa-8e5a-2a3f13abf978}",
+            "id": "{f3e952ab-a0b5-40a6-95be-dcb81cb125f2}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-60",
+                "cant": "50"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station2",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "965a0591-f61a-4285-a959-6b907681d010",
+            "planeId": "ba138a91-d3ad-4311-8348-054976e41039",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{ddb32e3e-07d5-4560-9076-90fdb76731f8}",
+            "id": "{bcf213ac-4af8-4319-9458-37e616bc96c1}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-58.9742435115588",
+                "cant": "49.145202926299"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station3",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "a996b8dd-69df-42fb-b60f-e6b7af4a31b3",
+            "planeId": "94b003a8-5c45-4577-b0e0-54730139fcd0",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{a192a6a0-85d4-4371-8d31-f54b102d348c}",
+            "id": "{754b22c6-0da7-46aa-8653-d648b9e295ae}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-57.3706071479225",
+                "cant": "47.8088392899354"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station4",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "8eacf669-4945-40b4-b6cd-83b6c33bb57a",
+            "planeId": "a584705f-6277-4719-83c8-62b2064bb929",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{3ac97db2-5b74-4052-a4d7-6baff0eb95b2}",
+            "id": "{fecadac4-e827-45c4-adfd-e25df4c8efcc}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-55.7669707842861",
+                "cant": "46.4724756535717"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station5",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "d428afdb-35ee-4eae-902e-2fe716f5c1ae",
+            "planeId": "0e4813a0-32a0-4947-a58a-e3c299f8c56e",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{239c0924-f3c0-4c81-ab91-ffdd3797d033}",
+            "id": "{7d3bf0e2-1880-44f7-821d-065f5d479c68}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-54.1633344206498",
+                "cant": "45.1361120172081"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station6",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "ba303309-ae12-499c-b93b-ae3862e30fc2",
+            "planeId": "487afc76-2332-4a5d-9412-b15cce4681d7",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{7fa5019c-1b80-4675-b515-6d3f78351c1f}",
+            "id": "{359eeb68-efe6-4006-a7e6-c6cf60631561}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-52.5596980570134",
+                "cant": "43.7997483808445"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station7",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "74b5ec62-1633-49d3-95dd-731226c9072a",
+            "planeId": "14237456-5c38-4632-9333-d82504e282a3",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{e00da31a-fd51-4f26-85f8-0956b30df298}",
+            "id": "{efca35ba-6a97-43da-9c5c-b604811557d0}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-50.956061693377",
+                "cant": "42.4633847444809"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station8",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "783051f9-c26e-4bd2-9477-0aa9c8dfb025",
+            "planeId": "2eb4e04d-4b18-4795-a633-ccb5fe6cf8cf",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{60ea889c-55c9-4b30-8f64-9fb5e041334a}",
+            "id": "{955fd7ec-2818-4e5f-8434-4d2bd8ce1deb}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-49.3524253297406",
+                "cant": "41.1270211081172"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station9",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "015a7cf9-4036-4eac-be0d-5f2b952ef28c",
+            "planeId": "a76bedf7-c55b-4597-9b47-0c6fd195a9f9",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{6791be62-72b1-4763-98d7-bc26d4e567c5}",
+            "id": "{de111001-2df0-4da8-81e0-f145b415ee70}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-47.7487889661043",
+                "cant": "39.7906574717536"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station10",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "9f1b595c-15eb-42c8-ace7-5c30c674d2dc",
+            "planeId": "9e6b0ccc-41c9-4ff7-8fb6-76d9f4324966",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{c03a5f64-6732-44a8-9ace-938bb08bf59c}",
+            "id": "{9e0afc98-6c51-4cac-9a00-394adcd03592}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-47.4215162388316",
+                "cant": "39.5179301990263"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station0",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "9b4156e9-1fd8-41d8-a1eb-1d342258e74e",
+            "planeId": "c3f852ef-38ad-4a85-bafe-a56e2f301647",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{d877339b-b5c1-484a-b46e-d1af11c7391f}",
+            "id": "{88e4f992-6cc3-4d18-aedd-293f06332c82}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-45.8178798751952",
+                "cant": "38.1815665626627"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station1",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "f784347f-824a-4248-a6d8-4c4fc99825db",
+            "planeId": "7ed7f6f2-63b5-4d25-8e93-63a52cd9749b",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{01536232-88f6-4a57-92d7-c7354dbcfd92}",
+            "id": "{a05c1a81-2ce9-45bf-807c-f87ea0bacd93}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-44.2142435115588",
+                "cant": "36.845202926299"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station2",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "0f3bf2a3-59b8-4f9e-bf52-486fda1581f0",
+            "planeId": "cdbea6b6-06dd-4882-8cd9-0b7c735eade3",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{85d8ab72-ab39-4c90-9ff5-29ab134c962d}",
+            "id": "{b7166cfd-a611-4419-95e8-a0e1ec27f64d}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-42.6106071479225",
+                "cant": "35.5088392899354"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station3",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "f9655d69-c642-4626-b00a-ab241e6eec34",
+            "planeId": "dfadabee-67a6-4a5a-b9c5-1676965edbaa",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{e94634b0-cd14-4785-ae55-fa44fa210694}",
+            "id": "{8aaca102-def6-4294-9c78-afab3a16cfb4}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-41.0069707842861",
+                "cant": "34.1724756535718"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station4",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "7830cb0b-3114-4d25-a733-77dfa3ee9d6b",
+            "planeId": "6ecfc582-c81f-4576-99e3-1f1438edc46d",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{917bc929-169e-4c89-9b20-5023052a1fa1}",
+            "id": "{06348dd3-f025-41fa-9998-794bbd1b97ab}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-39.4033344206497",
+                "cant": "32.8361120172081"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station5",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "8589dcbc-57d3-4485-bdfe-d90bad0428ac",
+            "planeId": "970ef0f1-ed6f-4194-9b96-b900482969c1",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{65aa218e-44a4-459c-994c-ab7382afa071}",
+            "id": "{fcac2ee6-06d6-4864-ac46-5ec53e89fb0e}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-37.7996980570134",
+                "cant": "31.4997483808445"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station6",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "c1970ffb-f2ad-473b-8636-be76eddae595",
+            "planeId": "570d372a-93bf-4887-9498-034bd844afa9",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{227a38ed-6836-4172-acce-cbf004e7fc3d}",
+            "id": "{6b63dcde-108c-4688-9d32-aa5284d42b3d}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-36.196061693377",
+                "cant": "30.1633847444808"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station7",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "708ecf3b-6abb-4a2f-b5be-9b6ec74decad",
+            "planeId": "2e0bb60b-d7bf-4d59-b588-8b7860ffabb3",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{8038011b-f785-4e1d-a758-2b74646addc6}",
+            "id": "{e235baa6-495b-40b1-be8b-b6c7f54525bf}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-34.5924253297407",
+                "cant": "28.8270211081172"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station8",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "49076ea0-390d-4744-aa10-0ab9b355d53c",
+            "planeId": "1746e16a-6190-49c5-8146-636b1ab5c0d4",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{131e22fc-7407-42b6-880d-0a55354b1e4b}",
+            "id": "{25270d66-3248-4f7c-a133-c6a042eb81df}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-32.9887889661043",
+                "cant": "27.4906574717536"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station9",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "28d9d4f0-b51a-4fa7-aefa-cb577579965b",
+            "planeId": "b2182354-5a41-41ca-a64e-7a2812a1aecf",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{960d2d63-fd93-4421-8c2b-5f05cac5828a}",
+            "id": "{21544573-3e8f-4d36-9ea4-feed79a49c82}",
             "instanceParams": {
-                "H": "0",
-                "cant": "0"
+                "H": "-31.385152602468",
+                "cant": "26.15429383539"
             },
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station10",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "cab42a8f-aed3-431b-95e2-4ae57ec99895",
+            "planeId": "dacb865a-66a6-415a-b690-988aa834f493",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
@@ -1713,16 +1711,20 @@
                         {
                             "centerX": 0,
                             "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
                             "endX": -278.86395263671875,
                             "endY": 69.11463165283203,
-                            "length": 299.0853346759055,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 229.48426305213323,
                             "mode": 0,
                             "radius": 0,
                             "solved": false,
                             "spiralType1": 0,
                             "spiralType2": 0,
-                            "startX": -426.4147322751324,
-                            "startY": -191.0407158730159,
+                            "startX": -395.3377172406164,
+                            "startY": -128.61470139509112,
                             "tangentIdxAfter": -1,
                             "tangentIdxBefore": -1,
                             "type": 0
@@ -1730,8 +1732,12 @@
                         {
                             "centerX": 0,
                             "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
                             "endX": 0,
                             "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
                             "length": 50,
                             "mode": 1,
                             "radius": 300,
@@ -1747,8 +1753,12 @@
                         {
                             "centerX": 0,
                             "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
                             "endX": 0,
                             "endY": 0,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
                             "length": 0,
                             "mode": 1,
                             "radius": 300,
@@ -1764,9 +1774,13 @@
                         {
                             "centerX": 0,
                             "centerY": 0,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
                             "endX": 0,
                             "endY": 0,
-                            "length": 50,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 55,
                             "mode": 1,
                             "radius": 300,
                             "solved": false,
@@ -1781,9 +1795,13 @@
                         {
                             "centerX": 0,
                             "centerY": 0,
-                            "endX": -18.70859338624343,
-                            "endY": 173.95335132275153,
-                            "length": 280.4852368463835,
+                            "centralAngle": 0,
+                            "constructionIsArc": false,
+                            "endX": 118.39945216033408,
+                            "endY": 218.1578879505506,
+                            "isCompoundUnknown": false,
+                            "isConstructionLine": false,
+                            "length": 424.3019031759986,
                             "mode": 0,
                             "radius": 0,
                             "solved": false,
@@ -1829,7 +1847,7 @@
                             "lvc": 50
                         },
                         {
-                            "chainage": 571.40168,
+                            "chainage": 646,
                             "elevation": 15,
                             "lvc": 0
                         }
@@ -1840,16 +1858,16 @@
             "horizontal": {
                 "rawPoints": [
                     {
-                        "azimuth": 0.5159254713506746,
+                        "azimuth": 0.5323340063452384,
                         "cant": 0,
                         "chainage": 0,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
-                        "easting": -426.4147322751324,
+                        "easting": -395.3377172406164,
                         "gaugeWidening": 0,
-                        "length": 169.23181679081083,
-                        "northing": -191.0407158730159,
+                        "length": 98.20822537739531,
+                        "northing": -128.61470139509112,
                         "plat": "",
                         "radius": 0,
                         "real1": 0,
@@ -1861,16 +1879,16 @@
                         "upDown": ""
                     },
                     {
-                        "azimuth": 0.5159254713506745,
+                        "azimuth": 0.5323340063452383,
                         "cant": 0,
-                        "chainage": 169.23181679081083,
+                        "chainage": 98.20822537739531,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "SPIRAL",
-                        "easting": -342.925896106794,
+                        "easting": -345.4925488938236,
                         "gaugeWidening": 0,
                         "length": 50,
-                        "northing": -43.83670081372847,
+                        "northing": -43.996058506794014,
                         "plat": "",
                         "radius": 300,
                         "real1": 0,
@@ -1882,19 +1900,19 @@
                         "upDown": ""
                     },
                     {
-                        "azimuth": 0.5992588046840078,
-                        "cant": 0,
-                        "chainage": 219.23181679081083,
+                        "azimuth": 0.6156673396785717,
+                        "cant": 50,
+                        "chainage": 148.2082253773953,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "ARC",
-                        "easting": -317.06850986017963,
+                        "easting": -318.93677072087513,
                         "gaugeWidening": 0,
-                        "length": 151.538144107206,
-                        "northing": -1.0599223607310009,
+                        "length": 151.3614978415337,
+                        "northing": -1.649301323361577,
                         "plat": "",
                         "radius": 300,
-                        "real1": 0,
+                        "real1": -60,
                         "real2": 0,
                         "speedLimit": 0,
                         "text1": "",
@@ -1903,16 +1921,16 @@
                         "upDown": ""
                     },
                     {
-                        "azimuth": 1.104385951708028,
+                        "azimuth": 1.1202056658170174,
                         "cant": 0,
-                        "chainage": 370.76996089801685,
+                        "chainage": 299.56972321892897,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "SPIRAL",
-                        "easting": -204.2472339153193,
+                        "easting": -204.6694945493058,
                         "gaugeWidening": 0,
-                        "length": 50,
-                        "northing": 97.68737234907476,
+                        "length": 55,
+                        "northing": 95.15666938361844,
                         "plat": "",
                         "radius": 300,
                         "real1": 0,
@@ -1924,16 +1942,16 @@
                         "upDown": ""
                     },
                     {
-                        "azimuth": 1.1877192850413612,
+                        "azimuth": 1.211872332483684,
                         "cant": 0,
-                        "chainage": 420.76996089801685,
+                        "chainage": 354.56972321892897,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
-                        "easting": -158.42236014806792,
+                        "easting": -153.80757423518406,
                         "gaugeWidening": 0,
-                        "length": 150.6317189612888,
-                        "northing": 117.65079246034101,
+                        "length": 290.73395123444925,
+                        "northing": 116.0326453251115,
                         "plat": "",
                         "radius": 0,
                         "real1": 0,
@@ -1945,16 +1963,16 @@
                         "upDown": ""
                     },
                     {
-                        "azimuth": 1.1877192850413612,
+                        "azimuth": 1.211872332483684,
                         "cant": 0,
-                        "chainage": 571.4016798593057,
+                        "chainage": 645.3036744533782,
                         "contChainage": 0,
                         "curveNo": "",
                         "curveType": "",
-                        "easting": -18.70859338624343,
+                        "easting": 118.39945216033408,
                         "gaugeWidening": 0,
                         "length": 0,
-                        "northing": 173.95335132275153,
+                        "northing": 218.1578879505506,
                         "plat": "",
                         "radius": 0,
                         "real1": 0,
@@ -2036,7 +2054,7 @@
                         "pviElevation": 15
                     },
                     {
-                        "chainage": 571.40168,
+                        "chainage": 646,
                         "elevation": 15,
                         "grade": 0,
                         "kValue": 0,
@@ -2050,16 +2068,16 @@
     ],
     "version": "1.0",
     "viewState": {
-        "atX": -265.4144931130264,
-        "atY": 10.602747738649356,
-        "atZ": 48.35103144676984,
-        "eyeX": -225.8707827916399,
-        "eyeY": -255.5101822797508,
-        "eyeZ": 250.71951758940793,
-        "scale": 13.190693074146349,
-        "upX": -0.13720806226351512,
-        "upY": 0.586592218921843,
-        "upZ": 0.7981751163436757,
+        "atX": -199.77564856954467,
+        "atY": 75.8189329792196,
+        "atZ": 8.756522178649902,
+        "eyeX": -199.77564856954484,
+        "eyeY": 75.81893297922434,
+        "eyeZ": 26.269566535950027,
+        "scale": 2.7078429682887264,
+        "upX": 2.639032972796849e-27,
+        "upY": 1,
+        "upZ": -2.710222950414085e-13,
         "viewType": 7
     }
 }

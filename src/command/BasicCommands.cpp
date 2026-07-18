@@ -372,12 +372,17 @@ public:
                 const QString& tclId = it.key();
                 railway::AlignmentDocument* aDoc = it.value();
                 if (!aDoc) continue;
-                // Sync solved H-result back to TCL rawPoints
+                // Sync solved H-result back to TCL rawPoints, preserving
+                // existing non-geometric auxiliary fields (see
+                // mergeAuxiliaryFields()).
                 railway::TrackCenterLine* tcl = doc->findTrackCenterLine(tclId);
                 const railway::HorizontalAlignment* ha =
                     aDoc->horizontal()->result();
-                if (tcl && ha && !ha->isEmpty())
-                    tcl->loadHorizontal(ha->rawPoints());
+                if (tcl && ha && !ha->isEmpty()) {
+                    QVector<railway::AlignmentPoint> merged = ha->rawPoints();
+                    railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
+                    tcl->loadHorizontal(merged);
+                }
                 // Store edit session JSON per-TCL
                 doc->setTclAlignmentData(tclId, aDoc->toJson());
             }
@@ -444,12 +449,17 @@ public:
                 const QString& tclId = it.key();
                 railway::AlignmentDocument* aDoc = it.value();
                 if (!aDoc) continue;
-                // Sync solved H-result back to TCL rawPoints
+                // Sync solved H-result back to TCL rawPoints, preserving
+                // existing non-geometric auxiliary fields (see
+                // mergeAuxiliaryFields()).
                 railway::TrackCenterLine* tcl = doc->findTrackCenterLine(tclId);
                 const railway::HorizontalAlignment* ha =
                     aDoc->horizontal()->result();
-                if (tcl && ha && !ha->isEmpty())
-                    tcl->loadHorizontal(ha->rawPoints());
+                if (tcl && ha && !ha->isEmpty()) {
+                    QVector<railway::AlignmentPoint> merged = ha->rawPoints();
+                    railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
+                    tcl->loadHorizontal(merged);
+                }
                 // Store edit session JSON per-TCL
                 doc->setTclAlignmentData(tclId, aDoc->toJson());
             }

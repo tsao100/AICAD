@@ -73,9 +73,11 @@ void ProfileArrayStationTableDialog::populateTable() {
         m_table->setItem(row, 1, makeItem(QString::number(p, 'f', 3)));
 
         if (tcl) {
-            const double cant = tcl->getCant(p);
-            const double h    = tcl->getAppliedH(p);
-            const double az   = tcl->getAzimuth(p) * 180.0 / M_PI;
+            // 與 AlignedProfileArray 實際計算所用資料來源保持一致（優先 ALD
+            // 匯入，沒有匯入時才退回目前 horizontal()/vertical()）。
+            const double cant = tcl->getCantForCalc(p);
+            const double h    = tcl->getAppliedHForCalc(p);
+            const double az   = tcl->getAzimuthForCalc(p) * 180.0 / M_PI;
             m_table->setItem(row, 2, makeItem(QString::number(cant, 'f', 2)));
             m_table->setItem(row, 3, makeItem(QString::number(h,    'f', 3)));
             m_table->setItem(row, 4, makeItem(QString::number(az,   'f', 3)));

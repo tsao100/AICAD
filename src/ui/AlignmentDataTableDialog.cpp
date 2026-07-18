@@ -491,9 +491,16 @@ void AlignmentDataTableDialog::populateHorizontalTable()
     // CircularCurveNo/Cant/GaugeWidenning/SpeedLimit/Text1/Text2/Real1/Real2
     // 並非幾何求解的一部分：每次 solve() 都會以預設值（0 / 空字串）重新產生
     // AlignmentPoint 序列。若列數與快取相符，保留使用者先前輸入；否則（結構
-    // 性變動，例如新增/刪除元素）改由目前來源資料重新播種。
-    if (m_hAux.size() != pts->size())
+    // 性變動，例如新增/刪除元素，或對話框剛開啟、快取尚為空）改由目前來源
+    // 資料重新播種——但 *pts 本身（來自 solver 的 rawSrc）不帶輔助欄位，
+    // 必須額外從 m_tcl->horizontal()->rawPoints()（已由 UIManager/save 等處
+    // 的 mergeAuxiliaryFields() 保留下來的既有資料）依里程合併回來，否則
+    // 播種出來的快取仍是全零，對話框看到的就會是「清空」的輔助欄位。
+    if (m_hAux.size() != pts->size()) {
         m_hAux = *pts;
+        if (m_tcl)
+            mergeAuxiliaryFields(m_hAux, m_tcl->horizontal()->rawPoints());
+    }
 
     // ── 建立 HRowMeta 映射：掃描 EditableElements，與 rawPoints tsc 序列對齊 ─
     // 計數：第幾個 SpiralIn / CircularArc / SpiralOut 尚未被映射

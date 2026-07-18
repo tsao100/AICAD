@@ -199,6 +199,10 @@ CommandResult ImportAlignmentCommand::execute(const CommandContext& /*context*/)
         if (!tcl)
             tcl = doc->addTrackCenterLine(trackName);
 
+        // 先記錄「原始 ALD 匯入」快照（供 AlignedProfileArray 等優先採用），
+        // 再載入到目前使用中的 horizontal()——就算之後互動編輯器把
+        // horizontal() 換成重建後的元素鏈，這份快照也不會被覆蓋。
+        tcl->setAldHorizontalImport(hPts);
         tcl->loadHorizontal(hPts);
         ++importedTracks;
 
@@ -211,6 +215,7 @@ CommandResult ImportAlignmentCommand::execute(const CommandContext& /*context*/)
                 const QVector<railway::VerticalAlignmentPoint> vPts =
                     AldFileIO::readVerticalALD(vPath, &vErr);
                 if (!vPts.isEmpty()) {
+                    tcl->setAldVerticalImport(vPts);
                     tcl->loadVertical(vPts);
                     ++withVertical;
                 } else if (!vErr.isEmpty() && clm) {

@@ -602,8 +602,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                     // Sync solved rawPoints back to TCL for PLAN DEV
                                     const railway::HorizontalAlignment* ha =
                                         aDoc->horizontal()->result();
-                                    if (ha && !ha->isEmpty())
-                                        tcl->loadHorizontal(ha->rawPoints());
+                                    if (ha && !ha->isEmpty()) {
+                                        QVector<railway::AlignmentPoint> merged = ha->rawPoints();
+                                        railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
+                                        tcl->loadHorizontal(merged);
+                                    }
 
                                     if (tcl->hAlignVisible()) {
                                         view::AlignmentRenderer* r =
@@ -1717,8 +1720,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     }
                     // Sync solved rawPoints to TCL for PLAN DEV
                     const railway::HorizontalAlignment* ha = aDoc->horizontal()->result();
-                    if (ha && !ha->isEmpty())
-                        tcl->loadHorizontal(ha->rawPoints());
+                    if (ha && !ha->isEmpty()) {
+                        QVector<railway::AlignmentPoint> merged = ha->rawPoints();
+                        railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
+                        tcl->loadHorizontal(merged);
+                    }
                     r->setAlignment(aDoc->horizontal());
                     r->setVisible(true);
                     r->refresh();
@@ -1831,11 +1837,15 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                             &railway::HorizontalAlignmentEdit::changed,
                             connKeeper,
                             [r, aDoc, tcl, doc]() {
-                                // 同步 solver 結果到 TCL rawPoints（供其他消費者使用）
+                                // 同步 solver 結果到 TCL rawPoints（供其他消費者使用），
+                                // 並保留既有輔助欄位（見 mergeAuxiliaryFields() 註解）。
                                 const railway::HorizontalAlignment* ha =
                                     aDoc->horizontal()->result();
-                                if (ha && !ha->isEmpty())
-                                    tcl->loadHorizontal(ha->rawPoints());
+                                if (ha && !ha->isEmpty()) {
+                                    QVector<railway::AlignmentPoint> merged = ha->rawPoints();
+                                    railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
+                                    tcl->loadHorizontal(merged);
+                                }
                                 // renderer 已設為 AlignmentDocument 模式，直接刷新
                                 if (r) r->refresh();
                                 doc->setModified(true);
