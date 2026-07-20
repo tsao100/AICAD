@@ -898,6 +898,10 @@ QJsonObject Sketch::toJson() const {
         conArr.append(c.toJson());
     json["constraints"] = conArr;
 
+    // ✅ 儲存 Sketch 自身的參數（cant、H 等），否則重新載入後參數列表會消失
+    if (m_parameterStore)
+        json["parameters"] = m_parameterStore->toJson();
+
     return json;
 }
 
@@ -1158,6 +1162,11 @@ bool Sketch::fromJson(const QJsonObject& json) {
     if (json.contains("constraints")) {
         for (const QJsonValue& v : json["constraints"].toArray())
             m_constraints.append(SketchConstraint::fromJson(v.toObject()));
+    }
+
+    // ✅ 還原 Sketch 自身的參數（cant、H 等），確保重新載入後參數列表正常顯示
+    if (json.contains("parameters")) {
+        parameterStore()->fromJson(json["parameters"].toObject());
     }
 
     blockSignals(false);

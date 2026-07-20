@@ -286,6 +286,15 @@ bool Document::load(const QString& fileName) {
                 if (feature) {
                     if (feature->fromJson(featureJson)) {
                         addFeatureInternal(feature);
+
+                        // ✅ 還原 Sketch → Document 的參數作用域鏈（sketch store → global store），
+                        //    否則載入後的 Sketch 無法解析引用全域參數的表達式，
+                        //    且全域參數變更不會觸發此 Sketch 重建。
+                        if (auto* sk = qobject_cast<Sketch*>(feature)) {
+                            sk->parameterStore()->setParentStore(m_parameterStore);
+                            connect(sk->parameterStore(), &aicad::core::ParameterStore::parametersRecomputed,
+                                    sk, &Sketch::scheduleRebuild, Qt::UniqueConnection);
+                        }
                     } else {
                         qWarning() << "[Document] Failed to load feature from JSON";
                         delete feature;

@@ -10,6 +10,9 @@
 #include <Quantity_Color.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Vec.hxx>
+#include <Select3D_SensitivePoint.hxx>
+#include <SelectMgr_EntityOwner.hxx>
+#include <SelectMgr_Selection.hxx>
 #include <QDebug>
 #include <cmath>
 
@@ -122,6 +125,29 @@ void AIS_ConstraintSymbol::Compute(
     default:
         drawGeneric(prs, "•"); break;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComputeSelection — 建立單一 sensitive point，涵蓋整個符號範圍
+//
+// 符號本身很小（kSymbolSize ≈ 3mm），改用 Select3D_SensitivePoint + 像素容差
+// （與 AIS_DimensionLine 的數值標籤相同做法），確保各縮放層級下 hover/選取
+// 範圍都貼近符號實際大小，而不會隨視圖縮放而失準。
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AIS_ConstraintSymbol::ComputeSelection(
+        const Handle(SelectMgr_Selection)& sel,
+        const Standard_Integer /*mode*/)
+{
+    // kSymbolSensitivity 乘以 SelectMgr 的 PixelTolerance（預設 2px）即為偵測半徑。
+    // 符號比尺寸線數值文字小，容差略收斂一些。
+    constexpr int kSymbolSensitivity = 20;
+
+    Handle(SelectMgr_EntityOwner) owner = new SelectMgr_EntityOwner(this, 5);
+    Handle(Select3D_SensitivePoint) sens =
+        new Select3D_SensitivePoint(owner, m_symbolPos);
+    sens->SetSensitivityFactor(kSymbolSensitivity);
+    sel->Add(sens);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

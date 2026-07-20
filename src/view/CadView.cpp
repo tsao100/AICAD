@@ -27,6 +27,7 @@
 #include "core/geometry/ProjectOrigin.h"
 
 #include "cad/sketch/DimensionLineAIS.h"
+#include "cad/sketch/ConstraintSymbolAIS.h"
 #include "cad/sketch/SketchConstraint.h"
 #include "cad/sketch/SketchAxisAIS.h"
 
@@ -35,7 +36,10 @@
 #include <QMouseEvent>
 #include <QCursor>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QContextMenuEvent>
 #include <cmath>
+#include <functional>
 #include <QToolTip>
 #include <QMenu>
 #include <QPainter>
@@ -113,8 +117,44 @@ static QString constraintUuidForAIS(const Handle(AIS_InteractiveObject)& obj) {
     if (obj.IsNull()) return QString();
     Handle(AIS_DimensionLine) dim = Handle(AIS_DimensionLine)::DownCast(obj);
     if (!dim.IsNull()) return dim->constraintUuid();
+    // ✅ 幾何約束符號（Horizontal/Vertical/Coincident…小圖示）現在也可 hover / 選取，
+    //    須一併識別，Delete 鍵與 selectedGeomUuids()/detectedConstraintUuid() 才能命中它們。
+    Handle(aicad::cad::AIS_ConstraintSymbol) sym =
+        Handle(aicad::cad::AIS_ConstraintSymbol)::DownCast(obj);
+    if (!sym.IsNull()) return sym->constraintUuid();
     return QString();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DimValueLineEdit — 雙擊尺寸線數值時，疊在 CadView 上方的行內編輯欄
+//
+// 不使用 Q_OBJECT/自訂 signal（避免在 .cpp 內定義 QObject 子類需要額外 moc
+// 設定），改用簡單的 std::function callback：
+//   - Enter/Return  → 沿用 QLineEdit 內建 returnPressed() 訊號，由外部 connect
+//   - 滑鼠右鍵      → 攔截 contextMenuEvent，不彈出選單，改呼叫 onConfirm
+//   - ESC           → 攔截 keyPressEvent，呼叫 onCancel
+// ─────────────────────────────────────────────────────────────────────────────
+class DimValueLineEdit : public QLineEdit {
+public:
+    explicit DimValueLineEdit(QWidget* parent = nullptr) : QLineEdit(parent) {}
+
+    std::function<void()> onConfirm;  ///< 滑鼠右鍵觸發（視同確認並套用）
+    std::function<void()> onCancel;   ///< ESC 觸發（取消，不套用）
+
+protected:
+    void contextMenuEvent(QContextMenuEvent* event) override {
+        event->accept();              // 不顯示原生右鍵選單
+        if (onConfirm) onConfirm();
+    }
+    void keyPressEvent(QKeyEvent* event) override {
+        if (event->key() == Qt::Key_Escape) {
+            event->accept();
+            if (onCancel) onCancel();
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+};
 
 class CadView::Private {
 public:
@@ -175,9 +215,15 @@ public:
 
     // ── 尺寸線拖曳狀態 ──────────────────────────────────────────────────────
     QString              dragDimUuid;        ///< 正在拖曳的約束 UUID（空 = 無拖曳）
+    Handle(aicad::cad::AIS_DimensionLine) dragDimAIS;  ///< 對應的 AIS 物件（供「單純點擊＝選取」判斷用）
     QVector2D            dragDimStartMouse;  ///< 拖曳起始的草圖平面座標
+    QPoint                dragDimStartScreen; ///< 拖曳起始的螢幕座標（供 click vs drag 門檻判斷）
     double               dragDimBaseOffsetX = 0.0;  ///< 拖曳前的舊偏移 X
     double               dragDimBaseOffsetY = 0.0;  ///< 拖曳前的舊偏移 Y
+
+    // ── 尺寸線行內數值編輯狀態（雙擊觸發）────────────────────────────────────
+    DimValueLineEdit*    dimValueEditor = nullptr;   ///< 編輯欄 widget（nullptr = 未編輯中）
+    QString              dimValueEditUuid;           ///< 正在編輯的約束 UUID
 
     // ── 窗選 / 穿越窗選（Window / Crossing box selection）────────────────────
     // Sketch edit 與 H-Alignment edit 共用同一套機制：
@@ -2516,9 +2562,12 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 Handle(aicad::cad::AIS_DimensionLine) dimAIS =
                     Handle(aicad::cad::AIS_DimensionLine)::DownCast(det);
                 if (!dimAIS.IsNull()) {
-                    // 點擊到尺寸線 → 開始拖曳
+                    // 點擊到尺寸線 → 先記錄為「可能拖曳」，實際是拖曳還是單純點擊選取
+                    // 要等 mouseReleaseEvent 依移動距離判斷（見下方 dragDimAIS 說明）
                     d->dragDimUuid       = dimAIS->constraintUuid();
+                    d->dragDimAIS        = dimAIS;
                     d->dragDimStartMouse = screenToPlane(event->pos());
+                    d->dragDimStartScreen = event->pos();
                     d->dragDimBaseOffsetX = dimAIS->dimOffsetX();
                     d->dragDimBaseOffsetY = dimAIS->dimOffsetY();
                     setMode(InteractionMode::DimLineDrag);
@@ -3078,12 +3127,25 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
         d->mode == InteractionMode::DimLineDrag &&
         !d->dragDimUuid.isEmpty())
     {
-        QVector2D planePt = screenToPlane(event->pos());
-        QVector2D delta   = planePt - d->dragDimStartMouse;
-        double newOffX = d->dragDimBaseOffsetX + delta.x();
-        double newOffY = d->dragDimBaseOffsetY + delta.y();
-        Q_EMIT dimLineDragFinished(d->dragDimUuid, newOffX, newOffY);
+        // 移動距離小於門檻 → 視為單純點擊，不是拖曳：改為選取該尺寸線，
+        // 讓使用者可以像一般幾何一樣選取尺寸束制，並可用 Delete 鍵刪除。
+        // （沿用窗選/框選共用的 kBoxSelectDragThreshold 判斷標準）
+        QPoint screenDelta = event->pos() - d->dragDimStartScreen;
+        if (screenDelta.manhattanLength() < kBoxSelectDragThreshold) {
+            if (!d->dragDimAIS.IsNull() && !d->context.IsNull()) {
+                bool additive = (event->modifiers() & Qt::ShiftModifier);
+                if (!additive) d->context->ClearSelected(Standard_False);
+                d->context->AddOrRemoveSelected(d->dragDimAIS, Standard_True);
+            }
+        } else {
+            QVector2D planePt = screenToPlane(event->pos());
+            QVector2D delta   = planePt - d->dragDimStartMouse;
+            double newOffX = d->dragDimBaseOffsetX + delta.x();
+            double newOffY = d->dragDimBaseOffsetY + delta.y();
+            Q_EMIT dimLineDragFinished(d->dragDimUuid, newOffX, newOffY);
+        }
         d->dragDimUuid.clear();
+        d->dragDimAIS.Nullify();
         unsetCursor();
         setMode(InteractionMode::Sketching);
         event->accept();
@@ -3111,6 +3173,120 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::RightButton) {
         d->mousePressed = false;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mouseDoubleClickEvent — 雙擊尺寸線數值 → 進入行內編輯
+//
+// Qt 雙擊事件序列為：press1, release1, doubleClick(取代 press2), release2。
+// 第一次點擊已由 mousePressEvent/mouseReleaseEvent 處理為「選取」（見上方
+// dragDimAIS 相關邏輯），第二次點擊直接由這裡接手，兩者不會互相干擾。
+// ─────────────────────────────────────────────────────────────────────────────
+
+void CadView::mouseDoubleClickEvent(QMouseEvent* event) {
+    auto* cmdMgr = Application::instance() ? Application::instance()->commandManager() : nullptr;
+    const bool hasActiveCmd = cmdMgr && cmdMgr->hasActiveCommand();
+
+    if (!hasActiveCmd && event->button() == Qt::LeftButton &&
+        !d->context.IsNull() && d->context->HasDetected())
+    {
+        Handle(AIS_InteractiveObject) det = d->context->DetectedInteractive();
+        Handle(aicad::cad::AIS_DimensionLine) dimAIS =
+            Handle(aicad::cad::AIS_DimensionLine)::DownCast(det);
+        if (!dimAIS.IsNull()) {
+            startDimValueEdit(dimAIS);
+            event->accept();
+            return;
+        }
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// startDimValueEdit — 建立/定位行內編輯欄，預填目前數值或表達式
+// ─────────────────────────────────────────────────────────────────────────────
+
+void CadView::startDimValueEdit(const Handle(aicad::cad::AIS_DimensionLine)& dimAIS) {
+    if (dimAIS.IsNull()) return;
+
+    // 若已在編輯其他尺寸，先取消舊的（不套用），避免兩個編輯欄同時存在
+    if (d->dimValueEditor) cancelDimValueEdit();
+
+    QString uuid = dimAIS->constraintUuid();
+
+    // 取得目前的顯示文字：優先使用 paramExpr，否則用數值（CoordinateDim 用 "x,y"）
+    QString initialText;
+    auto* app = core::Application::instance();
+    Sketch* sk = app ? app->activeSketch() : nullptr;
+    cad::SketchConstraint* con = sk ? sk->findConstraint(uuid) : nullptr;
+    if (con) {
+        if (con->type == cad::ConstraintType::CoordinateDim) {
+            initialText = QString("%1,%2").arg(con->value).arg(con->value2);
+        } else if (!con->paramExpr.isEmpty()) {
+            initialText = con->paramExpr;
+        } else {
+            initialText = QString::number(con->value);
+        }
+    } else {
+        return;   // 找不到對應約束，不啟動編輯
+    }
+
+    // 標籤世界座標 → 螢幕座標，供編輯欄定位
+    gp_Pnt labelPos = dimAIS->labelPosition3D();
+    Standard_Integer sx = 0, sy = 0;
+    if (!d->view.IsNull())
+        d->view->Convert(labelPos.X(), labelPos.Y(), labelPos.Z(), sx, sy);
+
+    d->dimValueEditor = new DimValueLineEdit(this);
+    d->dimValueEditUuid = uuid;
+    d->dimValueEditor->setText(initialText);
+    d->dimValueEditor->selectAll();
+
+    constexpr int kEditorWidth  = 90;
+    constexpr int kEditorHeight = 22;
+    d->dimValueEditor->setGeometry(sx - kEditorWidth / 2, sy - kEditorHeight / 2,
+                                    kEditorWidth, kEditorHeight);
+    d->dimValueEditor->show();
+    d->dimValueEditor->setFocus(Qt::MouseFocusReason);
+
+    connect(d->dimValueEditor, &QLineEdit::returnPressed,
+            this, [this]() { commitDimValueEdit(); });
+    d->dimValueEditor->onConfirm = [this]() { commitDimValueEdit(); };
+    d->dimValueEditor->onCancel  = [this]() { cancelDimValueEdit(); };
+
+    setMode(InteractionMode::DimValueEdit);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// commitDimValueEdit — Enter 或滑鼠右鍵確認：讀取文字、發出訊號、關閉編輯欄
+// ─────────────────────────────────────────────────────────────────────────────
+
+void CadView::commitDimValueEdit() {
+    if (!d->dimValueEditor) return;
+
+    QString text = d->dimValueEditor->text();
+    QString uuid = d->dimValueEditUuid;
+
+    d->dimValueEditor->deleteLater();
+    d->dimValueEditor = nullptr;
+    d->dimValueEditUuid.clear();
+    setMode(InteractionMode::Sketching);
+
+    if (!uuid.isEmpty() && !text.trimmed().isEmpty())
+        Q_EMIT dimValueEditCommitted(uuid, text.trimmed());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// cancelDimValueEdit — ESC 取消：不套用任何變更，直接關閉編輯欄
+// ─────────────────────────────────────────────────────────────────────────────
+
+void CadView::cancelDimValueEdit() {
+    if (!d->dimValueEditor) return;
+
+    d->dimValueEditor->deleteLater();
+    d->dimValueEditor = nullptr;
+    d->dimValueEditUuid.clear();
+    setMode(InteractionMode::Sketching);
 }
 
 void CadView::wheelEvent(QWheelEvent* event) {

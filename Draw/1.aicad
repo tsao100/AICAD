@@ -1,5 +1,296 @@
 {
     "features": [
+        {
+            "constraints": [
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "edf83db2-c412-4a0f-92c0-51e26a396601",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 5,
+                    "uuid": "aa5ce970-3b3e-4b96-b13b-724e8949b01b",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "61feb807-c553-4818-b4ad-fe5c780acbfa",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "6f71748d-b93e-4fa0-83a7-d9ced42a73c4",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 0,
+                    "uuid": "1671492a-b6dc-4731-9893-8f1c5bb6bde3",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 72.50516510009766,
+                    "dimOffY": 6.7006988525390625,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "cant",
+                    "refs": [
+                        {
+                            "geomUuid": "51c49d94-3254-4382-87e8-c65ed8221de6",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "014f6a56-6183-466d-90ef-1474b5492774",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 24,
+                    "uuid": "bbe101de-2ae4-47a6-a488-6d7cf16b1e29",
+                    "value": 60,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "91b4d275-3d9f-4cbc-9bd6-70e357761294",
+                            "handle": 8
+                        }
+                    ],
+                    "type": 6,
+                    "uuid": "251bae34-6641-42c8-8175-631940b0d8ce",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 8.311965942382812,
+                    "dimOffY": -73.37031555175781,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "H",
+                    "refs": [
+                        {
+                            "geomUuid": "61feb807-c553-4818-b4ad-fe5c780acbfa",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "f67b106f-ff22-4b8a-a301-4d4152d9f904",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 23,
+                    "uuid": "b13b43f5-afbb-4eab-af30-fdd50a6628d6",
+                    "value": 100,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "91b4d275-3d9f-4cbc-9bd6-70e357761294",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 20,
+                    "uuid": "2a5d1860-29c5-4aad-b152-ce7df4f6c2cc",
+                    "value": 0,
+                    "value2": 0
+                }
+            ],
+            "geometries": [
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -109.10812377929688,
+                            "y": 43.502811431884766
+                        }
+                    ],
+                    "px": -109.10812377929688,
+                    "py": 41.002811431884766,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "6f71748d-b93e-4fa0-83a7-d9ced42a73c4"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 22.974889755249023,
+                            "y": 93.5028076171875
+                        }
+                    ],
+                    "px": 22.974889755249023,
+                    "py": 101.0028076171875,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "014f6a56-6183-466d-90ef-1474b5492774"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -109.10812377929688,
+                            "y": 43.502811431884766
+                        }
+                    ],
+                    "px": -109.10812377929688,
+                    "py": 41.002811431884766,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "61feb807-c553-4818-b4ad-fe5c780acbfa"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 56.989662170410156,
+                            "y": 43.502811431884766
+                        }
+                    ],
+                    "px": 56.989662170410156,
+                    "py": 41.002811431884766,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "51c49d94-3254-4382-87e8-c65ed8221de6"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -9.108124732971191,
+                            "y": 116.36632537841797
+                        }
+                    ],
+                    "px": -9.108124732971191,
+                    "py": 116.36632537841797,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "8c4e8388-0887-4d07-9dd2-bdb8b3ff54e8"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -9.108124732971191,
+                            "y": -60.271785736083984
+                        }
+                    ],
+                    "px": -9.108124732971191,
+                    "py": -60.271785736083984,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "f67b106f-ff22-4b8a-a301-4d4152d9f904"
+                },
+                {
+                    "endUuid": "014f6a56-6183-466d-90ef-1474b5492774",
+                    "points": [
+                        {
+                            "x": -109.10812377929688,
+                            "y": 41.002811431884766
+                        },
+                        {
+                            "x": 22.974889755249023,
+                            "y": 101.0028076171875
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "6f71748d-b93e-4fa0-83a7-d9ced42a73c4",
+                    "type": 0,
+                    "uuid": "185c86c3-8a96-4d43-8ea8-7fe3ab9f973c"
+                },
+                {
+                    "endUuid": "51c49d94-3254-4382-87e8-c65ed8221de6",
+                    "points": [
+                        {
+                            "x": -109.10812377929688,
+                            "y": 41.002811431884766
+                        },
+                        {
+                            "x": 56.989662170410156,
+                            "y": 41.002811431884766
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "61feb807-c553-4818-b4ad-fe5c780acbfa",
+                    "type": 0,
+                    "uuid": "edf83db2-c412-4a0f-92c0-51e26a396601"
+                },
+                {
+                    "endUuid": "f67b106f-ff22-4b8a-a301-4d4152d9f904",
+                    "points": [
+                        {
+                            "x": -9.108124732971191,
+                            "y": 116.36632537841797
+                        },
+                        {
+                            "x": -9.108124732971191,
+                            "y": -60.271785736083984
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "8c4e8388-0887-4d07-9dd2-bdb8b3ff54e8",
+                    "type": 0,
+                    "uuid": "91b4d275-3d9f-4cbc-9bd6-70e357761294"
+                }
+            ],
+            "id": "{a96b1224-1c7d-4ec5-818c-01bfd49c0d7e}",
+            "name": "Sketch 1",
+            "parameters": {
+                "H": "100",
+                "cant": "60"
+            },
+            "planeData": {
+                "createdTime": "2026-07-18T21:17:19",
+                "geometry": {
+                    "normal": [
+                        0,
+                        0,
+                        1
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        1,
+                        0,
+                        0
+                    ]
+                },
+                "id": "0a00ef2d-a8d1-434a-882c-63223a6ed3e3",
+                "isLocked": true,
+                "modifiedTime": "2026-07-18T21:17:19",
+                "name": "XY",
+                "type": 0
+            },
+            "planeId": "0a00ef2d-a8d1-434a-882c-63223a6ed3e3",
+            "planeName": "XY",
+            "suppressed": false,
+            "type": "Sketch",
+            "visible": false
+        }
     ],
     "fileName": "1.aicad",
     "parameters": {
@@ -440,16 +731,16 @@
     ],
     "version": "1.0",
     "viewState": {
-        "atX": 31.827170741322476,
-        "atY": -2.6343846254750014,
+        "atX": 0,
+        "atY": 0,
         "atZ": 0,
-        "eyeX": 31.827170741322476,
-        "eyeY": -2.6343846254750014,
-        "eyeZ": 204.32865065155448,
-        "scale": 1.4640915479060315,
+        "eyeX": 0,
+        "eyeY": 0,
+        "eyeZ": 0,
+        "scale": 2.4752475247524752,
         "upX": 0,
         "upY": 1,
         "upZ": 0,
-        "viewType": 7
+        "viewType": 1
     }
 }

@@ -31,6 +31,7 @@ class Document;
 class Sketch;
 class Plane;
 class GripManager;
+class AIS_DimensionLine;
 }
 
 namespace ui {
@@ -69,6 +70,7 @@ enum class InteractionMode {
     GetGeom,        ///< ✅ Task E: 點擊回報 geomUuid+handle（幾何約束互動選取）
     PlaceDimLine,   ///< ✅ Task E: 移動預覽尺寸線位置，點擊確認
     DimLineDrag,    ///< 拖曳已存在的尺寸線（移動尺寸線及數值位置）
+    DimValueEdit,   ///< 雙擊尺寸線數值 → 行內編輯數值/表達式中
     Navigation
 };
 
@@ -418,6 +420,10 @@ Q_SIGNALS:
     /// 拖曳現有尺寸線 — 放開確認
     void dimLineDragFinished(const QString& constraintUuid, double offsetX, double offsetY);
 
+    /// 雙擊尺寸線數值文字進入行內編輯，使用者按 Enter 或滑鼠右鍵確認新數值/表達式後發出
+    /// （CoordinateDim 等雙數值類型以 "x,y" 逗號分隔）
+    void dimValueEditCommitted(const QString& constraintUuid, const QString& newExprOrValue);
+
     /**
      * @brief 取得點被取消時發出
      */
@@ -499,6 +505,11 @@ protected:
      * @brief 滑鼠釋放事件
      */
     void mouseReleaseEvent(QMouseEvent* event) override;
+
+    /**
+     * @brief 滑鼠雙擊事件（雙擊尺寸線數值 → 進入行內編輯）
+     */
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
     void handleViewCubeClick(const QPoint& pos);
     void startViewCubeAnimation();
@@ -591,6 +602,15 @@ private:
     void applyPolygonSelectionScheme(const QVector<QPoint>& ptsQt, bool crossing, bool additive);
     /// 取得目前視角對應的參考平面（與 screenToPlane() 相同規則，供窗選/籬選/多邊形視覺共用）。
     cad::Plane* boxSelectReferencePlane() const;
+
+    // ── 尺寸線行內數值編輯（雙擊觸發）────────────────────────────────────────
+    /// 雙擊尺寸線數值時呼叫：於該標籤畫面座標處顯示行內編輯欄，預填目前的
+    /// 數值/表達式文字。Enter 或滑鼠右鍵確認、ESC 取消。
+    void startDimValueEdit(const Handle(aicad::cad::AIS_DimensionLine)& dimAIS);
+    /// 確認編輯：讀取編輯欄文字，發出 dimValueEditCommitted，關閉編輯欄。
+    void commitDimValueEdit();
+    /// 取消編輯：不套用任何變更，直接關閉編輯欄。
+    void cancelDimValueEdit();
 
     QString m_selectionFilter;
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面

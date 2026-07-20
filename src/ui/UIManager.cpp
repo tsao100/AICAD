@@ -44,6 +44,7 @@
 #include "command/CommandManager.h"
 #include "command/LineCommand.h"
 #include "command/GripMoveCommand.h"
+#include "command/ConstraintCommands.h"
 #include "view/AlignmentRenderer.h"
 #include "view/Railway3DAlignmentRenderer.h"
 #include "railway/AlignmentDocument.h"
@@ -2705,6 +2706,18 @@ void UIManager::setupSketchPanel()
         // 2. 寫回 Sketch constraint，持久化偏移
         if (Sketch* sk = currentActiveSketch())
             sk->updateConstraintDimOffset(uuid, ox, oy);
+    });
+
+    // ── 雙擊尺寸線行內編輯（Enter/滑鼠右鍵確認）────────────────────────────────
+    // 實際的數值/表達式解析、CoordinateDim「x,y」格式、solveConstraints()、
+    // 命令列訊息回報，皆與 EDITCON 指令共用 command::applyDimensionEdit()。
+    connect(d->cadView, &view::CadView::dimValueEditCommitted,
+            this, [this](const QString& uuid, const QString& newExprOrValue) {
+        Sketch* sk = currentActiveSketch();
+        auto* cmdMgr = d->commandLineManager;
+        command::applyDimensionEdit(sk, uuid, newExprOrValue, cmdMgr);
+        // applyDimensionEdit 內部已呼叫 sk->solveConstraints()，
+        // 其 constraintSolved 訊號會自動觸發 ConstraintOverlayManager::rebuildAll()。
     });
 
     // 尺寸線點擊（SketchPanel 的 slot 已處理，此處轉發給 ParameterPanel）

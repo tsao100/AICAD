@@ -47,7 +47,7 @@ private:
                  const Standard_Integer mode) override;
 
     void ComputeSelection(const Handle(SelectMgr_Selection)&,
-                          const Standard_Integer) override {}  // 不可選取
+                          const Standard_Integer) override;  // ✅ 可 hover / 選取
 
     // 各種符號繪製
     void drawCoincident    (const Handle(Prs3d_Presentation)& prs);

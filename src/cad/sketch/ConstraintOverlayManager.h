@@ -59,6 +59,11 @@ public:
      */
     Handle(AIS_DimensionLine) dimLineAISForConstraint(const QString& constraintUuid) const;
 
+    /**
+     * 取得指定約束的幾何符號 AIS 物件（供 EraseCommand 互動取物時 hover 高亮使用）
+     */
+    Handle(AIS_ConstraintSymbol) symbolAISForConstraint(const QString& constraintUuid) const;
+
     /// ✅ GAP 3: 供 UIManager modeChanged 啟用/停用點 AIS 選取
     const QHash<QString, Handle(SketchPointAIS)>& pointAISMap() const { return m_pointAISMap; }
     void setVisible(bool v);

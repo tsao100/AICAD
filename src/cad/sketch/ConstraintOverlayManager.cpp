@@ -323,6 +323,12 @@ Handle(AIS_DimensionLine) ConstraintOverlayManager::dimLineAISForConstraint(
     return m_dimLines.value(constraintUuid);
 }
 
+Handle(AIS_ConstraintSymbol) ConstraintOverlayManager::symbolAISForConstraint(
+    const QString& constraintUuid) const
+{
+    return m_geomSymbols.value(constraintUuid);
+}
+
 // ── Task D: SketchPoint AIS 重建 ─────────────────────────────────────────────
 void ConstraintOverlayManager::rebuildPoints()
 {

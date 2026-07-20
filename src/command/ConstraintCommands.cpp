@@ -86,6 +86,98 @@ static Sketch* requireActiveSketch(core::Application* app,
     return sk;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// applyDimensionEdit — EDITCON 指令與尺寸線雙擊行內編輯共用的核心邏輯
+// （邏輯與 EditConCommand::execute() 的直接 UUID 分支一致，抽出供兩處呼叫）
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool applyDimensionEdit(Sketch* sk,
+                        const QString& constraintUuid,
+                        const QString& newExprOrValue,
+                        core::CommandLineManager* cmdMgr)
+{
+    if (!sk) {
+        if (cmdMgr) cmdMgr->printError("No active sketch.");
+        return false;
+    }
+
+    SketchConstraint* con = sk->findConstraint(constraintUuid);
+    if (!con) {
+        if (cmdMgr)
+            cmdMgr->printError(QString("Constraint '%1' not found.").arg(constraintUuid));
+        return false;
+    }
+    if (!con->isDimensional()) {
+        if (cmdMgr)
+            cmdMgr->printError("Only dimensional constraints can be edited.");
+        return false;
+    }
+
+    QString newExpr = newExprOrValue.trimmed();
+    if (newExpr.isEmpty()) {
+        if (cmdMgr) cmdMgr->printWarning("⚠️  Empty value — edit cancelled.");
+        return false;
+    }
+    QString oldExpr = con->paramExpr.isEmpty()
+        ? QString::number(con->value) : con->paramExpr;
+
+    // CoordinateDim：支援 "x,y" 逗號分隔格式
+    if (con->type == ConstraintType::CoordinateDim && newExpr.contains(',')) {
+        QStringList parts = newExpr.split(',');
+        if (parts.size() == 2) {
+            bool ok1, ok2;
+            double x = parts[0].trimmed().toDouble(&ok1);
+            double y = parts[1].trimmed().toDouble(&ok2);
+            if (!ok1 || !ok2) {
+                if (cmdMgr)
+                    cmdMgr->printError(
+                        QString("Invalid coordinate format: '%1' (expected x,y)").arg(newExpr));
+                return false;
+            }
+            con->value  = x;
+            con->value2 = y;
+            con->paramExpr.clear();
+            SolveResult result = sk->solveConstraints();
+            if (cmdMgr) {
+                cmdMgr->printSuccess(
+                    QString("✅ CoordinateDim updated: X=%1, Y=%2. Solved.").arg(x).arg(y));
+                reportSolveResult(result, cmdMgr);
+            }
+            return true;
+        }
+    }
+
+    bool isNumber;
+    double newValue = newExpr.toDouble(&isNumber);
+    if (!isNumber) {
+        auto* store = sk->parameterStore();
+        if (store) {
+            auto [ok, evaluated] = store->evaluate(newExpr);
+            if (!ok) {
+                if (cmdMgr)
+                    cmdMgr->printError(QString("Unknown expression: '%1'").arg(newExpr));
+                return false;
+            }
+            newValue = evaluated;
+        } else {
+            if (cmdMgr) cmdMgr->printError("No ParameterStore available.");
+            return false;
+        }
+    }
+
+    con->paramExpr = isNumber ? QString() : newExpr;
+    con->value     = newValue;
+
+    SolveResult result = sk->solveConstraints();
+    if (cmdMgr) {
+        cmdMgr->printSuccess(
+            QString("✅ Constraint updated: %1 → %2 (= %3). Solved.")
+            .arg(oldExpr).arg(newExpr).arg(newValue));
+        reportSolveResult(result, cmdMgr);
+    }
+    return true;
+}
+
 static void triggerOverlayRebuild(core::Application* app)
 {
     if (!app) return;

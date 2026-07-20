@@ -14,6 +14,7 @@
 #include "../core/EventBus.h"
 #include "../cad/Sketch.h"
 #include "../cad/sketch/DimensionLineAIS.h"
+#include "../cad/sketch/ConstraintSymbolAIS.h"
 #include "../cad/sketch/ConstraintOverlayManager.h"
 #include "../ui/UIManager.h"
 #include "../ui/SketchPanel.h"
@@ -260,8 +261,15 @@ void EraseCommand::setHighlight(const QString& uuid, bool on)
     auto* panel = uiMgr ? uiMgr->findChild<ui::SketchPanel*>() : nullptr;
     if (panel && panel->overlay()) {
         Handle(AIS_DimensionLine) dim = panel->overlay()->dimLineAISForConstraint(uuid);
-        if (!dim.IsNull())
+        if (!dim.IsNull()) {
             toggle(dim);
+            return;
+        }
+        // 3) 也找不到 → 嘗試當作幾何約束符號（AIS_ConstraintSymbol，
+        //    如 Horizontal/Vertical/Coincident 等小圖示）處理
+        Handle(cad::AIS_ConstraintSymbol) sym = panel->overlay()->symbolAISForConstraint(uuid);
+        if (!sym.IsNull())
+            toggle(sym);
     }
 }
 

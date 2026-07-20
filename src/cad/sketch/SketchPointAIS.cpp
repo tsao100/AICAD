@@ -2,7 +2,9 @@
 #include "SketchPointAIS.h"
 #include "ConstraintSolver.h"
 #include <Graphic3d_ArrayOfPolylines.hxx>
+#include <Graphic3d_ArrayOfPoints.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
+#include <Graphic3d_AspectMarker3d.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Quantity_Color.hxx>
 #include <Select3D_SensitivePoint.hxx>
@@ -54,6 +56,12 @@ void SketchPointAIS::Compute(const Handle(PrsMgr_PresentationManager)& /*pm*/,
 {
     prs->Clear();
 
+    // Endpoint：固定為紅色實心圓點，螢幕空間固定像素大小，不受縮放與約束狀態影響
+    if (m_origin == SketchPoint::Origin::Endpoint) {
+        drawEndpointMarker(prs);
+        return;
+    }
+
     // ── 顏色 ──
     Quantity_Color color;
     if (m_origin == SketchPoint::Origin::Explicit) {
@@ -75,6 +83,23 @@ void SketchPointAIS::Compute(const Handle(PrsMgr_PresentationManager)& /*pm*/,
     }
 
     drawSymbol(prs, color, halfSize);
+}
+
+void SketchPointAIS::drawEndpointMarker(const Handle(Prs3d_Presentation)& prs) const
+{
+    // Aspect_TOM_BALL：OCCT 內建的實心圓點 marker，大小以螢幕像素為單位
+    // （由 Graphic3d_AspectMarker3d 的 scale 參數決定），因此不會隨視圖縮放而改變大小。
+    Handle(Graphic3d_AspectMarker3d) markerAspect =
+        new Graphic3d_AspectMarker3d(Aspect_TOM_BALL,
+                                      Quantity_Color(Quantity_NOC_RED),
+                                      kEndpointMarkerScale);
+
+    Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(1);
+    arr->AddVertex(m_pos3D);
+
+    Handle(Graphic3d_Group) grp = prs->NewGroup();
+    grp->SetGroupPrimitivesAspect(markerAspect);
+    grp->AddPrimitiveArray(arr);
 }
 
 void SketchPointAIS::drawSymbol(const Handle(Prs3d_Presentation)& prs,
@@ -117,7 +142,7 @@ void SketchPointAIS::drawSymbol(const Handle(Prs3d_Presentation)& prs,
         seg->AddVertex(offset( 0.0,       halfSize));
         grp->AddPrimitiveArray(seg);
     } else {
-        // 正方形 □（Endpoint）
+        // 正方形 □（Intersection，交點；Endpoint 已於 Compute() 提前分流至 drawEndpointMarker）
         Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(5, 1);
         seg->AddBound(5);                          // ← 必須在 vertex 之前
         seg->AddVertex(offset(-halfSize, -halfSize));

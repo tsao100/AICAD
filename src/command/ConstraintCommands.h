@@ -31,6 +31,18 @@ namespace command {
 void reportSolveResult(const cad::SolveResult& result,
                        core::CommandLineManager* cmdMgr);
 
+/**
+ * 套用新的數值/表達式到既有的尺寸約束（EDITCON 指令與雙擊行內編輯共用）。
+ * - 一般尺寸型：newExprOrValue 可為純數字或 ParameterStore 表達式。
+ * - CoordinateDim：newExprOrValue 支援 "x,y" 逗號分隔格式。
+ * 成功時會呼叫 sk->solveConstraints()（觸發 overlay 自動重建），並視 cmdMgr
+ * 是否為 nullptr 決定是否輸出命令列訊息。回傳 true 表示套用成功。
+ */
+bool applyDimensionEdit(cad::Sketch* sk,
+                        const QString& constraintUuid,
+                        const QString& newExprOrValue,
+                        core::CommandLineManager* cmdMgr);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 幾何約束命令基底（Phase 2）
 // 子類只需指定 constraintType 和 requiredSelections
