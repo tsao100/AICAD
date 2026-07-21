@@ -278,6 +278,22 @@ public:
                        const QString& reuseCenterUuid = QString());
     QString addPolylineGeom(const QVector<QVector2D>& pts, bool closed,
                             const QVector<QString>& reuseVertexUuids = {});
+
+    /**
+     * @brief 將一串點位「退化」為多條獨立的 SketchLine，並在相鄰線段的接點
+     *        自動加上 Coincident 束制（closed=true 時，最後一段與第一段之間
+     *        也會加上 Coincident，形成封閉迴路）。
+     *
+     * 與 addPolylineGeom() 建立單一 SketchPolyline 幾何不同：這裡每一段都是
+     * 完全獨立、可個別選取/標註/設定束制的 SketchLine（與 LineCommand 連續畫線
+     * 產生的結果一致）。用於 Polyline / Rectangle / Polygon 等指令的底層實作，
+     * 使整個草圖系統的參數化行為一致。
+     *
+     * @return 依序建立的 SketchLine UUID 列表；呼叫端可視需要疊加其他束制
+     *         （例如 Rectangle 額外加上 Horizontal/Vertical）。
+     */
+    QStringList addLineChainGeom(const QVector<QVector2D>& pts, bool closed);
+
     QString addSplineGeom(const QVector<QVector2D>& pts,
                           const QVector<QString>& reuseControlPointUuids = {});
     QString addEllipseGeom(const QVector2D& center,

@@ -294,22 +294,68 @@ void DimPreviewOverlay::rebuild()
         dA = QVector2D(dimX, A.y());
         dB = QVector2D(dimX, B.y());
     } else if (m_info.type == CT::FixedAngleDim || m_info.type == CT::FixedAngle) {
-        // 角度：使用角弧形式，dA/dB 用一般線性 fallback（弧在後段單獨畫）
+        // 角度：延伸線必須與被標註的兩條線平行——沿各自線方向、從兩線交點
+        // （apex）向外延伸，而不是像線性尺寸那樣垂直於兩點連線。
+        // 這裡採用與確認後的最終顯示（AIS_DimensionLine::drawAngleDim）相同的
+        // 交點/方向計算方式，讓拖曳預覽與實際結果視覺一致。
+        bool built = false;
         if (m_info.refs.size() >= 2) {
-            A = m_info.refs[0].resolvePosition(m_sketch);
-            B = m_info.refs[1].resolvePosition(m_sketch);
+            auto* geomA = m_sketch->findGeometry(m_info.refs[0].geomUuid);
+            auto* geomB = m_sketch->findGeometry(m_info.refs[1].geomUuid);
+            auto* lnA = dynamic_cast<const cad::SketchLine*>(geomA);
+            auto* lnB = dynamic_cast<const cad::SketchLine*>(geomB);
+
+            if (lnA && lnB) {
+                QVector2D dirA = lnA->end - lnA->start;
+                QVector2D dirB = lnB->end - lnB->start;
+                float lenA = dirA.length();
+                float lenB = dirB.length();
+
+                if (lenA > 1e-6f && lenB > 1e-6f) {
+                    dirA /= lenA;
+                    dirB /= lenB;
+
+                    // 兩條無限延伸線的交點（apex）
+                    float cross = dirA.x() * dirB.y() - dirA.y() * dirB.x();
+                    QVector2D apex;
+                    if (std::abs(cross) < 1e-6f) {
+                        // 平行：退化為線 A 中點
+                        apex = (lnA->start + lnA->end) * 0.5f;
+                    } else {
+                        QVector2D ab = lnB->start - lnA->start;
+                        float t = (ab.x() * dirB.y() - ab.y() * dirB.x()) / cross;
+                        apex = lnA->start + dirA * t;
+                    }
+
+                    // 角弧半徑：由滑鼠到 apex 的距離即時決定（拖曳調整大小）
+                    float arcR = std::max(15.f, (m_mouse - apex).length());
+
+                    A  = apex;
+                    B  = apex;
+                    dA = apex + dirA * arcR;
+                    dB = apex + dirB * arcR;
+                    built = true;
+                }
+            }
         }
-        QVector2D ab = B - A;
-        float abLen = ab.length();
-        QVector2D perpDir = (abLen < 1e-4f)
-            ? QVector2D(0, 1)
-            : QVector2D(-ab.y(), ab.x()) / abLen;
-        QVector2D mid = (A + B) * 0.5f;
-        float dot = QVector2D::dotProduct(m_mouse - mid, perpDir);
-        if (dot < 0) perpDir = -perpDir;
-        float offset = std::max(std::abs(dot), 15.f);
-        dA = A + perpDir * offset;
-        dB = B + perpDir * offset;
+        if (!built) {
+            // fallback：找不到有效線幾何時，退化為舊版線性尺寸樣式
+            if (m_info.refs.size() >= 2) {
+                A = m_info.refs[0].resolvePosition(m_sketch);
+                B = m_info.refs[1].resolvePosition(m_sketch);
+            }
+            QVector2D ab = B - A;
+            float abLen = ab.length();
+            QVector2D perpDir = (abLen < 1e-4f)
+                ? QVector2D(0, 1)
+                : QVector2D(-ab.y(), ab.x()) / abLen;
+            QVector2D mid = (A + B) * 0.5f;
+            float dot = QVector2D::dotProduct(m_mouse - mid, perpDir);
+            if (dot < 0) perpDir = -perpDir;
+            float offset = std::max(std::abs(dot), 15.f);
+            dA = A + perpDir * offset;
+            dB = B + perpDir * offset;
+        }
     } else if (m_info.type == CT::FixedArcLength) {
         // 弧長：同心弧，此處用線性近似（真弧由 AIS 繪製）
         if (!m_info.refs.isEmpty()) {
@@ -397,7 +443,13 @@ void DimPreviewOverlay::rebuild()
     // ── 數值文字（紅色，字高 36，平行尺寸線，居中）──────────────────────────
     // 直徑/半徑：標籤放圓心；其他：放尺寸線中點
     {
-        QString label = QString::number(m_info.value, 'f', 2);
+        const bool isAngleType =
+            (m_info.type == CT::FixedAngleDim || m_info.type == CT::FixedAngle);
+        // 角度類型：m_info.value 內部為弧度，顯示時轉換為「度」並加上 ° 符號，
+        // 與確認後的最終標籤（AIS_DimensionLine::drawAngleDim）格式一致。
+        QString label = isAngleType
+            ? QString::number(m_info.value * 180.0 / M_PI, 'f', 2) + QStringLiteral("°")
+            : QString::number(m_info.value, 'f', 2);
         // 標籤放在尺寸線中點（dA/dB）：當滑鼠在圓外時尺寸線已平移，標籤跟著走
         QVector2D midDim = (dA + dB) * 0.5f;
         gp_Pnt wMid = toWorld(midDim);

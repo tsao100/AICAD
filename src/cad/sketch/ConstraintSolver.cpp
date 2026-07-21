@@ -641,12 +641,19 @@ void FixedAngleDimEquation::evaluate(const QVector<double>& v, QVector<double>& 
     auto itB = layout().find(refs[1].geomUuid);
     if (itA == layout().end() || itB == layout().end()) { out[0] = 0; return; }
 
-    int oA = itA->offset, oB = itB->offset;
-    // dirA = (x2A-x1A, y2A-y1A)
-    double dxA = v[oA+2] - v[oA+0];
-    double dyA = v[oA+3] - v[oA+1];
-    double dxB = v[oB+2] - v[oB+0];
-    double dyB = v[oB+3] - v[oB+1];
+    // ⚠️ 不可直接用 itA->offset + 0/1/2/3：Line 若與其他幾何共用 SketchPoint DOF
+    // （offset == -1，這其實是最常見的情況 —— 每條 SketchLine 的端點本來就各自
+    //  有獨立的 SketchPoint，因此幾乎必定共用），真正的變數位置要透過
+    // indexFor(Start/End) 解析（與 HorizontalEquation/ParallelEquation 等其他
+    // 線段類約束方程式一致），否則會存取到 v[-1] 等越界索引而觸發
+    // QVector::operator[] 的 assert crash。
+    int ax1 = itA->indexFor(GeomHandle::Start), ay1 = ax1 + 1;
+    int ax2 = itA->indexFor(GeomHandle::End),   ay2 = ax2 + 1;
+    int bx1 = itB->indexFor(GeomHandle::Start), by1 = bx1 + 1;
+    int bx2 = itB->indexFor(GeomHandle::End),   by2 = bx2 + 1;
+
+    double dxA = v[ax2] - v[ax1], dyA = v[ay2] - v[ay1];
+    double dxB = v[bx2] - v[bx1], dyB = v[by2] - v[by1];
 
     double lenA = std::sqrt(dxA*dxA + dyA*dyA);
     double lenB = std::sqrt(dxB*dxB + dyB*dyB);
@@ -666,9 +673,14 @@ void FixedAngleDimEquation::jacobian(const QVector<double>& v, int r0,
     auto itB = layout().find(refs[1].geomUuid);
     if (itA == layout().end() || itB == layout().end()) return;
 
-    int oA = itA->offset, oB = itB->offset;
-    double dxA = v[oA+2] - v[oA+0], dyA = v[oA+3] - v[oA+1];
-    double dxB = v[oB+2] - v[oB+0], dyB = v[oB+3] - v[oB+1];
+    // 同上：改用 indexFor(Start/End) 正確解析共用 SketchPoint DOF 的情況。
+    int ax1 = itA->indexFor(GeomHandle::Start), ay1 = ax1 + 1;
+    int ax2 = itA->indexFor(GeomHandle::End),   ay2 = ax2 + 1;
+    int bx1 = itB->indexFor(GeomHandle::Start), by1 = bx1 + 1;
+    int bx2 = itB->indexFor(GeomHandle::End),   by2 = bx2 + 1;
+
+    double dxA = v[ax2]-v[ax1], dyA = v[ay2]-v[ay1];
+    double dxB = v[bx2]-v[bx1], dyB = v[by2]-v[by1];
 
     double lenA2 = dxA*dxA + dyA*dyA;
     double lenB2 = dxB*dxB + dyB*dyB;
@@ -692,15 +704,15 @@ void FixedAngleDimEquation::jacobian(const QVector<double>& v, int r0,
     auto ddn_dx2B = ( dxA - dot*dxB/lenB2) / lenAB;
     auto ddn_dy2B = ( dyA - dot*dyB/lenB2) / lenAB;
 
-    J[r0][oA+0] = ddn_dx1A;
-    J[r0][oA+1] = ddn_dy1A;
-    J[r0][oA+2] = ddn_dx2A;
-    J[r0][oA+3] = ddn_dy2A;
+    J[r0][ax1] = ddn_dx1A;
+    J[r0][ay1] = ddn_dy1A;
+    J[r0][ax2] = ddn_dx2A;
+    J[r0][ay2] = ddn_dy2A;
 
-    J[r0][oB+0] = ddn_dx1B;
-    J[r0][oB+1] = ddn_dy1B;
-    J[r0][oB+2] = ddn_dx2B;
-    J[r0][oB+3] = ddn_dy2B;
+    J[r0][bx1] = ddn_dx1B;
+    J[r0][by1] = ddn_dy1B;
+    J[r0][bx2] = ddn_dx2B;
+    J[r0][by2] = ddn_dy2B;
 }
 
 // ── CoordinateDimEquation：F1 = px - value ; F2 = py - value2 ────────────

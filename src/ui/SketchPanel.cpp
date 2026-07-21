@@ -3,6 +3,7 @@
 #include "cad/ConstraintPickSession.h"   // full definition needed for connect() and method calls
 #include "core/CommandLineManager.h"
 #include <limits>
+#include <cmath>
 #include <QPair>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -457,10 +458,16 @@ void SketchPanel::refreshConstraintList()
 
         // 尺寸約束：顯示 paramExpr（若有）或 value
         if (c.isDimensional()) {
+            // 角度類型內部以弧度儲存，清單顯示一律轉換為「度」並加上 ° 符號
+            const bool isAngleType =
+                (c.type == cad::ConstraintType::FixedAngleDim ||
+                 c.type == cad::ConstraintType::FixedAngle);
+            double displayValue = isAngleType ? (c.value * 180.0 / M_PI) : c.value;
+            QString unitSuffix  = isAngleType ? QStringLiteral("°") : QString();
             QString label = c.paramExpr.isEmpty()
-                ? QString::number(c.value, 'f', 3)
+                ? QString::number(displayValue, 'f', 3) + unitSuffix
                 : QString("%1=%2").arg(c.paramExpr)
-                                  .arg(c.value, 0, 'f', 3);
+                                  .arg(displayValue, 0, 'f', 3) + unitSuffix;
             // 量測模式用灰色斜體
             item->setText(2, label);
             if (!c.driving) {
@@ -571,8 +578,13 @@ void SketchPanel::onDimensionClicked(
         if (c.uuid != uuid) continue;
         if (!c.paramExpr.isEmpty() && m_exprInput)
             m_exprInput->setText(c.paramExpr);
-        else if (m_valueInput)
-            m_valueInput->setValue(c.value);
+        else if (m_valueInput) {
+            // 角度類型內部以弧度儲存，這裡只是顯示用的快速編輯欄位，轉換為「度」較直覺
+            const bool isAngleType =
+                (c.type == cad::ConstraintType::FixedAngleDim ||
+                 c.type == cad::ConstraintType::FixedAngle);
+            m_valueInput->setValue(isAngleType ? (c.value * 180.0 / M_PI) : c.value);
+        }
         if (m_drivingCheck)
             m_drivingCheck->setChecked(c.driving);
         break;
@@ -590,16 +602,25 @@ void SketchPanel::onConstraintItemDoubleClicked(QTreeWidgetItem* item, int /*col
     for (const auto& c : m_sketch->constraints()) {
         if (c.uuid != uuid || !c.isDimensional()) continue;
 
+        // 角度類型（FixedAngleDim/FixedAngle）：內部一律以弧度儲存，
+        // 但編輯對話框顯示/輸入一律使用「度」，較符合使用者直覺。
+        const bool isAngleType =
+            (c.type == cad::ConstraintType::FixedAngleDim ||
+             c.type == cad::ConstraintType::FixedAngle);
+
         // 彈出 inline 編輯對話框
         bool ok = false;
+        double displayValue = isAngleType ? (c.value * 180.0 / M_PI) : c.value;
         QString current = c.paramExpr.isEmpty()
-                        ? QString::number(c.value, 'f', 3)
+                        ? QString::number(displayValue, 'f', 3)
                         : c.paramExpr;
 
         QString newExpr = QInputDialog::getText(
             this,
             tr("編輯尺寸約束"),
-            tr("數值或參數表達式（如 50、width、height*2）："),
+            isAngleType
+                ? tr("數值（度）或參數表達式（如 45、width、height*2）：")
+                : tr("數值或參數表達式（如 50、width、height*2）："),
             QLineEdit::Normal,
             current,
             &ok);
@@ -612,7 +633,14 @@ void SketchPanel::onConstraintItemDoubleClicked(QTreeWidgetItem* item, int /*col
         bool isNum = false;
         double numVal = newExpr.toDouble(&isNum);
 
-        Q_EMIT requestEditConstraint(uuid, newExpr, isNum ? numVal : c.value, isNum);
+        // 角度類型：使用者輸入的數字視為「度」，轉換為弧度後再交給
+        // requestEditConstraint（其內部直接寫入 SketchConstraint::value）。
+        double storedVal = c.value;
+        if (isNum) {
+            storedVal = isAngleType ? (numVal * M_PI / 180.0) : numVal;
+        }
+
+        Q_EMIT requestEditConstraint(uuid, newExpr, storedVal, isNum);
         break;
     }
 }

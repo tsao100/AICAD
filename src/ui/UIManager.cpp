@@ -6,6 +6,7 @@
  */
 
 #include "UIManager.h"
+#include <cmath>
 #include "MainWindow.h"
 #include "ToolManager.h"
 #include "FeatureBrowser.h"
@@ -155,6 +156,18 @@ public:
     /// HorizontalAlignmentEdit::elements()（即 m_elems）。
     int selectedAlignElemIdx = -1;
     view::AlignmentRenderer* selectedAlignRenderer = nullptr;
+
+    // ── LineCommand 連續線段自動重合束制 ──────────────────────────────
+    /// 目前是否處於一次連續畫線（LINE 指令）的過程中
+    bool        lineChainActive = false;
+    /// 本次連續畫線第一段的 SketchLine UUID（用於封閉迴路時的重合束制）
+    QString     lineChainFirstLineUuid;
+    /// 第一段的起點座標（用於判斷最後一點是否與起點「很接近」）
+    QVector2D   lineChainFirstStartPos;
+    /// 上一段的 SketchLine UUID（用於段與段之間的重合束制）
+    QString     lineChainPrevLineUuid;
+    /// 上一段的終點座標（用於判斷本段起點是否緊接上一段終點）
+    QVector2D   lineChainPrevEndPos;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -290,7 +303,7 @@ void UIManager::initGripSystem()
             });
     // ── D) command.started → 切換至「繪圖模式」─────────────────────────────
     bus->subscribe(core::Events::COMMAND_STARTED, this,
-                   [this](const QVariant&) {
+                   [this](const QVariant& v) {
                        // OSnap ON（point 輸入需要 snap）
                        if (d->cadView && d->cadView->snapManager())
                            d->cadView->snapManager()->setSnapEnabled(true);
@@ -299,10 +312,26 @@ void UIManager::initGripSystem()
                        if (d->gripManager) d->gripManager->setEnabled(false);
                        // 清除殘留的幾何選取高亮
                        if (d->cadView) d->cadView->clearSketchGeomSelection();
+
+                       // 每次重新啟動 LINE 系列指令，重置「連續線段自動重合束制」的追蹤狀態，
+                       // 避免將上一次畫線流程殘留的端點誤判為本次的連續段落。
+                       const QString canonicalName = v.toString();
+                       if (canonicalName == "line"
+                           || canonicalName == "construction-line"
+                           || canonicalName == "centerline") {
+                           d->lineChainActive = false;
+                           d->lineChainFirstLineUuid.clear();
+                           d->lineChainPrevLineUuid.clear();
+                       }
                    });
 
     // ── E) command 結束 → 自動回到「選取模式」────────────────────────────────
     auto onCommandEnd = [this](const QVariant&) {
+        // LINE 系列指令結束（完成/取消/失敗）→ 連續線段追蹤狀態失效
+        d->lineChainActive = false;
+        d->lineChainFirstLineUuid.clear();
+        d->lineChainPrevLineUuid.clear();
+
         if (!d->cadView) return;
         const bool inSketch =
             (d->cadView->mode() == view::InteractionMode::Sketching);
@@ -1080,10 +1109,53 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            QVector2D endPoint = lineData["endPoint"].value<QVector2D>();
 
                            // Create the line in the sketch (addLineGeom creates SketchPoints)
-                           sketch->addLineGeom(startPoint, endPoint);
+                           QString lineUuid = sketch->addLineGeom(startPoint, endPoint);
                            // rebuildRequested signal auto-triggers Document::rebuildFeature
                            // → eraseFromContext + rebuild + displayInContext
                            // DO NOT call rebuild() again here: SketchPointAIS are managed by Sketch
+
+                           // ── 連續線段自動加上「重合」束制 ──────────────────────────
+                           // LineCommand 每次都以「上一段終點」作為下一段起點呼叫本事件，
+                           // 因此本段起點理論上緊接著上一段終點；而若使用者將本段終點
+                           // 移回本次連續畫線的最初起點附近，視為封閉迴路，同樣補上重合束制。
+                           // 容許誤差：kLineJoinTol 用於判斷「段與段的銜接點」
+                           //          （理論上為同一座標，取極小值即可）；
+                           //          kLineCloseLoopTol 用於判斷「終點是否很接近起點」
+                           //          （使用者手動點擊，容許稍大的誤差，可依圖面單位調整）。
+                           constexpr float kLineJoinTol      = 1e-4f;
+                           constexpr float kLineCloseLoopTol = 1e-3f;
+
+                           if (!lineUuid.isEmpty()) {
+                               // 段與段銜接：本段起點 ≈ 上一段終點 → 加上重合束制
+                               if (d->lineChainActive
+                                   && !d->lineChainPrevLineUuid.isEmpty()
+                                   && (startPoint - d->lineChainPrevEndPos).lengthSquared()
+                                          < kLineJoinTol * kLineJoinTol) {
+                                   sketch->constrainCoincident(
+                                       cad::GeomRef(d->lineChainPrevLineUuid, cad::GeomHandle::End),
+                                       cad::GeomRef(lineUuid, cad::GeomHandle::Start));
+                               }
+
+                               // 本次連續畫線的第一段：記錄起點供之後判斷是否封閉
+                               if (!d->lineChainActive) {
+                                   d->lineChainActive          = true;
+                                   d->lineChainFirstLineUuid   = lineUuid;
+                                   d->lineChainFirstStartPos   = startPoint;
+                               }
+
+                               // 封閉迴路：本段終點 ≈ 最初起點（且不是同一條線自我重合）→ 加上重合束制
+                               if (!d->lineChainFirstLineUuid.isEmpty()
+                                   && d->lineChainFirstLineUuid != lineUuid
+                                   && (endPoint - d->lineChainFirstStartPos).lengthSquared()
+                                          < kLineCloseLoopTol * kLineCloseLoopTol) {
+                                   sketch->constrainCoincident(
+                                       cad::GeomRef(lineUuid, cad::GeomHandle::End),
+                                       cad::GeomRef(d->lineChainFirstLineUuid, cad::GeomHandle::Start));
+                               }
+
+                               d->lineChainPrevLineUuid = lineUuid;
+                               d->lineChainPrevEndPos   = endPoint;
+                           }
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -1369,15 +1441,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                return;
                            }
 
-                           // Create the polygon in the sketch
-                           // Option 1: If sketch has addPolygon method
+                           // 建立多邊形：sketch->addPolyline() 現在會自動退化為
+                           // N 條獨立 SketchLine + 相鄰角落的 Coincident 束制
+                           // （與 Line / Rectangle 指令一致，見 Sketch::addLineChainGeom）
                            sketch->addPolyline(vertices, true);
-
-                           // Option 2: If sketch needs individual lines for polygon
-                           // for (int i = 0; i < vertices.size(); ++i) {
-                           //     int nextIndex = (i + 1) % vertices.size();
-                           //     sketch->addLine(vertices[i], vertices[nextIndex]);
-                           // }
 
                            // Notify feature update
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
@@ -2443,9 +2510,15 @@ void UIManager::setupSketchPanel()
                             qWarning() << "[UIManager] Cannot evaluate:" << newExpr;
                             return;
                         }
+                        // 角度類型：參數表達式求值結果同樣視為「度」，需轉換為弧度
+                        // （與 SketchPanel::onConstraintItemDoubleClicked 的literal number
+                        //  路徑、以及 GeneralDimCommand 的一致慣例相同）。
+                        const bool isAngleType =
+                            (c.type == cad::ConstraintType::FixedAngleDim ||
+                             c.type == cad::ConstraintType::FixedAngle);
                         c.paramExpr = newExpr;
-                        c.value     = v;
-                        // 若 store 中尚未有此名稱，自動登記
+                        c.value     = isAngleType ? (v * M_PI / 180.0) : v;
+                        // 若 store 中尚未有此名稱，自動登記（登記原始度數值，維持表達式語意一致）
                         if (!sketch->parameterStore()->has(newExpr))
                             sketch->parameterStore()->setLocal(newExpr, v);
                     }
@@ -2709,8 +2782,9 @@ void UIManager::setupSketchPanel()
     });
 
     // ── 雙擊尺寸線行內編輯（Enter/滑鼠右鍵確認）────────────────────────────────
-    // 實際的數值/表達式解析、CoordinateDim「x,y」格式、solveConstraints()、
-    // 命令列訊息回報，皆與 EDITCON 指令共用 command::applyDimensionEdit()。
+    // 實際的數值/表達式解析、CoordinateDim「x,y」格式、角度度/弧度轉換、
+    // solveConstraints()、命令列訊息回報，皆與 EDITCON 指令共用
+    // command::applyDimensionEdit()。
     connect(d->cadView, &view::CadView::dimValueEditCommitted,
             this, [this](const QString& uuid, const QString& newExprOrValue) {
         Sketch* sk = currentActiveSketch();

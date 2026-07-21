@@ -409,6 +409,7 @@ CommandResult GeneralDimCommand::execute(const CommandContext& ctx)
     m_hasPending = false;
     m_pendingValue = 0.0;
     m_pendingExpr.clear();
+    m_pendingIsRawUserInput = false;
 
     // 若命令列帶入數值/表達式，預先記錄
     if (!ctx.args.isEmpty()) {
@@ -421,6 +422,7 @@ CommandResult GeneralDimCommand::execute(const CommandContext& ctx)
             if (isNum) {
                 m_pendingValue = v;
                 m_hasPending   = true;
+                m_pendingIsRawUserInput = true;
             } else if (expr != "-measured") {
                 auto [ok, ev] = sk->parameterStore()->evaluate(expr);
                 if (!ok) {
@@ -431,6 +433,7 @@ CommandResult GeneralDimCommand::execute(const CommandContext& ctx)
                 m_pendingValue = ev;
                 m_pendingExpr  = expr;
                 m_hasPending   = true;
+                m_pendingIsRawUserInput = true;
                 if (cmdMgr) cmdMgr->printMessage(
                     QString("  Expression '%1' = %2").arg(expr).arg(ev));
             }
@@ -905,12 +908,14 @@ void GeneralDimCommand::onStringInput(const QVariant& payload)
     if (m_state == State::WaitValue) {
         if (input.isEmpty()) {
             m_pendingValue = m_measuredValue;
+            m_pendingIsRawUserInput = false;   // 沿用量測值（角度已是弧度），不再轉換
         } else {
             bool isNum;
             double v = input.toDouble(&isNum);
             if (isNum) {
                 m_pendingValue = v;
                 m_pendingExpr.clear();
+                m_pendingIsRawUserInput = true;
             } else {
                 cad::Sketch* sk = activeSketch();
                 if (!sk) { cleanup(); return; }
@@ -922,6 +927,7 @@ void GeneralDimCommand::onStringInput(const QVariant& payload)
                 }
                 m_pendingValue = ev;
                 m_pendingExpr  = input;
+                m_pendingIsRawUserInput = true;
             }
         }
         commitDimension();
@@ -1051,7 +1057,11 @@ void GeneralDimCommand::transitionToWaitValue()
         return;
     }
 
-    QString defStr = QString::number(m_measuredValue, 'f', 2);
+    const bool isAngleType = (m_type == ConstraintType::FixedAngleDim ||
+                              m_type == ConstraintType::FixedAngle);
+    // 角度類型：m_measuredValue 內部為弧度，提示文字改顯示「度」讓使用者輸入直覺一致
+    double defVal = isAngleType ? (m_measuredValue * 180.0 / M_PI) : m_measuredValue;
+    QString defStr = QString::number(defVal, 'f', 2) + (isAngleType ? QStringLiteral("°") : QString());
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) {
         cmdMgr->showPrompt(
@@ -1073,7 +1083,15 @@ void GeneralDimCommand::commitDimension()
     SketchConstraint c;
     c.type           = m_type;
     c.refs           = m_refs;
-    c.value          = m_pendingValue;
+    // 角度類型（FixedAngleDim/FixedAngle）：內部一律以弧度儲存（求解器與顯示皆假設弧度）。
+    // 使用者輸入（literal number 或 expression 求值結果）視為「度」，需轉換；
+    // 若 m_pendingValue 直接沿用 m_measuredValue（使用者按 Enter 採用量測值），
+    // 該值本身已經是弧度，不能重複轉換。
+    const bool isAngleType = (m_type == ConstraintType::FixedAngleDim ||
+                              m_type == ConstraintType::FixedAngle);
+    c.value          = (isAngleType && m_pendingIsRawUserInput)
+                        ? (m_pendingValue * M_PI / 180.0)
+                        : m_pendingValue;
     c.value2         = (m_type == ConstraintType::CoordinateDim)
                        ? m_measuredValue2 : 0.0;
     c.paramExpr      = m_pendingExpr;
@@ -1151,7 +1169,7 @@ void GeneralDimCommand::cleanup()
     m_dimOffsetY     = 0.0;
     m_dimAnchor2D    = QVector2D{};
     m_hasPending     = false;
-
+    m_pendingIsRawUserInput = false;
     auto* app     = core::Application::instance();
     auto* ui      = app ? app->uiManager() : nullptr;
     auto* cadView = ui  ? ui->cadView()    : nullptr;

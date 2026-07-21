@@ -129,7 +129,14 @@ void Sketch::addLine(const QVector2D& p1, const QVector2D& p2) {
 }
 
 void Sketch::addPolyline(const QVector<QVector2D>& points, bool closed) {
-    addPolylineGeom(points, closed);
+    // ✅ 退化為多條獨立 SketchLine + 相鄰段落自動 Coincident 束制，
+    //    不再建立單一 SketchPolyline 幾何。理由：
+    //      - 每一段可個別被選取、標註尺寸、設定束制（水平/垂直/相切…）、
+    //        轉為建構線、單獨刪除或倒圓角，與 Line 指令產生的結果完全一致；
+    //      - 與 ConstraintSolver / grip 編輯 / 尺寸標註等既有管線共用同一套
+    //        SketchLine 處理邏輯，不需要為 SketchPolyline 另外維護特例。
+    //    （舊格式 SketchPolyline/addPolylineGeom 仍保留，供讀取舊檔案使用。）
+    addLineChainGeom(points, closed);
 }
 
 void Sketch::addSpline(const QVector<QVector2D>& points) {
@@ -163,7 +170,23 @@ void Sketch::addRectangle(const QVector2D& corner1, const QVector2D& corner2) {
            << QVector2D(corner2.x(), corner1.y())
            << corner2
            << QVector2D(corner1.x(), corner2.y());
-    addPolyline(points, true);
+
+    // 退化為 4 條獨立 SketchLine + 4 個角落的 Coincident 束制
+    QStringList lineUuids = addLineChainGeom(points, true);
+
+    // 補上 Horizontal/Vertical 束制，讓矩形在之後被拖曳/求解時仍維持「矩形」
+    // （否則退化後只是一個沒有形狀限制的封閉四邊形）。
+    // 邊的順序對應 points：corner1→(x2,y1) 水平、(x2,y1)→corner2 垂直、
+    //                     corner2→(x1,y2) 水平、(x1,y2)→corner1 垂直。
+    if (lineUuids.size() == 4) {
+        constrainHorizontal(lineUuids[0]);
+        constrainVertical(lineUuids[1]);
+        constrainHorizontal(lineUuids[2]);
+        constrainVertical(lineUuids[3]);
+    } else {
+        qWarning() << "[Sketch]" << name()
+                   << "addRectangle: unexpected line count" << lineUuids.size();
+    }
 }
 
 QVector3D Sketch::planeToWorld(const QVector2D& planePt) const {
@@ -1923,6 +1946,36 @@ QString Sketch::addCircleGeom(const QVector2D& center, double radius,
     Q_EMIT geometryChanged();
     Q_EMIT rebuildRequested();
     return circ->uuid;
+}
+
+QStringList Sketch::addLineChainGeom(const QVector<QVector2D>& pts, bool closed)
+{
+    QStringList lineUuids;
+    if (pts.size() < 2) {
+        qWarning() << "[Sketch]" << name() << "addLineChainGeom needs at least 2 points";
+        return lineUuids;
+    }
+
+    // Step 1：逐段建立獨立的 SketchLine（每段各自擁有獨立端點，不共用同一個 SketchPoint）
+    for (int i = 0; i < pts.size() - 1; ++i) {
+        lineUuids.append(addLineGeom(pts[i], pts[i + 1]));
+    }
+    if (closed) {
+        lineUuids.append(addLineGeom(pts.last(), pts.first()));
+    }
+
+    // Step 2：相鄰線段的接點自動加上 Coincident 束制（前一段終點 ≈ 下一段起點）
+    for (int i = 0; i + 1 < lineUuids.size(); ++i) {
+        constrainCoincident(GeomRef(lineUuids[i],     GeomHandle::End),
+                             GeomRef(lineUuids[i + 1], GeomHandle::Start));
+    }
+    // Step 3：封閉迴路：最後一段終點 與 第一段起點 重合
+    if (closed && lineUuids.size() >= 2) {
+        constrainCoincident(GeomRef(lineUuids.last(),  GeomHandle::End),
+                             GeomRef(lineUuids.first(), GeomHandle::Start));
+    }
+
+    return lineUuids;
 }
 
 QString Sketch::addPolylineGeom(const QVector<QVector2D>& pts, bool closed,

@@ -46,6 +46,11 @@ private:
     double               m_dimOffsetY    = 0.0;
     QVector2D            m_dimAnchor2D;           ///< beginPlaceDimLine 時的錨點（草圖座標）
     bool                 m_hasPending    = false; ///< execute() 帶入了預設值
+    /// true：m_pendingValue 來自使用者直接輸入（literal number 或 expression）；
+    /// false：m_pendingValue 是採用 m_measuredValue（已經是弧度，無需再轉換）。
+    /// 僅在 m_type 為 FixedAngleDim/FixedAngle 時有意義：使用者輸入視為「度」，
+    /// commitDimension() 會在此時轉換為弧度存入 SketchConstraint::value。
+    bool                 m_pendingIsRawUserInput = false;
 
     /// WaitMenu 選單選項列表，key=使用者輸入字母, value=ConstraintType
     struct MenuOption {

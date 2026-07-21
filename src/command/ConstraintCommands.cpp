@@ -121,6 +121,12 @@ bool applyDimensionEdit(Sketch* sk,
     QString oldExpr = con->paramExpr.isEmpty()
         ? QString::number(con->value) : con->paramExpr;
 
+    // 角度類型（FixedAngleDim/FixedAngle）：內部一律以弧度儲存，但使用者輸入
+    // （literal number 或 expression 求值結果）一律視為「度」，需轉換，與
+    // GeneralDimCommand 建立時、SketchPanel 編輯對話框的慣例一致。
+    const bool isAngleType = (con->type == ConstraintType::FixedAngleDim ||
+                              con->type == ConstraintType::FixedAngle);
+
     // CoordinateDim：支援 "x,y" 逗號分隔格式
     if (con->type == ConstraintType::CoordinateDim && newExpr.contains(',')) {
         QStringList parts = newExpr.split(',');
@@ -166,13 +172,13 @@ bool applyDimensionEdit(Sketch* sk,
     }
 
     con->paramExpr = isNumber ? QString() : newExpr;
-    con->value     = newValue;
+    con->value     = isAngleType ? (newValue * M_PI / 180.0) : newValue;
 
     SolveResult result = sk->solveConstraints();
     if (cmdMgr) {
         cmdMgr->printSuccess(
-            QString("✅ Constraint updated: %1 → %2 (= %3). Solved.")
-            .arg(oldExpr).arg(newExpr).arg(newValue));
+            QString("✅ Constraint updated: %1 → %2 (= %3%4). Solved.")
+            .arg(oldExpr).arg(newExpr).arg(newValue).arg(isAngleType ? "°" : ""));
         reportSolveResult(result, cmdMgr);
     }
     return true;
@@ -440,11 +446,15 @@ CommandResult DimConstraintCommand::execute(const CommandContext& ctx)
     auto* ui = app->uiManager();
     if (!ui) return CommandResult::Failure("UIManager not available.");
 
+    const bool isAngleType = (m_type == ConstraintType::FixedAngleDim ||
+                              m_type == ConstraintType::FixedAngle);
+
     // ── 解析數值或參數表達式 ─────────────────────────────────────────────────
     if (ctx.args.isEmpty()) {
-        // 提示輸入數值
-        cmdMgr->showPrompt(
-            QString("Enter %1 value or expression (e.g. 50 or width/2):").arg(name()));
+        // 提示輸入數值（角度類型明確標示單位為「度」，避免使用者誤以為是弧度）
+        cmdMgr->showPrompt(isAngleType
+            ? QString("Enter %1 value in degrees or expression (e.g. 45 or width/2):").arg(name())
+            : QString("Enter %1 value or expression (e.g. 50 or width/2):").arg(name()));
         cmdMgr->waitForInput(core::InputType::String);
         return CommandResult::Success();
     }
@@ -472,6 +482,12 @@ CommandResult DimConstraintCommand::execute(const CommandContext& ctx)
             return CommandResult::Failure("No ParameterStore available.");
         }
         cmdMgr->printMessage(QString("  Expression '%1' = %2").arg(expr).arg(value));
+    }
+
+    // 角度約束：使用者輸入（literal number 或 expression 求值結果）一律視為「度」，
+    // 但內部（SketchConstraint::value、求解器、AIS 顯示）一律使用弧度，故需在此轉換。
+    if (isAngleType) {
+        value = value * M_PI / 180.0;
     }
 
     // ── 顯示 DOF 提示（最少尺寸原則）────────────────────────────────────────
@@ -559,6 +575,12 @@ CommandResult EditConCommand::execute(const CommandContext& ctx)
         QString oldExpr = con->paramExpr.isEmpty()
             ? QString::number(con->value) : con->paramExpr;
 
+        // 角度類型（FixedAngleDim/FixedAngle）：內部一律以弧度儲存，但使用者輸入
+        // （literal number 或 expression 求值結果）一律視為「度」，需轉換，
+        // 與 GeneralDimCommand 建立時、SketchPanel 編輯對話框的慣例一致。
+        const bool isAngleType = (con->type == ConstraintType::FixedAngleDim ||
+                                  con->type == ConstraintType::FixedAngle);
+
         // CoordinateDim：支援 "x,y" 逗號分隔格式
         if (con->type == ConstraintType::CoordinateDim && newExpr.contains(',')) {
             QStringList parts = newExpr.split(',');
@@ -598,7 +620,7 @@ CommandResult EditConCommand::execute(const CommandContext& ctx)
         }
 
         con->paramExpr = isNumber ? QString() : newExpr;
-        con->value     = newValue;
+        con->value     = isAngleType ? (newValue * M_PI / 180.0) : newValue;
 
         // CoordinateDim：若第三參數提供 Y 值，一併更新（空格分隔備用格式）
         if (con->type == ConstraintType::CoordinateDim && ctx.args.size() >= 3) {
@@ -610,8 +632,8 @@ CommandResult EditConCommand::execute(const CommandContext& ctx)
 
         SolveResult result = sk->solveConstraints();
         cmdMgr->printSuccess(
-            QString("✅ Constraint updated: %1 → %2 (= %3). Solved.")
-            .arg(oldExpr).arg(newExpr).arg(newValue));
+            QString("✅ Constraint updated: %1 → %2 (= %3%4). Solved.")
+            .arg(oldExpr).arg(newExpr).arg(newValue).arg(isAngleType ? "°" : ""));
         reportSolveResult(result, cmdMgr);
         triggerOverlayRebuild(app);
         return CommandResult::Success();
