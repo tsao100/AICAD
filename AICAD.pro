@@ -345,6 +345,7 @@ SOURCES += \
     src/view/ViewManager.cpp \
     src/view/CadView.cpp \
     src/view/DimPreviewOverlay.cpp \
+    src/view/InputJig.cpp \
     src/view/RubberBand.cpp \
     #src/view/SelectionManager.cpp \
     src/view/ViewGrid.cpp \
@@ -486,6 +487,7 @@ HEADERS += \
     src/view/ViewManager.h \
     src/view/CadView.h \
     src/view/DimPreviewOverlay.h \
+    src/view/InputJig.h \
     src/view/RubberBand.h \
     #src/view/SelectionManager.h \
     src/view/ViewGrid.h \

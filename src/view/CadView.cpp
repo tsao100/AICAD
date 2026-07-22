@@ -7,6 +7,7 @@
 
 #include "CadView.h"
 #include "DimPreviewOverlay.h"
+#include "InputJig.h"
 #include "RubberBand.h"
 #include "ViewGrid.h"
 #include "cad/Feature.h"
@@ -14,6 +15,7 @@
 #include "cad/Document.h"
 #include "cad/PlaneManager.h"
 #include "cad/grips/GripManager.h"
+#include "cad/grips/AlignmentGripProvider.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "core/CommandLineManager.h"
@@ -68,6 +70,7 @@
 #include <Graphic3d_DisplayPriority.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
+#include <gp_Vec.hxx>
 #include <TColgp_Array1OfPnt2d.hxx>
 #include <BRep_Tool.hxx>
 #include <TopoDS.hxx>
@@ -246,6 +249,18 @@ public:
     QVector<QPoint>   boxSelectPolyQt;    ///< 已確定的多邊形/籬選頂點（Qt 邏輯座標），第一點＝框選起點
     QString           boxSelectShapeKeyBuffer;  ///< 累積鍵盤輸入緩衝，偵測 F / WP / CP（見 keyPressEvent）
 
+    // ── Ortho Lock（F8）+ InputJig（距離／角度輸入 Jig）───────────────────
+    // 共用一個旗標／widget：Sketch 橡皮筋取點（LINE / ALIGNMENTFIXTANGENT
+    // 皆走 mode==Sketching + RubberBand 共同路徑）與 Grip 拖曳（草圖端點、
+    // 水平線形 PI／IP）都套用同一套邏輯。
+    bool       orthoLock = false;
+    InputJig*  inputJig  = nullptr;
+
+    enum class JigContext { None, PointPick, GripDrag };
+    JigContext jigContext = JigContext::None;
+    QPointF    jigBasePointPlane;   ///< PointPick：橡皮筋上一個已確定的點（草圖平面座標）
+    gp_Pnt     jigBasePointWorld;   ///< GripDrag：拖曳起點（世界座標）
+
     Private()
         : document(nullptr)
         , rubberBand(nullptr)
@@ -333,6 +348,84 @@ CadView::CadView(QWidget* parent)
     // GDIM: 尺寸預覽用 OCCT Presentation（仿 RubberBand），不使用 Qt widget overlay
     m_dimOverlay = new DimPreviewOverlay(this);
     // context 在 initializeViewer() 後才有效，在 showEvent 中呼叫 setContext
+
+    // ── InputJig：F8 Ortho + 距離/角度輸入（新增 IP／移動 IP 共用）──────────
+    d->inputJig = new InputJig(this);
+    connect(d->inputJig, &InputJig::committed, this,
+            [this](double distance, double angleDeg) {
+                const double rad = angleDeg * M_PI / 180.0;
+                double du, dv;   // du = 沿平面 X 軸(或 East)偏移，dv = 沿平面 Y 軸(或 North)偏移
+                if (d->inputJig->isAzimuthMode()) {
+                    // 測量習慣：正北 = 0，順時針為正
+                    du = distance * std::sin(rad);
+                    dv = distance * std::cos(rad);
+                } else {
+                    // 一般數學慣例：+X 軸 = 0，逆時針為正
+                    du = distance * std::cos(rad);
+                    dv = distance * std::sin(rad);
+                }
+
+                if (d->jigContext == Private::JigContext::PointPick) {
+                    QPointF pt(d->jigBasePointPlane.x() + du,
+                               d->jigBasePointPlane.y() + dv);
+                    auto* bus = core::Application::instance()->eventBus();
+                    if (bus) {
+                        QVariantMap data;
+                        data["point"]      = QVariant::fromValue(pt);
+                        data["geomUuid"]   = QString();
+                        data["geomHandle"] = -1;
+                        bus->publish(core::Events::POINT_ACQUIRED, data);
+                    }
+                    Q_EMIT pointAcquired(pt);
+                    Q_EMIT geomRefPicked(pt, QString(), -1);
+                } else if (d->jigContext == Private::JigContext::GripDrag) {
+                    if (!d->gripManager || !d->gripManager->isGripSelected()) return;
+                    gp_Vec offset = gp_Vec(d->gripManager->planeXAxis()) * du
+                                  + gp_Vec(d->gripManager->planeYAxis()) * dv;
+                    gp_Pnt pos = d->jigBasePointWorld.Translated(offset);
+                    d->gripManager->commitDragAt(pos);
+                }
+            });
+    connect(d->inputJig, &InputJig::cancelled, this, [this]() {
+        // Jig 自己已經在收到 Escape 當下呼叫 hideJig()（見 InputJig::eventFilter），
+        // 這裡讓「Jig 作用中按 Esc」的效果精確對應「滑鼠右鍵」在同一 context
+        // 下原本的行為 —— 不要額外觸發 turnOffActiveGrips()／窗選中止／
+        // commandLineManager 那套更重的全域 Escape 流程（那是給命令列輸入框
+        // 本身按 Esc 用的，範圍比右鍵取消大很多，例如會把所有 grips 一併關閉）。
+        if (d->jigContext == Private::JigContext::PointPick) {
+            // 對應 mousePressEvent 裡「RightButton && Sketching 模式且有
+            // active command」時的行為：先發 POINT_CANCELLED，讓目前指令
+            // 自己的 handleCancelled()/cleanup() 收尾（含清除橡皮筋，見
+            // LineCommand::cleanup() → "command.request-cleanup"）。
+            auto* cmdMgr = core::Application::instance()
+                               ? core::Application::instance()->commandManager()
+                               : nullptr;
+            if (cmdMgr && cmdMgr->hasActiveCommand()) {
+                auto* bus = core::Application::instance()->eventBus();
+                if (bus) bus->publish(core::Events::POINT_CANCELLED, QVariant());
+
+                // ✅ 保險：並非每個互動指令都會訂閱 POINT_CANCELLED 來自我結束
+                // （目前只有 LineCommand／AlignmentFixTangentCommand 這樣做）。
+                // 這裡再明確呼叫 CommandManager 的權威取消 API，確保「Jig 作用
+                // 中按 Esc」一定會把目前 active 的指令一併取消掉，不會卡住。
+                // 若上面的 publish 已經讓指令 finished()（currentCommand 已被
+                // 清空），這裡會安全地變成 no-op。
+                if (cmdMgr->hasActiveCommand()) {
+                    cmdMgr->cancelCurrentCommand();
+                }
+            }
+            // 保險：即使沒有 active command，也不要留下殘影橡皮筋。
+            if (d->rubberBand) {
+                d->rubberBand->clearPoints();
+                d->rubberBand->clear();
+            }
+        } else if (d->jigContext == Private::JigContext::GripDrag) {
+            // 對應右鍵在 grip 拖曳中的既有行為範圍：只還原「這一次」拖曳，
+            // 不像 turnOffActiveGrips() 那樣把所有 grips 一併關閉。
+            if (d->gripManager) d->gripManager->cancelGrip();
+        }
+        d->jigContext = Private::JigContext::None;
+    });
 
     // ✅ Do NOT call initializeViewer() here.
     // Defer to showEvent so NSView is fully realized.
@@ -582,6 +675,25 @@ void CadView::initializeViewer() {
                 d->context->UpdateCurrentViewer();
             }
             displayAllFeatures();
+        });
+
+        // ── InputJig：新的一段橡皮筋開始／結束時，清除鎖定或隱藏 Jig ─────────
+        // 這裡只負責 Jig 的顯示狀態，實際的 rubber band 幾何更新仍由
+        // UIManager 對同一事件的訂閱處理（見 UIManager.cpp）。
+        bus->subscribe("command.update-rubber-band", this, [this](const QVariant& data) {
+            if (!d->inputJig) return;
+            const QString action = data.toMap().value("action").toString();
+            if (action == "clearAndAdd" || action == "addPoint") {
+                d->inputJig->resetLocks();
+            }
+        });
+        bus->subscribe("command.request-cleanup", this, [this](const QVariant& data) {
+            if (!d->inputJig) return;
+            if (data.toMap().value("clearRubberBand").toBool()) {
+                d->inputJig->hideJig();
+                d->inputJig->resetLocks();
+                d->jigContext = Private::JigContext::None;
+            }
         });
 
 
@@ -923,6 +1035,57 @@ void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
     if (d->gripFilter) {
         d->gripFilter->setBoxSelectActiveQuery([this]() { return isBoxSelectArmed(); });
     }
+    if (!d->gripManager) return;
+
+    d->gripManager->setOrthoLock(d->orthoLock);
+
+    // ── InputJig：Grip 拖曳（草圖端點、水平線形 PI／IP「移動 IP」）共用路徑 ──
+    connect(d->gripManager, &GripManager::gripDragStarted, this,
+            [this](const QString&) {
+                if (!d->gripManager || !d->inputJig) return;
+                d->jigContext        = Private::JigContext::GripDrag;
+                d->jigBasePointWorld = d->gripManager->dragStartPos();
+                // AlignmentGripProvider 拖曳的是水平線形 PI／IP → 用測量習慣角度
+                // （正北=0，順時針為正）；其餘（草圖端點等）用一般數學角度。
+                d->inputJig->setAzimuthMode(
+                    dynamic_cast<AlignmentGripProvider*>(d->gripManager->currentProvider()) != nullptr);
+                d->inputJig->resetLocks();
+            });
+
+    connect(d->gripManager, &GripManager::gripDragging, this,
+            [this](const QString&, const gp_Pnt& pos) {
+                if (!d->gripManager || !d->inputJig) return;
+                if (d->jigContext != Private::JigContext::GripDrag) return;
+
+                gp_Vec delta(d->jigBasePointWorld, pos);
+                const double du = delta.Dot(gp_Vec(d->gripManager->planeXAxis()));
+                const double dv = delta.Dot(gp_Vec(d->gripManager->planeYAxis()));
+                const double liveDist  = std::hypot(du, dv);
+                const double liveAngle = d->inputJig->isAzimuthMode()
+                    ? std::fmod(std::atan2(du, dv) * 180.0 / M_PI + 360.0, 360.0)
+                    : std::fmod(std::atan2(dv, du) * 180.0 / M_PI + 360.0, 360.0);
+
+                Standard_Integer sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0;
+                if (!d->view.IsNull()) {
+                    d->view->Convert(d->jigBasePointWorld.X(), d->jigBasePointWorld.Y(),
+                                      d->jigBasePointWorld.Z(), sx0, sy0);
+                    d->view->Convert(pos.X(), pos.Y(), pos.Z(), sx1, sy1);
+                }
+                const QPoint startScreen(sx0, sy0);
+                const QPoint endScreen(sx1, sy1);
+                const QPointF lineDir(endScreen.x() - startScreen.x(),
+                                       endScreen.y() - startScreen.y());
+                const QPoint distAnchor((startScreen.x() + endScreen.x()) / 2,
+                                         (startScreen.y() + endScreen.y()) / 2);
+                d->inputJig->showLive(distAnchor, startScreen, lineDir, liveDist, liveAngle);
+            });
+
+    connect(d->gripManager, &GripManager::gripDragFinished, this,
+            [this](const QString&, const gp_Pnt&, const gp_Pnt&) {
+                if (!d->inputJig) return;
+                d->inputJig->hideJig();
+                d->jigContext = Private::JigContext::None;
+            });
 }
 
 bool CadView::hasActiveGrips() const {
@@ -1027,6 +1190,16 @@ bool CadView::isBoxSelectArmed() const
     return d->boxSelectArmed;
 }
 
+bool CadView::isOrthoLocked() const
+{
+    return d->orthoLock;
+}
+
+bool CadView::isInputJigVisible() const
+{
+    return d->inputJig && d->inputJig->isJigVisible();
+}
+
 void CadView::cancelActiveBoxSelect()
 {
     if (d->boxSelectArmed) {
@@ -1054,6 +1227,15 @@ void CadView::setMode(InteractionMode mode) {
             m_snapManager->setSnapEnabled(false);
         else if (wasGetGeom && !isGetGeom)
             m_snapManager->setSnapEnabled(true);
+    }
+
+    // 離開 Sketching 模式時，隱藏 InputJig（避免殘留在畫面上）
+    if (d->mode == InteractionMode::Sketching && mode != InteractionMode::Sketching) {
+        if (d->inputJig) {
+            d->inputJig->hideJig();
+            d->inputJig->resetLocks();
+        }
+        d->jigContext = Private::JigContext::None;
     }
 
     d->mode = mode;
@@ -1655,11 +1837,15 @@ void CadView::showReturnAlignmentButton() {
     m_returnAlignmentButton->move(width() - m_returnAlignmentButton->width() - 10, 10);
     m_returnAlignmentButton->show();
     m_returnAlignmentButton->raise();
+    // 進入 Alignment edit：InputJig（新增 IP 用）預設角度採測量習慣（正北=0，順時針為正）
+    if (d->inputJig) d->inputJig->setAzimuthMode(true);
 }
 
 void CadView::hideReturnAlignmentButton() {
     if (m_returnAlignmentButton)
         m_returnAlignmentButton->hide();
+    // 離開 Alignment edit：InputJig 還原為一般數學角度（供草圖使用）
+    if (d->inputJig) d->inputJig->setAzimuthMode(false);
 }
 
 void CadView::setSuppressCoordDisplay(bool suppress)
@@ -2509,7 +2695,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     }
 
     // ✅ 如果是平面選取模式
-    if (m_selectionFilter == "plane" && event->button() == Qt::LeftButton) {
+    //    ⚠️ 額外加上 d->mode == Selecting 判斷：m_selectionFilter 在平面選取
+    //    流程開始時被設為 "plane"（見 ViewManager::onPlaneSelectionRequested），
+    //    但選完/取消後從未重設回 "all"（見下方 return 前的重設）。過去只靠
+    //    m_selectionFilter == "plane" 判斷，會讓「使用者一輩子只要選過一次
+    //    平面」之後，所有後續 Sketching 模式下的左鍵點擊都可能被誤判成平面
+    //    選取，此處補上 mode 判斷雙重保險，並在成功/取消兩個出口都重設旗標。
+    if (m_selectionFilter == "plane" && d->mode == InteractionMode::Selecting &&
+        event->button() == Qt::LeftButton) {
         if (d->context->HasDetected()) {
             Handle(AIS_InteractiveObject) picked = d->context->DetectedInteractive();
             Handle(AIS_Shape) pickedShape = Handle(AIS_Shape)::DownCast(picked);
@@ -2528,6 +2721,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 bus->publish("plane.selected", planeData);
 
                 highlightSelectablePlanes(false);
+                m_selectionFilter = "all";   // ✅ 重設，避免旗標永久卡在 "plane"
 
                 return;
             }
@@ -3036,14 +3230,80 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     if (d->mode == InteractionMode::Sketching) {
         if (d->rubberBand) {
             QPointF planePtF;
+            bool snappedByOSnap = false;
 
             // ✅ 優先使用 snap 鎖定座標（double 版）
             if (m_snapManager && m_snapManager->isSnapActive()) {
                 auto pt2d = m_snapManager->snapPoint2DF();
-                planePtF = pt2d.has_value() ? pt2d.value()
-                                            : screenToPlaneD(event->pos());
+                if (pt2d.has_value()) {
+                    planePtF = pt2d.value();
+                    snappedByOSnap = true;
+                } else {
+                    planePtF = screenToPlaneD(event->pos());
+                }
             } else {
                 planePtF = screenToPlaneD(event->pos());
+            }
+
+            const QVector<QPointF> rbPts = d->rubberBand->points();
+            const bool     hasBase = !rbPts.isEmpty();
+            const QPointF  basePt  = hasBase ? rbPts.last() : QPointF();
+
+            // ── Ortho Lock（F8）：沒有 OSnap 命中時，鎖定相對於前一點的水平/垂直方向 ──
+            //    LINE（草圖）與 ALIGNMENTFIXTANGENT（新增 IP）都走這條共用路徑。
+            if (hasBase && d->orthoLock && !snappedByOSnap) {
+                const double dx0 = planePtF.x() - basePt.x();
+                const double dy0 = planePtF.y() - basePt.y();
+                planePtF = (std::abs(dx0) >= std::abs(dy0))
+                               ? QPointF(planePtF.x(), basePt.y())
+                               : QPointF(basePt.x(), planePtF.y());
+            }
+
+            // ── InputJig：跟隨游標顯示距離／角度，支援鍵盤輸入覆寫 ────────────
+            //    覆蓋 LINE（新端點）與 ALIGNMENTFIXTANGENT（新增 IP）。
+            if (hasBase && d->inputJig) {
+                const double dx = planePtF.x() - basePt.x();
+                const double dy = planePtF.y() - basePt.y();
+                const double liveDist  = std::hypot(dx, dy);
+                const double liveAngle = d->inputJig->isAzimuthMode()
+                    ? std::fmod(std::atan2(dx, dy) * 180.0 / M_PI + 360.0, 360.0)
+                    : std::fmod(std::atan2(dy, dx) * 180.0 / M_PI + 360.0, 360.0);
+
+                d->jigContext        = Private::JigContext::PointPick;
+                d->jigBasePointPlane = basePt;
+
+                // 先套用目前已鎖定的覆寫值（若有）算出「最終點」；
+                // showLive() 內部本來就只更新「未鎖定」欄位的顯示文字，
+                // 所以下面傳入的 liveDist/liveAngle 仍是滑鼠即時值，不受影響，
+                // 但兩個標籤的螢幕錨點要反映「最終點」，才會跟橡皮筋線對得上。
+                double distOverride = 0.0, angleOverride = 0.0;
+                const bool hasDistOverride  = d->inputJig->distanceValue(distOverride);
+                const bool hasAngleOverride = d->inputJig->angleValue(angleOverride);
+                if (hasDistOverride || hasAngleOverride) {
+                    const double dist  = hasDistOverride  ? distOverride  : liveDist;
+                    const double angDg = hasAngleOverride ? angleOverride : liveAngle;
+                    const double rad   = angDg * M_PI / 180.0;
+                    double du, dv;
+                    if (d->inputJig->isAzimuthMode()) {
+                        du = dist * std::sin(rad);
+                        dv = dist * std::cos(rad);
+                    } else {
+                        du = dist * std::cos(rad);
+                        dv = dist * std::sin(rad);
+                    }
+                    planePtF = QPointF(basePt.x() + du, basePt.y() + dv);
+                }
+
+                const QPoint startScreen = planeToScreen(QVector2D(basePt));
+                const QPoint endScreen   = planeToScreen(QVector2D(planePtF));  // 反映最終（可能已被覆寫）的點
+                const QPointF lineDir(endScreen.x() - startScreen.x(),
+                                       endScreen.y() - startScreen.y());
+                const QPoint distAnchor((startScreen.x() + endScreen.x()) / 2,
+                                         (startScreen.y() + endScreen.y()) / 2);
+                d->inputJig->showLive(distAnchor, startScreen, lineDir, liveDist, liveAngle);
+            } else if (d->inputJig) {
+                d->inputJig->hideJig();
+                d->jigContext = Private::JigContext::None;
             }
 
             d->rubberBand->setCurrentPoint(planePtF);  // Phase fix: QPointF直接傳入
@@ -3392,6 +3652,16 @@ void CadView::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
+    // ── F8：正交鎖定（Ortho Lock）切換，Sketch 與 Alignment edit 共用 ────────
+    if (event->key() == Qt::Key_F8) {
+        d->orthoLock = !d->orthoLock;
+        if (d->gripManager) d->gripManager->setOrthoLock(d->orthoLock);
+        Q_EMIT statusMessageRequested(
+            d->orthoLock ? tr("Ortho ON (F8)") : tr("Ortho OFF (F8)"), 1500);
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_Escape) {
         // 窗選 / 穿越窗選進行中：取消框選，不做其他事
         if (d->boxSelectArmed) {
@@ -3400,7 +3670,11 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             event->accept();
             return;
         }
-        if (m_selectionFilter == "plane") {
+        // ⚠️ 同上：加上 d->mode == Selecting 判斷，避免 m_selectionFilter 殘留
+        //    "plane" 導致之後（例如 InputJig 正在取點/拖曳時）按 Esc 被誤判
+        //    成「取消平面選取」，讓真正該做的取消（清橡皮筋／InputJig 取消）
+        //    永遠執行不到。
+        if (m_selectionFilter == "plane" && d->mode == InteractionMode::Selecting) {
             qDebug() << "[CadView] Plane selection cancelled";
 
             core::EventBus* bus = core::Application::instance()->eventBus();
@@ -3411,6 +3685,7 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             bus->publish("plane.selected", planeData);
 
             highlightSelectablePlanes(false);
+            m_selectionFilter = "all";   // ✅ 重設，避免旗標永久卡在 "plane"
 
             return;
         }
@@ -3420,6 +3695,11 @@ void CadView::keyPressEvent(QKeyEvent* event) {
                 d->rubberBand->clearPoints();
                 d->rubberBand->clear();
             }
+            if (d->inputJig) {
+                d->inputJig->hideJig();
+                d->inputJig->resetLocks();
+            }
+            d->jigContext = Private::JigContext::None;
         }
         if (d->mode == InteractionMode::GetPoint) {
             EventBus* bus = Application::instance()->eventBus();
@@ -3456,6 +3736,16 @@ void CadView::keyPressEvent(QKeyEvent* event) {
             qDebug() << "[CadView] Spacebar pressed - finishing command";
             EventBus* bus = Application::instance()->eventBus();
             bus->publish(Events::POINT_CANCELLED, QVariant());
+            return;
+        }
+    }
+
+    // ── InputJig：Jig 可見時，直接打數字/小數點/負號＝輸入距離 ──────────────
+    if (d->inputJig && d->inputJig->isJigVisible() && !event->text().isEmpty()) {
+        const QChar ch = event->text().at(0);
+        if (ch.isDigit() || ch == QChar('.') || ch == QChar('-')) {
+            d->inputJig->beginTypedInput(event->text());
+            event->accept();
             return;
         }
     }

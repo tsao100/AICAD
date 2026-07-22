@@ -20,6 +20,7 @@
 #include "view/RubberBand.h"
 #include "view/ViewGrid.h"      // ✅ 添加
 #include <QShortcut>
+#include <QKeyEvent>
 #include "CommandLineWidget.h"
 #include "CommandInputEdit.h"
 #include "TransientCommandHistory.h"
@@ -43,7 +44,6 @@
 #include "ParameterPanel.h"  // Phase 7
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
-#include "command/LineCommand.h"
 #include "command/GripMoveCommand.h"
 #include "command/ConstraintCommands.h"
 #include "view/AlignmentRenderer.h"
@@ -871,7 +871,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         });
 
         // 同時訂閱草圖結束事件（從 CadView::sketchFinished signal 或 command）
-        bus->subscribe("sketch.editEnded", this, [this](const QVariant&) {
+        bus->subscribe("sketch.editEnded", this, [](const QVariant&) {
             // sketch.editEnded 由 onSketchEditEnded() 自己發布，避免遞迴
             // 此處僅作防禦性處理
         });
@@ -1048,7 +1048,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
         // ── Extrude 建立 ─────────────────────────────────────────────
         bus->subscribe("command.create-extrude", this,
-                       [this](const QVariant& data) {
+                       [](const QVariant& data) {
                            QVariantMap map = data.toMap();
                            QString sketchId = map["sketchId"].toString();
                            double height    = map["height"].toDouble();
@@ -2090,6 +2090,17 @@ void UIManager::setupCommandLine() {
     // ① 建立新命令列 Widget（以 cadView 為 anchor）
     d->commandLine = new CommandLineWidget(d->cadView, d->mainWindow);
 
+    // ①-a InputJig（距離/角度輸入 Jig）與 F8 正交鎖定：命令列全域按鍵攔截
+    //     （qApp->installEventFilter）預設會把所有按鍵導向命令列輸入框，
+    //     這裡開一個例外通道，讓 F8 與 InputJig 顯示中的按鍵改送回原本
+    //     的目標 widget（CadView::keyPressEvent／InputJig 自己的 QLineEdit）。
+    d->commandLine->setKeyCaptureBypassQuery([this](QKeyEvent* ke) -> bool {
+        if (!d->cadView) return false;
+        if (ke->key() == Qt::Key_F8) return true;
+        if (d->cadView->isInputJigVisible()) return true;
+        return false;
+    });
+
     // ② 注入歷程到 CommandInputEdit
     d->commandLine->inputEdit()->setHistory(
         d->commandLineManager->commandHistory());
@@ -2354,12 +2365,12 @@ void UIManager::connectCommandLineEvents() {
                    });
 
     // UIManager.cpp — connectCommandLineEvents() 或 setupSketchPanel() 加入：
-    bus->subscribe("command.start-construction-line", this, [this](const QVariant&) {
+    bus->subscribe("command.start-construction-line", this, [](const QVariant&) {
         core::Application::instance()->commandManager()
             ->executeCommand("construction-line", QStringList{});
     });
 
-    bus->subscribe("command.start-centerline", this, [this](const QVariant&) {
+    bus->subscribe("command.start-centerline", this, [](const QVariant&) {
         core::Application::instance()->commandManager()
             ->executeCommand("centerline", QStringList{});
     });    
@@ -2395,7 +2406,7 @@ void UIManager::setupSketchPanel()
 
     // ── 建構幾何信號 ─────────────────────────────────────────────
     connect(d->sketchPanel, &SketchPanel::requestAddConstructionLine,
-            this, [this] {
+            this, [] {
                 auto* sketch = core::Application::instance()->activeSketch();
                 if (!sketch) return;
                 // 此處觸發互動式 command（與 LineCommand 相似但強制 Construction）
@@ -2404,13 +2415,13 @@ void UIManager::setupSketchPanel()
             });
 
     connect(d->sketchPanel, &SketchPanel::requestAddCenterline,
-            this, [this] {
+            this, [] {
                 auto* bus = core::Application::instance()->eventBus();
                 bus->publish("command.start-centerline", QVariant{});
             });
 
     connect(d->sketchPanel, &SketchPanel::requestAddConstructionCircle,
-            this, [this] {
+            this, [] {
                 auto* bus = core::Application::instance()->eventBus();
                 bus->publish("command.start-construction-circle", QVariant{});
             });
@@ -2797,7 +2808,7 @@ void UIManager::setupSketchPanel()
     // 尺寸線點擊（SketchPanel 的 slot 已處理，此處轉發給 ParameterPanel）
     connect(d->sketchPanel,
             &SketchPanel::dimensionConstraintClicked,
-            this, [this](const QString& uuid,
+            this, [](const QString& uuid,
                          cad::ConstraintOverlayManager::Mode mode,
                          const QString& instanceId) {
         Q_UNUSED(uuid)

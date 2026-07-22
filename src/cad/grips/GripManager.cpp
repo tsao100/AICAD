@@ -6,6 +6,7 @@
 #include <IntAna_IntConicQuad.hxx>
 #include <gp_Pln.hxx>
 #include <gp_Lin.hxx>
+#include <gp_Vec.hxx>
 #include <Precision.hxx>
 
 namespace aicad::cad {
@@ -297,6 +298,22 @@ bool GripManager::mouseMoveEvent(const gp_Pnt& worldPos, int sx, int sy)
             snapDesc = fallback.description;
         }
 
+        // ── Ortho Lock（F8）：沒有其他 snap 命中時，鎖定沿平面 X/Y 軸方向 ──────
+        //    用平面自身的 X/Y 軸（m_planeX/m_planeY，草圖可能是任意方向的平面，
+        //    對齊 alignment 則預設為世界 X/Y）投影，而非直接比較世界座標差，
+        //    以確保非水平草圖平面上的 ortho 行為同樣正確。
+        if (!snapped && m_orthoLock) {
+            gp_Vec delta(m_dragStartPos, worldPos);
+            double du = delta.Dot(gp_Vec(m_planeX));
+            double dv = delta.Dot(gp_Vec(m_planeY));
+            gp_Vec offset = (std::abs(du) >= std::abs(dv))
+                                ? gp_Vec(m_planeX) * du
+                                : gp_Vec(m_planeY) * dv;
+            snapPos  = m_dragStartPos.Translated(offset);
+            snapped  = true;
+            snapDesc = "Ortho";
+        }
+
         m_lastSnapPos = snapPos;   // ← 儲存供 mousePressEvent 第二次點擊使用
 
         SnapResult result{ snapped, snapPos, snapDesc };
@@ -360,8 +377,12 @@ bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int /*sx*/, int /*sy*/
     }
 
     // ── 狀態二：已選取 grip，此次點擊 = 確認放置位置 ────────────
-    gp_Pnt finalPos = m_lastSnapPos;   // 使用 mouseMoveEvent 中最後的 snap 結果
+    finalizeDrag(m_lastSnapPos);   // 使用 mouseMoveEvent 中最後的 snap 結果
+    return true;
+}
 
+void GripManager::finalizeDrag(const gp_Pnt& finalPos)
+{
     if (m_provider)
         m_provider->onGripDragEnd(m_activeGripId, m_dragStartPos, finalPos);
     Q_EMIT gripDragFinished(m_activeGripId, m_dragStartPos, finalPos);
@@ -375,7 +396,21 @@ bool GripManager::mousePressEvent(const gp_Pnt& worldPos, int /*sx*/, int /*sy*/
 
     refreshGrips();
     qDebug() << "[GripManager] Grip placed at" << finalPos.X() << finalPos.Y() << finalPos.Z();
-    return true;
+}
+
+void GripManager::commitDragAt(const gp_Pnt& pos)
+{
+    if (!m_gripSelected || m_activeGripId.isEmpty()) return;
+
+    // 先套用最終位置到幾何（等同 mouseMoveEvent 的即時預覽），
+    // 確保 onGripDragEnd 前幾何已經反映 InputJig 指定的座標。
+    for (GripPoint& gp : m_grips) {
+        if (gp.id == m_activeGripId && gp.onDrag) {
+            gp.onDrag(pos, false);
+            break;
+        }
+    }
+    finalizeDrag(pos);
 }
 
 bool GripManager::mouseReleaseEvent(const gp_Pnt& /*worldPos*/)

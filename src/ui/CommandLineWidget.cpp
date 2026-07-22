@@ -337,6 +337,14 @@ bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
              key == Qt::Key_CapsLock);
 
         if (!isModifierOnly) {
+            // ── 例外通道：讓外部（UIManager／CadView）決定某些按鍵不被攔截 ──
+            //    用途：F8 正交鎖定切換、InputJig（距離/角度輸入 Jig）顯示中
+            //    的 Tab／數字鍵，這些都必須送達 CadView 或其子 widget（例如
+            //    InputJig 自己的 QLineEdit），而不是被導向命令列輸入框。
+            if (m_keyCaptureBypassQuery && m_keyCaptureBypassQuery(ke)) {
+                return false;   // 不攔截，交還給原本的事件傳遞流程
+            }
+
             auto* srcWidget = qobject_cast<QWidget*>(obj);
             auto* srcWindow = qobject_cast<QWindow*>(obj);
 
@@ -418,6 +426,14 @@ bool CommandLineWidget::eventFilter(QObject* obj, QEvent* event) {
                      key == Qt::Key_Alt     || key == Qt::Key_Meta   ||
                      key == Qt::Key_CapsLock|| key == Qt::Key_unknown);
                 if (!isModifierOnly) {
+                    // ── 例外通道：與上面全域攔截區塊共用同一個 query ──────────
+                    //    這裡是「來源為 m_cadView」的第二條攔截路徑（透過
+                    //    m_cadView->installEventFilter(this) 註冊），必須套用
+                    //    同一個例外規則，否則 F8／InputJig 顯示中的按鍵仍會
+                    //    在這裡被重新攔截，讓上面的例外通道形同虛設。
+                    if (m_keyCaptureBypassQuery && m_keyCaptureBypassQuery(ke)) {
+                        break;
+                    }
                     m_inputEdit->setFocus();
                     // 轉送按鍵到 m_inputEdit，讓首次按鍵就被接收，不需多按一次
                     QApplication::sendEvent(m_inputEdit, event);

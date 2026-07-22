@@ -35,6 +35,8 @@ public:
         m_planeX = xAxis;
         m_planeY = yAxis;
     }
+    gp_Dir planeXAxis() const { return m_planeX; }
+    gp_Dir planeYAxis() const { return m_planeY; }
 
     // ── 選取物件後，載入其 grip ────────────────────────────────
     IGripProvider* currentProvider() const { return m_provider.get(); }
@@ -49,6 +51,21 @@ public:
     void setMidpointSnap(bool on) { m_snapMidpoint = on; }
 
     void setSnapManager(osnap::OSnapManager* mgr) { m_snapManager = mgr; }
+
+    // ── Ortho Lock（F8）─────────────────────────────────────────
+    /// 開啟後，拖曳中若沒有其他 snap 命中，座標會被鎖定在相對於拖曳起點
+    /// 的水平/垂直方向上（依滑鼠偏移量較大的軸決定）。
+    void setOrthoLock(bool on) { m_orthoLock = on; }
+    bool isOrthoLock() const { return m_orthoLock; }
+
+    /// 拖曳起點（僅在 isGripSelected()==true 時有意義），供 InputJig 計算
+    /// 目前距離／角度顯示用。
+    gp_Pnt dragStartPos() const { return m_dragStartPos; }
+
+    /// 由 InputJig 提交數值時呼叫：等同於「第二次點擊」把 grip 放置在 pos，
+    /// 完成本次拖曳（push undo、清除拖曳狀態、重新整理 grips）。
+    /// 僅在 isGripSelected()==true 時有效。
+    void commitDragAt(const gp_Pnt& pos);
 
     // ── 滑鼠事件（由 GripEventFilter 呼叫）──────────────────────
     //bool mouseMoveEvent(const gp_Pnt& worldPos);   // returns true if grip active
@@ -94,6 +111,7 @@ private:
     void        displayHandles();
     void        eraseHandles();
     void        updateHandleColor(const QString& id, GripState state);
+    void        finalizeDrag(const gp_Pnt& finalPos);
 
     Handle(AIS_InteractiveContext) m_context;
     std::unique_ptr<IGripProvider> m_provider;   // 替換原 raw pointer
@@ -116,6 +134,7 @@ private:
     bool        m_snapEndpoint = true;
     bool        m_snapMidpoint = true;
     bool        m_enabled = true;
+    bool        m_orthoLock = false;
     osnap::OSnapManager* m_snapManager = nullptr;
     Handle(V3d_View) m_view;
 };

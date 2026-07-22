@@ -12,6 +12,9 @@
 #include <QPropertyAnimation>
 #include <QTimer>
 #include <QSettings>
+#include <functional>
+
+class QKeyEvent;
 
 namespace aicad {
 namespace ui {
@@ -54,6 +57,16 @@ public:
     // 讓 UIManager 在 alias resolve 後以正確名稱修正歷程
     void recordResolvedCommand(const QString& resolved);
     void setLastPrompt(const QString& prompt);
+
+    /// 由外部（UIManager）設定：對於每個即將被全域攔截並轉送到命令列輸入框
+    /// 的按鍵事件，先詢問這個 callback；回傳 true 時該按鍵「不」被攔截，
+    /// 讓事件正常傳遞給原本的目標 widget（例如 CadView 的 F8 正交鎖定切換、
+    /// InputJig 顯示中時的 Tab／數字輸入）。
+    /// 背景：CommandLineWidget 透過 qApp->installEventFilter(this) 全域攔截
+    /// 幾乎所有按鍵並轉送到命令列輸入框，這個 query 是唯一的例外通道。
+    void setKeyCaptureBypassQuery(std::function<bool(QKeyEvent*)> query) {
+        m_keyCaptureBypassQuery = std::move(query);
+    }
 
 signals:
     void commandSubmitted(const QString& cmd);
@@ -173,6 +186,9 @@ private:
     // 雙擊 gripper 可重置回自動對齊（選用）
     bool m_initialAlignDone = false;
     void resetAlignment();
+
+    // 全域按鍵攔截的例外通道（見 setKeyCaptureBypassQuery）
+    std::function<bool(QKeyEvent*)> m_keyCaptureBypassQuery;
 
 
     static constexpr int SINGLE_ROW_HEIGHT = 32;

@@ -159,6 +159,15 @@ public:
     /// 窗選 / 穿越窗選是否正在進行中（包含拖曳中或等待第二次點擊）。
     /// 供 GripEventFilter 判斷是否應暫時避開 grip 命中檢測，避免卡住流程。
     bool isBoxSelectArmed() const;
+
+    /// F8 正交鎖定（Ortho Lock）目前是否開啟。Sketch 與 Alignment edit 共用
+    /// 同一個旗標：草圖橡皮筋取點、Grip 拖曳（含水平線形 IP 拖曳）皆會套用。
+    bool isOrthoLocked() const;
+
+    /// InputJig（距離/角度輸入 Jig）目前是否顯示中。供 CommandLineWidget
+    /// 的全域按鍵攔截判斷是否該把按鍵放行給 CadView／InputJig 自己處理，
+    /// 而不是被導向命令列輸入框（見 UIManager::setupCommandLine）。
+    bool isInputJigVisible() const;
     /// 取消進行中的窗選/穿越窗選/籬選/多邊形選取（供 ESC 全域處理路徑呼叫，
     /// 例如 UIManager 對 CommandInputEdit::escapePressed 的處理）。
     void cancelActiveBoxSelect();
