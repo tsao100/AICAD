@@ -389,32 +389,32 @@ CadView::CadView(QWidget* parent)
     connect(d->inputJig, &InputJig::cancelled, this, [this]() {
         // Jig 自己已經在收到 Escape 當下呼叫 hideJig()（見 InputJig::eventFilter），
         // 這裡讓「Jig 作用中按 Esc」的效果精確對應「滑鼠右鍵」在同一 context
-        // 下原本的行為 —— 不要額外觸發 turnOffActiveGrips()／窗選中止／
-        // commandLineManager 那套更重的全域 Escape 流程（那是給命令列輸入框
-        // 本身按 Esc 用的，範圍比右鍵取消大很多，例如會把所有 grips 一併關閉）。
+        // 下原本的行為 —— 不多做、也不少做。
+        //
+        // 已實際追過右鍵在 PointPick（有 active command）時完整的連鎖反應：
+        //   右鍵 → publish(POINT_CANCELLED)
+        //        → LineCommand/AlignmentFixTangentCommand::handleCancelled()
+        //        → Q_EMIT finished(CommandResult::Success(...))
+        //        → CommandManager::onCommandFinished()：
+        //              cmd->cleanup(); cmd->deleteLater(); currentCommand=nullptr;
+        //              publish(COMMAND_EXECUTED)；publish(COMMAND_PROMPT, "")
+        //        → UIManager 的 COMMAND_EXECUTED 訂閱：
+        //              d->commandLine->clearCommandOptions();
+        //              d->commandLine->inputEdit()->setPlaceholderText("輸入指令或 LISP...");
+        // 也就是說，右鍵單靠 publish(POINT_CANCELLED) 就已經讓命令列完整回到
+        // 「等待下一個指令」的狀態——不需要（也不應該）額外呼叫
+        // CommandManager::cancelCurrentCommand() 或 turnOffActiveGrips() 那類
+        // 更重的路徑，那些是命令列輸入框自己按 Esc 才會走的更大範圍流程。
         if (d->jigContext == Private::JigContext::PointPick) {
-            // 對應 mousePressEvent 裡「RightButton && Sketching 模式且有
-            // active command」時的行為：先發 POINT_CANCELLED，讓目前指令
-            // 自己的 handleCancelled()/cleanup() 收尾（含清除橡皮筋，見
-            // LineCommand::cleanup() → "command.request-cleanup"）。
             auto* cmdMgr = core::Application::instance()
                                ? core::Application::instance()->commandManager()
                                : nullptr;
             if (cmdMgr && cmdMgr->hasActiveCommand()) {
                 auto* bus = core::Application::instance()->eventBus();
                 if (bus) bus->publish(core::Events::POINT_CANCELLED, QVariant());
-
-                // ✅ 保險：並非每個互動指令都會訂閱 POINT_CANCELLED 來自我結束
-                // （目前只有 LineCommand／AlignmentFixTangentCommand 這樣做）。
-                // 這裡再明確呼叫 CommandManager 的權威取消 API，確保「Jig 作用
-                // 中按 Esc」一定會把目前 active 的指令一併取消掉，不會卡住。
-                // 若上面的 publish 已經讓指令 finished()（currentCommand 已被
-                // 清空），這裡會安全地變成 no-op。
-                if (cmdMgr->hasActiveCommand()) {
-                    cmdMgr->cancelCurrentCommand();
-                }
             }
-            // 保險：即使沒有 active command，也不要留下殘影橡皮筋。
+            // 保險：即使沒有 active command，也不要留下殘影橡皮筋
+            // （右鍵沒有這行，但這裡純粹是視覺保險，不影響命令列狀態）。
             if (d->rubberBand) {
                 d->rubberBand->clearPoints();
                 d->rubberBand->clear();

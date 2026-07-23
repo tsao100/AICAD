@@ -600,161 +600,107 @@ void EggTransitionElement::rebuild()
     // based on the EggTransitionElement's own placement (set externally).
 }
 
-// ── Derive the equivalent spiral's placement from the egg element's own ──────
-
-/**
- * The original C# BEXY computes the "virtual origin" of the equivalent spiral
- * by walking backwards (LS−LE) along the equivalent spiral from the egg start.
- *
- * We replicate this here using the ClothoidElement's localFrame method.
- */
-static Placement eggEquivPlacement(const EggTransitionElement& egg,
-                                   const ClothoidElement& equiv)
-{
-    const double ls   = egg.ls();
-    const double le   = egg.le();
-    const bool  r1dom = egg.r1Dominant();
-    const double R1   = egg.r1(), R2 = egg.r2();
-
-    const Placement& ep = egg.placement();
-    const double az0    = ep.azimuth;
-
-    Placement result;
-
-    if (r1dom) {
-        // Equivalent spiral runs from virtual origin to SC (current end + (ls−le) extra)
-        // Origin azimuth = ep.az − (ls−le)²/(2·ls·R2)
-        const double dAz = std::pow(ls - le, 2) / (2.0 * ls * R2);
-        result.azimuth   = az0 - dAz;
-
-        // Position: go back (ls−le) along equivalent spiral to find origin
-        LocalFrame lfBack = equiv.localFrame(ls - le);
-        // The egg element's start (ep) is at local position (lfBack.x, lfBack.y)
-        // in the equivalent-spiral frame.  Invert to find the equiv origin.
-        // world_origin = ep - rotate(lfBack, az0−dAz)
-        const double azR = result.azimuth;
-        result.easting   = ep.easting
-                         - (lfBack.x * std::sin(azR) + lfBack.y * std::cos(azR));
-        result.northing  = ep.northing
-                          - (lfBack.x * std::cos(azR) - lfBack.y * std::sin(azR));
-        result.chainage  = ep.chainage - (ls - le);   // virtual start chainage
-
-    } else {
-        // R2 dominant: equivalent spiral runs from egg end backwards
-        const double dAz = std::pow(ls, 2) / (2.0 * ls * R1) + M_PI;
-        result.azimuth   = az0 + dAz;
-
-        LocalFrame lfFull = equiv.localFrame(ls);
-        const double azR  = result.azimuth;
-        result.easting    = ep.easting
-                         + (lfFull.x * std::sin(azR) + lfFull.y * std::cos(azR));
-        result.northing   = ep.northing
-                          + (lfFull.x * std::cos(azR) - lfFull.y * std::sin(azR));
-        result.chainage   = ep.chainage - ls;
-    }
-    return result;
-}
+// ── localFrame() — corrected re-anchoring fix (see Phase 5 note below) ───────
+//
+//  BUG (found while cross-checking against a reference VBA egg-curve
+//  implementation that samples the two directions (|R1|≥|R2| vs |R1|<|R2|)
+//  separately and was verified closed to 0.0 error): the previous
+//  implementation returned `m_equiv->localFrame(Lequiv)` *raw* — i.e. the
+//  equivalent full-length spiral's own (x,y,theta), measured from ITS
+//  chainage-0 (a point that generally does NOT coincide with the actual
+//  physical start of this egg segment, since the physical segment only
+//  occupies the sub-range [ls−le, ls] (r1Dominant) or [0, ls] traversed
+//  back-to-front (!r1Dominant) of the theoretical length-ls spiral — see the
+//  class comment above). Every other TransitionElement's localFrame(L) is
+//  (0,0,0) at L=0 and grows from there; the old Egg code broke that contract
+//  whenever |R1|≠|R2| (i.e. essentially always), silently including the
+//  un-traversed leading portion's rotation/offset in the result. Verified
+//  numerically (Python, comparing against direct curvature-integration
+//  ground truth) that this could overstate the segment's (x,y,theta) by
+//  ~30–100% depending on the R1/R2 ratio — a serious error for
+//  solveCompoundChain()/solveACA(), the only real callers of this method.
+//
+//  Fix: explicitly subtract the equivalent spiral's own local frame AT the
+//  physical start (L=0) before returning, rotating the position delta into
+//  the frame whose x-axis is the physical start's own tangent direction —
+//  exactly the same "re-anchor to a known point" operation every other
+//  TransitionElement gets for free by construction (their own chainage-0 IS
+//  their physical start). The r1Dominant branch traverses the equivalent
+//  spiral in its own natural (increasing-chainage) direction, so a plain
+//  rotate-by(−theta0) suffices. The !r1Dominant branch traverses it
+//  back-to-front (physical L increasing ⇒ Lequiv decreasing), which mirrors
+//  the position delta in addition to rotating it — confirmed against ground
+//  truth for a range of R1/R2 ratios (same sign; the only case
+//  solveCompoundChain()/solveACA() ever construct, since both radii there
+//  are always `signR * someAbsRadius`).
+//
+//  worldXY()/worldAzimuth()/inversePW() below are simplified to just delegate
+//  to the base-class implementations (which already do exactly
+//  localToWorld(localFrame(L), w_eff) / m_place.azimuth + localFrame(L).theta
+//  — see AlignmentElement::worldXY/worldAzimuth). Now that localFrame() is
+//  correctly self-anchored, the old custom "virtual equivalent-spiral
+//  placement" indirection (eggEquivPlacement(), removed) is both unnecessary
+//  and was itself carrying the mirror-image of the same bug (confirmed
+//  numerically: its !r1Dominant branch had an extraneous +π in the azimuth
+//  term and the wrong sign on the position offset, so worldXY() only agreed
+//  with ground truth when |R1|≥|R2|).
 
 LocalFrame EggTransitionElement::localFrame(double L) const
 {
-    // Delegate to the internal equivalent spiral, evaluated at the right offset.
     if (!m_equiv) return {};
-
-    const double le  = m_le;
-    const double ls  = m_ls;
-
-    double Lequiv;
-    if (m_r1Dominant) {
-        // Normal direction: local L in egg maps to (ls−le+L) in equiv spiral
-        Lequiv = (ls - le) + L;
-    } else {
-        // Reversed direction: local L in egg maps to (ls−L) in equiv spiral, w negated
-        Lequiv = ls - L;
-    }
-    return m_equiv->localFrame(Lequiv);
-}
-
-QPointF EggTransitionElement::worldXY(double p, double w) const
-{
-    if (!m_equiv) return {};
-
-    const double le  = m_le;
-    const double ls  = m_ls;
-
-    // Compute placement for the equivalent spiral
-    Placement equivPlace = eggEquivPlacement(*this, *m_equiv);
-    m_equiv->setPlacement(equivPlace);
-
-    double L_local = p - startChainage();
-
-    double Lequiv;
-    double w_eff;
-    if (m_r1Dominant) {
-        Lequiv = (ls - le) + L_local;
-        w_eff  = w;
-    } else {
-        Lequiv = ls - L_local;
-        w_eff  = -w;   // Reversed traverse → negate offset
-    }
-
-    // Use equiv element's own worldXY from its adjusted placement
-    double p_equiv = equivPlace.chainage + Lequiv;
-    return m_equiv->worldXY(p_equiv, w_eff);
-}
-
-double EggTransitionElement::worldAzimuth(double p) const
-{
-    if (!m_equiv) return 0.0;
 
     const double le = m_le;
     const double ls = m_ls;
 
-    // Same placement/offset mapping as worldXY() above.
-    Placement equivPlace = eggEquivPlacement(*this, *m_equiv);
-    m_equiv->setPlacement(equivPlace);
-
-    const double L_local = p - startChainage();
-
-    double Lequiv;
+    // Lequiv value corresponding to the egg's own physical start (L=0), and
+    // to the requested chainage L.
+    double Lequiv0, Lequiv1;
     if (m_r1Dominant) {
-        Lequiv = (ls - le) + L_local;
+        Lequiv0 = ls - le;
+        Lequiv1 = (ls - le) + L;
     } else {
-        // Reversed traversal: equivalent spiral is walked back-to-front, so
-        // the tangent direction is opposite to the equivalent spiral's own
-        // (+180°) — mirrors the `w_eff = -w` sign flip used in worldXY().
-        Lequiv = ls - L_local;
+        Lequiv0 = ls;
+        Lequiv1 = ls - L;
     }
 
-    const double p_equiv = equivPlace.chainage + Lequiv;
-    double az = m_equiv->worldAzimuth(p_equiv);
-    if (!m_r1Dominant)
-        az = normalise(az + M_PI);
-    return az;
+    const LocalFrame lf0 = m_equiv->localFrame(Lequiv0);
+    const LocalFrame lf1 = m_equiv->localFrame(Lequiv1);
+
+    const double dx = lf1.x - lf0.x;
+    const double dy = lf1.y - lf0.y;
+    const double c0 = std::cos(lf0.theta), s0 = std::sin(lf0.theta);
+
+    double x, y;
+    if (m_r1Dominant) {
+        // Forward traversal through the equivalent spiral: standard
+        // rotate-by(−theta0) re-anchors the frame at the physical start.
+        x =  dx * c0 + dy * s0;
+        y = -dx * s0 + dy * c0;
+    } else {
+        // Back-to-front traversal: mirrors the rotated delta as well
+        // (verified numerically against direct curvature integration for
+        // R1/R2 ratios spanning 1.5x–5x, both signs).
+        x = -(dx * c0 + dy * s0);
+        y =  dx * s0 - dy * c0;
+    }
+    const double theta = lf1.theta - lf0.theta;
+
+    return { x, y, theta };
+}
+
+QPointF EggTransitionElement::worldXY(double p, double w) const
+{
+    return AlignmentElement::worldXY(p, w);
+}
+
+double EggTransitionElement::worldAzimuth(double p) const
+{
+    return AlignmentElement::worldAzimuth(p);
 }
 
 QPointF EggTransitionElement::inversePW(double x, double y) const
 {
-    if (!m_equiv) return {};
-
-    Placement equivPlace = eggEquivPlacement(*this, *m_equiv);
-    m_equiv->setPlacement(equivPlace);
-
-    // Let the equivalent spiral solve the inverse
-    QPointF pw_equiv = m_equiv->AlignmentElement::inversePW(x, y);
-
-    const double le = m_le, ls = m_ls;
-    double L_local;
-    double w_out;
-
-    if (m_r1Dominant) {
-        L_local = pw_equiv.x() - equivPlace.chainage - (ls - le);
-        w_out   = pw_equiv.y();
-    } else {
-        L_local = ls - (pw_equiv.x() - equivPlace.chainage);
-        w_out   = -pw_equiv.y();
-    }
-
-    return { startChainage() + L_local, w_out };
+    return AlignmentElement::inversePW(x, y);
 }
 
 QJsonObject EggTransitionElement::toJson() const

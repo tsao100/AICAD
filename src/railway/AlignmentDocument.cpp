@@ -980,6 +980,55 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
                 t2 = rawCurveTypeToSpiralType(sPt.curveType);
             }
 
+            // 兩端 Tangent 夾角（真實轉角 Δ = 圓弧弧心角 + 緩和曲線各自的
+            // L/(2R) 轉角，直接由量測到的半徑／弧長算出，不經過方位角相減
+            // 再 fold 到 (-π, π] 的正規化步驟）若 >= 180 度，addSCS() 依附
+            // 的「切線交點」重建法會失效：T = R·tan(Δ/2) 在 Δ→180° 時發散
+            // （交點跑到無窮遠或錯誤的一側），無法用來定位 Floating 圓弧。
+            // 此時改為忠實使用量測到的圓弧兩端座標／圓心直接建立 Fixed
+            // CircularArc（fixedArc），若群組內仍有緩和曲線，則以
+            // addLC()/addCA()（Floating Spiral，長度由 solver 反解，仿
+            // Line-Clothoid／Clothoid-Arc 既有模式）分別接在 Fixed Tangent
+            // 與這段 Fixed Arc 之間（floatSpiral），而非併入 addSCS() 的
+            // Floating SCS 群組。
+            const double arcCentralAngle = std::abs(cPt.length) / radius;
+            const double spiralAngle1    = (L1 > 1e-9) ? L1 / (2.0 * radius) : 0.0;
+            const double spiralAngle2    = (L2 > 1e-9) ? L2 / (2.0 * radius) : 0.0;
+            const double totalDeflection = arcCentralAngle + spiralAngle1 + spiralAngle2;
+
+            if (totalDeflection >= M_PI - 1e-9) {
+                const AlignmentPoint& p0 = rawPts[buf[cPos].ptIdx];
+                const AlignmentPoint& p1 = rawPts[buf[cPos].ptIdx + 1];
+                CircularArcElement arcElem(p0.radius);
+                Placement place{ p0.chainage, p0.easting, p0.northing, p0.azimuth };
+                arcElem.setPlacement(place);
+                arcElem.setLength(p0.length);
+
+                int arcIdx = addFixedCurve(ptXY(p0), ptXY(p1), arcElem.centreXY(), radius);
+
+                if (arcIdx >= 0 && L1 > 1e-9) {
+                    const int lcIdx = addLC(tanBefore, arcIdx, t1);
+                    if (lcIdx >= 0) ++arcIdx;   // spiralIn inserted immediately before the arc
+                }
+                if (arcIdx >= 0 && L2 > 1e-9) {
+                    addCA(arcIdx, tanAfter, t2);
+                }
+
+                // Both addFixedCurve() and addLC()/addCA() here always insert
+                // at (or push past) the current end of m_elems -- by
+                // construction every entry in tangentElemIdx still refers to
+                // a strictly earlier index, so unlike the addSCS()/
+                // addCompoundChain() branches, no tangentElemIdx shift is
+                // required for later groups in this loop.
+                qDebug() << "[HorizontalAlignmentEdit] seedFromRawPoints:"
+                            " deflection angle >= 180 deg at raw point"
+                         << buf.first().ptIdx << "-- reconstructed as Fixed"
+                            " CircularArc" << ((L1 > 1e-9 || L2 > 1e-9)
+                                ? "+ floating transition spiral(s)" : "")
+                         << "instead of tangent-intersection Floating SCS";
+                continue;
+            }
+
             {
                 const int sizeBefore = m_elems.size();
                 addSCS(tanBefore, tanAfter, radius, L1, L2, t1, t2);

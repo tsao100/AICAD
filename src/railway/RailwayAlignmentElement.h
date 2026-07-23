@@ -153,24 +153,25 @@ public:
      * @param p  Chainage [m]
      * @param w  Lateral offset [m]; POSITIVE = LEFT of direction of travel.
      *
-     * Virtual: EggTransitionElement overrides this to recompute its internal
-     * equivalent-spiral placement (eggEquivPlacement()) before delegating,
-     * which the generic base implementation (localToWorld() using this
-     * element's own m_place) cannot do correctly. Without `virtual` here,
-     * calls through a base AlignmentElement& — which is how every other
-     * part of the codebase holds elements (elementAt(), TrackCenterLine's
-     * element list, etc.) — would silently hide EggTransitionElement's
-     * override and use the wrong placement, producing incorrect 3D geometry
-     * for CSC-style compound curves (observed on G02U).
+     * Virtual: kept virtual so EggTransitionElement can override it (see
+     * that class). Historically the override had to recompute an internal
+     * equivalent-spiral placement (eggEquivPlacement()) because
+     * EggTransitionElement::localFrame() was not self-anchored at its own
+     * physical start; that bug is fixed as of the Phase 5 localFrame() fix
+     * (see RailwayAlignmentElement.cpp), so EggTransitionElement::worldXY()
+     * now just delegates straight back to this base implementation. Kept
+     * `virtual` regardless so a future subclass with a genuine placement
+     * quirk isn't silently bypassed when held through a base
+     * AlignmentElement& (elementAt(), TrackCenterLine's element list, etc.).
      */
     virtual QPointF worldXY(double p, double w = 0.0) const;
 
     /**
      * @brief Tangent azimuth [rad, CW from N] at chainage @p p.
      *
-     * Virtual for the same reason as worldXY() above: EggTransitionElement
-     * needs to evaluate this against its internal equivalent-spiral
-     * placement rather than this element's own m_place.
+     * Virtual for the same reason as worldXY() above. EggTransitionElement's
+     * override now simply delegates here too (see that class and the
+     * Phase 5 localFrame() fix note in RailwayAlignmentElement.cpp).
      */
     virtual double worldAzimuth(double p) const;
 

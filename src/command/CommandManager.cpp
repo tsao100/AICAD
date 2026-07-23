@@ -397,21 +397,35 @@ void CommandManager::cancelCurrentCommand() {
         qDebug() << "[CommandManager] No command to cancel";
         return;
     }
-    
-    QString cmdName = d->currentCommand->name();
+
+    Command* cmd = d->currentCommand;
+    QString cmdName = cmd->name();
     qDebug() << "[CommandManager] Cancelling command:" << cmdName;
-    
-    if (d->currentCommand->canCancel()) {
-        d->currentCommand->cancel();
-        
+
+    if (cmd->canCancel()) {
+        cmd->cancel();
+
         Q_EMIT commandCancelled(cmdName);
-        
+
         // 透過 EventBus 發布事件
         if (Application* app = Application::instance()) {
             if (EventBus* bus = app->eventBus()) {
                 bus->publish(Events::COMMAND_CANCELLED, cmdName);
+                // ✅ 不論指令本身是否有另外訂閱 POINT_CANCELLED 之類的事件來
+                //    自我收尾，這裡都要把命令列的提示重設回「等待下一個指令」，
+                //    否則使用者會看到舊的提示文字卡著不動。
+                bus->publish(Events::COMMAND_PROMPT, QString());
             }
         }
+
+        // ✅ 過去這裡漏了完整收尾：只呼叫了 cancel()，沒有 cleanup()／
+        //    deleteLater()／把 d->currentCommand 歸零，導致 CommandManager
+        //    誤以為指令仍在執行中，後續指令送不進來。這裡比照
+        //    onCommandFinished() 的收尾方式，確保「取消」等同於「指令徹底
+        //    結束」，讓命令列真正回到可以接受下一個指令的狀態。
+        cmd->cleanup();
+        cmd->deleteLater();
+        d->currentCommand = nullptr;
     } else {
         qWarning() << "[CommandManager] Command cannot be cancelled:" << cmdName;
     }
