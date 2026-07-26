@@ -35,6 +35,7 @@
 #include "AlignmentDocument.h"
 #include "RailwayAlignment.h"
 #include "RailwayAlignmentElement.h"
+#include "AlignmentNLSolver.h"
 
 #include <QPointF>
 #include <QVector>
@@ -197,6 +198,73 @@ struct SolvedACA
     QPointF arc2EndPoint;      ///< Original arc2 end (PT₂), unchanged
     double  arc2Len  = 0.0;   ///< Trimmed arc2 length  SC₂ → PT₂ [m]
     double  azSC2    = 0.0;   ///< Forward azimuth at SC₂ [rad]
+};
+
+// ============================================================================
+//  SolvedReverseSpiral  — unknown-length S1><S2 between Fixed Arc → Fixed Arc
+//  （曲率方向相反、中間過零，見 ReverseSpiral_Command_實作計畫.md 第 2 節）
+// ============================================================================
+
+/**
+ * @brief Result of solveReverseSpiral(): Arc₁ → SpiralIn(S1) → SpiralOut(S2)
+ *        → Arc₂, where Arc₁ and Arc₂ turn in OPPOSITE directions and S1/S2
+ *        meet at a curvature-zero junction point J (no intervening arc).
+ *
+ * Unlike solveACA() (same-direction Egg transition, curvature never reaches
+ * zero, zero degrees of freedom given R1≠R2), this configuration has a
+ * genuine **1-parameter solution family** (see plan doc §0, §2): for any
+ * L1, there is exactly one matching L2 (see solveReverseSpiral()'s inner
+ * closed-form + bisection), but which point of that family is "the" answer
+ * depends on the caller-supplied ReverseSpiralStrategy.
+ *
+ * Both arcs are trimmed: Arc₁ new-PT = arc1TrimPoint; Arc₂ new-PC =
+ * arc2TrimPoint. Coordinate / azimuth conventions identical to SolvedACA.
+ */
+struct SolvedReverseSpiral
+{
+    bool    valid       = false;
+
+    // Trimmed Arc₁  (original arc1-start → arc1TrimPoint)
+    QPointF arc1StartPoint;     ///< Original arc1 start (PC₁), unchanged
+    QPointF arc1TrimPoint;      ///< Trimmed arc1 new-PT = start of S1
+    double  arc1Len     = 0.0;  ///< Trimmed arc1 length PC₁ → arc1TrimPoint [m]
+    double  azArc1Trim  = 0.0;  ///< Forward azimuth at arc1TrimPoint [rad]
+
+    // Spiral S1  (arc1TrimPoint → junction, curvature 1/R1 → 0)
+    double  length1     = 0.0;  ///< Solved S1 length [m]
+    double  R1          = 0.0;  ///< Arc₁ radius (absolute) [m]
+
+    /** Curvature-zero junction point where S1 and S2 meet (S1 end == S2 start). */
+    QPointF junction;
+    double  junctionAzimuth = 0.0;  ///< Forward azimuth at the junction [rad]
+
+    // Spiral S2  (junction → arc2TrimPoint, curvature 0 → 1/R2)
+    double  length2     = 0.0;  ///< Solved S2 length [m]
+    double  R2          = 0.0;  ///< Arc₂ radius (absolute) [m]
+
+    // Trimmed Arc₂  (arc2TrimPoint → original arc2-end)
+    QPointF arc2TrimPoint;      ///< Trimmed arc2 new-PC = end of S2
+    QPointF arc2EndPoint;       ///< Original arc2 end (PT₂), unchanged
+    double  arc2Len     = 0.0;  ///< Trimmed arc2 length arc2TrimPoint → PT₂ [m]
+    double  azArc2Trim  = 0.0;  ///< Forward azimuth at arc2TrimPoint [rad]
+
+    int     iterations   = 0;   ///< Bisection iterations actually used
+    double  residualNorm = 0.0; ///< Converged |junction azimuth mismatch| [rad]
+                                 ///< (see solveReverseSpiral() — this is the
+                                 ///< residual the inner solve drives to 0;
+                                 ///< kept for unit-test tolerance checks)
+};
+
+/**
+ * @brief One sample of the 1-parameter reverse-spiral solution family, as
+ *        produced by AlignmentSolver::analyzeReverseSpiralFamily() for
+ *        preview purposes (ReverseSpiralCommand step 2 in the plan doc).
+ */
+struct ReverseSpiralFamilySample
+{
+    double  length1 = 0.0;
+    double  length2 = 0.0;
+    QPointF junction;
 };
 
 // ============================================================================
@@ -475,6 +543,87 @@ public:
         QPointF arc2Center, double arc2Radius,
         QPointF arc2End,    double arc2AzEnd,
         SpiralType spiralType = SpiralType::Clothoid);
+
+    /**
+     * @brief 分析兩個曲率方向相反的 Fixed CircularArc 之間，是否存在反向
+     *        緩和曲線（S1><S2，中間無圓弧）解族，並回傳幾組代表性樣本。
+     *
+     * 對應 ReverseSpiral_Command_實作計畫.md 第 2.2 節：對外層 L1 掃描
+     * 若干樣本點，每個樣本內層以封閉式（無需疊代，見 solveReverseSpiral()
+     * 實作說明的旋轉對稱推導）算出對應的 L2；因此本函式本身不需要疊代，
+     * 純粹是「掃描 + 找出每個 L1 對應的 L2」。
+     *
+     * 參數與 solveACA() 完全一致（同樣的 arc1/arc2 anchor 慣例），額外
+     * 要求 arc1、arc2 的轉向必須相反（見下方 @return 說明），否則直接
+     * 回傳 false（不構成反向緩和曲線，應改用 solveACA()）。
+     *
+     * @return false：兩弧轉向相同（非反向緩和曲線情境）、或半徑 ≈ 0、
+     *         或兩圓幾何上不存在任何交會（例如圓心距過近/過遠）。
+     *         true：outSamples 至少含 1 筆樣本（sampleCount 上限，實際
+     *         可能因幾何限制而略少）。
+     */
+    static bool analyzeReverseSpiralFamily(
+        QPointF arc1Center, double arc1Radius,
+        QPointF arc1Start,  double arc1AzStart,
+        QPointF arc2Center, double arc2Radius,
+        QPointF arc2End,    double arc2AzEnd,
+        SpiralType type1, SpiralType type2,
+        QVector<ReverseSpiralFamilySample>& outSamples,
+        int sampleCount = 8);
+
+    /**
+     * @brief 在 analyzeReverseSpiralFamily() 確認解族存在後，依
+     *        ReverseSpiralStrategy 將 1 自由度解族收斂為唯一解。
+     *
+     * 完整推導見 ReverseSpiral_Command_實作計畫.md 第 2.3 節與本檔
+     * AlignmentSolver.cpp 中 solveReverseSpiral() 實作前的長篇註解
+     * （旋轉對稱 + 兩圓交點，取代逐點疊代）。
+     *
+     * @param strategy       見 AlignmentDocument.h 的 ReverseSpiralStrategy。
+     * @param strategyParam  依 strategy 意義不同（FixL1/FixL2 為長度 [m]、
+     *                       TotalLength 為 L1+L2 [m]、FixedAValue 為 A 值）；
+     *                       EqualLength / EqualAValue / PickJunction 不使用。
+     * @param pickedJunctionHint 僅 PickJunction 使用：使用者點擊的概略
+     *                       反曲點，取解族中最接近此點的成員。
+     * @return SolvedReverseSpiral，valid==true 時 length1/length2/junction
+     *         等欄位皆已收斂（容差沿用既有 solveLC/solveCA 的 0.1 mm 慣例）。
+     */
+    static SolvedReverseSpiral solveReverseSpiral(
+        QPointF arc1Center, double arc1Radius,
+        QPointF arc1Start,  double arc1AzStart,
+        QPointF arc2Center, double arc2Radius,
+        QPointF arc2End,    double arc2AzEnd,
+        SpiralType type1, SpiralType type2,
+        ReverseSpiralStrategy strategy, double strategyParam,
+        QPointF pickedJunctionHint = QPointF());
+
+    /**
+     * @brief LM (Levenberg-Marquardt) 版本的 solveReverseSpiral()，供
+     *        AlignmentSolver_LM統一升級計畫.md Phase 2「影子驗證」使用。
+     *
+     * 與 solveReverseSpiral() 共用完全相同的輸入/輸出簽名與底層幾何殘差
+     * （檔案內 reverseSpiralResidual() 這個 file-local helper——旋轉對稱
+     * ＋兩圓交點的封閉式推導本身不變，兩個版本的差異純粹在「怎麼把
+     * (L1,L2) 收斂到殘差=0」：solveReverseSpiral() 用巢狀 bisection（外層
+     * L1、內層 L2，EqualLength/TotalLength/EqualAValue 三種策略還要再包一
+     * 層外層 bisection）；本函式改用單一一次 AlignmentNLSolver（2 個未知
+     * 數 [L1,L2]、2 條殘差：reverseSpiralResidual + strategy 對應的第二
+     * 條），把「巢狀 bisection」壓成「一次 2×2 聯立解」。
+     *
+     * 呼叫端（單元測試）應該對相同輸入分別呼叫兩個版本，比較
+     * length1/length2/junction 是否在 1mm 容差內一致，通過後才能考慮把
+     * solveReverseSpiral() 的預設實作切換過來（見升級計畫 Phase 2 交付
+     * 順序）；在切換之前，本函式僅供交叉驗證使用，尚未接入
+     * HorizontalAlignmentEdit::addReverseSpiral() / solve() 的正式路徑。
+     */
+    static SolvedReverseSpiral solveReverseSpiralLM(
+        QPointF arc1Center, double arc1Radius,
+        QPointF arc1Start,  double arc1AzStart,
+        QPointF arc2Center, double arc2Radius,
+        QPointF arc2End,    double arc2AzEnd,
+        SpiralType type1, SpiralType type2,
+        ReverseSpiralStrategy strategy, double strategyParam,
+        QPointF pickedJunctionHint = QPointF());
 
     /**
      * @brief 求解 S0 C0 S1 C1 ... Sn 複合緩和曲線鏈結（N≥2 個圓弧）。

@@ -63,6 +63,18 @@ public:
 
     bool isVisible() const { return m_visible; }
 
+    /**
+     * @brief 目前使用者在 3D 檢視中，透過點擊本疊加折線所選取的
+     *        TrackCenterLine（可多選，沿用 CadView 既有的 AIS 選取機制／
+     *        Shift 疊加選取）。
+     *
+     *        實作方式：每條折線建立時已透過
+     *        CadView::registerSketchGeomAIS() 登錄反查資料，這裡直接檢查
+     *        每個 overlay AIS 物件是否位於 AIS_InteractiveContext 目前的
+     *        選取集合中（IsSelected()）。
+     */
+    QList<railway::TrackCenterLine*> selectedTcls() const;
+
 private:
     /** 為單一 TrackCenterLine 建立 3D 折線（局部座標，Z 為實際高程）。 */
     Handle(AIS_Shape) build3DPolyline(const railway::TrackCenterLine* tcl) const;
@@ -75,6 +87,10 @@ private:
 
     CadView* m_cadView = nullptr;
     QList<Handle(AIS_InteractiveObject)> m_overlays;
+    QList<railway::TrackCenterLine*>     m_overlayTcl;   ///< 與 m_overlays 一一對應
+                                                          ///< （build3DPolyline() 可能對
+                                                          ///< 某些 tcl 回傳 null 而跳過，
+                                                          ///< 故不可假設與 m_tcls 索引相同）
     QList<railway::TrackCenterLine*>     m_tcls;         ///< 目前訂閱同步中的線路清單
     QList<QMetaObject::Connection>       m_connections;  ///< dataChanged 訂閱控制代碼
     bool m_visible = false;

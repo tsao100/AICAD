@@ -137,7 +137,15 @@ struct SnapCandidate {
 //  Snap 設定
 // ============================================================================
 struct OSnapSettings {
-    SnapTypes  enabledTypes     = SnapType::Standard;
+    // ✅ 修正：Alignment 四種 snap（PI/TC/Mid/Perp）預設一併開啟。
+    // 先前只有 Standard（Endpoint|Midpoint|Center|Quadrant）預設開啟，
+    // Alignment 相關類型維持關閉狀態，使用者必須自行在 OSnap 工具列上多點
+    // 4 個額外圖示才會生效——這在多輪追查中被反覆誤判成「資料沒接上」的
+    // 各種管線問題，但實際上管線本身沒有問題，只是這幾個開關預設是關的，
+    // FC/AS/FT 等命令的取點自然「看起來」完全抓不到 alignment 鎖點。
+    SnapTypes  enabledTypes     = SnapType::Standard | SnapType::AlignmentPI |
+                                   SnapType::AlignmentTC | SnapType::AlignmentMid |
+                                   SnapType::AlignmentPerp;
     double     pickPixelRadius  = 12.0;   ///< 螢幕吸附半徑（像素）
     double     magnetRadius     = 8.0;    ///< 磁吸半徑（像素），進入此範圍才鎖定
     bool       showTooltip      = true;   ///< 顯示吸附類型提示

@@ -820,31 +820,19 @@ SolvedACA AlignmentSolver::solveACA(
         return result;
     }
 
-    // ── Determine turn signs from arc centres relative to an initial guess ──
-    //   signR1 = +1 if Arc₁ turns right, -1 if left.
-    //   signR2 = +1 if Arc₂ turns right, -1 if left.
-    //   We derive signR from the cross-product of the radius vector at the
-    //   arc's entry point and the arc's travel direction.
+    // ── Determine turn signs from arc centres relative to the travel direction ─
+    //   signR1 = +1 if Arc₁ turns right, -1 if left; signR2 likewise for Arc₂.
     //
-    //   For Arc₁, we compute at arc1Start (PC₁):
-    //     r1 = arc1Start − arc1Center
-    //     tangent1 direction (dE, dN) derived from arc1AzStart
-    //     signR1 = +1 if centre is to the RIGHT of tangent.
-    //
-    //   For Arc₂, we compute at arc2End (PT₂):
-    //     The centre must be to the RIGHT for a right-hand arc.
-    {
-        const double sA1 = std::sin(arc1AzStart), cA1 = std::cos(arc1AzStart);
-        const double n1x = cA1, n1y = -sA1;   // right-perp of az1
-        const double side1 = (arc1Center.x() - arc1Start.x()) * n1x
-                           + (arc1Center.y() - arc1Start.y()) * n1y;
-        // side1 > 0 means centre is to the right → right-hand curve
-        (void)side1; // used only in sign computation below
-    }
-
-    // Signed radii used internally:
-    //   Derive signR1 from (arc1Center relative to the travel direction at arc1Start)
-    //   Derive signR2 from (arc2Center relative to the travel direction at arc2End)
+    //   This is the *unambiguous* determination the VBA reference's second
+    //   C-C fix insists on: derive the sign from real, already-known data
+    //   (here: the real arc centre vs. the real forward-travel direction at
+    //   a real point on the arc) rather than from any fixed convention
+    //   (radius magnitude, pick order, ...) that only happens to hold for
+    //   one turn direction. It is the caller's job to supply arc1AzStart /
+    //   arc2AzEnd as the arc's *true* forward tangent azimuth (see
+    //   AlignmentAddSpiralCommand::showSolverPreview()'s arcAzimuthAtPC() /
+    //   arcAzimuthAtPT() helpers, which recover this from the arc's real
+    //   PC+PT via a cross product — never from a single point).
     auto computeSignR = [](QPointF centre, QPointF refPt, double az) -> int {
         const double n_x = std::cos(az), n_y = -std::sin(az);   // right-perp
         const double side = (centre.x() - refPt.x()) * n_x
@@ -853,252 +841,202 @@ SolvedACA AlignmentSolver::solveACA(
     };
 
     const int signR1 = computeSignR(arc1Center, arc1Start, arc1AzStart);
-    const int signR2 = computeSignR(arc2Center, arc2End,   arc2AzEnd - M_PI);
-    // Note: at PT₂ we travel in the forward direction az2, so the right-perp
-    // check uses az2AzEnd.  But arc2AzEnd is the forward azimuth at PT₂,
-    // so the travel direction at PT₂ is arc2AzEnd.  The centre should be on
-    // the same side at both entry and exit.
-    const int signR2b = computeSignR(arc2Center, arc2End, arc2AzEnd);
-    (void)signR2; // resolve below
+    const int signR2 = computeSignR(arc2Center, arc2End,   arc2AzEnd);
 
-    // Use signR2b (evaluated at PT₂ with forward-travel direction) for Arc₂.
     const double signedR1 = signR1 * R1;
-    const double signedR2 = signR2b * R2;
+    const double signedR2 = signR2 * R2;
 
-    // ── Gap-function evaluation ───────────────────────────────────────────────
+    // ── VBA 蛋形線反算演算法（完全比照使用者提供、已驗證正確的
+    //   螺線反算函數.bas / SolveSpiral_CC + LMSolve1D）────────────────────────
     //
-    //  For trial Ls, the spiral sweeps from curvature 1/R1 to curvature 1/R2.
-    //  We use an EggTransitionElement internally to get the local-frame geometry.
+    //  舊版做法：外層對 Ls 二分，內層對 azSC1 再做一次二分搜尋「哪個切入
+    //  角度會讓 SC₂ 剛好落在 Arc₂ 圓周上」，找不到內層的變號區間就直接把
+    //  f(Ls) 設成 1e9（"no intersection"）。這個雙層巢狀二分法在很多幾何
+    //  下，內層根本找不到 bracket（尤其 Ls 偏小或偏大時 SC₂ 離 Arc₂ 太遠），
+    //  導致 f(Ls) 在絕大部分掃描範圍內都是常數 1e9，外層永遠看不到變號，
+    //  回報「no sign change」——這不代表這兩段圓弧真的無法用蛋形線銜接，
+    //  只是求解策略本身的中間步驟（內層搜尋）太容易失敗。
     //
-    //  SC₁ on Arc₁: The spiral enters Arc₁ with azimuth azSC1.  The tangency
-    //  condition pins azSC1 to a specific point on Arc₁:
-    //      SC₁ = arc1Center + (-signR1·R1·cos azSC1,  +signR1·R1·sin azSC1)
+    //  VBA 版的作法乾淨得多：蛋形線兩端圓心之間的距離，是「平移旋轉不變
+    //  量」，只跟 Ls、R1、R2 有關，跟整體怎麼擺放完全無關。所以只需要
+    //  解一個一維方程式：
+    //      DistOfLs(Ls) = |Ctrial2(Ls) − Ctrial1(Ls)|  ＝  targetD
+    //  （targetD＝實際選取的兩個圓弧、圓心之間的真實距離）
+    //  解出 Ls 之後，比較「本地座標系試算出的 O1→O2 方向」跟「實際的
+    //  O1→O2 方向」，兩者的夾角差就是 SC1 在圓1上的正確方位角
+    //  ALFA1（=azSC1），完全不需要額外一層搜尋。
     //
-    //  SC₂ on Arc₂: Similarly
-    //      SC₂_expected = arc2Center + (-signR2·R2·cos azSC2, +signR2·R2·sin azSC2)
-    //
-    //  The EggTransitionElement provides (Xm, Ym, thetaTotal) from SC₁ to SC₂.
-    //  Given azSC1 we can compute the world position of SC₂:
-    //      SC₂_computed = SC₁ + (Xm·sin(azSC1) + Ym·cos(azSC1),
-    //                             Xm·cos(azSC1) − Ym·sin(azSC1))
-    //
-    //  The error is projected onto the cross-track direction at SC₂ (n_SC2):
-    //      f(Ls) = (SC₂_computed − SC₂_expected) · n_SC2
-    //
-    //  This makes the gap function insensitive to along-track position of SC₁
-    //  (which slides freely along Arc₁).
-
-    auto evalF = [&](double Ls) -> double {
-        // Build EggTransitionElement for this Ls
-        EggTransitionElement egg(signedR1, signedR2, Ls);
-
-        // Local frame at full Ls from SC₁
-        const LocalFrame lf = egg.localFrame(Ls);
-        const double Xm      = lf.x;
-        const double Ym      = lf.y;
-        const double thetaS  = lf.theta;   // accumulated rotation from SC₁ to SC₂
-
-        // azSC1 is unknown but determined by: exit azimuth azSC2 = azSC1 + thetaS
-        // And SC₂ must satisfy tangency with Arc₂:
-        //   azSC2 is the forward tangent of Arc₂ at SC₂.
-        //
-        // We iterate: guess azSC1, compute SC₁ and SC₂_computed, compare with
-        // SC₂_expected.  But to keep a simple 1-D bisection we pick the degree
-        // of freedom as Ls; azSC1 is recovered from azSC2.
-        //
-        // Strategy: use the direction from arc1Center to arc2Center as a seed
-        // to estimate azSC1.  For the bisection we only need the SIGN of f(Ls),
-        // not its exact value, so an inner Newton loop on azSC1 is fast.
-        //
-        // Simpler consistent approach: for a given Ls, solve for azSC1 such
-        // that |SC₂_computed − arc2Center| = R₂  (point on Arc₂ circle).
-        // Then check tangency: (SC₂_computed − arc2Center) should be perpendicular
-        // to the spiral tangent direction at SC₂.
-        //
-        // Cross-track gap: project (SC₂_computed − SC₂_expected) onto the
-        // cross-track direction of arc2.
-        //
-        // We solve the inner equation  |SC₂_computed(azSC1) − arc2Center|² = R₂²
-        // analytically.
-        //
-        //  SC₂_computed(azSC1) = SC₁(azSC1) + T·(sin azSC1, cos azSC1) + C
-        //  where T = Xm, and the cross-track term Ym is rotated by azSC1.
-        //
-        //  Let  SC₁(azSC1) = arc1Center + (-signR1·R1·cos azSC1, +signR1·R1·sin azSC1)
-        //  Then:
-        //    SC₂_computed.x = arc1Center.x - signR1·R1·cos(azSC1)
-        //                      + Xm·sin(azSC1) + Ym·cos(azSC1)
-        //    SC₂_computed.y = arc1Center.y + signR1·R1·sin(azSC1)
-        //                      + Xm·cos(azSC1) - Ym·sin(azSC1)
-        //
-        //  |SC₂_computed − arc2Center|² = R₂²  is a transcendental equation
-        //  in azSC1.  We solve it by a fast bisection on azSC1 as an inner loop.
-        //
-        //  For the OUTER bisection (over Ls), we evaluate the signed gap after
-        //  finding the inner azSC1.
-
-        // Inner bisection: find azSC1 such that SC₂ lies on Arc₂ circle
-        // Search range for azSC1: full circle, but start near initial estimate
-        const double azSC1_init = std::atan2(arc2Center.x() - arc1Center.x(),
-                                             arc2Center.y() - arc1Center.y());
-
-        auto sc2FromAzSC1 = [&](double azSC1) -> QPointF {
-            const double sc1x = arc1Center.x() - signR1 * R1 * std::cos(azSC1);
-            const double sc1y = arc1Center.y() + signR1 * R1 * std::sin(azSC1);
-            const double dx   = Xm * std::sin(azSC1) + Ym * std::cos(azSC1);
-            const double dy   = Xm * std::cos(azSC1) - Ym * std::sin(azSC1);
-            return QPointF(sc1x + dx, sc1y + dy);
-        };
-
-        auto radialError = [&](double azSC1) -> double {
-            const QPointF sc2 = sc2FromAzSC1(azSC1);
-            const double dr2 = (sc2.x() - arc2Center.x()) * (sc2.x() - arc2Center.x())
-                             + (sc2.y() - arc2Center.y()) * (sc2.y() - arc2Center.y());
-            return dr2 - R2 * R2;
-        };
-
-        // Scan for a bracket near the estimate
-        double az_lo = azSC1_init - M_PI;
-        double az_hi = azSC1_init + M_PI;
-        double f_lo  = radialError(az_lo);
-        double az_br = -999.0;
-
-        {
-            const int nInner = 360;
-            double prev_f = f_lo;
-            for (int k = 1; k <= nInner; ++k) {
-                const double az_k = az_lo + 2.0 * M_PI * k / nInner;
-                const double f_k  = radialError(az_k);
-                if (prev_f * f_k < 0.0) { az_br = az_k; az_hi = az_k; az_lo = az_lo + 2.0 * M_PI * (k-1) / nInner; break; }
-                prev_f = f_k;
-            }
-        }
-
-        if (az_br < -900.0) {
-            // No intersection: spiral can't reach Arc₂ at this Ls
-            // Return a large positive error (gap too big)
-            return 1e9;
-        }
-
-        // Bisect inner loop to find azSC1
-        for (int iter = 0; iter < 60; ++iter) {
-            const double az_mid = 0.5 * (az_lo + az_hi);
-            if (std::abs(az_hi - az_lo) < 1e-9) { az_lo = az_mid; break; }
-            if (radialError(az_lo) * radialError(az_mid) <= 0.0)
-                az_hi = az_mid;
-            else
-                az_lo = az_mid;
-        }
-        const double azSC1 = az_lo;
-
-        // azSC2 = azSC1 + thetaS
-        const double azSC2 = azSC1 + thetaS;
-
-        // Expected SC₂ from tangency condition on Arc₂
-        const double sc2_exp_x = arc2Center.x() - signR2b * R2 * std::cos(azSC2);
-        const double sc2_exp_y = arc2Center.y() + signR2b * R2 * std::sin(azSC2);
-
-        // Computed SC₂
-        const QPointF sc2_comp = sc2FromAzSC1(azSC1);
-
-        // Cross-track gap: project difference onto right-perp of azSC2
-        const double nx = std::cos(azSC2), ny = -std::sin(azSC2);
-        return (sc2_comp.x() - sc2_exp_x) * nx
-             + (sc2_comp.y() - sc2_exp_y) * ny;
+    //  DistOfLs(Ls) 本身是「圓心距離」這種規則得多的函數，不會像舊版的
+    //  cross-track 殘差那樣容易出現「探到很接近零但兩側都不變號」的邊界
+    //  情形——但仍保留掃描+二分／黃金分割相切備援，當作跟 VBA 同款的
+    //  「不要只相信單一求解策略」的雙重保險。
+    auto CircleCenterFromSpiralEnd = [](QPointF pt, double az, double Rsigned) -> QPointF {
+        return QPointF(pt.x() + Rsigned * std::cos(az),
+                       pt.y() - Rsigned * std::sin(az));
+    };
+    auto PointOnCircleForAzimuth = [](QPointF centre, double Rsigned, double az) -> QPointF {
+        return QPointF(centre.x() - Rsigned * std::cos(az),
+                       centre.y() + Rsigned * std::sin(az));
+    };
+    auto rotateLocal = [](double Xm, double Ym, double az) -> QPointF {
+        return QPointF(Xm * std::sin(az) + Ym * std::cos(az),
+                       Xm * std::cos(az) - Ym * std::sin(az));
     };
 
-    // ── Outer bisection over Ls ───────────────────────────────────────────────
+    // DistOfLs：本地座標系（SC1 在原點、方位角 0）試算出的兩端圓心距離。
+    // Ls<=0 時的自然邊界值＝兩個純圓弧半徑差的絕對值（比照 VBA DistOfLE）。
+    auto DistOfLs = [&](double LsTrial) -> double {
+        if (LsTrial <= 1e-9) return std::abs(std::abs(signedR1) - std::abs(signedR2));
+        const QPointF ctrial1 = CircleCenterFromSpiralEnd(QPointF(0.0, 0.0), 0.0, signedR1);
+        EggTransitionElement egg(signedR1, signedR2, LsTrial);
+        const LocalFrame lf = egg.localFrame(LsTrial);
+        const QPointF sc2Local = rotateLocal(lf.x, lf.y, 0.0);
+        const QPointF ctrial2  = CircleCenterFromSpiralEnd(sc2Local, lf.theta, signedR2);
+        return std::hypot(ctrial2.x() - ctrial1.x(), ctrial2.y() - ctrial1.y());
+    };
+
+    const double targetD = std::hypot(arc2Center.x() - arc1Center.x(),
+                                      arc2Center.y() - arc1Center.y());
+
     const double geomDist = std::hypot(arc2End.x() - arc1Start.x(),
                                        arc2End.y() - arc1Start.y())
                           + R1 + R2;
     const double Req    = (R1 * R2) / std::abs(R1 - R2);   // equivalent radius
     const double Ls_max = std::min(geomDist * 2.0, M_PI * Req * 0.95);
 
-    const int    nScan = 400;
-    double Ls_lo = 1e-3;
-    double f_lo  = evalF(Ls_lo);
-    double Ls_hi = -1.0;
+    // ── 主要求解器：Levenberg-Marquardt（比照 VBA LMSolve1D）────────────────
+    //   數值微分近似 J、自適應阻尼 lambda；x 強制維持 >0。收斂後用「相對
+    //   殘差」再驗證一次，不直接相信 LM 自己回報的收斂——不夠準就落到下面
+    //   的掃描+二分備援（保證收斂，只要解真的存在）。
+    auto lmSolveLs = [&](double x0) -> double {
+        const int    kMaxIter  = 100;
+        const int    kMaxInner = 80;
+        double x   = (x0 > 0.0) ? x0 : 0.0001;
+        double lam = 0.001;
+        const double tolAbs = std::max(targetD * 1e-9, 1e-9);
 
-    for (int k = 1; k <= nScan; ++k) {
-        const double Ls_k = Ls_max * k / static_cast<double>(nScan);
-        const double f_k  = evalF(Ls_k);
-        if (f_lo * f_k < 0.0) { Ls_hi = Ls_k; break; }
-        f_lo = f_k;
-        Ls_lo = Ls_k;
-    }
+        double R = DistOfLs(x) - targetD;
+        for (int it = 0; it < kMaxIter; ++it) {
+            if (std::abs(R) < tolAbs) break;
+            double h = std::abs(x) * 1e-7;
+            if (h < 1e-8) h = 1e-8;
+            double J = (DistOfLs(x + h) - DistOfLs(x - h)) / (2.0 * h);
+            if (J == 0.0) J = 1e-12;
 
-    if (Ls_hi < 0.0) {
-        qWarning() << "[AlignmentSolver] solveACA: f(Ls) has no sign change."
-                   << "R1=" << R1 << "R2=" << R2 << "Ls_max=" << Ls_max;
-        return result;
-    }
-
-    for (int iter = 0; iter < 80; ++iter) {
-        const double Ls_mid = 0.5 * (Ls_lo + Ls_hi);
-        if (std::abs(Ls_hi - Ls_lo) < 1e-4) { Ls_lo = Ls_mid; break; }
-        if (evalF(Ls_lo) * evalF(Ls_mid) <= 0.0)
-            Ls_hi = Ls_mid;
-        else
-            Ls_lo = Ls_mid;
-    }
-    const double Ls = Ls_lo;
-
-    // ── Final geometry ────────────────────────────────────────────────────────
-    EggTransitionElement eggF(signedR1, signedR2, Ls);
-    const LocalFrame lfF = eggF.localFrame(Ls);
-    const double XmF      = lfF.x;
-    const double YmF      = lfF.y;
-    const double thetaSF  = lfF.theta;
-
-    // Recover azSC1 with the same inner bisection logic
-    const double azSC1_init = std::atan2(arc2Center.x() - arc1Center.x(),
-                                         arc2Center.y() - arc1Center.y());
-
-    auto sc2FromAzSC1_F = [&](double azSC1) -> QPointF {
-        const double sc1x = arc1Center.x() - signR1 * R1 * std::cos(azSC1);
-        const double sc1y = arc1Center.y() + signR1 * R1 * std::sin(azSC1);
-        const double dx   = XmF * std::sin(azSC1) + YmF * std::cos(azSC1);
-        const double dy   = XmF * std::cos(azSC1) - YmF * std::sin(azSC1);
-        return QPointF(sc1x + dx, sc1y + dy);
-    };
-    auto radialError_F = [&](double azSC1) -> double {
-        const QPointF sc2 = sc2FromAzSC1_F(azSC1);
-        const double dr2 = (sc2.x() - arc2Center.x()) * (sc2.x() - arc2Center.x())
-                         + (sc2.y() - arc2Center.y()) * (sc2.y() - arc2Center.y());
-        return dr2 - R2 * R2;
-    };
-
-    double az_lo_F = azSC1_init - M_PI, az_hi_F = azSC1_init + M_PI;
-    {
-        const int nI = 360;
-        double prev_f = radialError_F(az_lo_F);
-        for (int k = 1; k <= nI; ++k) {
-            const double az_k = (azSC1_init - M_PI) + 2.0 * M_PI * k / nI;
-            const double f_k  = radialError_F(az_k);
-            if (prev_f * f_k < 0.0) {
-                az_hi_F = az_k;
-                az_lo_F = (azSC1_init - M_PI) + 2.0 * M_PI * (k-1) / nI;
-                break;
+            bool accepted = false;
+            for (int inner = 0; inner < kMaxInner; ++inner) {
+                double delta = -R / (J * (1.0 + lam));
+                double xNew  = x + delta;
+                if (xNew <= 0.0) xNew = x / 2.0;
+                const double rNew = DistOfLs(xNew) - targetD;
+                if (std::abs(rNew) < std::abs(R)) {
+                    x = xNew; R = rNew;
+                    lam = std::max(lam / 10.0, 1e-14);
+                    accepted = true;
+                    break;
+                }
+                lam *= 10.0;
+                if (lam > 1e14) break;
             }
-            prev_f = f_k;
+            if (!accepted) break;
+        }
+
+        const double relTol = std::max(targetD * 1e-7, 1e-7);
+        if (x <= 0.0 || std::abs(R) > relTol) return -1.0;   // 交給備援
+        return x;
+    };
+
+    // 初始猜測：跟 VBA 一樣取「圓心實際距離」的一部分，量級通常已經很接近。
+    double Ls = lmSolveLs(std::max(1.0, targetD * 0.3));
+
+    if (Ls < 0.0) {
+        // ── LM 沒收斂到足夠精度：掃描+二分備援（保證收斂，安全網）───────────
+        const int    nScan = 400;
+        double Ls_lo = 1e-3;
+        double f_lo  = DistOfLs(Ls_lo) - targetD;
+        double Ls_hi = -1.0;
+        double minAbsF = std::abs(f_lo), minAbsFLs = Ls_lo;
+
+        for (int k = 1; k <= nScan; ++k) {
+            const double Ls_k = Ls_max * k / static_cast<double>(nScan);
+            const double f_k  = DistOfLs(Ls_k) - targetD;
+            if (std::abs(f_k) < minAbsF) { minAbsF = std::abs(f_k); minAbsFLs = Ls_k; }
+            if (f_lo * f_k < 0.0) { Ls_hi = Ls_k; break; }
+            f_lo = f_k;
+            Ls_lo = Ls_k;
+        }
+
+        if (Ls_hi < 0.0) {
+            // 沒找到變號區間：黃金分割在觀察到的最小值附近再精修一次
+            // （相切／重根解的備援，跟前一版邏輯相同，只是換成新的
+            // DistOfLs 殘差）；精修後仍明顯偏離零，才真的判定無解。
+            const double kLooseTol  = std::max(R1, R2) * 0.01;
+            const double kAcceptTol = std::max(R1, R2) * 1e-6;
+            bool refined = false;
+            double LsTangent = minAbsFLs;
+            if (minAbsF < kLooseTol) {
+                const double halfWindow = (Ls_max / nScan) * 2.0;
+                double lo = std::max(1e-6, minAbsFLs - halfWindow);
+                double hi = std::min(Ls_max, minAbsFLs + halfWindow);
+                const double gr = (std::sqrt(5.0) - 1.0) / 2.0;
+                double c = hi - gr * (hi - lo);
+                double d = lo + gr * (hi - lo);
+                for (int iter = 0; iter < 80; ++iter) {
+                    if (std::abs(DistOfLs(c) - targetD) < std::abs(DistOfLs(d) - targetD)) hi = d; else lo = c;
+                    c = hi - gr * (hi - lo);
+                    d = lo + gr * (hi - lo);
+                }
+                LsTangent = 0.5 * (lo + hi);
+                if (std::abs(DistOfLs(LsTangent) - targetD) < kAcceptTol) refined = true;
+            }
+            if (!refined) {
+                qWarning() << "[AlignmentSolver] solveACA: DistOfLs(Ls) has no sign"
+                              " change and no near-zero minimum was found."
+                           << "R1=" << R1 << "R2=" << R2 << "targetD=" << targetD
+                           << "Ls_max=" << Ls_max << "min|residual|=" << minAbsF
+                           << "at Ls=" << minAbsFLs
+                           << "-- these two arcs genuinely cannot be joined by any"
+                              " Egg-Transition curve within this Ls range.";
+                return result;
+            }
+            qDebug() << "[AlignmentSolver] solveACA: bisection found no sign change,"
+                        " but a tangent-point solution exists at Ls=" << LsTangent
+                     << "-- accepting it (golden-section refined).";
+            Ls = LsTangent;
+        } else {
+            for (int iter = 0; iter < 80; ++iter) {
+                const double Ls_mid = 0.5 * (Ls_lo + Ls_hi);
+                if (std::abs(Ls_hi - Ls_lo) < 1e-6) { Ls_lo = Ls_mid; break; }
+                if ((DistOfLs(Ls_lo) - targetD) * (DistOfLs(Ls_mid) - targetD) <= 0.0)
+                    Ls_hi = Ls_mid;
+                else
+                    Ls_lo = Ls_mid;
+            }
+            Ls = Ls_lo;
         }
     }
-    for (int iter = 0; iter < 60; ++iter) {
-        const double az_mid = 0.5 * (az_lo_F + az_hi_F);
-        if (std::abs(az_hi_F - az_lo_F) < 1e-9) { az_lo_F = az_mid; break; }
-        if (radialError_F(az_lo_F) * radialError_F(az_mid) <= 0.0)
-            az_hi_F = az_mid;
-        else
-            az_lo_F = az_mid;
-    }
-    const double azSC1 = az_lo_F;
+
+    // ── 由 Ls 反推 ALFA1(=azSC1)：比較本地試算方向跟實際 O1→O2 方向 ────────
+    const QPointF ctrial1 = CircleCenterFromSpiralEnd(QPointF(0.0, 0.0), 0.0, signedR1);
+    EggTransitionElement eggF(signedR1, signedR2, Ls);
+    const LocalFrame lfF = eggF.localFrame(Ls);
+    const double thetaSF = lfF.theta;
+    const QPointF sc2LocalF = rotateLocal(lfF.x, lfF.y, 0.0);
+    const QPointF ctrial2   = CircleCenterFromSpiralEnd(sc2LocalF, thetaSF, signedR2);
+
+    const double AmzTrial = std::atan2(ctrial2.x() - ctrial1.x(), ctrial2.y() - ctrial1.y());
+    const double AmzReal  = std::atan2(arc2Center.x() - arc1Center.x(),
+                                       arc2Center.y() - arc1Center.y());
+    double ALFA1 = AmzReal - AmzTrial;
+    while (ALFA1 >  M_PI) ALFA1 -= 2.0 * M_PI;
+    while (ALFA1 < -M_PI) ALFA1 += 2.0 * M_PI;
+
+    const double azSC1 = ALFA1;
     const double azSC2 = azSC1 + thetaSF;
 
     // SC₁ and SC₂ world positions
-    const QPointF sc1Point(arc1Center.x() - signR1 * R1 * std::cos(azSC1),
-                           arc1Center.y() + signR1 * R1 * std::sin(azSC1));
-    const QPointF sc2Point(arc2Center.x() - signR2b * R2 * std::cos(azSC2),
-                           arc2Center.y() + signR2b * R2 * std::sin(azSC2));
+    const QPointF sc1Point = PointOnCircleForAzimuth(arc1Center, signedR1, azSC1);
+    const QPointF sc2Point = PointOnCircleForAzimuth(arc2Center, signedR2, azSC2);
 
     // ── Trimmed arc lengths ───────────────────────────────────────────────────
     auto arcAngle = [](QPointF from, QPointF to, QPointF centre, int signR) -> double {
@@ -1113,7 +1051,7 @@ SolvedACA AlignmentSolver::solveACA(
     };
 
     const double phi1 = arcAngle(arc1Start, sc1Point, arc1Center, signR1);
-    const double phi2 = arcAngle(sc2Point,  arc2End,  arc2Center, signR2b);
+    const double phi2 = arcAngle(sc2Point,  arc2End,  arc2Center, signR2);
 
     result.valid         = true;
     result.arc1StartPoint = arc1Start;
@@ -1128,6 +1066,832 @@ SolvedACA AlignmentSolver::solveACA(
     result.arc2EndPoint   = arc2End;
     result.arc2Len        = R2 * phi2;
     result.azSC2          = azSC2;
+
+    return result;
+}
+
+// ============================================================================
+//  solveReverseSpiral 系列 — file-local geometry helpers
+//
+//  核心觀察（見 ReverseSpiral_Command_實作計畫.md 第 2.2/2.3 節，此處補完整
+//  推導）：Fixed CircularArc 是「已經釘死在絕對座標中的圓」，沒有 solveLC/
+//  solveCA 那種「可沿切線滑動」的自由度；因此「在圓上任選一點當作緩和曲線
+//  的接點」這件事，對圓本身而言是**旋轉對稱**的——把接點沿圓周移動角度
+//  α，等同於把「圓 + 緩和曲線」這一整組剛體繞圓心旋轉 α。也就是說：
+//
+//    對固定的 L（緩和曲線長度），當接點在圓上滑動時，緩和曲線另一端
+//    （曲率為 0 的那一端，即 S1/S2 的交會點 J）會沿著「以圓心為圓心、
+//    半徑 ρ(L) 為半徑」的另一個圓滑動，且 J 的方位角 = (J 相對圓心的
+//    方位角) + 一個與接點無關、只與 L 有關的固定偏移量。
+//
+//  因此，給定 L1、L2，J1 必落在以 arc1Center 為心、ρ1(L1) 為半徑的圓上；
+//  J2 必落在以 arc2Center 為心、ρ2(L2) 為半徑的圓上。S1/S2 在 J 相接的
+//  「位置」條件（ΔX=ΔY=0，見輸入文件第二節）於是退化為兩個圓的交點
+//  （封閉式，circleIntersect()，不需疊代）；「方向」條件（Δθ=0）則是
+//  唯一真正需要求根的殘差，且只剩 L1、L2 兩個未知數（不再需要額外的
+//  接點角度 φ1/φ2 當作獨立未知數——它們已經被兩圓交點隱式決定）。
+//
+//  ρ(L) 與「J 相對接點的固定角度偏移」透過 jFromArcCT()/jFromArcTC() 用
+//  任意一個已知（位置＋方位角）的圓上參考點直接算出（借用 solveCA／
+//  solveLC 已有的 TC/CT 局部座標公式，只是兩者已知/未知的角色對調，見
+//  下方個別函式註解），不需要另外疊代。
+// ============================================================================
+
+namespace {
+
+/**
+ * @brief CT 方向（曲率 R → 0）：已知圓上一點 P（位於 arcCenter/R/signR 所
+ *        定義的圓上，含其順行方位角 azP），求緩和曲線另一端（曲率 0 的
+ *        J 點）。用於 S1（Arc₁ 出口 → 交會點）。
+ *
+ *  公式是 solveCA()（已知 ST 反推 CS）的代數反解：solveCA 用
+ *  azCS = az2 − thetaS 從已知的 az2（切線端）求 azCS（弧端）；這裡兩者
+ *  已知/未知對調，直接令 azJ = azP + thetaS 即可（thetaS 只與 L 本身
+ *  有關，與哪一端已知無關），offset 公式（stDx/stDy）維持不變。
+ */
+void jFromArcCT(QPointF centre, double R, int signR, SpiralType type,
+                QPointF P, double azP, double L,
+                QPointF& J, double& azJ, double& thetaOut)
+{
+    if (L < 1e-9) { J = P; azJ = azP; thetaOut = 0.0; return; }
+    const auto elem = makeTransitionElement(type, L, signR * R);
+    const LocalFrame lf = elem->localFrame(L);
+    thetaOut = lf.theta;
+    azJ = azP + lf.theta;
+    const double sJ = std::sin(azJ), cJ = std::cos(azJ);
+    const double dx = lf.x * sJ + lf.y * cJ;
+    const double dy = lf.x * cJ - lf.y * sJ;
+    J = QPointF(P.x() + dx, P.y() + dy);
+}
+
+/**
+ * @brief TC 方向（曲率 0 → R）：已知圓上一點 P（同上）求緩和曲線另一端
+ *        （曲率 0 的 J 點）。用於 S2（交會點 → Arc₂ 入口）。
+ *
+ *  solveLC() 用 azSC = az1 + thetaS 從已知的 az1（切線端）求 azSC（弧
+ *  端）；這裡對調已知/未知：azJ = azP − thetaS，offset 公式（scDx/scDy）
+ *  維持不變，但因為 SC = TS + offset(az1) ⟹ TS = SC − offset(az1)，
+ *  offset 從 P 減去而非加上。
+ */
+void jFromArcTC(QPointF centre, double R, int signR, SpiralType type,
+                QPointF P, double azP, double L,
+                QPointF& J, double& azJ, double& thetaOut)
+{
+    if (L < 1e-9) { J = P; azJ = azP; thetaOut = 0.0; return; }
+    const auto elem = makeTransitionElement(type, L, signR * R);
+    const LocalFrame lf = elem->localFrame(L);
+    thetaOut = lf.theta;
+    azJ = azP - lf.theta;
+    const double sJ = std::sin(azJ), cJ = std::cos(azJ);
+    const double dx = lf.x * sJ + lf.y * cJ;
+    const double dy = lf.x * cJ - lf.y * sJ;
+    J = QPointF(P.x() - dx, P.y() - dy);
+}
+
+/**
+ * @brief 平面上兩圓（centre1,r1）、（centre2,r2）之交點（標準封閉式）。
+ * @return 交點數（0/1/2），存入 out[0..count-1]。
+ */
+int circleIntersect(QPointF c1, double r1, QPointF c2, double r2, QPointF out[2])
+{
+    const double dx = c2.x() - c1.x();
+    const double dy = c2.y() - c1.y();
+    const double d  = std::hypot(dx, dy);
+    if (d < 1e-9) return 0;                          // 同心，無（或無限多）交點
+    if (d > r1 + r2 + 1e-9) return 0;                 // 太遠
+    if (d < std::abs(r1 - r2) - 1e-9) return 0;       // 一圓包住另一圓
+    const double a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
+    const double h2 = r1 * r1 - a * a;
+    const double h  = std::sqrt(std::max(0.0, h2));
+    const double mx = c1.x() + a * dx / d;
+    const double my = c1.y() + a * dy / d;
+    const double ux = -dy / d, uy = dx / d;   // 垂直於 c1→c2 的單位向量
+    out[0] = QPointF(mx + h * ux, my + h * uy);
+    out[1] = QPointF(mx - h * ux, my - h * uy);
+    return (h < 1e-9) ? 1 : 2;   // 相切時只有 1 個真正相異的交點
+}
+
+/**
+ * @brief 給定 L1、L2，計算交會點與其方向殘差。
+ * @return 若兩圓不相交，回傳 NaN；否則回傳 normaliseAngle(azJ1−azJ2)。
+ *
+ * 分支選擇（branch selection）——修正 Phase 2 影子驗證抓到的不連續 bug
+ * ─────────────────────────────────────────────────────────────────────
+ * circleIntersect() 在有兩個交點時，兩者恰好相差一個固定的垂直偏移
+ * ±h·u，其中 u ⟂ (arc2Center−arc1Center)。**關鍵觀察**：u 本身完全不依賴
+ * L1、L2（arc1Center、arc2Center 對整個解族而言是固定的），所以「哪一個
+ * 交點才是物理上正確的那一個」這件事，理論上對整個解族只有一個固定答案，
+ * 不應該隨 L1、L2 變動而改變。
+ *
+ * 舊實作在每次呼叫時各自獨立比較兩個候選點的 |residual|、取較小者，這個
+ * 「逐次重新比較」的做法會在兩個候選的殘差量級交叉的地方（例如本例
+ * L1≈140 附近）產生分支切換——從外部看就是 J 點座標與殘差對 L1、L2 的
+ * 依賴關係出現不連續跳躍，導致 bisection 的「單調變號」假設失效、鎖定
+ * 假根（見 AlignmentSolver_LM統一升級計畫.md Phase 2 交叉驗證紀錄）。
+ *
+ * 修正：改成只用「與 L1、L2 無關」的幾何（arc1Center、arc2Center、
+ * arc1Start 三點的相對位置）決定一次分支歸屬，讓同一次 solveReverseSpiral()
+ * /analyzeReverseSpiralFamily() 呼叫中，所有 L1、L2 組合都套用同一個分支
+ * ——保證殘差函式對 (L1,L2) 連續，bisection／LM 才能正確運作。
+ *
+ * 判定方式：以 arc1Center→arc2Center 為基準線，arc1Start 落在基準線的哪
+ * 一側，就選同一側的交點（因為實際線形是從 arc1Start 出發、連續不自我
+ * 穿越地走到交會點，正常幾何下交會點理應與 arc1Start 同側）。若
+ * arc1Start 幾乎剛好落在基準線上（refCross≈0，無法判斷側別的退化情況），
+ * 才退回舊的「逐次取 |residual| 較小者」做法──這個退化情況本身極罕見，
+ * 且發生時兩個候選通常本來就很接近，用舊方法也不會產生明顯不連續。
+ */
+double reverseSpiralResidual(
+    QPointF arc1Center, double R1, int signR1, SpiralType type1,
+    QPointF arc1Start,  double arc1AzStart, double L1,
+    QPointF arc2Center, double R2, int signR2, SpiralType type2,
+    QPointF arc2End,    double arc2AzEnd,   double L2,
+    QPointF& bestJ, double& bestAzJ1, double& bestAzJ2)
+{
+    QPointF J1ref, J2ref; double azJ1ref, azJ2ref, th1, th2;
+    jFromArcCT(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1, J1ref, azJ1ref, th1);
+    jFromArcTC(arc2Center, R2, signR2, type2, arc2End,   arc2AzEnd,   L2, J2ref, azJ2ref, th2);
+
+    const double rho1 = std::hypot(J1ref.x() - arc1Center.x(), J1ref.y() - arc1Center.y());
+    const double rho2 = std::hypot(J2ref.x() - arc2Center.x(), J2ref.y() - arc2Center.y());
+
+    QPointF cand[2];
+    const int nCand = circleIntersect(arc1Center, rho1, arc2Center, rho2, cand);
+    if (nCand == 0) return std::numeric_limits<double>::quiet_NaN();
+
+    auto residualAt = [&](QPointF p, double& az1a, double& az2a) -> double {
+        az1a = AlignmentSolver::normaliseAngle(
+            azJ1ref + (AlignmentSolver::azimuthOf(arc1Center, p)
+                     - AlignmentSolver::azimuthOf(arc1Center, J1ref)));
+        az2a = AlignmentSolver::normaliseAngle(
+            azJ2ref + (AlignmentSolver::azimuthOf(arc2Center, p)
+                     - AlignmentSolver::azimuthOf(arc2Center, J2ref)));
+        return AlignmentSolver::normaliseAngle(az1a - az2a);
+    };
+
+    // ── deterministic branch selection (L1/L2-independent) ─────────────────
+    if (nCand == 2) {
+        const double bx = arc2Center.x() - arc1Center.x();
+        const double by = arc2Center.y() - arc1Center.y();
+        const double refCross = bx * (arc1Start.y() - arc1Center.y())
+                               - by * (arc1Start.x() - arc1Center.x());
+        if (std::abs(refCross) > 1e-6) {
+            // Empirically verified (see diag_branch.cpp / conversation notes):
+            // for a REVERSE curve the true junction sits on the OPPOSITE
+            // side of the arc1Center→arc2Center baseline from arc1Start —
+            // arc1 and arc2 curve in opposite directions by definition,
+            // which pushes the junction across the baseline relative to
+            // where the alignment enters arc1. Hence the sign flip below
+            // (wantSign = −sign(refCross), not +sign(refCross)).
+            const double wantSign = (refCross >= 0.0) ? -1.0 : 1.0;
+            const double side0 = bx * (cand[0].y() - arc1Center.y())
+                                - by * (cand[0].x() - arc1Center.x());
+            const int chosen = (side0 * wantSign >= 0.0) ? 0 : 1;
+            double az1a, az2a;
+            const double res = residualAt(cand[chosen], az1a, az2a);
+            bestJ = cand[chosen];
+            bestAzJ1 = az1a;
+            bestAzJ2 = az2a;
+            return res;
+        }
+        // refCross ≈ 0 (arc1Start essentially on the arc1Center-arc2Center
+        // baseline): side test is inconclusive, fall through to the
+        // argmin fallback below for just this degenerate case.
+    }
+
+    double best = std::numeric_limits<double>::infinity();
+    for (int k = 0; k < nCand; ++k) {
+        double az1a, az2a;
+        const double res = residualAt(cand[k], az1a, az2a);
+        if (std::abs(res) < std::abs(best)) {
+            best = res;
+            bestJ = cand[k];
+            bestAzJ1 = az1a;
+            bestAzJ2 = az2a;
+        }
+    }
+    return best;
+}
+
+} // anonymous namespace
+
+// ============================================================================
+//  analyzeReverseSpiralFamily
+// ============================================================================
+
+bool AlignmentSolver::analyzeReverseSpiralFamily(
+    QPointF arc1Center, double arc1Radius,
+    QPointF arc1Start,  double arc1AzStart,
+    QPointF arc2Center, double arc2Radius,
+    QPointF arc2End,    double arc2AzEnd,
+    SpiralType type1, SpiralType type2,
+    QVector<ReverseSpiralFamilySample>& outSamples,
+    int sampleCount)
+{
+    outSamples.clear();
+
+    const double R1 = std::abs(arc1Radius);
+    const double R2 = std::abs(arc2Radius);
+    if (R1 < 1e-9 || R2 < 1e-9) {
+        qWarning() << "[AlignmentSolver] analyzeReverseSpiralFamily: arc radius ≈ 0";
+        return false;
+    }
+
+    auto computeSignR = [](QPointF centre, QPointF refPt, double az) -> int {
+        const double n_x = std::cos(az), n_y = -std::sin(az);
+        const double side = (centre.x() - refPt.x()) * n_x
+                           + (centre.y() - refPt.y()) * n_y;
+        return (side >= 0.0) ? 1 : -1;
+    };
+    const int signR1 = computeSignR(arc1Center, arc1Start, arc1AzStart);
+    const int signR2 = computeSignR(arc2Center, arc2End,   arc2AzEnd);
+
+    if (signR1 == signR2) {
+        qWarning() << "[AlignmentSolver] analyzeReverseSpiralFamily: arc1 and arc2"
+                   << "turn the SAME direction — this is an Egg (ACA) transition,"
+                   << "not a reverse spiral. Use solveACA() instead.";
+        return false;
+    }
+
+    // L 的掃描上限：與 solveLC/solveCA 同款量級（幾何距離的倍數，並用
+    // π·R 上限避免緩和曲線轉角超過 90 度造成的自相交退化）。
+    const double geomDist = std::hypot(arc2End.x() - arc1Start.x(),
+                                       arc2End.y() - arc1Start.y())
+                          + R1 + R2;
+    const double L1_max = std::min(geomDist, M_PI * R1 * 0.45);
+
+    for (int k = 1; k <= sampleCount; ++k) {
+        const double L1_try = L1_max * k / static_cast<double>(sampleCount + 1);
+
+        // 對此 L1，掃描 + 二分找出對應的 L2（見 solveReverseSpiral() 內層
+        // solve 的相同邏輯；此處保留獨立實作以維持 analyze/solve 兩者互不
+        //依賴，方便個別單元測試）。
+        const double L2_max = std::min(geomDist, M_PI * R2 * 0.45);
+        const int    nScan  = 60;   // 樣本預覽用，掃描密度可低於正式求解
+        QPointF bestJ; double bestAz1, bestAz2;
+        double L2_lo = 1e-3;
+        double f_lo  = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_try,
+                                             arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_lo,
+                                             bestJ, bestAz1, bestAz2);
+        double L2_hi = -1.0, f_hi = 0.0;
+        for (int m = 1; m <= nScan; ++m) {
+            const double L2_k = L2_max * m / static_cast<double>(nScan);
+            const double f_k  = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_try,
+                                                      arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_k,
+                                                      bestJ, bestAz1, bestAz2);
+            if (std::isfinite(f_lo) && std::isfinite(f_k) && f_lo * f_k < 0.0) {
+                L2_hi = L2_k; f_hi = f_k;
+                break;
+            }
+            if (std::isfinite(f_k)) { f_lo = f_k; L2_lo = L2_k; }
+        }
+        if (L2_hi < 0.0) continue;   // 此 L1 在掃描範圍內找不到匹配的 L2，跳過
+
+        for (int iter = 0; iter < 60; ++iter) {
+            const double L2_mid = 0.5 * (L2_lo + L2_hi);
+            const double f_mid = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_try,
+                                                        arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_mid,
+                                                        bestJ, bestAz1, bestAz2);
+            if (std::abs(L2_hi - L2_lo) < 1e-4) break;
+            if (f_lo * f_mid <= 0.0) { L2_hi = L2_mid; }
+            else { L2_lo = L2_mid; f_lo = f_mid; }
+        }
+
+        ReverseSpiralFamilySample sample;
+        sample.length1  = L1_try;
+        sample.length2  = 0.5 * (L2_lo + L2_hi);
+        sample.junction = bestJ;
+        outSamples.append(sample);
+    }
+
+    if (outSamples.isEmpty()) {
+        qWarning() << "[AlignmentSolver] analyzeReverseSpiralFamily: no L1 in scan range"
+                   << "produced a matching L2 — arcs may be geometrically incompatible"
+                   << "(too close / too far apart).";
+        return false;
+    }
+    return true;
+}
+
+// ============================================================================
+//  solveReverseSpiral
+// ============================================================================
+
+SolvedReverseSpiral AlignmentSolver::solveReverseSpiral(
+    QPointF arc1Center, double arc1Radius,
+    QPointF arc1Start,  double arc1AzStart,
+    QPointF arc2Center, double arc2Radius,
+    QPointF arc2End,    double arc2AzEnd,
+    SpiralType type1, SpiralType type2,
+    ReverseSpiralStrategy strategy, double strategyParam,
+    QPointF pickedJunctionHint)
+{
+    SolvedReverseSpiral result;
+
+    const double R1 = std::abs(arc1Radius);
+    const double R2 = std::abs(arc2Radius);
+    if (R1 < 1e-9 || R2 < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveReverseSpiral: arc radius ≈ 0";
+        return result;
+    }
+
+    auto computeSignR = [](QPointF centre, QPointF refPt, double az) -> int {
+        const double n_x = std::cos(az), n_y = -std::sin(az);
+        const double side = (centre.x() - refPt.x()) * n_x
+                           + (centre.y() - refPt.y()) * n_y;
+        return (side >= 0.0) ? 1 : -1;
+    };
+    const int signR1 = computeSignR(arc1Center, arc1Start, arc1AzStart);
+    const int signR2 = computeSignR(arc2Center, arc2End,   arc2AzEnd);
+
+    if (signR1 == signR2) {
+        qWarning() << "[AlignmentSolver] solveReverseSpiral: arc1/arc2 turn the same"
+                   << "direction — not a reverse spiral (use solveACA()).";
+        return result;
+    }
+
+    const double geomDist = std::hypot(arc2End.x() - arc1Start.x(),
+                                       arc2End.y() - arc1Start.y())
+                          + R1 + R2;
+    const double L1_max = std::min(geomDist, M_PI * R1 * 0.45);
+    const double L2_max = std::min(geomDist, M_PI * R2 * 0.45);
+
+    QPointF bestJ; double bestAz1 = 0.0, bestAz2 = 0.0;
+
+    // ── 內層：給定 L1，二分求出匹配的 L2（g(L1) = L2） ─────────────────────
+    auto solveL2FromL1 = [&](double L1, bool& ok) -> double {
+        const int nScan = 200;
+        double L2_lo = 1e-3;
+        double f_lo = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1,
+                                            arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_lo,
+                                            bestJ, bestAz1, bestAz2);
+        double L2_hi = -1.0;
+        for (int m = 1; m <= nScan; ++m) {
+            const double L2_k = L2_max * m / static_cast<double>(nScan);
+            const double f_k  = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1,
+                                                      arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_k,
+                                                      bestJ, bestAz1, bestAz2);
+            if (std::isfinite(f_lo) && std::isfinite(f_k) && f_lo * f_k < 0.0) { L2_hi = L2_k; break; }
+            if (std::isfinite(f_k)) { f_lo = f_k; L2_lo = L2_k; }
+        }
+        if (L2_hi < 0.0) { ok = false; return 0.0; }
+        for (int iter = 0; iter < 80; ++iter) {
+            const double L2_mid = 0.5 * (L2_lo + L2_hi);
+            const double f_mid = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1,
+                                                        arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_mid,
+                                                        bestJ, bestAz1, bestAz2);
+            if (std::abs(L2_hi - L2_lo) < 1e-4) { L2_lo = L2_mid; break; }
+            if (f_lo * f_mid <= 0.0) { L2_hi = L2_mid; }
+            else { L2_lo = L2_mid; f_lo = f_mid; }
+        }
+        ok = true;
+        return 0.5 * (L2_lo + L2_hi);
+    };
+
+    // ── 內層（角色互換）：給定 L2，二分求出匹配的 L1 ────────────────────────
+    auto solveL1FromL2 = [&](double L2, bool& ok) -> double {
+        const int nScan = 200;
+        double L1_lo = 1e-3;
+        double f_lo = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_lo,
+                                            arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2,
+                                            bestJ, bestAz1, bestAz2);
+        double L1_hi = -1.0;
+        for (int m = 1; m <= nScan; ++m) {
+            const double L1_k = L1_max * m / static_cast<double>(nScan);
+            const double f_k  = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_k,
+                                                      arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2,
+                                                      bestJ, bestAz1, bestAz2);
+            if (std::isfinite(f_lo) && std::isfinite(f_k) && f_lo * f_k < 0.0) { L1_hi = L1_k; break; }
+            if (std::isfinite(f_k)) { f_lo = f_k; L1_lo = L1_k; }
+        }
+        if (L1_hi < 0.0) { ok = false; return 0.0; }
+        for (int iter = 0; iter < 80; ++iter) {
+            const double L1_mid = 0.5 * (L1_lo + L1_hi);
+            const double f_mid = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_mid,
+                                                        arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2,
+                                                        bestJ, bestAz1, bestAz2);
+            if (std::abs(L1_hi - L1_lo) < 1e-4) { L1_lo = L1_mid; break; }
+            if (f_lo * f_mid <= 0.0) { L1_hi = L1_mid; }
+            else { L1_lo = L1_mid; f_lo = f_mid; }
+        }
+        ok = true;
+        return 0.5 * (L1_lo + L1_hi);
+    };
+
+    double L1 = 0.0, L2 = 0.0;
+    bool ok = false;
+
+    switch (strategy) {
+    case ReverseSpiralStrategy::FixL1: {
+        L1 = std::abs(strategyParam);
+        L2 = solveL2FromL1(L1, ok);
+        break;
+    }
+    case ReverseSpiralStrategy::FixL2: {
+        L2 = std::abs(strategyParam);
+        L1 = solveL1FromL2(L2, ok);
+        break;
+    }
+    case ReverseSpiralStrategy::FixedAValue: {
+        const double A = std::abs(strategyParam);
+        L1 = A * A / R1;
+        L2 = A * A / R2;
+        double dummyJ1, dummyJ2;
+        const double res = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1,
+                                                  arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2,
+                                                  bestJ, bestAz1, bestAz2);
+        (void)dummyJ1; (void)dummyJ2;
+        ok = std::isfinite(res) && std::abs(res) < 1e-4;
+        if (!ok) {
+            qWarning() << "[AlignmentSolver] solveReverseSpiral: FixedAValue A=" << A
+                       << "does not lie on the reverse-spiral solution family for"
+                       << "this arc pair (residual=" << res << "rad).";
+        }
+        break;
+    }
+    case ReverseSpiralStrategy::EqualLength:
+    case ReverseSpiralStrategy::TotalLength:
+    case ReverseSpiralStrategy::EqualAValue: {
+        // 外層對 L1 做一次 bisection，驅動 outer(L1) = 0：
+        //   EqualLength  : g(L1) − L1
+        //   TotalLength  : g(L1) + L1 − strategyParam
+        //   EqualAValue  : g(L1)/R2 − L1/R1
+        auto outerF = [&](double L1v, bool& innerOk) -> double {
+            const double L2v = solveL2FromL1(L1v, innerOk);
+            if (!innerOk) return std::numeric_limits<double>::quiet_NaN();
+            switch (strategy) {
+            case ReverseSpiralStrategy::EqualLength: return L2v - L1v;
+            case ReverseSpiralStrategy::TotalLength: return L2v + L1v - strategyParam;
+            case ReverseSpiralStrategy::EqualAValue: return L2v / R2 - L1v / R1;
+            default: return 0.0;
+            }
+        };
+
+        const int nScan = 100;
+        double L1_lo = 1e-3;
+        bool okLo = false;
+        double f_lo = outerF(L1_lo, okLo);
+        double L1_hi = -1.0, f_hi = 0.0;
+        for (int m = 1; m <= nScan; ++m) {
+            const double L1_k = L1_max * m / static_cast<double>(nScan);
+            bool okK = false;
+            const double f_k = outerF(L1_k, okK);
+            if (okLo && okK && std::isfinite(f_lo) && std::isfinite(f_k) && f_lo * f_k < 0.0) {
+                L1_hi = L1_k; f_hi = f_k; break;
+            }
+            if (okK) { f_lo = f_k; L1_lo = L1_k; okLo = true; }
+        }
+        if (L1_hi < 0.0) { ok = false; break; }
+        for (int iter = 0; iter < 60; ++iter) {
+            const double L1_mid = 0.5 * (L1_lo + L1_hi);
+            bool okMid = false;
+            const double f_mid = outerF(L1_mid, okMid);
+            if (std::abs(L1_hi - L1_lo) < 1e-4) { L1_lo = L1_mid; break; }
+            if (!okMid) { L1_hi = L1_mid; continue; }
+            if (f_lo * f_mid <= 0.0) { L1_hi = L1_mid; }
+            else { L1_lo = L1_mid; f_lo = f_mid; }
+        }
+        L1 = 0.5 * (L1_lo + L1_hi);
+        L2 = solveL2FromL1(L1, ok);
+        break;
+    }
+    case ReverseSpiralStrategy::PickJunction: {
+        QVector<ReverseSpiralFamilySample> samples;
+        if (!analyzeReverseSpiralFamily(arc1Center, R1, arc1Start, arc1AzStart,
+                                        arc2Center, R2, arc2End, arc2AzEnd,
+                                        type1, type2, samples, 24)) {
+            ok = false;
+            break;
+        }
+        int bestIdx = -1; double bestDist = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < samples.size(); ++i) {
+            const double d = QLineF(samples[i].junction, pickedJunctionHint).length();
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        if (bestIdx < 0) { ok = false; break; }
+        L1 = samples[bestIdx].length1;
+        L2 = solveL2FromL1(L1, ok);
+        break;
+    }
+    }
+
+    if (!ok) {
+        qWarning() << "[AlignmentSolver] solveReverseSpiral: failed to converge for strategy"
+                   << static_cast<int>(strategy);
+        return result;
+    }
+
+    // ── 由收斂的 L1、L2 反推真正的圓弧裁切點（見檔案開頭大段註解） ───────────
+    //   azCS = azJ − thetaS（solveCA() 同款公式，此處 azJ 已知，回推 azCS）。
+    double thetaS1 = 0.0, thetaS2 = 0.0;
+    {
+        const auto elem1 = makeTransitionElement(type1, L1, signR1 * R1);
+        thetaS1 = (L1 > 1e-9) ? elem1->localFrame(L1).theta : 0.0;
+        const auto elem2 = makeTransitionElement(type2, L2, signR2 * R2);
+        thetaS2 = (L2 > 1e-9) ? elem2->localFrame(L2).theta : 0.0;
+    }
+    const double azArc1Trim = bestAz1 - thetaS1;
+    const double azArc2Trim = bestAz2 + thetaS2;
+
+    const QPointF arc1TrimPoint(arc1Center.x() - signR1 * R1 * std::cos(azArc1Trim),
+                                arc1Center.y() + signR1 * R1 * std::sin(azArc1Trim));
+    const QPointF arc2TrimPoint(arc2Center.x() - signR2 * R2 * std::cos(azArc2Trim),
+                                arc2Center.y() + signR2 * R2 * std::sin(azArc2Trim));
+
+    auto arcAngleOf = [](QPointF from, QPointF to, QPointF centre, int signR) -> double {
+        const QPointF rf = from - centre;
+        const QPointF rt = to   - centre;
+        const double cross = rf.x() * rt.y() - rf.y() * rt.x();
+        const double dot   = rf.x() * rt.x() + rf.y() * rt.y();
+        double phi = std::atan2(std::abs(cross), dot);
+        if (signR > 0 && cross > 0.0) phi = 2.0 * M_PI - phi;
+        if (signR < 0 && cross < 0.0) phi = 2.0 * M_PI - phi;
+        return phi;
+    };
+    const double phi1 = arcAngleOf(arc1Start, arc1TrimPoint, arc1Center, signR1);
+    const double phi2 = arcAngleOf(arc2TrimPoint, arc2End, arc2Center, signR2);
+
+    result.valid          = true;
+    result.arc1StartPoint = arc1Start;
+    result.arc1TrimPoint  = arc1TrimPoint;
+    result.arc1Len        = R1 * phi1;
+    result.azArc1Trim     = azArc1Trim;
+    result.length1        = L1;
+    result.R1             = R1;
+    result.junction       = bestJ;
+    result.junctionAzimuth = bestAz1;
+    result.length2        = L2;
+    result.R2             = R2;
+    result.arc2TrimPoint  = arc2TrimPoint;
+    result.arc2EndPoint   = arc2End;
+    result.arc2Len        = R2 * phi2;
+    result.azArc2Trim     = azArc2Trim;
+    result.residualNorm   = std::abs(AlignmentSolver::normaliseAngle(bestAz1 - bestAz2));
+
+    return result;
+}
+
+// ============================================================================
+//  solveReverseSpiralLM  —  Phase 2 of AlignmentSolver_LM統一升級計畫.md
+//
+//  Same inputs/outputs as solveReverseSpiral(), same underlying geometry
+//  (reuses reverseSpiralResidual() unchanged — the rotation-symmetry +
+//  circle-intersection closed form is not what's being replaced here). The
+//  only thing that changes is *how* (L1,L2) is driven to satisfy the
+//  residual: instead of solveReverseSpiral()'s nested bisection (outer L1 /
+//  inner L2, with EqualLength/TotalLength/EqualAValue wrapping a THIRD outer
+//  bisection layer on top of that), this solves the 2-unknown system
+//  [L1,L2] jointly in one AlignmentNLSolver::solve() call with 2 residuals:
+//
+//    r[0] = reverseSpiralResidual(L1, L2)              (the geometric
+//           tangency/continuity condition — see the long comment above
+//           jFromArcCT()/jFromArcTC() for the derivation)
+//    r[1] = strategy-specific second equation (see ReverseSpiralStrategy;
+//           mirrors exactly the closed forms already used inside
+//           solveReverseSpiral()'s switch statement, just expressed as a
+//           residual instead of a bisection target)
+//
+//  FixL1/FixL2/FixedAValue reduce to a single unknown (the other length is
+//  pinned by strategyParam), so those three still use a plain 1-unknown
+//  solve (n=1) rather than the full 2-unknown system — there is no nested
+//  bisection to eliminate for those cases in the first place, so LM buys
+//  nothing there beyond what a single bisection already does; they are
+//  included here only so callers can treat all seven strategies uniformly
+//  through one function.  PickJunction is not amenable to LM at all — "pick
+//  the closest family member to a point the user clicked" is a discrete
+//  nearest-neighbour search over analyzeReverseSpiralFamily() samples, not
+//  a root-finding problem — so it delegates to analyzeReverseSpiralFamily()
+//  exactly as solveReverseSpiral() does, then finishes with the plain
+//  1-unknown solve for the resulting fixed L1.
+// ============================================================================
+
+SolvedReverseSpiral AlignmentSolver::solveReverseSpiralLM(
+    QPointF arc1Center, double arc1Radius,
+    QPointF arc1Start,  double arc1AzStart,
+    QPointF arc2Center, double arc2Radius,
+    QPointF arc2End,    double arc2AzEnd,
+    SpiralType type1, SpiralType type2,
+    ReverseSpiralStrategy strategy, double strategyParam,
+    QPointF pickedJunctionHint)
+{
+    SolvedReverseSpiral result;
+
+    const double R1 = std::abs(arc1Radius);
+    const double R2 = std::abs(arc2Radius);
+    if (R1 < 1e-9 || R2 < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveReverseSpiralLM: arc radius ≈ 0";
+        return result;
+    }
+
+    auto computeSignR = [](QPointF centre, QPointF refPt, double az) -> int {
+        const double n_x = std::cos(az), n_y = -std::sin(az);
+        const double side = (centre.x() - refPt.x()) * n_x
+                           + (centre.y() - refPt.y()) * n_y;
+        return (side >= 0.0) ? 1 : -1;
+    };
+    const int signR1 = computeSignR(arc1Center, arc1Start, arc1AzStart);
+    const int signR2 = computeSignR(arc2Center, arc2End,   arc2AzEnd);
+
+    if (signR1 == signR2) {
+        qWarning() << "[AlignmentSolver] solveReverseSpiralLM: arc1/arc2 turn the same"
+                   << "direction — not a reverse spiral (use solveACA()).";
+        return result;
+    }
+
+    const double geomDist = std::hypot(arc2End.x() - arc1Start.x(),
+                                       arc2End.y() - arc1Start.y())
+                          + R1 + R2;
+    const double L1_max = std::min(geomDist, M_PI * R1 * 0.45);
+    const double L2_max = std::min(geomDist, M_PI * R2 * 0.45);
+
+    QPointF bestJ; double bestAz1 = 0.0, bestAz2 = 0.0;
+
+    // Wraps reverseSpiralResidual() with the bestJ/bestAz1/bestAz2 out-params
+    // already bound, returning NaN (via reverseSpiralResidual's own contract)
+    // when the two circles don't intersect at this (L1,L2) — the residual
+    // function below turns that into a large-but-finite penalty so LM never
+    // sees a NaN in the Jacobian.
+    auto geomResidual = [&](double L1v, double L2v) -> double {
+        const double r = reverseSpiralResidual(
+            arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1v,
+            arc2Center, R2, signR2, type2, arc2End,   arc2AzEnd,   L2v,
+            bestJ, bestAz1, bestAz2);
+        return std::isfinite(r) ? r : 1e3;  // circles don't intersect: steer away
+    };
+
+    // ── seed initial guess from the family scan (see plan doc §3: "initial
+    //    guess" guidance — LM is sensitive to starting point, and an
+    //    arbitrary constant risks landing in the non-intersecting region
+    //    where geomResidual() is a flat penalty plateau with zero gradient).
+    QVector<ReverseSpiralFamilySample> samples;
+    const bool haveSamples = analyzeReverseSpiralFamily(
+        arc1Center, R1, arc1Start, arc1AzStart,
+        arc2Center, R2, arc2End,   arc2AzEnd,
+        type1, type2, samples, 8);
+    if (!haveSamples || samples.isEmpty()) {
+        qWarning() << "[AlignmentSolver] solveReverseSpiralLM: no solution family"
+                   << "(arcs geometrically incompatible — too close/too far apart).";
+        return result;
+    }
+    // Median sample is a reasonable strategy-agnostic seed for all cases
+    // except PickJunction (handled separately below).
+    const auto& seed = samples[samples.size() / 2];
+
+    double L1 = 0.0, L2 = 0.0;
+    bool ok = false;
+
+    // ── PickJunction: identical discrete search to solveReverseSpiral() —
+    //    not a root-finding problem, so LM is not applicable; delegate.
+    if (strategy == ReverseSpiralStrategy::PickJunction) {
+        int bestIdx = -1; double bestDist = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < samples.size(); ++i) {
+            const double d = QLineF(samples[i].junction, pickedJunctionHint).length();
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        if (bestIdx < 0) {
+            qWarning() << "[AlignmentSolver] solveReverseSpiralLM: PickJunction found no sample.";
+            return result;
+        }
+        L1 = samples[bestIdx].length1;
+        // Single-unknown LM solve for L2 given fixed L1 (same 1-D case as
+        // FixL1 below — see that branch for the shared implementation).
+        AlignmentNLSolver::ResidualFn fn = [&](const QVector<double>& x, QVector<double>& r) {
+            r.resize(1);
+            r[0] = geomResidual(L1, x[0]);
+        };
+        AlignmentNLSolver solver;
+        const auto res = solver.solve({seed.length2}, fn, {L2_max});
+        ok = res.converged;
+        L2 = res.x[0];
+    }
+    // ── FixL1 / FixL2 / FixedAValue: genuinely 1 unknown, no nested
+    //    bisection existed to eliminate — plain 1-D LM solve for parity.
+    else if (strategy == ReverseSpiralStrategy::FixL1) {
+        L1 = std::abs(strategyParam);
+        AlignmentNLSolver::ResidualFn fn = [&](const QVector<double>& x, QVector<double>& r) {
+            r.resize(1);
+            r[0] = geomResidual(L1, x[0]);
+        };
+        AlignmentNLSolver solver;
+        const auto res = solver.solve({seed.length2}, fn, {L2_max});
+        ok = res.converged;
+        L2 = res.x[0];
+    }
+    else if (strategy == ReverseSpiralStrategy::FixL2) {
+        L2 = std::abs(strategyParam);
+        AlignmentNLSolver::ResidualFn fn = [&](const QVector<double>& x, QVector<double>& r) {
+            r.resize(1);
+            r[0] = geomResidual(x[0], L2);
+        };
+        AlignmentNLSolver solver;
+        const auto res = solver.solve({seed.length1}, fn, {L1_max});
+        ok = res.converged;
+        L1 = res.x[0];
+    }
+    else if (strategy == ReverseSpiralStrategy::FixedAValue) {
+        const double A = std::abs(strategyParam);
+        L1 = A * A / R1;
+        L2 = A * A / R2;
+        const double res = geomResidual(L1, L2);
+        ok = std::abs(res) < 1e-4;
+        if (!ok) {
+            qWarning() << "[AlignmentSolver] solveReverseSpiralLM: FixedAValue A=" << A
+                       << "does not lie on the reverse-spiral solution family for"
+                       << "this arc pair (residual=" << res << "rad).";
+        }
+    }
+    // ── EqualLength / TotalLength / EqualAValue: the real Phase-2 payoff —
+    //    genuine 2-unknown joint solve, replacing solveReverseSpiral()'s
+    //    THREE nested bisection layers (outer strategy-loop over L1, inner
+    //    loop solving L2 from L1) with one AlignmentNLSolver::solve() call.
+    else {
+        AlignmentNLSolver::ResidualFn fn = [&](const QVector<double>& x, QVector<double>& r) {
+            const double L1v = x[0], L2v = x[1];
+            r.resize(2);
+            r[0] = geomResidual(L1v, L2v);
+            switch (strategy) {
+            case ReverseSpiralStrategy::EqualLength: r[1] = L2v - L1v; break;
+            case ReverseSpiralStrategy::TotalLength: r[1] = L2v + L1v - strategyParam; break;
+            case ReverseSpiralStrategy::EqualAValue: r[1] = L2v / R2 - L1v / R1; break;
+            default: r[1] = 0.0; break;
+            }
+        };
+        AlignmentNLSolver::Config cfg;
+        cfg.tolerance = 1e-6;   // r[0] is radians (O(1e-2..1)), r[1] is meters
+                                 // or meters/meter — both already O(1) scale,
+                                 // so the default-scale tolerance guidance in
+                                 // AlignmentNLSolver.h applies directly here.
+        AlignmentNLSolver solver(cfg);
+        QVector<double> x0     = {seed.length1, seed.length2};
+        QVector<double> scale  = {L1_max, L2_max};
+        const auto res = solver.solve(x0, fn, scale);
+        ok = res.converged;
+        L1 = res.x[0];
+        L2 = res.x[1];
+    }
+
+    if (!ok || L1 <= 0.0 || L2 <= 0.0) {
+        qWarning() << "[AlignmentSolver] solveReverseSpiralLM: failed to converge for strategy"
+                   << static_cast<int>(strategy);
+        return result;
+    }
+
+    // Re-evaluate once more at the converged (L1,L2) to get final bestJ/
+    // bestAz1/bestAz2 (the lambda captures were last written by whichever
+    // residual evaluation happened to run last inside the solver, which is
+    // already the converged point in practice, but re-evaluating explicitly
+    // here removes any dependency on AlignmentNLSolver's internal call order).
+    geomResidual(L1, L2);
+
+    // ── final geometry assembly — identical to solveReverseSpiral()'s tail,
+    //    duplicated rather than factored out for this shadow-validation
+    //    phase so the two implementations stay fully independent (see plan
+    //    doc §2: "keep Bisection and LM cross-checkable" — sharing the tail
+    //    would make a bug in the tail invisible to cross-validation).
+    double thetaS1 = 0.0, thetaS2 = 0.0;
+    {
+        const auto elem1 = makeTransitionElement(type1, L1, signR1 * R1);
+        thetaS1 = (L1 > 1e-9) ? elem1->localFrame(L1).theta : 0.0;
+        const auto elem2 = makeTransitionElement(type2, L2, signR2 * R2);
+        thetaS2 = (L2 > 1e-9) ? elem2->localFrame(L2).theta : 0.0;
+    }
+    const double azArc1Trim = bestAz1 - thetaS1;
+    const double azArc2Trim = bestAz2 + thetaS2;
+
+    const QPointF arc1TrimPoint(arc1Center.x() - signR1 * R1 * std::cos(azArc1Trim),
+                                arc1Center.y() + signR1 * R1 * std::sin(azArc1Trim));
+    const QPointF arc2TrimPoint(arc2Center.x() - signR2 * R2 * std::cos(azArc2Trim),
+                                arc2Center.y() + signR2 * R2 * std::sin(azArc2Trim));
+
+    auto arcAngleOf = [](QPointF from, QPointF to, QPointF centre, int signR) -> double {
+        const QPointF rf = from - centre;
+        const QPointF rt = to   - centre;
+        const double cross = rf.x() * rt.y() - rf.y() * rt.x();
+        const double dot   = rf.x() * rt.x() + rf.y() * rt.y();
+        double phi = std::atan2(std::abs(cross), dot);
+        if (signR > 0 && cross > 0.0) phi = 2.0 * M_PI - phi;
+        if (signR < 0 && cross < 0.0) phi = 2.0 * M_PI - phi;
+        return phi;
+    };
+    const double phi1 = arcAngleOf(arc1Start, arc1TrimPoint, arc1Center, signR1);
+    const double phi2 = arcAngleOf(arc2TrimPoint, arc2End, arc2Center, signR2);
+
+    result.valid          = true;
+    result.arc1StartPoint = arc1Start;
+    result.arc1TrimPoint  = arc1TrimPoint;
+    result.arc1Len        = R1 * phi1;
+    result.azArc1Trim     = azArc1Trim;
+    result.length1        = L1;
+    result.R1             = R1;
+    result.junction       = bestJ;
+    result.junctionAzimuth = bestAz1;
+    result.length2        = L2;
+    result.R2             = R2;
+    result.arc2TrimPoint  = arc2TrimPoint;
+    result.arc2EndPoint   = arc2End;
+    result.arc2Len        = R2 * phi2;
+    result.azArc2Trim     = azArc2Trim;
+    result.residualNorm   = std::abs(AlignmentSolver::normaliseAngle(bestAz1 - bestAz2));
 
     return result;
 }
@@ -1462,10 +2226,21 @@ SolvedCompoundChain AlignmentSolver::solveCompoundChain(
 
     // Final (exit) spiral: mirrored formula referenced at the KNOWN target
     // azimuth az2 (identical role to solveSCS Step 7c / solveCA's stDx/stDy).
+    //
+    // ── 修正：先前這裡誤用了跟「入螺旋」forward-walk 相同的旋轉公式
+    // （Xm*sin+Ym*cos, Xm*cos−Ym*sin），只適用於「已知起點方位角，往前走」
+    // 的情況。但這裡是反過來——已知的是終點方位角 az2，要從 CS（弧終點）
+    // 算到 ST，對應的是 solveSCS Step 7c／solveCA 用的「鏡射」公式（見
+    // solveSCS：stDx = Xm2*sin(az2) − Ym2*cos(az2)；stDy = Xm2*cos(az2) +
+    // Ym2*sin(az2)，等同先把局部 y 取負再依 az2 旋轉）。少了這個鏡射，
+    // 等同旋轉角度少轉了整段出螺旋自身的偏轉角 theta[N]，在 theta[N] 不小
+    // 的情況下（例如蛋形線一側接續的出螺旋），會讓最後一段出螺旋跟前一個
+    // 圓弧之間出現數公尺等級的縱向落差（實測 G02U R109.4 蛋形線案例：
+    // 修正前誤差 ~7.6m，修正後 <1mm）。
     QPointF stRaw = pos;
     if (resolvedSpiralLengths[N] >= 1e-9) {
-        const double stDx =  Xm[N] * std::sin(az2) + Ym[N] * std::cos(az2);
-        const double stDy =  Xm[N] * std::cos(az2) - Ym[N] * std::sin(az2);
+        const double stDx =  Xm[N] * std::sin(az2) - Ym[N] * std::cos(az2);
+        const double stDy =  Xm[N] * std::cos(az2) + Ym[N] * std::sin(az2);
         stRaw = pos + QPointF(stDx, stDy);
     }
     // ST: terminal node, no following segment.
@@ -1595,6 +2370,23 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         int       arc2Idx  = -1;   ///< index of the Fixed Arc₂ element (after spiral)
     };
     QVector<ACAData> acaData(n);
+
+    // Reverse-spiral group data — stored per SpiralIn element index (SpiralIn
+    // and its adjacent SpiralOut both carry isReverseSpiralGroup==true, see
+    // ReverseSpiral_Command_實作計畫.md 第 2.4 節). SpiralIn sits between
+    // Fixed Arc₁ (before) and Fixed Arc₂ (after), exactly like ACAData, but
+    // unlike ACA the "spiral" here is TWO physically distinct elements
+    // (SpiralIn=S1, SpiralOut=S2) meeting at a real curvature-zero junction,
+    // so both element indices are tracked (spiralOutIdx) for the
+    // point-sequence builder below.
+    struct RSData {
+        bool                 valid        = false;
+        SolvedReverseSpiral  rs;
+        int                  arc1Idx      = -1;   ///< Fixed Arc₁ element index (before S1)
+        int                  arc2Idx      = -1;   ///< Fixed Arc₂ element index (after S2)
+        int                  spiralOutIdx = -1;   ///< index of the paired SpiralOut (S2) element
+    };
+    QVector<RSData> rsData(n);
 
     // ════════════════════════════════════════════════════════════════════════
     //  Pass 1 – Fixed CircularArc: foot-of-perpendicular T1 / T2
@@ -2187,6 +2979,99 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    //  Pass 2f — Reverse-spiral group  (Fixed Arc₁ → SpiralIn(S1) →
+    //            SpiralOut(S2) → Fixed Arc₂；曲率方向相反，中間過零)
+    //
+    //  Identification: element i is a SpiralIn with mode==Floating,
+    //    isReverseSpiralGroup==true, tangentIdxBefore/After pointing at
+    //    Fixed CircularArc elements (overloaded exactly like ACA, see
+    //    addReverseSpiral()), and element (i+1) is the paired SpiralOut
+    //    (also isReverseSpiralGroup==true). Both S1 and S2 lengths are
+    //    unknown; solveReverseSpiral() finds them per the group's stored
+    //    ReverseSpiralStrategy/Param (see ReverseSpiral_Command_實作計畫.md
+    //    第 2.4 節).
+    // ════════════════════════════════════════════════════════════════════════
+    for (int i = 0; i < n; ++i) {
+        if (elems[i].type != EditableElementType::SpiralIn)  continue;
+        if (elems[i].mode != ConstraintMode::Floating)       continue;
+        if (!elems[i].isReverseSpiralGroup)                  continue;
+
+        const int arc1I = elems[i].tangentIdxBefore;
+        const int arc2I = elems[i].tangentIdxAfter;
+        const int outI  = i + 1;
+
+        if (arc1I < 0 || arc1I >= n) continue;
+        if (arc2I < 0 || arc2I >= n) continue;
+        if (elems[arc1I].type != EditableElementType::CircularArc) continue;
+        if (elems[arc2I].type != EditableElementType::CircularArc) continue;
+        if (elems[arc1I].mode != ConstraintMode::Fixed)            continue;
+        if (elems[arc2I].mode != ConstraintMode::Fixed)            continue;
+        if (outI >= n || elems[outI].type != EditableElementType::SpiralOut
+                       || !elems[outI].isReverseSpiralGroup) {
+            qWarning() << "[AlignmentSolver] Pass2f ReverseSpiral idx" << i
+                       << ": paired SpiralOut not found immediately after — skipping";
+            continue;
+        }
+
+        if (!arcData[arc1I].valid) {
+            qWarning() << "[AlignmentSolver] Pass2f ReverseSpiral idx" << i
+                       << ": Fixed arc1 at idx" << arc1I << " not solved in Pass 1";
+            continue;
+        }
+        if (!arcData[arc2I].valid) {
+            qWarning() << "[AlignmentSolver] Pass2f ReverseSpiral idx" << i
+                       << ": Fixed arc2 at idx" << arc2I << " not solved in Pass 1";
+            continue;
+        }
+
+        const double R1 = std::abs(elems[arc1I].radius);
+        const double R2 = std::abs(elems[arc2I].radius);
+
+        const double az1Start = arcData[arc1I].azPC;
+        const double signedDelta2 = (elems[arc2I].radius >= 0.0)
+                                    ? (arcData[arc2I].arcLen / R2)
+                                    : -(arcData[arc2I].arcLen / R2);
+        const double az2End = arcData[arc2I].azPC + signedDelta2;
+
+        const auto strategy = static_cast<ReverseSpiralStrategy>(elems[i].reverseSpiralStrategy);
+        const double strategyParam = elems[i].reverseSpiralParam;
+
+        const SolvedReverseSpiral rs = solveReverseSpiral(
+            elems[arc1I].arcCenter, R1,
+            arcData[arc1I].pc,  az1Start,
+            elems[arc2I].arcCenter, R2,
+            arcData[arc2I].pt,  az2End,
+            elems[i].spiralType1, elems[outI].spiralType1,
+            strategy, strategyParam);
+
+        if (!rs.valid) {
+            qWarning() << "[AlignmentSolver] Pass2f ReverseSpiral idx" << i << ": solveReverseSpiral failed";
+            continue;
+        }
+
+        RSData rd;
+        rd.valid        = true;
+        rd.rs           = rs;
+        rd.arc1Idx      = arc1I;
+        rd.arc2Idx      = arc2I;
+        rd.spiralOutIdx = outI;
+        rsData[i] = rd;
+
+        // Write solved lengths back so they survive serialisation
+        const_cast<EditableElement&>(elems[i]).length    = rs.length1;
+        const_cast<EditableElement&>(elems[outI]).length = rs.length2;
+
+        // Trim Arc₁ tail: its new PT = S1's arc-side point
+        arcData[arc1I].arcLen = rs.arc1Len;
+        arcData[arc1I].pt     = rs.arc1TrimPoint;
+
+        // Trim Arc₂ head: its new PC = S2's arc-side point
+        arcData[arc2I].pc     = rs.arc2TrimPoint;
+        arcData[arc2I].azPC   = rs.azArc2Trim;
+        arcData[arc2I].arcLen = rs.arc2Len;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     //  Pass 3 — Free elements: derive geometry from solved neighbours
     //
     //  Strategy: iterative residual minimisation.
@@ -2637,6 +3522,15 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             // This arc is Arc₂ of an ACA → spiral at i-1 has arc2Idx==i
             const bool hasACA_entry = (i > 0      && acaData[i-1].valid && acaData[i-1].arc2Idx == i);
 
+            // A reverse-spiral group has its SpiralIn(S1)+SpiralOut(S2) pair
+            // occupying (arc1Idx+1, arc1Idx+2) — TWO elements, unlike ACA's
+            // one — so relative to Arc₁ the SpiralIn sits at (i+1), and
+            // relative to Arc₂ the SpiralIn sits at (i-2) (SpiralOut at i-1).
+            // This arc is Arc₁ of a reverse-spiral group → SpiralIn at i+1
+            const bool hasRS_exit  = (i + 1 < n && rsData[i+1].valid && rsData[i+1].arc1Idx == i);
+            // This arc is Arc₂ of a reverse-spiral group → SpiralIn at i-2
+            const bool hasRS_entry = (i >= 2     && rsData[i-2].valid && rsData[i-2].arc2Idx == i);
+
             // ── Emit LC spiral keypoint (TS) before the arc CC point ──────────
             if (hasLC) {
                 const SolvedLC& lc = lcData[i-1].lc;
@@ -2670,7 +3564,7 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             //   前一元素為 Tangent → "TC"（切線→圓弧）
             //   前一元素為 CircularArc → "CC"（弧→弧，反向曲線）
             {
-                const bool hasLC_entry = (hasLC || hasACA_entry);
+                const bool hasLC_entry = (hasLC || hasACA_entry || hasRS_entry);
                 if (hasLC_entry) {
                     pt.tsc = QStringLiteral("SC");
                 } else {
@@ -2726,6 +3620,71 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 pts.append(cspt);
                 // Arc₂ (starting at SC₂) will be emitted in the normal arc flow
                 // for element acaData[i+1].arc2Idx, with its updated pc = SC₂.
+                continue;  // skip default PT waypoint for Arc₁
+            }
+
+            // ── Emit reverse-spiral keypoints (S1: CS→ST, junction, S2: TS) ───
+            //  Unlike ACA (one continuous Egg element, emitted as a single
+            //  "CS" keypoint), a reverse-spiral group has TWO physically
+            //  distinct spirals meeting at a real curvature-zero junction —
+            //  so we emit S1's "CS"→"ST" pair (mirroring the hasCA block
+            //  below) followed immediately by S2's leading "TS" keypoint at
+            //  the SAME location (mirroring the hasLC block above), with
+            //  zero chainage gap between ST and TS (matching the existing
+            //  isSSJunction convention for "two spirals meeting, no arc
+            //  between" elsewhere in this solver).
+            if (hasRS_exit) {
+                const SolvedReverseSpiral& rs = rsData[i+1].rs;
+                const int spiralInIdx  = i + 1;
+                const int spiralOutIdx = rsData[i+1].spiralOutIdx;
+                auto spiralTypeName = [](SpiralType t) -> QString {
+                    switch (t) {
+                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
+                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
+                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
+                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
+                    default:                   return QStringLiteral("SPIRAL");
+                    }
+                };
+
+                // CS point = start of S1 (exit of Arc₁ = entry of S1)
+                AlignmentPoint cspt;
+                cspt.tsc       = QStringLiteral("CS");
+                cspt.curveType = spiralTypeName(elems[spiralInIdx].spiralType1);
+                cspt.easting   = rs.arc1TrimPoint.x();
+                cspt.northing  = rs.arc1TrimPoint.y();
+                cspt.azimuth   = rs.azArc1Trim;
+                cspt.length    = rs.length1;
+                cspt.radius    = rs.R1;
+                cspt.chainage  = chainage;
+                chainage      += rs.length1;
+                pts.append(cspt);
+
+                // ST point = end of S1 = the curvature-zero junction
+                AlignmentPoint stpt;
+                stpt.tsc      = QStringLiteral("ST");
+                stpt.easting  = rs.junction.x();
+                stpt.northing = rs.junction.y();
+                stpt.azimuth  = rs.junctionAzimuth;
+                stpt.chainage = chainage;
+                pts.append(stpt);
+
+                // TS point = start of S2, same location as ST above (zero
+                // chainage gap — this is the S1><S2 junction itself).
+                AlignmentPoint tspt;
+                tspt.tsc       = QStringLiteral("TS");
+                tspt.curveType = spiralTypeName(elems[spiralOutIdx].spiralType1);
+                tspt.easting   = rs.junction.x();
+                tspt.northing  = rs.junction.y();
+                tspt.azimuth   = rs.junctionAzimuth;
+                tspt.length    = rs.length2;
+                tspt.radius    = rs.R2;
+                tspt.chainage  = chainage;
+                chainage      += rs.length2;
+                pts.append(tspt);
+
+                // Arc₂ (starting at rs.arc2TrimPoint) will be emitted in the
+                // normal arc flow below for element rsData[i+1].arc2Idx.
                 continue;  // skip default PT waypoint for Arc₁
             }
 
@@ -2913,7 +3872,12 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                                               ? arc_delta : -arc_delta;
                     sentinel.azimuth = arcData[i].azPC + signedDelta;
                 }
+                // 線形最後一段為圓弧（Circular Arc）時，終點是「弧→切線」
+                // 過渡點，比照 2615 行同樣的判斷邏輯，tsc 應為 "CT"，
+                // 而非預設的 "TT"（TT 僅適用於最後一段為切線的情況）。
+                sentinel.tsc = QStringLiteral("CT");
                 break;
+
             } else if ((elems[i].type == EditableElementType::SpiralIn
                         || elems[i].type == EditableElementType::SpiralOut)
                        && elems[i].mode == ConstraintMode::Fixed) {

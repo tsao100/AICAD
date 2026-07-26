@@ -12,6 +12,7 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <gp_Pnt.hxx>
 #include <Quantity_Color.hxx>
+#include <AIS_InteractiveContext.hxx>
 
 #include <QDebug>
 #include <QVector3D>
@@ -112,12 +113,22 @@ void Railway3DAlignmentRenderer::rebuildOverlays()
     clearOverlaysOnly();
     if (!m_cadView) return;
 
-    for (const railway::TrackCenterLine* tcl : m_tcls) {
+    for (railway::TrackCenterLine* tcl : m_tcls) {
         Handle(AIS_Shape) shape = build3DPolyline(tcl);
         if (shape.IsNull()) continue;
 
         m_cadView->addOverlayAIS(shape, {0});
+
+        // 登錄反查資料（geomUuid = "railway3d:<tclId>"），供：
+        //   1. selectedTcls()：以 IsSelected() 檢查目前選取集合；
+        //   2. 點擊取得高程的互動命令（例如 V3D）：由 POINT_ACQUIRED payload
+        //      的 geomUuid 反查點擊命中哪一條線路。
+        m_cadView->registerSketchGeomAIS(shape, tcl->id(),
+                                          QStringLiteral("railway3d:") + tcl->id(),
+                                          -1);
+
         m_overlays.append(shape);
+        m_overlayTcl.append(tcl);
     }
 
     m_cadView->refreshView();
@@ -126,10 +137,34 @@ void Railway3DAlignmentRenderer::rebuildOverlays()
 void Railway3DAlignmentRenderer::clearOverlaysOnly()
 {
     if (m_cadView) {
-        for (const auto& obj : m_overlays)
+        for (const auto& obj : m_overlays) {
+            m_cadView->unregisterSketchGeomAIS(obj);
             m_cadView->removeOverlayAIS(obj);
+        }
     }
     m_overlays.clear();
+    m_overlayTcl.clear();
+}
+
+// ============================================================================
+//  selectedTcls()
+// ============================================================================
+
+QList<railway::TrackCenterLine*> Railway3DAlignmentRenderer::selectedTcls() const
+{
+    QList<railway::TrackCenterLine*> result;
+    if (!m_cadView) return result;
+
+    Handle(AIS_InteractiveContext) ctx = m_cadView->context();
+    if (ctx.IsNull()) return result;
+
+    const int n = std::min(m_overlays.size(), m_overlayTcl.size());
+    for (int i = 0; i < n; ++i) {
+        if (!m_overlayTcl[i]) continue;
+        if (ctx->IsSelected(m_overlays[i]) && !result.contains(m_overlayTcl[i]))
+            result.append(m_overlayTcl[i]);
+    }
+    return result;
 }
 
 // ============================================================================

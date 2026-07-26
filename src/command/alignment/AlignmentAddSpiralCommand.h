@@ -111,6 +111,17 @@ private:
         const railway::HorizontalAlignmentEdit*     edit,
         railway::EditableElementType&               outType);
 
+    /**
+     * @brief 若 elemIdx（一個 Fixed Tangent／Fixed CircularArc 的 index）已經有
+     *        一段 Floating SpiralIn/SpiralOut 依附在它旁邊，回傳一段人類可讀的
+     *        提示文字（含是否已成功求解）；否則回傳空字串。用於使用者剛點選
+     *        到某個元素時，提早提示「這裡已經有螺線了」，避免重複新增或跟既有
+     *        （可能求解失敗、尚未成功）的浮動螺線互相衝突。
+     */
+    static QString describeAdjacentFloatingSpiral(
+        int                                      elemIdx,
+        const railway::HorizontalAlignmentEdit*  edit);
+
     // ── 高亮輔助 ──────────────────────────────────────────────────────────────
     void highlightElement(int elemIdx);
 

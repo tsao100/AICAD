@@ -137,7 +137,5 @@ private:
     int m_angleFillIdx = 0;         ///< WaitingForArcAngles 目前填到第幾個弧（0..N-1）
 };
 
-REGISTER_COMMAND("scschain", AlignmentSCSChainCommand);
-
 } // namespace command
 } // namespace aicad

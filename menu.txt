@@ -142,6 +142,7 @@ command|alignmentfloatcurve||0
 command|alignmentscs||0
 command|scschain||0
 command|alignmentaddspiral||0
+command|alignment3daddvprofile||0
 command|profilearray||0
 command|profileloft||0
 command|setorigin||0

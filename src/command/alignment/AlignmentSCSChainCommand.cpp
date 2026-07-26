@@ -663,5 +663,14 @@ QString AlignmentSCSChainCommand::getUsage() const
         "  For a single arc (N=1), use SCS instead.";
 }
 
+// ── 命令註冊 ──────────────────────────────────────────────────────────────
+// 原本誤放在 AlignmentSCSChainCommand.h 內（namespace 作用域下的檔頭巨集），
+// 違反本專案「REGISTER_COMMAND 必須放在 .cpp」的慣例（見其他 alignment
+// 指令，如 ImportAlignmentCommand.cpp 底部）——若該標頭日後被其他 .cpp
+// include，會在每個引用它的翻譯單元各自產生一份靜態初始化器，屬於未定義
+// 行為的溫床、也可能造成難以排查的「靜默註冊失敗」。移到這裡，確保只有
+// 這個 .cpp 對應的單一翻譯單元會執行註冊。
+REGISTER_COMMAND("scschain", AlignmentSCSChainCommand);
+
 } // namespace command
 } // namespace aicad

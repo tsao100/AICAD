@@ -61,27 +61,6 @@ const QStringList kSpiralTypeNames = {
     QObject::tr("CubicECI (CECI三次拋物線)")
 };
 
-// curveType 字串 → SpiralType
-SpiralType curveTypeToEnum(const QString& s)
-{
-    if (s == QLatin1String("HALFSINE")) return SpiralType::HalfSine;
-    if (s == QLatin1String("PARABOLA")) return SpiralType::Parabola;
-    if (s == QLatin1String("CUBICJPN")) return SpiralType::CubicJPN;
-    if (s == QLatin1String("CUBICECI")) return SpiralType::CubicECI;
-    return SpiralType::Clothoid;
-}
-
-QString spiralTypeToDisplay(SpiralType t)
-{
-    switch (t) {
-    case SpiralType::HalfSine: return QObject::tr("HalfSine");
-    case SpiralType::Parabola: return QObject::tr("Parabola");
-    case SpiralType::CubicJPN: return QObject::tr("CubicJPN");
-    case SpiralType::CubicECI: return QObject::tr("CubicECI");
-    default:                   return QObject::tr("Clothoid");
-    }
-}
-
 QString curveTypeToDisplay(const QString& ct)
 {
     if (ct == QLatin1String("ARC"))      return QObject::tr("圓弧 (ARC)");
@@ -1113,7 +1092,6 @@ void AlignmentDataTableDialog::populateVerticalTable()
 void AlignmentDataTableDialog::onVCellChanged(QTableWidgetItem* item)
 {
     if (m_populating || !item || !m_doc) return;
-    const int row = item->row();
     const int col = item->column();
 
     // 取得 vipIdx（存於 UserRole）

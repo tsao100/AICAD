@@ -88,6 +88,11 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("PV",  "PROFILEVIEW",      "Show vertical alignment profile view",         true);
     registerAlias("VCG", "VALIGNCHECKGRADE", "Check grades against limit, highlight violations", true);
 
+    // ── 3D Alignment：加入簡易起訖點垂直線形 ─────────────────────────────────
+    registerAlias("V3D", "ALIGNMENT3DADDVPROFILE",
+                  "Add start/end-only vertical alignment to selected 3D Alignment lines"
+                  " (pick elevations by clicking two 3D Alignment polylines)", true);
+
     // ── Phase 9：草圖約束命令別名 ─────────────────────────────────────────────
     // Geometric
     registerAlias("COI", "COINCIDENT",    "Coincident constraint",             true);

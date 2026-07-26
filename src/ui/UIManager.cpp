@@ -7,6 +7,11 @@
 
 #include "UIManager.h"
 #include <cmath>
+#include <QPointer>
+#include <QJsonObject>
+#include <QAction>
+#include <QIcon>
+#include <QKeySequence>
 #include "MainWindow.h"
 #include "ToolManager.h"
 #include "FeatureBrowser.h"
@@ -44,6 +49,7 @@
 #include "ParameterPanel.h"  // Phase 7
 #include "command/CommandTypes.h"  // 確保包含完整定義
 #include "command/CommandManager.h"
+#include "command/SketchEditCommand.h"
 #include "command/GripMoveCommand.h"
 #include "command/ConstraintCommands.h"
 #include "view/AlignmentRenderer.h"
@@ -168,6 +174,16 @@ public:
     QString     lineChainPrevLineUuid;
     /// 上一段的終點座標（用於判斷本段起點是否緊接上一段終點）
     QVector2D   lineChainPrevEndPos;
+
+    // ── Sketch 通用快照式 undo/redo（掛在 CommandManager 訊號上）────────
+    /// 目前執行中的 CommandManager 指令開始時，若有作用中的 Sketch，
+    /// 是否已捕捉「操作前」快照（見 UIManager::initialize() 內
+    /// 「Sketch 通用 undo/redo」區塊）
+    bool                    sketchEditPending = false;
+    /// 操作前快照所屬的 Sketch（用於操作後比對是否切換了作用中草圖）
+    QPointer<cad::Sketch>   sketchEditTargetSketch;
+    /// 操作前的 JSON 快照
+    QJsonObject             sketchEditBeforeSnapshot;
 };
 
 UIManager::UIManager(QObject* parent)
@@ -458,6 +474,94 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // 在 Private 初始化完成、建立 cadView 之後加入（約 initialize() 函式內）：
         d->undoStack = new QUndoStack(d->mainWindow);   // parent 給 mainWindow 自動清理        // 設置命令列系統（在 CadView 創建後）
 
+        // ── Sketch 通用快照式 undo/redo ─────────────────────────────────
+        // 設計：不逐指令手刻 undo/redo，而是掛在 CommandManager 的
+        // commandStarted/commandFinished/commandCancelled 這三個既有訊號上，
+        // 在「有作用中 Sketch」的前提下，指令開始時捕捉一次 Sketch::toJson()
+        // 快照，指令結束（無論成功／取消）時再捕捉一次，兩者不同才推入
+        // SketchEditCommand。對於 LineCommand 這類互動式多點指令（畫連續
+        // 線），commandStarted/commandFinished 只在整個互動流程「開始」與
+        // 「真正結束」（Enter/ESC/右鍵完成，而非每下一點）各觸發一次
+        // （見 CommandManager::executeCommand 內 connect(cmd, &Command::finished, …)
+        // 與 LineCommand::handlePointAcquired 逐段 publish 但不逐段 finish 的
+        // 實作），因此一整段連續畫線會合併成一筆 Undo，行為與大多數 CAD
+        // 軟體「一個指令一筆 Undo」一致。
+        //
+        // 與既有機制的分工：
+        //   - grip 拖曳（GripMoveCommand）、AlignmentEditCommand（PI/VIP 拖曳、
+        //     資料表編輯）都是直接操作、不經過 CommandManager::executeCommand，
+        //     不會被這裡重複捕捉。
+        //   - 排除 "undo"/"redo" 這兩個指令名稱本身，避免呼叫復原/重做時
+        //     被本 hook 誤判成一次新的可復原操作，把 undo 動作自己也推入
+        //     undo stack（那會讓 redo 歷史被錯誤截斷）。
+        if (auto* cmdMgr = app->commandManager()) {
+            auto isExcluded = [](const QString& name) {
+                return name.compare("undo", Qt::CaseInsensitive) == 0
+                    || name.compare("redo", Qt::CaseInsensitive) == 0;
+            };
+
+            connect(cmdMgr, &command::CommandManager::commandStarted, this,
+                    [this, isExcluded](const QString& name) {
+                        if (isExcluded(name)) { d->sketchEditPending = false; return; }
+
+                        cad::Sketch* sketch = core::Application::instance()->activeSketch();
+                        d->sketchEditPending      = (sketch != nullptr);
+                        d->sketchEditTargetSketch = sketch;
+                        d->sketchEditBeforeSnapshot = sketch ? sketch->toJson() : QJsonObject();
+                    });
+
+            auto finishHook = [this](const QString& name) {
+                if (!d->sketchEditPending) return;
+                d->sketchEditPending = false;
+
+                cad::Sketch* sketch = d->sketchEditTargetSketch;
+                if (!sketch) return;
+                // 指令執行期間切換了作用中草圖（極少見）：保守起見不產生 undo 記錄，
+                // 避免張冠李戴。
+                if (core::Application::instance()->activeSketch() != sketch) return;
+
+                const QJsonObject after = sketch->toJson();
+                if (after == d->sketchEditBeforeSnapshot) return;   // no-op，無需記錄
+
+                command::SketchEditCommand::push(sketch, d->sketchEditBeforeSnapshot,
+                                                 after, name);
+            };
+
+            connect(cmdMgr, &command::CommandManager::commandFinished, this,
+                    [finishHook](const QString& name, const command::CommandResult&) {
+                        finishHook(name);
+                    });
+            connect(cmdMgr, &command::CommandManager::commandCancelled, this,
+                    [finishHook](const QString& name) { finishHook(name); });
+        }
+
+        // ── 返回／重做工具列按鈕 ─────────────────────────────────────────
+        // 這兩個按鈕刻意不走 menu.txt → CommandFactory 那條通用派送路徑：
+        // 一般工具列按鈕觸發的是「一次性指令」，但 Undo/Redo 按鈕的
+        // 可用狀態（enabled）、提示文字（"復原 xxx"／"重做 xxx"）需要
+        // 跟著 QUndoStack::canUndoChanged/undoTextChanged 等訊號即時更新，
+        // 用 QUndoStack 內建的 createUndoAction()/createRedoAction() 直接
+        // 取得已經跟 stack 綁定好的 QAction 最單純可靠。
+        {
+            QToolBar* undoToolbar = d->mainWindow->addToolBar(tr("復原/重做"));
+            undoToolbar->setObjectName(QStringLiteral("UndoRedoToolbar"));
+
+            QAction* undoAction = d->undoStack->createUndoAction(d->mainWindow, tr("復原"));
+            undoAction->setShortcut(QKeySequence::Undo);
+            undoAction->setIcon(QIcon::fromTheme(QStringLiteral("edit-undo")));
+
+            QAction* redoAction = d->undoStack->createRedoAction(d->mainWindow, tr("重做"));
+            redoAction->setShortcut(QKeySequence::Redo);
+            redoAction->setIcon(QIcon::fromTheme(QStringLiteral("edit-redo")));
+
+            undoToolbar->addAction(undoAction);
+            undoToolbar->addAction(redoAction);
+
+            // 讓快捷鍵在整個主視窗都有效，不侷限於工具列按鈕本身取得焦點時
+            d->mainWindow->addAction(undoAction);
+            d->mainWindow->addAction(redoAction);
+        }
+
         setupCommandLine();
 
         // ✅ 在這裡呼叫，d->mainWindow 和 d->cadView 都已存在
@@ -522,7 +626,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 d->cadView->setGridEnabled(false);
 
                 // 6. 清除 active alignment doc / tclId
-                d->alignmentDoc = nullptr;
+                setActiveAlignmentDoc(nullptr);
                 d->activeTclId.clear();
 
                 // 7. 發布 alignment-edit-ended 讓其他模組知道
@@ -652,12 +756,20 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                         r->setHorizontalAlignment(tcl->horizontal());
                                         r->setVisible(true);
                                         r->refresh();
+                                        // ✅ 修正：只顯示水平線形（未開垂直斷面 dock）的 TCL，
+                                        // 先前完全不會把它的 AlignmentDocument 設為 d->alignmentDoc
+                                        // ——導致 AS/FC 等靠 d->alignmentDoc 找元素的命令，在剛載入
+                                        // 檔案、且該 TCL 沒開垂直斷面 dock 時，永遠選不到任何弧／
+                                        // 切線（因為 context.alignmentDoc 根本不是這條線的
+                                        // AlignmentDocument）。比照下方 vAlignVisible 分支同樣
+                                        // 「顯示中 → 設為 active」的邏輯。
+                                        setActiveAlignmentDoc(aDoc);  // track active
                                     }
                                     if (tcl->vAlignVisible()) {
                                         d->vAlignDock->setAlignmentDocument(aDoc);
                                         d->vAlignDock->loadTrackCenterLine(tcl);
                                         d->vAlignDock->show();
-                                        d->alignmentDoc = aDoc;  // track active
+                                        setActiveAlignmentDoc(aDoc);  // track active
                                     }
                                 }
                            });
@@ -674,7 +786,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 for (auto* ad : d->tclAlignmentDocs)
                     delete ad;
                 d->tclAlignmentDocs.clear();
-                d->alignmentDoc = nullptr;
+                setActiveAlignmentDoc(nullptr);
                 // ✅ 清除 Railway 彙總 3D Alignment 顯示
                 if (d->railway3DRenderer)
                     d->railway3DRenderer->clear();
@@ -711,6 +823,29 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     r->setHorizontalAlignment(tcl->horizontal());
                     r->setVisible(true);
                     r->refresh();
+
+                    // ✅ 修正：比照 valign-visibility-changed 分支，顯示水平線形時
+                    // 也要 get-or-create 這條 TCL 的 AlignmentDocument 並設為 active
+                    // ——先前這裡完全沒有碰 d->alignmentDoc，導致單靠「顯示水平線
+                    // 形」（例如 feature tree 的眼睛圖示切換）無法讓 AS/FC 等命令
+                    // 找到這條線的元素，必須額外去開垂直斷面 dock 才會意外生效。
+                    //
+                    // 完整比照 editAlignmentRequested 的建立流程（見上方該處）：
+                    // 第一次建立時，先嘗試載入既有的 edit-session JSON；若仍無
+                    // 元素資料，退回從 TCL 既有的稠密關鍵點序列反推一次，讓
+                    // AS/FC/grip 一開始就有東西可以選取，而不是空的文件。
+                    railway::AlignmentDocument* aDoc =
+                        d->tclAlignmentDocs.value(tclId, nullptr);
+                    if (!aDoc) {
+                        aDoc = new railway::AlignmentDocument(d->mainWindow);
+                        d->tclAlignmentDocs.insert(tclId, aDoc);
+                        QJsonObject editJson = doc->tclAlignmentData(tclId);
+                        if (!editJson.isEmpty())
+                            aDoc->fromJson(editJson);
+                        aDoc->horizontal()->seedFromRawPoints(tcl->horizontal()->rawPoints());
+                        aDoc->horizontal()->solve();
+                    }
+                    setActiveAlignmentDoc(aDoc);  // track active
                 } else {
                     r->setVisible(false);
                 }
@@ -736,7 +871,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         aDoc = new railway::AlignmentDocument(d->mainWindow);
                         d->tclAlignmentDocs.insert(tclId, aDoc);
                     }
-                    d->alignmentDoc = aDoc;  // set active
+                    setActiveAlignmentDoc(aDoc);  // set active
                     d->vAlignDock->setAlignmentDocument(aDoc);
                     d->vAlignDock->loadTrackCenterLine(tcl);
                     d->vAlignDock->show();
@@ -1254,8 +1389,14 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                return;
                            }
 
+                           // ✅ 尊重呼叫端（LineCommand::execute 非互動分支）夾帶的 role，
+                           //    否則用打字輸入座標建立的建構線／中心線會被誤建成一般線。
+                           auto role = static_cast<cad::GeomRole>(
+                               request.value("role", static_cast<int>(cad::GeomRole::Normal)).toInt());
+
                            // Create the line in the sketch (addLineGeom creates SketchPoints)
-                           sketch->addLineGeom(QVector2D(x1, y1), QVector2D(x2, y2));
+                           sketch->addLineGeom(QVector2D(x1, y1), QVector2D(x2, y2),
+                                               QString(), QString(), role);
 
                            bus->publish(Events::FEATURE_UPDATED, sketch->name());
                            bus->publish(Events::COMMAND_EXECUTED, "Line created");
@@ -1566,40 +1707,78 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                 d->cadView->snapManager()->setSnapEnabled(v.toBool());
         });
 
-        // ── 建構線（Construction Line） ─────────────────────────────────
+        // ── 建構線（Construction Line）／中心線（Centerline） ────────────────
+        // 共用邏輯：兩者都是「可被束制、可被 OSnap、有 UUID」的 SketchLine，
+        // 只差在 role。互動模式下 LineCommand::handlePointAcquired() 發布的
+        // payload 是 startPoint/endPoint（QVector2D），與一般線一致；
+        // 舊版 handler 誤以為 payload 是 args 字串列表，導致互動畫線完全無效
+        // （args 恆為空、提早 return，滑鼠點兩下畫面上什麼都不會出現）。
+        // 這裡改用與 command.create-sketch-line 相同的處理方式與自動重合／
+        // 封閉迴路邏輯（沿用同一組 d->lineChain* 追蹤狀態——COMMAND_STARTED /
+        // 指令結束時已會重置，見上方 onCommandEnd 與 D) 區塊）。
+        auto handleConstructionFamilyLine =
+            [this, bus](const QVariant& v, cad::GeomRole role, const QString& createdMsg) {
+                QVariantMap lineData = v.toMap();
+                Application* app = Application::instance();
+                cad::Sketch* sketch = app->activeSketch();
+                if (!sketch) {
+                    qWarning() << "[UIManager] No active sketch for construction/centerline creation";
+                    bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                    return;
+                }
+
+                QVector2D startPoint = lineData["startPoint"].value<QVector2D>();
+                QVector2D endPoint   = lineData["endPoint"].value<QVector2D>();
+
+                QString lineUuid = sketch->addLineGeom(startPoint, endPoint,
+                                                        QString(), QString(), role);
+
+                constexpr float kLineJoinTol      = 1e-4f;
+                constexpr float kLineCloseLoopTol = 1e-3f;
+
+                if (!lineUuid.isEmpty()) {
+                    if (d->lineChainActive
+                        && !d->lineChainPrevLineUuid.isEmpty()
+                        && (startPoint - d->lineChainPrevEndPos).lengthSquared()
+                               < kLineJoinTol * kLineJoinTol) {
+                        sketch->constrainCoincident(
+                            cad::GeomRef(d->lineChainPrevLineUuid, cad::GeomHandle::End),
+                            cad::GeomRef(lineUuid, cad::GeomHandle::Start));
+                    }
+
+                    if (!d->lineChainActive) {
+                        d->lineChainActive        = true;
+                        d->lineChainFirstLineUuid = lineUuid;
+                        d->lineChainFirstStartPos = startPoint;
+                    }
+
+                    if (!d->lineChainFirstLineUuid.isEmpty()
+                        && d->lineChainFirstLineUuid != lineUuid
+                        && (endPoint - d->lineChainFirstStartPos).lengthSquared()
+                               < kLineCloseLoopTol * kLineCloseLoopTol) {
+                        sketch->constrainCoincident(
+                            cad::GeomRef(lineUuid, cad::GeomHandle::End),
+                            cad::GeomRef(d->lineChainFirstLineUuid, cad::GeomHandle::Start));
+                    }
+
+                    d->lineChainPrevLineUuid = lineUuid;
+                    d->lineChainPrevEndPos   = endPoint;
+                }
+
+                bus->publish(Events::FEATURE_UPDATED, sketch->name());
+                setStatusMessage(createdMsg, 2000);
+            };
+
         bus->subscribe("command.create-sketch-construction-line", this,
-                       [this, bus, app](const QVariant& v) {
-                           auto data  = v.toMap();
-                           auto args  = data["args"].toStringList();
-                           auto* sketch = app->activeSketch();
-                           if (!sketch || args.size() < 4) return;
-
-                           bool ok[4]; float c[4];
-                           for (int i = 0; i < 4; ++i) c[i] = args[i].toFloat(&ok[i]);
-                           if (!ok[0]||!ok[1]||!ok[2]||!ok[3]) return;
-
-                           sketch->addConstructionLine(QVector2D(c[0],c[1]), QVector2D(c[2],c[3]));
-                           sketch->rebuild();
-                           bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
-                           setStatusMessage(tr("建構線已加入"), 2000);
+                       [this, handleConstructionFamilyLine](const QVariant& v) {
+                           handleConstructionFamilyLine(v, cad::GeomRole::Construction,
+                                                         tr("建構線已加入"));
                        });
 
-        // ── 中心線（Centerline） ─────────────────────────────────────────
         bus->subscribe("command.create-sketch-centerline", this,
-                       [this, bus, app](const QVariant& v) {
-                           auto data  = v.toMap();
-                           auto args  = data["args"].toStringList();
-                           auto* sketch = app->activeSketch();
-                           if (!sketch || args.size() < 4) return;
-
-                           bool ok[4]; float c[4];
-                           for (int i = 0; i < 4; ++i) c[i] = args[i].toFloat(&ok[i]);
-                           if (!ok[0]||!ok[1]||!ok[2]||!ok[3]) return;
-
-                           sketch->addCenterline(QVector2D(c[0],c[1]), QVector2D(c[2],c[3]));
-                           sketch->rebuild();
-                           bus->publish(core::Events::FEATURE_UPDATED, sketch->name());
-                           setStatusMessage(tr("中心線已加入"), 2000);
+                       [this, handleConstructionFamilyLine](const QVariant& v) {
+                           handleConstructionFamilyLine(v, cad::GeomRole::Centerline,
+                                                         tr("中心線已加入"));
                        });
 
         // ── 建構圓（Construction Circle） ────────────────────────────────
@@ -1775,7 +1954,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         aDoc->horizontal()->seedFromRawPoints(tcl->horizontal()->rawPoints());
                         aDoc->horizontal()->solve();
                     }
-                    d->alignmentDoc = aDoc;  // set active
+                    setActiveAlignmentDoc(aDoc);  // set active
 
                     // ── 建立/更新 per-TCL renderer ────────────────────────────
                     view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
@@ -2256,15 +2435,17 @@ void UIManager::connectCommandLineEvents() {
                     d->cadView->cancelActiveBoxSelect();
                     return;
                 }
-                // ✅ 一律呼叫 turnOffActiveGrips()：該函式內部已一併處理
-                //    grips 關閉「與」底層 AIS 選取清除（不論當下是否真的有
-                //    active grips），確保 ESC 能可靠清除所有選取——包含
-                //    H-Alignment edit（3D alignment）中選取了不會產生 grip
-                //    的物件（例如 alignment overlay）的情況。過去只在
-                //    hasActiveGrips() 為 true 時才呼叫，導致這類選取無法被
-                //    ESC 清除。
-                if (d->cadView && d->cadView->turnOffActiveGrips()) {
-                    return;
+                // ✅ 命令列輸入框（CommandInputEdit）持有焦點時，ESC 事件不會
+                //    落在 CadView::keyPressEvent()，過去只呼叫
+                //    turnOffActiveGrips() 就提前 return，InputJig 顯示中、
+                //    命令等待取點時完全沒有被取消（Jig 不會隱藏、橡皮筋不會
+                //    清除、POINT_CANCELLED 也不會發佈）。改呼叫
+                //    CadView::requestEscapeCancel()（＝ performEscapeCancel()，
+                //    內部已包含 turnOffActiveGrips()），不再提前 return，並且
+                //    一律接著呼叫 CommandLineManager::onEscapePressed() 取消
+                //    目前執行中的命令本身，三者都要執行到。
+                if (d->cadView) {
+                    d->cadView->requestEscapeCancel();
                 }
                 d->commandLineManager->onEscapePressed();
             });
@@ -3193,6 +3374,47 @@ const QHash<QString, railway::AlignmentDocument*>& UIManager::tclAlignmentDocs()
     return d->tclAlignmentDocs;
 }
 
+railway::AlignmentDocument* UIManager::ensureTclAlignmentDocument(const QString& tclId)
+{
+    // 與 showAlignmentDataTableRequested / railway.valign-visibility-changed
+    // 兩處既有的「取得或建立 per-TCL AlignmentDocument」邏輯相同（見本檔案
+    // 對應 lambda），抽出供命令層等其他呼叫者共用。
+    auto* docMgr = core::Application::instance()->documentManager();
+    auto* doc    = docMgr ? docMgr->currentDocument() : nullptr;
+    if (!doc) return nullptr;
+
+    auto* tcl = doc->findTrackCenterLine(tclId);
+    if (!tcl) return nullptr;
+
+    railway::AlignmentDocument* aDoc = d->tclAlignmentDocs.value(tclId, nullptr);
+    if (aDoc) return aDoc;
+
+    aDoc = new railway::AlignmentDocument(d->mainWindow);
+    d->tclAlignmentDocs.insert(tclId, aDoc);
+
+    // 優先從 per-TCL JSON（editSession）載入
+    QJsonObject editJson = doc->tclAlignmentData(tclId);
+    if (!editJson.isEmpty()) {
+        aDoc->fromJson(editJson);
+    }
+
+    // 若載入後（或本來就）尚無元素資料/VIP資料，嘗試從 TCL 既有的稠密點位
+    // 反推一次（例如 ALD 匯入、尚未經過任何編輯器的情況）。已有資料時為 no-op。
+    aDoc->horizontal()->seedFromRawPoints(tcl->horizontal()->rawPoints());
+    aDoc->vertical()->seedFromDensePoints(tcl->vertical()->points());
+
+    // 確保 solver 已執行一次（空資料也要 solve，保持 m_result 有效）
+    aDoc->horizontal()->solve();
+    aDoc->vertical()->solve();
+
+    return aDoc;
+}
+
+view::Railway3DAlignmentRenderer* UIManager::railway3DRenderer() const
+{
+    return d->railway3DRenderer;
+}
+
 ui::VAlignEditorDockWidget* UIManager::vAlignDockWidget() const
 {
     return d->vAlignDock;
@@ -3584,6 +3806,52 @@ void UIManager::onViewReady() {
     }
 }
 
+// ✅ 新增：統一設定「目前作用中」的 AlignmentDocument，並同步接到 OSnap
+void UIManager::setActiveAlignmentDoc(railway::AlignmentDocument* doc) {
+    d->alignmentDoc = doc;
+    if (d->cadView && d->cadView->snapManager()) {
+        // ✅ 修正：OSnap 的鎖點來源不應只有「目前正在編輯」的這一條
+        // alignment（doc），而是場景中所有已知的 per-TCL AlignmentDocument
+        // （d->tclAlignmentDocs），這樣 FC/AS 等命令取點時，才能吃到「其他」
+        // alignment 上的 PI/TS/SC/CS/ST/中點/垂足，而不是只有 active 的那條。
+        // 若 doc 本身還不在 d->tclAlignmentDocs 裡（例如尚未被寫入該 hash
+        // 的過渡狀態），一併補上，確保它自己也不會被漏掉。
+        QVector<railway::AlignmentDocument*> docs;
+        docs.reserve(d->tclAlignmentDocs.size() + 1);
+        for (railway::AlignmentDocument* ad : d->tclAlignmentDocs) {
+            if (ad) docs.append(ad);
+        }
+        if (doc && !docs.contains(doc)) docs.append(doc);
+        d->cadView->snapManager()->setAlignmentDocuments(docs);
+    }
+    // TC／中點／垂足的來源（每條 TCL 一定都有的持久化資料）不依賴 doc 本身，
+    // 獨立刷新一次即可，見 refreshAlignmentOSnapSources() 說明。
+    refreshAlignmentOSnapSources();
+}
+
+// ✅ 新增：見 UIManager.h 內對 refreshAlignmentOSnapSources() 的說明
+void UIManager::refreshAlignmentOSnapSources() {
+    if (!d->cadView || !d->cadView->snapManager()) return;
+
+    // ✅ 修正：AlignmentDocument 清單（d->tclAlignmentDocs）只涵蓋「曾經打開
+    // 編輯」過的 TCL，場景中其他只是單純顯示、從未被編輯過的 TCL 完全沒有
+    // 對應的 AlignmentDocument，OSnap 因此永遠吸不到它們的鎖點。這裡改用
+    // 「每條 TCL 一定都有」的持久化資料 tcl->horizontal()——正是
+    // AlignmentRenderer 實際渲染畫面用的同一份資料——讓 TC／中點／垂足這
+    // 三種 snap 對任何可視 alignment 都能生效，不受該 TCL 是否曾被打開編輯
+    // 過的限制。
+    QVector<railway::HorizontalAlignment*> haligns;
+    auto* app = core::Application::instance();
+    cad::Document* curDoc = app ? app->documentManager()->currentDocument() : nullptr;
+    if (curDoc) {
+        haligns.reserve(curDoc->trackCenterLines().size());
+        for (railway::TrackCenterLine* tcl : curDoc->trackCenterLines()) {
+            if (tcl && tcl->horizontal()) haligns.append(tcl->horizontal());
+        }
+    }
+    d->cadView->snapManager()->setHorizontalAlignments(haligns);
+}
+
 // ✅ 新增：初始化參考幾何的方法
 void UIManager::initializeReferenceGeometry() {
     if (!d->cadView) {
@@ -3650,6 +3918,20 @@ void UIManager::onCurrentDocumentChanged(cad::Document* doc) {
         // ✅ 有 viewState 時不 fitAll，由 DOCUMENT_OPENED 的 timer 負責還原
         if (doc->viewState().isEmpty())
             d->cadView->fitAll();
+    }
+
+    // ✅ 修正：不要等使用者去開垂直斷面 dock／切換某條 TCL 的可視性才把
+    // alignment 接上 OSnap——文件一旦成為「目前文件」，就把它底下每條 TCL
+    // 的 tcl->horizontal() 主動推給 OSnap 一次，確保剛開檔就直接下
+    // FC/AS/FT 等取點指令時，alignment 的鎖點也立刻可用。
+    refreshAlignmentOSnapSources();
+
+    // ✅ 文件裡的 TCL 清單本身異動時（新增/刪除 TrackCenterLine），同步刷新
+    // 一次，避免清單跟畫面上實際可視的 alignment 漸漸脫節。
+    if (doc) {
+        connect(doc, &cad::Document::trackCenterLinesChanged,
+                this, &UIManager::refreshAlignmentOSnapSources,
+                Qt::UniqueConnection);
     }
 
     if (d->propertyPanel)

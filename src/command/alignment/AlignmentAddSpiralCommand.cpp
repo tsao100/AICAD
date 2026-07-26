@@ -32,6 +32,8 @@
 #include "core/EventBus.h"
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
+#include "ui/UIManager.h"
+#include "view/CadView.h"
 
 #include <QDebug>
 #include <QLineF>
@@ -46,6 +48,57 @@ using aicad::railway::ConstraintMode;
 
 namespace aicad {
 namespace command {
+
+// ────────────────────────────────────────────────────────────────────────────
+//  arcAzimuthAtPC / arcAzimuthAtPT  (file-local helpers)
+//
+//  參考使用者提供的最新 VBA 螺線反算工具修正說明（螺線反算工具.bas 的
+//  C-C 分支第二次修正）：該版明確指出「固定用某個慣例猜正負號（不論是
+//  選取順序、或半徑大小）只對某一種轉向正確，鏡射成另一種轉向就會出
+//  錯」——因為左彎/右彎是圓心+半徑之外、獨立的第三個自由度，任何「只憑
+//  一個點就猜方向」的公式都無法穩定分辨。
+//
+//  這裡先前 LC/CA/ACA 三處預覽程式碼，各自用 `atan2(-r.y(), r.x())`
+//  （只用「圓心→單一端點」這一個半徑向量）反推該點的切線方位角，完全
+//  沒有辦法判斷這段圓弧究竟是順時針(右彎)還是逆時針(左彎)——等同於
+//  VBA 第一次修正犯的同一種錯誤（隱含假設固定一種轉向），只是這裡連
+//  「猜」都沒有明講，直接寫死一種轉向，對另一種轉向的圓弧會算出偏離
+//  真實值（typically 相差接近 180°）的方位角，進而讓 solveLC/solveCA/
+//  solveACA 內部用這個錯誤方位角判斷出的轉向正負號（signR）也跟著錯。
+//
+//  正確作法（比照 AlignmentSolver::solve() Pass 1 的 ArcData.azPC 算法，
+//  也是 VBA 這次修正的精神——不猜，直接用實際量測到的資料驗證/決定）：
+//  必須同時用圓弧的「起點」與「終點」兩個真實已知點，兩者對圓心的半徑
+//  向量之外積（cross）才能唯一、無歧異地決定這段圓弧實際是順時針還是
+//  逆時針，不管圓弧本身轉向為何都恆成立。
+// ────────────────────────────────────────────────────────────────────────────
+
+/// 圓弧起點(PC)的切線方位角；outSign（可選）回傳這段圓弧的實際轉向
+/// （+1 = 順時針/右彎，-1 = 逆時針/左彎），供呼叫端需要沿same轉向
+/// 繼續推算終點方位角時使用（見 arcAzimuthAtPT()）。
+static double arcAzimuthAtPC(QPointF pc, QPointF pt, QPointF center, double* outSign = nullptr)
+{
+    const QPointF r1 = pc - center;
+    const QPointF r2 = pt - center;
+    const double  crossVal = r1.x() * r2.y() - r1.y() * r2.x();
+    const double  sign     = (crossVal >= 0.0) ? 1.0 : -1.0;
+    if (outSign) *outSign = sign;
+    return std::atan2(sign * (-r1.y()), sign * r1.x());
+}
+
+/// 圓弧終點(PT)的切線方位角：先用 arcAzimuthAtPC() 依實際轉向算出起點
+/// 方位角，再加上（帶正確正負號的）實際掃過角度，恆對任一轉向成立。
+static double arcAzimuthAtPT(QPointF pc, QPointF pt, QPointF center)
+{
+    double sign = 1.0;
+    const double azPC = arcAzimuthAtPC(pc, pt, center, &sign);
+    const QPointF r1 = pc - center;
+    const QPointF r2 = pt - center;
+    const double crossVal = r1.x() * r2.y() - r1.y() * r2.x();
+    const double dotVal   = r1.x() * r2.x() + r1.y() * r2.y();
+    const double sweep    = std::abs(std::atan2(crossVal, dotVal));
+    return azPC + sign * sweep;
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Constructor
@@ -91,6 +144,54 @@ QString AlignmentAddSpiralCommand::spiralTypeName(SpiralType t)
     case SpiralType::CubicECI: return QStringLiteral("CubicECI");
     default:                   return QStringLiteral("Clothoid");
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  describeAdjacentFloatingSpiral  (static)
+//
+//  檢查 elemIdx（一個 Fixed Tangent 或 Fixed CircularArc 的 index）是否已經
+//  有一段 Floating SpiralIn/SpiralOut 依附在它旁邊（透過該浮動元素的
+//  tangentIdxBefore／tangentIdxAfter 指回 elemIdx——這個欄位命名雖然叫
+//  「tangentIdx」，但 LC/CA（切線-弧）與 ACA（弧-弧）都共用同一套機制，
+//  指向的可能是 Tangent 也可能是 CircularArc 的 index）。
+//
+//  找到的話回傳一段人類可讀的說明文字（含目前是否已成功求解），供呼叫端
+//  在使用者剛點選到這個元素時提示；找不到則回傳空字串。
+// ────────────────────────────────────────────────────────────────────────────
+
+QString AlignmentAddSpiralCommand::describeAdjacentFloatingSpiral(
+    int                                      elemIdx,
+    const railway::HorizontalAlignmentEdit*  edit)
+{
+    if (!edit || elemIdx < 0) return QString();
+    const auto& elems = edit->elements();
+    if (elemIdx >= elems.size()) return QString();
+
+    for (int i = 0; i < elems.size(); ++i) {
+        const auto& e = elems[i];
+        if (e.mode != ConstraintMode::Floating) continue;
+        if (e.type != EditableElementType::SpiralIn
+            && e.type != EditableElementType::SpiralOut) continue;
+        if (e.tangentIdxBefore != elemIdx && e.tangentIdxAfter != elemIdx) continue;
+
+        const QString typeStr = (e.type == EditableElementType::SpiralIn)
+                                     ? QStringLiteral("SpiralIn")
+                                     : QStringLiteral("SpiralOut");
+        return QString("⚠️  Element #%1 already has a Floating %2 (#%3, Ls=%4m) "
+                       "attached %5 it, %6.")
+            .arg(elemIdx)
+            .arg(typeStr)
+            .arg(i)
+            .arg(e.length, 0, 'f', 3)
+            .arg(e.tangentIdxBefore == elemIdx ? "after" : "before")
+            .arg(e.solved
+                     ? "already solved"
+                     : "still UNSOLVED — adding another spiral here will very"
+                       " likely conflict with it instead of fixing it; consider"
+                       " deleting the existing one first (or checking why it"
+                       " failed to solve) before adding a new one");
+    }
+    return QString();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -226,16 +327,8 @@ void AlignmentAddSpiralCommand::showSolverPreview()
         const auto& tanElem = elems[m_tangentIdx];
         const auto& arcElem = elems[m_arcIdx];
 
-        // Reconstruct arcAzEnd from arcCenter / PC / PT geometry
-        const QPointF r1 = arcElem.startPI - arcElem.arcCenter;
-        const QPointF r2 = arcElem.endPI   - arcElem.arcCenter;
-        const double crossV = r1.x() * r2.y() - r1.y() * r2.x();
-        const double dotV   = r1.x() * r2.x() + r1.y() * r2.y();
-        const double arcAngle = std::abs(std::atan2(crossV, dotV));
         const double R = std::abs(arcElem.radius);
-        // Rough azimuth at arc end (used only for display)
-        const double azPC    = std::atan2(-r1.y(), r1.x()); // approximate
-        const double azArcEnd = azPC + (crossV >= 0.0 ? arcAngle : -arcAngle);
+        const double azArcEnd = arcAzimuthAtPT(arcElem.startPI, arcElem.endPI, arcElem.arcCenter);
 
         const railway::SolvedLC lc = railway::AlignmentSolver::solveLC(
             arcElem.arcCenter, R,
@@ -258,8 +351,28 @@ void AlignmentAddSpiralCommand::showSolverPreview()
                     .arg(lc.scPoint.y(),  0, 'f', 3)
                     .arg(lc.arcLen,       0, 'f', 3));
         } else {
-            outputMessage("LC solver: no solution found with current geometry. "
-                          "Check that the tangent direction is compatible with the arc.");
+            // ── 參考 VBA 螺線反算工具（螺線反算函數.bas）的診斷方式：不是
+            // 只回報「找不到解」，而是先算出「圓心到切線的垂距 D」跟「圓
+            // 半徑 R」，明確告訴使用者是哪一個幾何條件不成立（D < R 時，
+            // 這個切線／圓弧組合在幾何上本來就不存在合理的漸變曲線解，
+            // 換句話說就是 VBA 版 SolveSpiral_TC 裡 D < Rmag 的那個檢查）。
+            const double tanAz = std::atan2(tanElem.endPI.x() - tanElem.startPI.x(),
+                                             tanElem.endPI.y() - tanElem.startPI.y());
+            const double sA = std::sin(tanAz), cA = std::cos(tanAz);
+            const double D = std::abs((arcElem.arcCenter.x() - tanElem.startPI.x()) * cA
+                                     - (arcElem.arcCenter.y() - tanElem.startPI.y()) * sA);
+            if (D < R - 1e-6) {
+                outputMessage(
+                    QString("LC solver: no solution — the arc centre's perpendicular"
+                            " distance to the tangent (D = %1 m) is less than the arc"
+                            " radius (R = %2 m). This tangent/arc pair cannot be joined"
+                            " by any transition curve; pick a different tangent or arc.")
+                        .arg(D, 0, 'f', 3)
+                        .arg(R, 0, 'f', 3));
+            } else {
+                outputMessage("LC solver: no solution found with current geometry. "
+                              "Check that the tangent direction is compatible with the arc.");
+            }
         }
 
     } else if (m_mode == GroupMode::CA) {
@@ -269,8 +382,7 @@ void AlignmentAddSpiralCommand::showSolverPreview()
         const auto& arcElem = elems[m_arcIdx];
         const auto& tanElem = elems[m_tangentIdx];
 
-        const QPointF r1 = arcElem.startPI - arcElem.arcCenter;
-        const double azArcStart = std::atan2(-r1.y(), r1.x()); // approximate
+        const double azArcStart = arcAzimuthAtPC(arcElem.startPI, arcElem.endPI, arcElem.arcCenter);
 
         const railway::SolvedCA ca = railway::AlignmentSolver::solveCA(
             arcElem.arcCenter, std::abs(arcElem.radius),
@@ -293,8 +405,25 @@ void AlignmentAddSpiralCommand::showSolverPreview()
                     .arg(ca.stPoint.y(),  0, 'f', 3)
                     .arg(ca.arcLen,       0, 'f', 3));
         } else {
-            outputMessage("CA solver: no solution found with current geometry. "
-                          "Check that the tangent direction is compatible with the arc.");
+            // 同上（LC 分支）參考 VBA SolveSpiral_TC 的 D < Rmag 診斷方式。
+            const double R    = std::abs(arcElem.radius);
+            const double tanAz = std::atan2(tanElem.endPI.x() - tanElem.startPI.x(),
+                                             tanElem.endPI.y() - tanElem.startPI.y());
+            const double sA = std::sin(tanAz), cA = std::cos(tanAz);
+            const double D = std::abs((arcElem.arcCenter.x() - tanElem.startPI.x()) * cA
+                                     - (arcElem.arcCenter.y() - tanElem.startPI.y()) * sA);
+            if (D < R - 1e-6) {
+                outputMessage(
+                    QString("CA solver: no solution — the arc centre's perpendicular"
+                            " distance to the tangent (D = %1 m) is less than the arc"
+                            " radius (R = %2 m). This arc/tangent pair cannot be joined"
+                            " by any transition curve; pick a different arc or tangent.")
+                        .arg(D, 0, 'f', 3)
+                        .arg(R, 0, 'f', 3));
+            } else {
+                outputMessage("CA solver: no solution found with current geometry. "
+                              "Check that the tangent direction is compatible with the arc.");
+            }
         }
 
     } else if (m_mode == GroupMode::ACA) {
@@ -306,21 +435,8 @@ void AlignmentAddSpiralCommand::showSolverPreview()
         const double R1 = std::abs(arc1Elem.radius);
         const double R2 = std::abs(arc2Elem.radius);
 
-        // Approximate azimuths from geometry stored in EditableElement
-        const QPointF r1s = arc1Elem.startPI - arc1Elem.arcCenter;
-//        const QPointF r1e = arc1Elem.endPI   - arc1Elem.arcCenter;
-//        const double cross1 = r1s.x() * r1e.y() - r1s.y() * r1e.x();
-//        const double phi1   = std::abs(std::atan2(std::abs(cross1),
-//                                                   r1s.x()*r1e.x()+r1s.y()*r1e.y()));
-        const double azArc1Start = std::atan2(-r1s.y(), r1s.x());
-
-        const QPointF r2s = arc2Elem.startPI - arc2Elem.arcCenter;
-        const QPointF r2e = arc2Elem.endPI   - arc2Elem.arcCenter;
-        const double cross2 = r2s.x() * r2e.y() - r2s.y() * r2e.x();
-        const double phi2   = std::abs(std::atan2(std::abs(cross2),
-                                                   r2s.x()*r2e.x()+r2s.y()*r2e.y()));
-        const double azArc2End = std::atan2(-r2s.y(), r2s.x())
-                               + (cross2 >= 0.0 ? phi2 : -phi2);
+        const double azArc1Start = arcAzimuthAtPC(arc1Elem.startPI, arc1Elem.endPI, arc1Elem.arcCenter);
+        const double azArc2End   = arcAzimuthAtPT(arc2Elem.startPI, arc2Elem.endPI, arc2Elem.arcCenter);
 
         const railway::SolvedACA aca = railway::AlignmentSolver::solveACA(
             arc1Elem.arcCenter, R1,
@@ -348,8 +464,26 @@ void AlignmentAddSpiralCommand::showSolverPreview()
                     .arg(aca.sc2Point.y(), 0, 'f', 3)
                     .arg(aca.arc2Len,      0, 'f', 3));
         } else {
-            outputMessage("ACA solver: no solution found with current geometry.\n"
-                          "Check that R1 ≠ R2 and the two arcs are geometrically compatible.");
+            // ── 參考 VBA 螺線反算工具（螺線反算函數.bas 的 C-C／蛋形線分支）
+            // 的診斷精神：蛋形線兩端圓心之間的距離只跟 LE、R1、R2 有關，
+            // 這裡先算出兩圓心的實際距離，跟「半徑差的絕對值」比較，明確
+            // 指出兩弧是否有機會被一段蛋形線銜接，而不是只回報籠統的
+            // 「找不到解」。
+            const double centreDist = std::hypot(arc2Elem.arcCenter.x() - arc1Elem.arcCenter.x(),
+                                                  arc2Elem.arcCenter.y() - arc1Elem.arcCenter.y());
+            const double minReach = std::abs(R1 - R2);
+            if (centreDist < minReach - 1e-6) {
+                outputMessage(
+                    QString("ACA solver: no solution — the distance between the two arc"
+                            " centres (%1 m) is less than |R₁ − R₂| (%2 m). An"
+                            " Egg-Transition curve cannot bridge these two arcs at all;"
+                            " pick a different pair of arcs.")
+                        .arg(centreDist, 0, 'f', 3)
+                        .arg(minReach,   0, 'f', 3));
+            } else {
+                outputMessage("ACA solver: no solution found with current geometry.\n"
+                              "Check that R1 ≠ R2 and the two arcs are geometrically compatible.");
+            }
         }
     }
 }
@@ -420,6 +554,25 @@ CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
 
     EventBus* bus = Application::instance()->eventBus();
 
+    // ── 切換 CadView 進入可取點模式 ──────────────────────────────────────────
+    // 比照 EraseCommand 等既有互動式命令的既定作法：CadView 的滑鼠事件處理
+    // 有一段「不論目前是什麼模式都會執行」的通用 AIS 選取邏輯（見
+    // CadView::mousePressEvent 最後那個獨立的 if 區塊），只有當 mode 落在
+    // Sketching / GetPoint / GetGeom 時，滑鼠左鍵才會改成呼叫
+    // handlePointInput() 並發布 POINT_ACQUIRED 交給目前作用中的命令。
+    //
+    // AS 命令先前完全沒有呼叫 setMode()，若使用者是「剛載入檔案、還沒有
+    // 進入任何草圖／線形編輯」就直接下 AS 指令，CadView 當時的 mode 仍是
+    // 預設的 Idle——結果點擊圓弧/切線時，落入的是那段通用選取邏輯（只會
+    // 觸發 geometry.selected／alignment.elementSelected，附加 grips），
+    // 完全不會發布 POINT_ACQUIRED，AS 因此永遠收不到使用者點的第一個
+    // 點。此修正讓 AS 一開始就明確切到 Sketching 模式（cleanup() 會還原），
+    // 不再依賴「使用者剛好因為別的操作而讓 mode 處於正確狀態」這種偶然。
+    if (auto* uiMgr = Application::instance()->uiManager()) {
+        if (auto* cadView = uiMgr->cadView())
+            cadView->setMode(view::InteractionMode::Sketching);
+    }
+
     // ── Subscribe ────────────────────────────────────────────────────────────
     bus->subscribe(Events::POINT_ACQUIRED, this,
                    [this](const QVariant& data) {
@@ -481,6 +634,9 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
 
         highlightElement(idx);
 
+        const QString existingWarn =
+            describeAdjacentFloatingSpiral(idx, m_alignDoc->horizontal());
+
         if (detectedType == EditableElementType::Tangent) {
             // LC mode: first element is the tangent
             m_mode       = GroupMode::LC;
@@ -498,6 +654,7 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
             bus->publish(Events::COMMAND_PROMPT,
                          tr("CA/ACA: Click a Fixed Tangent or a second Fixed Arc:"));
         }
+        if (!existingWarn.isEmpty()) outputMessage(existingWarn);
         m_step = Step::PickSecond;
         break;
     }
@@ -519,6 +676,10 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
             m_arcIdx = idx;
             highlightElement(idx);
             outputMessage(QString("Fixed Arc #%1 selected.").arg(idx));
+            {
+                const QString warn = describeAdjacentFloatingSpiral(idx, m_alignDoc->horizontal());
+                if (!warn.isEmpty()) outputMessage(warn);
+            }
 
         } else {
             // First element was an arc (m_arcIdx is set); resolve CA vs ACA now.
@@ -550,6 +711,10 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
                 highlightElement(idx);
                 outputMessage(QString("ACA mode: Fixed Arc₂ #%1 selected.  "
                                       "Arc₁=#%2  Arc₂=#%3").arg(idx).arg(m_arcIdx).arg(idx));
+            }
+            {
+                const QString warn = describeAdjacentFloatingSpiral(idx, m_alignDoc->horizontal());
+                if (!warn.isEmpty()) outputMessage(warn);
             }
         }
 
@@ -732,6 +897,12 @@ void AlignmentAddSpiralCommand::cleanup()
     QVariantMap rb;
     rb["clearRubberBand"] = true;
     bus->publish("command.request-cleanup", rb);
+
+    // 還原 CadView 模式（比照 EraseCommand::cleanup() 的既定作法）。
+    if (auto* uiMgr = Application::instance()->uiManager()) {
+        if (auto* cadView = uiMgr->cadView())
+            cadView->setMode(view::InteractionMode::Sketching);
+    }
 
     m_step        = Step::PickFirst;
     m_mode        = GroupMode::Unknown;

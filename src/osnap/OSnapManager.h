@@ -48,6 +48,10 @@ namespace cad  {
 class Plane;
 class Sketch;
 }
+namespace railway {
+class AlignmentDocument;
+class HorizontalAlignment;
+}
 namespace osnap {
 
 class OSnapManager : public QObject
@@ -82,6 +86,30 @@ public:
     void setActivePlane(cad::Plane* plane);
     cad::Plane* activePlane() const;
     void setActiveSketch(cad::Sketch* sketch);   // ⭐新增
+
+    /**
+     * @brief 設定目前作用中的 AlignmentDocument，啟用 Alignment 幾何
+     *        （TS/SC/CS/ST、IP 等）的 OSnap 偵測；傳入 nullptr 停用。
+     *        實際偵測邏輯在 OSnapDetector，這裡只是轉發（與
+     *        setActiveSketch() 相同的 pass-through 慣例）。
+     */
+    void setAlignmentDocument(railway::AlignmentDocument* doc);
+
+    /**
+     * @brief 設定「所有目前可作為 Alignment Snap 來源」的 AlignmentDocument
+     *        清單，讓 OSnap 除了正在編輯的那一條 alignment 之外，也能吃到
+     *        場景中其他 alignment 的鎖點（PI/TS/SC/CS/ST/中點/垂足）。
+     */
+    void setAlignmentDocuments(const QVector<railway::AlignmentDocument*>& docs);
+
+    /**
+     * @brief 設定「所有目前可視」的 HorizontalAlignment（每條 TCL 實際
+     *        渲染用的持久化資料），啟用 TC/中點/垂足這三種 Alignment Snap
+     *        對「任何可視 alignment」生效，不受該 TCL 是否曾被打開編輯過
+     *        的限制。PI 交點仍只能透過 setAlignmentDocuments() 對有編輯
+     *        階段的 alignment 提供。
+     */
+    void setHorizontalAlignments(const QVector<railway::HorizontalAlignment*>& haligns);
 
     /// 設定「上一個確認的輸入點」（用於 Perpendicular/Tangent）
     void setLastInputPoint(const gp_Pnt& pt);

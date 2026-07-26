@@ -248,11 +248,13 @@ SOURCES += \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
     src/command/ConstraintCommands.cpp \
+    src/command/SketchEditCommand.cpp \
     src/command/GeneralDimCommand.cpp \
     src/cad/sketch/GeneralDimClassifier.cpp \
     src/command/ExtrudeCommand.cpp \
     src/command/alignment/SetOriginCommand.cpp \
     src/command/alignment/AlignmentAddSpiralCommand.cpp \
+    src/command/alignment/Alignment3DAddVProfileCommand.cpp \
     src/command/alignment/AlignmentEditCommand.cpp \
     src/command/alignment/AlignmentFixCurveCommand.cpp \
     src/command/alignment/AlignmentFixTangentCommand.cpp \
@@ -313,6 +315,7 @@ SOURCES += \
     src/osnap/OSnapToolbar.cpp \
     src/railway/AlignmentDocument.cpp \
     src/railway/AlignmentSolver.cpp \
+    src/railway/AlignmentNLSolver.cpp \
     src/railway/RailwayAlignment.cpp \
     src/railway/RailwayAlignmentElement.cpp \
     src/railway/AldFileIO.cpp \
@@ -391,8 +394,10 @@ HEADERS += \
     src/cad/sketch/GeneralDimClassifier.h \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
+    src/command/SketchEditCommand.h \
     src/command/alignment/SetOriginCommand.h \
     src/command/alignment/AlignmentAddSpiralCommand.h \
+    src/command/alignment/Alignment3DAddVProfileCommand.h \
     src/command/alignment/AlignmentCommandBase.h \
     src/command/alignment/AlignmentEditCommand.h \
     src/command/alignment/AlignmentFixCurveCommand.h \
@@ -455,6 +460,7 @@ HEADERS += \
     src/osnap/OSnapTypes.h \
     src/railway/AlignmentDocument.h \
     src/railway/AlignmentSolver.h \
+    src/railway/AlignmentNLSolver.h \
     src/railway/RailwayAlignment.h \
     src/railway/RailwayAlignmentElement.h \
     src/railway/AldFileIO.h \
@@ -466,6 +472,7 @@ HEADERS += \
     src/ui/GripEventFilter.h \
     src/ui/MainWindow.h \
     src/ui/FeatureBrowser.h \
+    src/ui/FeatureTreeItem.h \
     src/ui/AlignmentDataTableDialog.h \
     src/ui/CompoundChainCalcDialog.h \
     src/ui/ProfileArrayStationTableDialog.h \

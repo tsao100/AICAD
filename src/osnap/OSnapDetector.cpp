@@ -109,7 +109,20 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     QVector<Handle(AIS_InteractiveObject)>  aisObjects;
     collectCandidateShapes(context, view, mouseX, mouseY, shapes, aisObjects);
 
-    if (shapes.isEmpty() && !m_settings.gridSnapEnabled)
+    // Alignment snap 不依賴上面收集到的 AIS shape（TS/SC/CS/ST 等關鍵點是直接
+    // 從 HorizontalAlignmentEdit 的解算結果查詢，並非從畫面上 shape 的
+    // TopoDS_Vertex 取得），必須先算出來，讓下面的「shapes 是否為空」提前
+    // return 不會誤把它排除掉——否則在只顯示 alignment、附近沒有其他 sketch
+    // 幾何的畫面上，會在還沒進到 Alignment 分支前就直接回傳 nullopt。
+    const bool anyAlignmentEnabled =
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentPI)   ||
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentTC)   ||
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentMid)  ||
+        m_settings.enabledTypes.testFlag(SnapType::AlignmentPerp);
+    const bool alignmentSnapAvailable =
+        (!m_alignmentDocs.isEmpty() || !m_horizontalAlignments.isEmpty()) && anyAlignmentEnabled;
+
+    if (shapes.isEmpty() && !m_settings.gridSnapEnabled && !alignmentSnapAvailable)
         return std::nullopt;
 
     // ── Step 3: 對每個 Shape 執行各類型偵測 ───────────────────────────────────
@@ -132,12 +145,7 @@ OSnapDetector::detect(const Handle(AIS_InteractiveContext)& context,
     }
 
     // Alignment snap（不依賴 AIS shape，直接查詢 AlignmentDocument）
-    const bool anyAlignmentEnabled =
-        m_settings.enabledTypes.testFlag(SnapType::AlignmentPI)   ||
-        m_settings.enabledTypes.testFlag(SnapType::AlignmentTC)   ||
-        m_settings.enabledTypes.testFlag(SnapType::AlignmentMid)  ||
-        m_settings.enabledTypes.testFlag(SnapType::AlignmentPerp);
-    if (m_alignmentDoc && anyAlignmentEnabled) {
+    if (alignmentSnapAvailable) {
         detectAlignmentSnap(view, mouseWorldPt, mouseX, mouseY, candidates);
     }
 
@@ -1066,42 +1074,72 @@ void OSnapDetector::detectAlignmentSnap(
     int mouseX, int mouseY,
     QVector<SnapCandidate>& out)
 {
+    // AlignmentPI：只對「有編輯階段」的 AlignmentDocument 偵測（需要
+    // EditableElement 的 startPI/endPI，只有編輯階段的模型才有）。
+    for (aicad::railway::AlignmentDocument* doc : m_alignmentDocs) {
+        detectAlignmentPIForDoc(doc, view, mouseX, mouseY, out);
+    }
+
+    // AlignmentTC／Mid／Perp：對「所有可視」的 HorizontalAlignment 偵測
+    // （tcl->horizontal()，每條 TCL 一定都有，不論是否曾經打開編輯過）。
+    // 讓 FC/AS 等命令取點時，也能吃到「其他」alignment（同一份圖面上另一條
+    // TCL，即使從未被打開編輯過）上的鎖點，而不是只有目前正在編輯的那一條。
+    for (const aicad::railway::HorizontalAlignment* halign : m_horizontalAlignments) {
+        detectAlignmentSnapForHAlign(halign, view, mousePt, mouseX, mouseY, out);
+    }
+}
+
+void OSnapDetector::detectAlignmentPIForDoc(
+    aicad::railway::AlignmentDocument* doc,
+    const Handle(V3d_View)& view,
+    int mouseX, int mouseY,
+    QVector<SnapCandidate>& out)
+{
     using namespace aicad::railway;
 
-    if (!m_alignmentDoc) return;
+    if (!doc) return;
+    if (!m_settings.enabledTypes.testFlag(SnapType::AlignmentPI)) return;
 
-    HorizontalAlignmentEdit* hEdit = m_alignmentDoc->horizontal();
+    HorizontalAlignmentEdit* hEdit = doc->horizontal();
     if (!hEdit) return;
-
-    const HorizontalAlignment* halign = hEdit->result();
 
     // ──────────────────────────────────────────────────────────────────────────
     //  AlignmentPI：從 EditableElement 的 startPI / endPI 取交點
     // ──────────────────────────────────────────────────────────────────────────
-    if (m_settings.enabledTypes.testFlag(SnapType::AlignmentPI)) {
-        const auto& elems = hEdit->elements();
-        for (const EditableElement& e : elems) {
-            // Tangent 元素的兩個端點即為 PI 點
-            if (e.type == EditableElementType::Tangent) {
-                for (const QPointF& pi : { e.startPI, e.endPI }) {
-                    gp_Pnt piPt(pi.x(), pi.y(), 0.0);
-                    double dist = screenDistance(view, piPt, mouseX, mouseY);
-                    if (dist <= m_settings.pickPixelRadius) {
-                        SnapCandidate c = makeCandidate(
-                            SnapType::AlignmentPI, piPt, nullptr, view, mouseX, mouseY);
-                        out.append(c);
-                    }
+    const auto& elems = hEdit->elements();
+    for (const EditableElement& e : elems) {
+        // Tangent 元素的兩個端點即為 PI 點
+        if (e.type == EditableElementType::Tangent) {
+            for (const QPointF& pi : { e.startPI, e.endPI }) {
+                gp_Pnt piPt(pi.x(), pi.y(), 0.0);
+                double dist = screenDistance(view, piPt, mouseX, mouseY);
+                if (dist <= m_settings.pickPixelRadius) {
+                    SnapCandidate c = makeCandidate(
+                        SnapType::AlignmentPI, piPt, nullptr, view, mouseX, mouseY);
+                    out.append(c);
                 }
             }
         }
     }
+}
+
+void OSnapDetector::detectAlignmentSnapForHAlign(
+    const aicad::railway::HorizontalAlignment* halign,
+    const Handle(V3d_View)& view,
+    const gp_Pnt& mousePt,
+    int mouseX, int mouseY,
+    QVector<SnapCandidate>& out)
+{
+    using namespace aicad::railway;
+
+    if (!halign) return;
 
     // rawPoints 以下三個類型都需要
     const bool needTC    = m_settings.enabledTypes.testFlag(SnapType::AlignmentTC);
     const bool needMid   = m_settings.enabledTypes.testFlag(SnapType::AlignmentMid);
     const bool needPerp  = m_settings.enabledTypes.testFlag(SnapType::AlignmentPerp);
 
-    if (!halign || (!needTC && !needMid && !needPerp))
+    if (!needTC && !needMid && !needPerp)
         return;
 
     const QVector<AlignmentPoint>& pts = halign->rawPoints();

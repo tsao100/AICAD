@@ -33,6 +33,7 @@ namespace cad {
 
 namespace view {
     class CadView;
+    class Railway3DAlignmentRenderer;
 }
 
 namespace core {
@@ -223,6 +224,20 @@ public:
     /// All per-TCL AlignmentDocument instances (key = tclId)
     const QHash<QString, railway::AlignmentDocument*>& tclAlignmentDocs() const;
 
+    /**
+     * @brief 取得（若不存在則建立）指定 TCL 的 AlignmentDocument，並視需要
+     *        從其既有的 raw/dense 資料反推一次元素鏈／VIP 清單（與
+     *        showAlignmentDataTableRequested / railway.valign-visibility-changed
+     *        兩處既有邏輯相同，抽出供命令層等其他呼叫者共用，避免各自維護
+     *        一份可能產生分歧結果的重建邏輯）。
+     * @return 找不到對應 TrackCenterLine 時回傳 nullptr。
+     */
+    railway::AlignmentDocument* ensureTclAlignmentDocument(const QString& tclId);
+
+    /// Railway 資料夾「3D Alignment」彙總顯示（可能為 nullptr，直到第一次
+    /// eyeOpen 觸發建立）。
+    view::Railway3DAlignmentRenderer* railway3DRenderer() const;
+
     /// Step 16: Vertical-alignment dock widget
     ui::VAlignEditorDockWidget* vAlignDockWidget() const;
 
@@ -253,6 +268,35 @@ private:
 
     void setupCommandLine();
     void connectCommandLineEvents();
+
+    /**
+     * @brief 統一設定「目前作用中」的 AlignmentDocument（d->alignmentDoc），
+     *        並同步把它接到 CadView 的 OSnapManager／OSnapDetector，讓
+     *        Alignment edit（H-alignment grip 拖曳）時，OSnap 也能吃到
+     *        目前可視 alignment 的鎖點（TS/SC/CS/ST／IP 等）。
+     *
+     *        OSnapDetector 原本就有完整的 Alignment snap 偵測邏輯
+     *        （setAlignmentDocument()／detect() 內的 alignment 分支），但
+     *        該 setter 從未被任何呼叫端呼叫過，永遠是 nullptr，導致這段
+     *        偵測邏輯形同虛設。所有原本直接寫 `d->alignmentDoc = ...` 的
+     *        地方都應改呼叫這個方法，避免遺漏。
+     */
+    void setActiveAlignmentDoc(railway::AlignmentDocument* doc);
+
+    /**
+     * @brief 重新掃描目前文件的所有 TrackCenterLine，把每一條的
+     *        tcl->horizontal() 推給 OSnap（見 setActiveAlignmentDoc() 內的
+     *        說明）。
+     *
+     *        setActiveAlignmentDoc() 只會在使用者實際做了某些操作時被呼叫
+     *        （開啟垂直斷面 dock、切換水平/垂直可視性、進入編輯…），如果
+     *        使用者開檔後，alignment 一開始就顯示著、卻完全沒有觸發上述任何
+     *        一個分支就直接下 FC/AS 等取點指令，OSnap 的 alignment 來源清單
+     *        會維持在初始的空清單，導致「畫面上明明看得到、卻怎麼樣都吸不
+     *        到」。這個方法在文件載入／切換時（onCurrentDocumentChanged()）
+     *        主動呼叫一次，確保不依賴使用者是否恰好走過那幾個特定入口。
+     */
+    void refreshAlignmentOSnapSources();
 
     osnap::OSnapToolbar* m_snapToolbar = nullptr;
     cad::Sketch* m_currentActiveSketch = nullptr;

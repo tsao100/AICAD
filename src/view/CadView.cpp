@@ -387,43 +387,14 @@ CadView::CadView(QWidget* parent)
                 }
             });
     connect(d->inputJig, &InputJig::cancelled, this, [this]() {
-        // Jig 自己已經在收到 Escape 當下呼叫 hideJig()（見 InputJig::eventFilter），
-        // 這裡讓「Jig 作用中按 Esc」的效果精確對應「滑鼠右鍵」在同一 context
-        // 下原本的行為 —— 不多做、也不少做。
+        // Jig 自己已經在收到 Escape 當下呼叫 hideJig()（見 InputJig::eventFilter）。
         //
-        // 已實際追過右鍵在 PointPick（有 active command）時完整的連鎖反應：
-        //   右鍵 → publish(POINT_CANCELLED)
-        //        → LineCommand/AlignmentFixTangentCommand::handleCancelled()
-        //        → Q_EMIT finished(CommandResult::Success(...))
-        //        → CommandManager::onCommandFinished()：
-        //              cmd->cleanup(); cmd->deleteLater(); currentCommand=nullptr;
-        //              publish(COMMAND_EXECUTED)；publish(COMMAND_PROMPT, "")
-        //        → UIManager 的 COMMAND_EXECUTED 訂閱：
-        //              d->commandLine->clearCommandOptions();
-        //              d->commandLine->inputEdit()->setPlaceholderText("輸入指令或 LISP...");
-        // 也就是說，右鍵單靠 publish(POINT_CANCELLED) 就已經讓命令列完整回到
-        // 「等待下一個指令」的狀態——不需要（也不應該）額外呼叫
-        // CommandManager::cancelCurrentCommand() 或 turnOffActiveGrips() 那類
-        // 更重的路徑，那些是命令列輸入框自己按 Esc 才會走的更大範圍流程。
-        if (d->jigContext == Private::JigContext::PointPick) {
-            auto* cmdMgr = core::Application::instance()
-                               ? core::Application::instance()->commandManager()
-                               : nullptr;
-            if (cmdMgr && cmdMgr->hasActiveCommand()) {
-                auto* bus = core::Application::instance()->eventBus();
-                if (bus) bus->publish(core::Events::POINT_CANCELLED, QVariant());
-            }
-            // 保險：即使沒有 active command，也不要留下殘影橡皮筋
-            // （右鍵沒有這行，但這裡純粹是視覺保險，不影響命令列狀態）。
-            if (d->rubberBand) {
-                d->rubberBand->clearPoints();
-                d->rubberBand->clear();
-            }
-        } else if (d->jigContext == Private::JigContext::GripDrag) {
-            // 對應右鍵在 grip 拖曳中的既有行為範圍：只還原「這一次」拖曳，
-            // 不像 turnOffActiveGrips() 那樣把所有 grips 一併關閉。
-            if (d->gripManager) d->gripManager->cancelGrip();
-        }
+        // ✅ 統一行為：InputJig 作用中按一次 ESC，直接等同於完整取消
+        // （performEscapeCancel()，內容與「ESC 落在 CadView 本身」/舊版
+        // 需要再按第二次 ESC 才會走到的完整流程完全相同）——不再區分
+        // PointPick / GripDrag 各自只做部分動作，避免「Jig 作用中按一次
+        // ESC」跟「按兩次 ESC」效果不一致。
+        performEscapeCancel();
         d->jigContext = Private::JigContext::None;
     });
 
@@ -1038,6 +1009,19 @@ void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
     if (!d->gripManager) return;
 
     d->gripManager->setOrthoLock(d->orthoLock);
+
+    // ── OSnap 接線 ──────────────────────────────────────────────────────────
+    // GripManager::mouseMoveEvent() 內部原本就會呼叫 m_snapManager->onMouseMove()
+    // / snapPoint3D() 來取得「真正的」OSnap 候選（端點/中點/交點...等，由
+    // OSnapDetector 偵測），但 m_snapManager 這個成員從未被設定過（永遠是
+    // nullptr），導致該分支整段被跳過，直接落到 computeSnap() 的陽春備援
+    // （只能 snap 到其他 grip 端點或格線，抓不到一般幾何的 OSnap 結果）。
+    // 畫面上仍會顯示 OSnap 指示器，是因為 CadView::mouseMoveEvent() 本身
+    // 每次移動都會呼叫 m_snapManager->onMouseMove()（不管 grip 是否作用中），
+    // 但那次計算的結果從未回饋給 GripManager，因此「看得到鎖點顯示、
+    // 滑鼠點擊卻抓不到該鎖點座標」。此處補上這條線，讓 Alignment edit／
+    // Sketch 端點拖曳都能真正吃到 OSnap 鎖點。
+    d->gripManager->setSnapManager(m_snapManager);
 
     // ── InputJig：Grip 拖曳（草圖端點、水平線形 PI／IP「移動 IP」）共用路徑 ──
     connect(d->gripManager, &GripManager::gripDragStarted, this,
@@ -2043,6 +2027,24 @@ void CadView::handlePointInput(const QPoint& screenPos) {
         }
     }
 
+    // ── F8 Ortho Lock：套用到「實際送出」的點，而不只是橡皮筋預覽 ──────────
+    // 舊版只有 mouseMoveEvent() 更新橡皮筋預覽時套用水平/垂直鎖定，這裡（真正
+    // 點擊送出的座標）完全沒有套用，導致 F8 開啟時預覽線是水平/垂直，但點下去
+    // 送出的卻是滑鼠原始位置。邏輯與 mouseMoveEvent() 那份保持一致：
+    // 僅在「沒有 OSnap 命中」且有前一個基準點（橡皮筋最後一點）時才鎖定。
+    const bool snappedByOSnap = !geomUuid.isEmpty();
+    if (d->orthoLock && !snappedByOSnap && d->rubberBand) {
+        const QVector<QPointF> rbPts = d->rubberBand->points();
+        if (!rbPts.isEmpty()) {
+            const QPointF basePt = rbPts.last();
+            const double dx0 = planePt.x() - basePt.x();
+            const double dy0 = planePt.y() - basePt.y();
+            planePt = (std::abs(dx0) >= std::abs(dy0))
+                          ? QPointF(planePt.x(), basePt.y())
+                          : QPointF(basePt.x(), planePt.y());
+        }
+    }
+
     // 同時發布到 EventBus
     auto* bus = core::Application::instance()->eventBus();
     if (bus) {
@@ -2726,6 +2728,16 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 return;
             }
         }
+    }
+
+    // ── InputJig 顯示中的滑鼠右鍵：等同於單次 ESC 的完整取消 ──────────────────
+    // （見 performEscapeCancel() 說明：與「Jig 作用中按一次 ESC」共用同一套
+    //  完整取消流程，不再只是啟動視圖旋轉或走部分取消路徑。）
+    if (event->button() == Qt::RightButton && d->inputJig && d->inputJig->isJigVisible()) {
+        performEscapeCancel();
+        d->jigContext = Private::JigContext::None;
+        event->accept();
+        return;
     }
 
     if (event->button() == Qt::RightButton && d->mode == InteractionMode::Sketching) {
@@ -3600,6 +3612,38 @@ void CadView::wheelEvent(QWheelEvent* event) {
     update();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// performEscapeCancel — 統一的「完整取消」動作
+//
+// 內容與舊版 keyPressEvent() 的 Key_Escape 分支完全相同（見下方呼叫點），
+// 抽出成獨立函式後，InputJig 作用中的單次 ESC（InputJig::cancelled）與
+// 單次滑鼠右鍵（mousePressEvent 偵測到 Jig 顯示中）都改呼叫這裡，
+// 讓「Jig 作用中按一次 ESC / 點一次右鍵」與「舊版按兩次 ESC」的效果完全
+// 一致，不再需要第二次操作才能真正取消進行中的取點／指令。
+// ─────────────────────────────────────────────────────────────────────────────
+void CadView::performEscapeCancel() {
+    if (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::GetPoint) {
+        Q_EMIT pointCancelled();
+        if (d->rubberBand) {
+            d->rubberBand->clearPoints();
+            d->rubberBand->clear();
+        }
+        if (d->inputJig) {
+            d->inputJig->hideJig();
+            d->inputJig->resetLocks();
+        }
+        d->jigContext = Private::JigContext::None;
+    }
+    if (d->mode == InteractionMode::GetPoint) {
+        EventBus* bus = Application::instance()->eventBus();
+        bus->publish(Events::POINT_CANCELLED, QVariant());
+
+        Q_EMIT pointCancelled();
+    }
+    // ESC：grips 開啟時，單次按下即關閉全部 grips（Sketch / HAlign edit 共用同一邏輯）
+    turnOffActiveGrips();
+}
+
 void CadView::keyPressEvent(QKeyEvent* event) {
     // ── 窗選提示階段：直接攔截鍵盤輸入 F / WP / CP（備援路徑）──────────────
     // 主要路徑其實是 CommandLineWidget 對 qApp 安裝的全域事件過濾器，會把
@@ -3689,28 +3733,8 @@ void CadView::keyPressEvent(QKeyEvent* event) {
 
             return;
         }
-        if (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::GetPoint) {
-            Q_EMIT pointCancelled();
-            if (d->rubberBand) {
-                d->rubberBand->clearPoints();
-                d->rubberBand->clear();
-            }
-            if (d->inputJig) {
-                d->inputJig->hideJig();
-                d->inputJig->resetLocks();
-            }
-            d->jigContext = Private::JigContext::None;
-        }
-        if (d->mode == InteractionMode::GetPoint) {
-            EventBus* bus = Application::instance()->eventBus();
-            bus->publish(Events::POINT_CANCELLED, QVariant());
-
-            Q_EMIT pointCancelled();
-        }
-        // ESC：grips 開啟時，單次按下即關閉全部 grips（Sketch / HAlign edit 共用同一邏輯）
-        if (turnOffActiveGrips()) {
-            event->accept();
-        }
+        performEscapeCancel();
+        event->accept();
         return;
     }
 

@@ -541,11 +541,44 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 
+public:
+    /**
+     * @brief 供 CadView 之外的呼叫端（目前是 UIManager）觸發與
+     *        performEscapeCancel() 完全相同的「完整取消」流程。
+     *
+     * 命令列輸入框（CommandInputEdit）持有鍵盤焦點時，ESC 會先落在該
+     * QLineEdit 自己的 keyPressEvent（清除文字、emit escapePressed()），
+     * 完全不會經過 CadView::keyPressEvent()，因此 InputJig 隱藏／橡皮筋
+     * 清除／POINT_CANCELLED／關閉 grips 這一整套流程原本永遠不會被觸發到
+     * ——即使 InputJig 正顯示著、命令正在等待取點。UIManager 收到
+     * CommandInputEdit::escapePressed 後改呼叫這個方法，補上第四個呼叫點。
+     */
+    void requestEscapeCancel() { performEscapeCancel(); }
+
 private:
+    /**
+     * @brief 執行「完整取消」：與舊行為「InputJig 作用中按 ESC 兩次」/
+     *        鍵盤 ESC 落在 CadView 本身（非 Jig 的行內編輯欄）時完全相同的
+     *        一次性動作 —— 清橡皮筋、隱藏並重置 InputJig、依 mode 發佈
+     *        POINT_CANCELLED、關閉所有作用中的 grips。
+     *
+     * 統一供四個呼叫點使用，確保「InputJig 作用中按一次 ESC」與
+     * 「InputJig 作用中點一次滑鼠右鍵」都等同於這個完整流程（而不是舊版
+     * 需要再按第二次 ESC 才會執行到的部分）：
+     *   1. keyPressEvent() 的 Key_Escape 分支（Jig 未取得焦點時，ESC 直接
+     *      落在 CadView 本身）。
+     *   2. InputJig::cancelled 訊號（Jig 的行內編輯欄有焦點，攔截了 ESC）。
+     *   3. mousePressEvent() 偵測到 Jig 顯示中的滑鼠右鍵。
+     *   4. requestEscapeCancel()（命令列輸入框持有焦點時，經由 UIManager
+     *      轉發 CommandInputEdit::escapePressed 呼叫）。
+     */
+    void performEscapeCancel();
+
     /**
      * @brief 初始化 OCCT 視圖器
      */
     void initializeViewer();
+
 
     /**
      * @brief 更新視角投影

@@ -118,6 +118,54 @@ struct EditableElement
     //     後，立刻依「原始方位角」重新外插另一端，避免極短線段的方向
     //     被裁切位移（通常遠大於 kSSEpsilon）淹沒而失真。
     bool isSSJunction = false;
+
+    //   isReverseSpiralGroup — 此 SpiralIn/SpiralOut 屬於 REVERSESPIRAL
+    //     指令建立的 S1><S2 反向緩和曲線群組（兩段緩和曲線曲率方向相反，
+    //     直接相接，中間無圓弧）。與 isSSJunction 的差異：isSSJunction
+    //     標記的是「虛擬切線 Tangent 元素」，且該情境下 L1/L2 是已知量
+    //     （ALD 量測值）；isReverseSpiralGroup 標記的是「S1/S2 本身」，
+    //     且 L1/L2 是 AlignmentSolver::solveReverseSpiral() 的反解結果。
+    //     AlignmentSolver::solve() Pass 2c 依此旗標分流到反向緩和曲線
+    //     求解路徑，與 Pass 2b（isSSJunction）互不觸發。
+    bool isReverseSpiralGroup = false;
+
+    //   reverseSpiralStrategy / reverseSpiralParam — 僅 SpiralIn 元素使用
+    //     （比照 spiralType1/spiralType2 的掛法，只在代表性元素上掛額外
+    //     資料，SpiralOut 元素忽略這兩欄）。記錄建立此群組時使用者選擇的
+    //     解析策略（對應 ReverseSpiralStrategy enum 的整數值）與其參數，
+    //     供資料表編輯長度時重新反解、或重新開啟檔案後沿用同一策略。
+    int    reverseSpiralStrategy = 0;
+    double reverseSpiralParam    = 0.0;
+};
+
+// ============================================================================
+//  ReverseSpiralStrategy — REVERSESPIRAL 指令用來將「反向緩和曲線 1 自由度
+//  解族」（見 AlignmentSolver.h solveReverseSpiral() 說明）收斂為唯一解的
+//  額外約束選擇。
+// ============================================================================
+
+enum class ReverseSpiralStrategy {
+    FixL1        = 0,  ///< 指定 L1，反解 L2
+    FixL2        = 1,  ///< 指定 L2，反解 L1
+    EqualLength  = 2,  ///< L1 = L2（預設）
+    TotalLength  = 3,  ///< L1 + L2 = 常數
+    EqualAValue  = 4,  ///< A1 = A2，即 L1/R1 = L2/R2
+    FixedAValue  = 5,  ///< 兩段各自套用同一個指定 A 值：L = A²/R
+    PickJunction = 6   ///< 取最接近使用者點擊位置的解族成員
+};
+
+// ============================================================================
+//  ReverseSpiralSpec — addReverseSpiral() 的輸入參數
+// ============================================================================
+
+struct ReverseSpiralSpec {
+    int    arc1Idx = -1;        ///< 既有 Fixed/Floating CircularArc（曲率起點）
+    int    arc2Idx = -1;        ///< 既有 Fixed/Floating CircularArc（曲率終點）
+    SpiralType type1 = SpiralType::Clothoid;
+    SpiralType type2 = SpiralType::Clothoid;
+    ReverseSpiralStrategy strategy = ReverseSpiralStrategy::EqualLength;
+    double strategyParam = 0.0;   ///< 依 strategy 意義不同，見上方 enum 註解
+    QPointF pickedJunctionHint;   ///< 僅 PickJunction 使用
 };
 
 // Forward declaration (AlignmentDocument is defined later in this file)
@@ -311,6 +359,28 @@ public:
     int addCompoundChain(int tangentIdxBefore, int tangentIdxAfter,
                         const CompoundChainSpec& spec);
 
+    /**
+     * @brief 在兩個既有、曲率方向相反的 Fixed/Floating CircularArc 之間，
+     *        插入一組反向緩和曲線 S1><S2（中間無圓弧，交會點切線長 <
+     *        kSSEpsilon）。詳見 ReverseSpiral_Command_實作計畫.md 第 1.4、
+     *        2、3 節。
+     *
+     *  前置條件（不成立時回傳 -1，不修改 m_elems）：
+     *    - spec.arc1Idx、spec.arc2Idx 皆指向 CircularArc 元素，且兩者之間
+     *      至多只隔一段 Tangent（該 Tangent 會被兩段新 spiral 取代）。
+     *    - 兩弧曲率方向相反。
+     *
+     *  建立 2 個 EditableElement（SpiralIn 接 arc1 出口、SpiralOut 接 arc2
+     *  入口），皆設 isReverseSpiralGroup=true、mode=Floating，長度先填
+     *  0，由 AlignmentSolver::solveReverseSpiral() 於 solve() Pass 2c
+     *  依 spec.strategy 反解實際 L1/L2 並覆寫；spec.strategy／
+     *  strategyParam 存回新建 SpiralIn 的 reverseSpiralStrategy／
+     *  reverseSpiralParam 供後續資料表編輯沿用。
+     *
+     * @return 新建 SpiralIn 的 index；失敗回傳 -1。
+     */
+    int addReverseSpiral(const ReverseSpiralSpec& spec);
+
     void movePI(int idx, QPointF newPos);
 
     /**
@@ -402,7 +472,12 @@ public:
      *          （constructionIsArc）。若為 C 且原始資料剛好記錄了半徑，
      *          直接以量測到的兩端座標建立為 Fixed SpiralIn/SpiralOut
      *          （見 addFixedSpiral()）；若半徑不可考（原始資料未記錄，
-     *          此為目前最常見的情況），記錄警告並略過該群組。
+     *          此為目前最常見的情況，例如線形以 CS 開頭／SC 結尾），改為
+     *          借用檔案內最近一個有記錄半徑的圓弧關鍵點，建立一段固定
+     *          10 公尺長的「建構弧」（Fixed CircularArc，見 addFixedCurve()）
+     *          銜接在緩和曲線的建構線那一側，讓使用者仍有可見、可編輯的
+     *          元素可事後修正半徑；只有整份檔案都沒有任何實測半徑可借用
+     *          時，才記錄警告並略過該群組。
      *   3. "SS"（兩段緩和曲線直接相接的虛擬零長度切線點，複合反向曲線
      *      常見）等同規則 1 的一個 Tangent 錨點（同樣標記為建構線，但
      *      constructionIsArc 恆為 false），兩側同樣依 IP 計算角點。
