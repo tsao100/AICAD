@@ -645,11 +645,31 @@ SolvedLC AlignmentSolver::solveLC(
 //  Exact mirror of solveLC with the spiral running CT (curvature decreasing).
 //
 //  f(Ls) for CA:
-//    azCS = az2 − thetaS(Ls)                         [exit from arc into spiral]
+//    The CA spiral is walked "backwards" (from ST toward CS) to reuse the
+//    same zero-curvature-at-origin clothoid shape function used by LC.
+//    Because the walk direction is reversed relative to true travel, the
+//    curvature sign fed into the shape function must also be reversed
+//    (−signR·R instead of signR·R) — otherwise the reconstructed spiral
+//    curves the wrong way and only its cross-track projection happens to
+//    hit zero, while the actual ST/CS points end up far from where they
+//    should be (Fixed Tangent renders "stretched" and doesn't connect to
+//    the arc).
+//    azCS = az2 + thetaS(Ls)                         [exit from arc into spiral]
 //    CS_on_arc = arcCenter + (−signR·R·cos azCS,  +signR·R·sin azCS)
 //    stDx = Xm·sin(az2) + Ym·cos(az2)               [CT: same local frame as TC]
 //    stDy = Xm·cos(az2) − Ym·sin(az2)
+//    ST = CS + (stDx,stDy)
 //    f(Ls) = (tanStart − (stDx,stDy) − CS_on_arc) · n2   [n2 = right-perp of az2]
+//
+//  (Fixed 2026-07: thetaS/Xm/Ym used to be evaluated with the arc's own
+//   signed curvature (signR·R) and azCS = az2 − thetaS. That sign choice
+//   for the clothoid shape was wrong — f(Ls) could still be driven to zero
+//   near the true Ls by coincidence of the cross-track projection, but the
+//   reconstructed CS/ST points did not match the known geometry at all
+//   [drawing a SpiralOut that connected to a bogus ST, "stretching" the
+//   Fixed Tangent and leaving a visible gap at the arc]. The shape function
+//   must use the *reversed* curvature sign (−signR·R) because this spiral
+//   is parametrised backwards from ST; azCS then comes out as az2+thetaS.)
 // ============================================================================
 
 SolvedCA AlignmentSolver::solveCA(
@@ -678,14 +698,15 @@ SolvedCA AlignmentSolver::solveCA(
 
     // ── Step 3: bisection on f(Ls) ───────────────────────────────────────────
     auto evalF = [&](double Ls) -> double {
-        const auto elem = makeTransitionElement(spiralType, Ls, signR * R);
+        // Reversed curvature sign: this clothoid is walked ST→CS, opposite
+        // to true travel (CS→ST), so its shape must use −signR·R.
+        const auto elem = makeTransitionElement(spiralType, Ls, -signR * R);
         const LocalFrame lf = elem->localFrame(Ls);
         const double Xm     = lf.x;
         const double Ym     = lf.y;
         const double thetaS = lf.theta;
 
-        const double azCS = az2 - thetaS;
-        // CT spiral: TS→SC in local frame, mirrored for CS→ST direction
+        const double azCS = az2 + thetaS;
         const double stDx = Xm * sA2 + Ym * cA2;
         const double stDy = Xm * cA2 - Ym * sA2;
 
@@ -735,18 +756,19 @@ SolvedCA AlignmentSolver::solveCA(
     const double Ls = Ls_lo;
 
     // ── Step 4: final geometry ────────────────────────────────────────────────
-    const auto   elemF  = makeTransitionElement(spiralType, Ls, signR * R);
+    const auto   elemF  = makeTransitionElement(spiralType, Ls, -signR * R);
     const LocalFrame lf = elemF->localFrame(Ls);
     const double Xm     = lf.x;
     const double Ym     = lf.y;
     const double thetaS = lf.theta;
 
-    const double azCS = az2 - thetaS;
+    const double azCS = az2 + thetaS;
     const double stDx = Xm * sA2 + Ym * cA2;
     const double stDy = Xm * cA2 - Ym * sA2;
 
     const QPointF csPoint(arcCenter.x() - signR * R * std::cos(azCS),
                           arcCenter.y() + signR * R * std::sin(azCS));
+    // ST = CS + (stDx,stDy). Kept in sync with the corrected sign in evalF() above.
     const QPointF stPoint(csPoint.x() + stDx, csPoint.y() + stDy);
 
     // ── Step 5: trimmed arc  arcStart → CS ───────────────────────────────────
@@ -3216,6 +3238,24 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         // CA group: SpiralOut is emitted inline with the Fixed Arc → suppress SpiralOut
         if (caData[i].valid) {
             handledBySCS[i] = true;  // SpiralOut handled inside arc emission
+
+            // Suppress exit tangent too — mirrors the SCS/compound-chain
+            // suppression above. Without this, the exit Tangent element
+            // (tanIdx) is *also* processed normally by the main loop below,
+            // producing a second point at the exact same coordinates as the
+            // inline "ST" keypoint emitted here (see the CA emission block
+            // further down). The two duplicate points used to be collapsed
+            // by a display-layer dedup filter in AlignmentDataTableDialog,
+            // which kept the *wrong* one — the inline "ST" point used to
+            // hardcode length=0, while the real tangent length only existed
+            // on the now-suppressed duplicate, so the data table showed "—"
+            // for the last Tangent segment's length. Fixed by (a) suppressing
+            // the duplicate here and (b) writing the real length directly
+            // onto the inline "ST" point below, matching how the SCS block
+            // already does it for its own exit tangent.
+            const int ta = caData[i].tanIdx;
+            if (ta >= 0 && ta < n && elems[ta].type == EditableElementType::Tangent)
+                handledBySCS[ta] = true;
         }
         // ACA group: SpiralIn is emitted inline between the two arcs → suppress SpiralIn
         if (acaData[i].valid) {
@@ -3715,17 +3755,25 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 chainage      += ca.Ls;
                 pts.append(cspt);
 
-                // ST waypoint = start of the trimmed exit tangent
+                // ST waypoint = start of the trimmed exit tangent.
+                // Carries the *actual* tangent length directly (mirrors the
+                // SCS block's own "stTT.length = tlen" pattern) now that the
+                // exit tangent element is suppressed via handledBySCS above
+                // -- it will NOT be emitted a second time by the normal
+                // Tangent flow, so this is the only row for this segment.
+                const int ta = caData[i+1].tanIdx;
+                const double tlen = (ta >= 0 && ta < n)
+                    ? QLineF(ca.stPoint, tanEnd[ta]).length()
+                    : 0.0;
                 AlignmentPoint stpt;
                 stpt.tsc      = QStringLiteral("ST");
                 stpt.easting  = ca.stPoint.x();
                 stpt.northing = ca.stPoint.y();
                 stpt.azimuth  = ca.azST;
-                stpt.length   = 0.0;
+                stpt.length   = tlen;
                 stpt.chainage = chainage;
+                chainage     += tlen;
                 pts.append(stpt);
-                // (the trimmed tangent itself will be emitted in normal Tangent flow
-                //  since tanStart[ta] was updated to ca.stPoint)
                 continue;  // skip the default PT waypoint below
             }
 
@@ -3838,12 +3886,16 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 // end-of-alignment anchor.
                 const int ta = elems[i - 2].tangentIdxAfter;  // SpiralIn is i-2
                 if (ta >= 0 && ta < n
-                    && elems[ta].type == EditableElementType::Tangent) {
+                    && elems[ta].type == EditableElementType::Tangent
+                    && !isBoundaryConstruction[ta]) {
                     sentinel.easting  = tanEnd[ta].x();
                     sentinel.northing = tanEnd[ta].y();
                     sentinel.azimuth  = azimuthOf(tanStart[ta], tanEnd[ta]);
                 } else {
-                    // Fallback: no exit tangent found, anchor at ST
+                    // Fallback: no real (non-construction) exit tangent found,
+                    // anchor at ST -- this also covers the case where ta only
+                    // exists as a boundary construction line (see the Tangent
+                    // branch below for the analogous CircularArc-ending case).
                     const SolvedSCS& scs = scsData[i - 2].scs;
                     sentinel.easting  = scs.stPoint.x();
                     sentinel.northing = scs.stPoint.y();
@@ -3851,6 +3903,18 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 }
                 break;
             } else if (elems[i].type == EditableElementType::Tangent) {
+                if (isBoundaryConstruction[i]) {
+                    // 邊界建構線（isConstructionLine）本身不是真實量測到的
+                    // 直線段，只是 seedFromRawPoints() 為了錨定邊界緩和
+                    // 曲線虛擬延伸出來的佔位線，前面主迴圈已經不把它列進
+                    // 資料表（見上方 isBoundaryConstruction 判斷）。sentinel
+                    // 收尾列也必須比照跳過，繼續往前尋找真正的收尾元素
+                    // （通常是它緊鄰的圓弧或緩和曲線），而不是誤把這條建構
+                    // 線自己的（虛擬延伸）端點／方位角當成線形真正的終點。
+                    // 例如線形實際上以圓弧收尾時，跳過建構線後會落到下面
+                    // 的 CircularArc 分支，正確給出 tsc="CT"。
+                    continue;
+                }
                 const double len = QLineF(tanStart[i], tanEnd[i]).length();
                 if (len < 1e-9) continue;
                 sentinel.easting  = tanEnd[i].x();
@@ -3861,16 +3925,33 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                        && arcData[i].valid) {
                 sentinel.easting  = arcData[i].pt.x();
                 sentinel.northing = arcData[i].pt.y();
-                // Azimuth at PT = azimuth at PC ± (arc angle).
-                // delta = arcLen / R; sign follows e.radius sign.
+                // Tangent azimuth at PT, derived from PC/PT/azPC/arcLen only
+                // -- deliberately NOT using elems[i].arcCenter. arcCenter is
+                // only populated for *Fixed* arcs (set once by
+                // addFixedCurve()); a *Floating* arc's centre is computed
+                // on the fly by Pass 2 (solveFloatingCurve()) and is never
+                // written back into elems[i].arcCenter (elems is a const
+                // reference here), so for a Floating arc that field is just
+                // whatever default the EditableElement happened to have --
+                // using it as "the centre" silently produced a wrong
+                // azimuth whenever the alignment's last real element turned
+                // out to be a Floating arc (e.g. G104).
+                //
+                // Instead, get the turn sign purely from the chord
+                // PC→PT relative to the entry tangent azPC (right-perp
+                // side test -- the same kind of test solveLC()/solveCA()
+                // already use elsewhere), then apply the known unsigned
+                // delta = arcLen / R. This only needs fields that Pass 1
+                // (Fixed) and Pass 2 (Floating) both reliably populate.
                 {
-                    const double R    = std::abs(elems[i].radius);
-                    const double arc_delta = (R > 1e-9)
-                                            ? (arcData[i].arcLen / R)
-                                            : 0.0;
-                    const double signedDelta = (elems[i].radius >= 0.0)
-                                              ? arc_delta : -arc_delta;
-                    sentinel.azimuth = arcData[i].azPC + signedDelta;
+                    const double R = std::abs(elems[i].radius);
+                    const double delta = (R > 1e-9) ? (arcData[i].arcLen / R) : 0.0;
+                    const QPointF chord = arcData[i].pt - arcData[i].pc;
+                    const double  rpx = std::cos(arcData[i].azPC);
+                    const double  rpy = -std::sin(arcData[i].azPC);
+                    const double  sideVal = chord.x() * rpx + chord.y() * rpy;
+                    const double  sign    = (sideVal >= 0.0) ? 1.0 : -1.0;
+                    sentinel.azimuth = arcData[i].azPC + sign * delta;
                 }
                 // 線形最後一段為圓弧（Circular Arc）時，終點是「弧→切線」
                 // 過渡點，比照 2615 行同樣的判斷邏輯，tsc 應為 "CT"，

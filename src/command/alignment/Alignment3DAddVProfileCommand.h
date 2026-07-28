@@ -4,8 +4,9 @@
  * @file Alignment3DAddVProfileCommand.h
  * @brief ALIGNMENT3DADDVPROFILE（alias: V3D）— 於「3D Alignment」彙總顯示中，
  *        為目前已選取的線路（可多選）加入僅含起訖點（無中間豎曲線）的簡易
- *        垂直線形；起訖高程由使用者在畫面上分別點擊兩條 3D Alignment 折線
- *        取樣而得，起訖里程與各自的平面線形一致。
+ *        垂直線形；起訖高程可由使用者在畫面上點擊某條 3D Alignment 折線
+ *        取樣而得（里程沿用該折線該處），也可以直接在命令列輸入數值
+ *        （純數字或 EL=<高程>），兩種輸入方式在每一步都同時有效。
  *
  * 前置條件
  * ────────
@@ -20,12 +21,13 @@
  *     │  讀取目前選取（Railway3DAlignmentRenderer::selectedTcls()）
  *     │  為空 → Failure（請先選取）
  *     ▼
- *   PickStartRef  ── 提示「點擊某條 3D Alignment 折線以取得『起點』高程」
+ *   PickStartRef  ── 提示「點擊某條 3D Alignment 折線，或直接輸入【起點】高程」
  *     │  POINT_ACQUIRED，且 geomUuid 對應到已註冊的 3D Alignment 折線
  *     │  → 取得該線路在點擊位置的里程 p，以 TrackCenterLine::getZ(p) 取高程
+ *     │  或 NUMBER_INPUT（純數字 / EL=<高程>）→ 直接以輸入值作為高程
  *     ▼
- *   PickEndRef    ── 提示「點擊某條 3D Alignment 折線以取得『終點』高程」
- *     │  同上，取得第二個高程
+ *   PickEndRef    ── 提示「點擊某條 3D Alignment 折線，或直接輸入【終點】高程」
+ *     │  同上，取得第二個高程（點擊或輸入）
  *     ▼
  *   commitAll()   ── 對每條目標線路：
  *                     - 起訖里程＝該線路自身水平線形頭尾里程（rawPoints）
@@ -38,7 +40,8 @@
  *
  * 兩個點擊可以點在同一條或不同的 3D Alignment 折線上（可以是目標線路本身，
  * 也可以是任何其他已顯示的參考線路）——純粹依點擊位置在該線路上的最近里程
- * 取樣高程，不要求與目標線路有任何幾何關係。
+ * 取樣高程，不要求與目標線路有任何幾何關係。直接輸入高程時則沒有「取樣里程」
+ * 的概念，起訖里程仍固定沿用各目標線路自身的頭尾里程。
  *
  * @see Railway3DAlignmentRenderer::selectedTcls()
  * @see AlignmentDocument::VerticalAlignmentEdit::addVip()
@@ -46,6 +49,7 @@
 
 #include "command/Command.h"
 #include "command/CommandFactory.h"
+#include "view/CadView.h"
 
 #include <QPointF>
 #include <QString>
@@ -73,14 +77,23 @@ public:
 
 private:
     enum class Step {
-        PickStartRef,   ///< 等待點擊取得起點高程
-        PickEndRef      ///< 等待點擊取得終點高程
+        PickStartRef,   ///< 等待點擊或輸入取得起點高程
+        PickEndRef      ///< 等待點擊或輸入取得終點高程
     };
 
     void handlePointAcquired(const QPointF& point, const QString& geomUuid);
+    void handleNumberInput(const QString& text);
     void handleCancelled();
     void commitAll();
     void cleanup() override;
+
+    /**
+     * @brief 套用一個高程值到目前步驟（PickStartRef/PickEndRef 共用），
+     *        推進 m_step 並發佈下一步提示；PickEndRef 完成後呼叫 commitAll()。
+     * @param elevation   高程值（公尺）。
+     * @param originDesc  來源描述，僅用於訊息顯示（例如里程資訊，或空字串）。
+     */
+    void applyElevation(double elevation, const QString& originDesc);
 
     /**
      * @brief 從 geomUuid 反查 3D Alignment 折線所屬的 TrackCenterLine，
@@ -96,6 +109,12 @@ private:
     bool           m_isFinishing = false;
 
     QList<railway::TrackCenterLine*> m_targets;  ///< 3D 檢視中已選取的目標線路
+
+    /// 進入互動取點前的原始 CadView 模式（通常是瀏覽 3D Alignment 疊加顯示
+    /// 時的 Selecting/Navigation），execute() 成功進入互動流程後會暫時切到
+    /// GetPoint，cleanup() 時無論成功/取消/失敗都要換回來。
+    view::InteractionMode m_prevMode   = view::InteractionMode::Selecting;
+    bool                  m_modeChanged = false;
 
     double m_startElev = 0.0;
     double m_endElev   = 0.0;

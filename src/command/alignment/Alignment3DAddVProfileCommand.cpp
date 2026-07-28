@@ -10,7 +10,9 @@
 
 #include "command/alignment/Alignment3DAddVProfileCommand.h"
 #include "command/CommandTypes.h"
+#include "command/InputParser.h"
 #include "core/Application.h"
+#include "core/CommandLineManager.h"
 #include "core/DocumentManager.h"
 #include "core/EventBus.h"
 #include "cad/Document.h"
@@ -42,26 +44,86 @@ CommandResult Alignment3DAddVProfileCommand::execute(const CommandContext& conte
     m_ctx = context;
 
     if (!context.uiManager) {
-        return CommandResult::Failure("Internal error: no UIManager in context.");
+        const QString msg = "Internal error: no UIManager in context.";
+        outputMessage(msg);
+        return CommandResult::Failure(msg);
     }
 
     view::Railway3DAlignmentRenderer* renderer = context.uiManager->railway3DRenderer();
     if (!renderer || !renderer->isVisible()) {
-        return CommandResult::Failure(
-            "3D Alignment 尚未顯示 — 請先開啟 Railway 資料夾的 3D Alignment 眼睛圖示。");
+        const QString msg =
+            "3D Alignment 尚未顯示 — 請先開啟 Railway 資料夾的 3D Alignment 眼睛圖示。";
+        outputMessage(msg);
+        return CommandResult::Failure(msg);
     }
 
-    m_targets = renderer->selectedTcls();
+    // ── 目標線路：從 context.args 取得，而非即時查詢 renderer->selectedTcls() ──
+    //
+    // CommandManager::executeCommand() 會先發佈 COMMAND_STARTED，UIManager 對
+    // COMMAND_STARTED 的全域處理（切換至「繪圖模式」）會無條件呼叫
+    // CadView::clearSketchGeomSelection()，清空 AIS_InteractiveContext 目前
+    // 的選取集合——這發生在 cmd->execute() 之前。若這裡才去問
+    // renderer->selectedTcls()（其內部即時檢查 ctx->IsSelected()），選取已經
+    // 被清空，永遠回傳空清單，導致 V3D 每次都以「尚未選取任何線路」失敗，
+    // 且使用者在點選畫面上的折線之後執行 V3D 看起來「毫無反應」。
+    //
+    // UIManager 的 COMMAND_EXECUTE_REQUEST 處理常式在呼叫
+    // CommandManager::executeCommand()（因而在 COMMAND_STARTED 發佈、選取被
+    // 清空）之前，已經把當時的 CadView::selectedGeomUuids() 存進
+    // ctx.args ——這些 uuid 對 3D Alignment 折線而言即是
+    // "railway3d:<tclId>"（見 Railway3DAlignmentRenderer::rebuildOverlays()
+    // 對 registerSketchGeomAIS() 的呼叫）。改用這份「命令啟動前」的快照即可
+    // 取得使用者真正選取的線路，不受 clearSketchGeomSelection() 影響。
+    static const QString kPrefix = QStringLiteral("railway3d:");
+
+    auto* docMgr = Application::instance()->documentManager();
+    cad::Document* doc = docMgr ? docMgr->currentDocument() : nullptr;
+
+    qDebug() << "[V3D] context.args =" << context.args
+             << "doc =" << (doc ? "OK" : "nullptr");
+
+    m_targets.clear();
+    if (doc) {
+        for (const QString& uuid : context.args) {
+            if (!uuid.startsWith(kPrefix)) continue;
+            const QString tclId = uuid.mid(kPrefix.size());
+            railway::TrackCenterLine* tcl = doc->findTrackCenterLine(tclId);
+            qDebug() << "[V3D]   arg uuid =" << uuid
+                     << "-> tclId =" << tclId
+                     << "-> tcl =" << (tcl ? tcl->name() : "NOT FOUND");
+            if (tcl && !m_targets.contains(tcl))
+                m_targets.append(tcl);
+        }
+    }
+    qDebug() << "[V3D] m_targets.size() =" << m_targets.size();
+
     if (m_targets.isEmpty()) {
-        return CommandResult::Failure(
+        const QString msg =
             "尚未選取任何線路 — 請先在 3D Alignment 顯示中點選（可 Shift 多選）"
-            "欲加入垂直線形的折線，再執行本命令。");
+            "欲加入垂直線形的折線，再執行本命令。";
+        outputMessage(msg);
+        return CommandResult::Failure(msg);
     }
 
     m_step        = Step::PickStartRef;
     m_isFinishing = false;
     m_startElev   = 0.0;
     m_endElev     = 0.0;
+
+    // ── 切到 GetPoint 模式，讓滑鼠點擊真正被視為「取點」 ──────────────────
+    //
+    // CadView::mousePressEvent() 只有在 d->mode 為 Sketching / GetPoint /
+    // GetGeom 時，才會走 handlePointInput() 進而發佈 POINT_ACQUIRED（見該
+    // 函式內對 d->mode 的判斷）。使用者選取 3D Alignment 折線時，CadView
+    // 停留在瀏覽用的 Selecting 模式——若命令不主動切換，PickStartRef/
+    // PickEndRef 階段點擊畫面上的折線只會被當成一般物件選取（更新
+    // AIS_InteractiveContext 的選取集合），完全不會觸發 POINT_ACQUIRED，
+    // 因此命令看起來「無法輸入數據或選線形」。
+    if (context.cadView) {
+        m_prevMode    = context.cadView->mode();
+        m_modeChanged = true;
+        context.cadView->setMode(view::InteractionMode::GetPoint);
+    }
 
     EventBus* bus = Application::instance()->eventBus();
 
@@ -72,6 +134,14 @@ CommandResult Alignment3DAddVProfileCommand::execute(const CommandContext& conte
             QString geomUuid  = map["geomUuid"].toString();
             QMetaObject::invokeMethod(this, [this, pt, geomUuid]() {
                 handlePointAcquired(pt, geomUuid);
+            }, Qt::QueuedConnection);
+        });
+
+    bus->subscribe(Events::NUMBER_INPUT, this,
+        [this](const QVariant& data) {
+            QString text = data.toString();
+            QMetaObject::invokeMethod(this, [this, text]() {
+                handleNumberInput(text);
             }, Qt::QueuedConnection);
         });
 
@@ -92,8 +162,14 @@ CommandResult Alignment3DAddVProfileCommand::execute(const CommandContext& conte
                       .arg(m_targets.size())
                       .arg(names.join(", ")));
     bus->publish(Events::COMMAND_PROMPT,
-                 tr("點擊某條 3D Alignment 折線以取得【起點】高程："));
-    outputMessage("點擊某條 3D Alignment 折線以取得【起點】高程：");
+                 tr("點擊某條 3D Alignment 折線，或直接輸入【起點】高程（EL=<高程> 或純數字）："));
+    outputMessage("點擊某條 3D Alignment 折線，或直接輸入【起點】高程（EL=<高程> 或純數字）：");
+    // 讓命令列同時接受純文字輸入：CommandLineManager 在 isWaitingForInput()
+    // 為 true 時，才會把使用者送出的文字視為「資料」而發佈 NUMBER_INPUT，
+    // 否則會被當成一個全新的指令名稱去解析（進而取消本命令）。滑鼠點擊走的
+    // 是 CadView::mode()（見上方切到 GetPoint 的說明），與此無關，兩種輸入
+    // 方式因此可以在同一步驟並存。
+    core::CommandLineManager::instance()->waitForInput(core::InputType::Number);
 
     return CommandResult::Success("Waiting for start-elevation pick");
 }
@@ -142,28 +218,75 @@ void Alignment3DAddVProfileCommand::handlePointAcquired(const QPointF& point,
 
     double chainage = 0.0, elevation = 0.0;
     if (!sampleElevation(geomUuid, point, chainage, elevation)) {
-        outputMessage("該處未命中任何 3D Alignment 折線 — 請直接點擊在折線上。");
+        outputMessage("該處未命中任何 3D Alignment 折線 — 請直接點擊在折線上，"
+                      "或直接輸入高程數值。");
         bus->publish(Events::COMMAND_PROMPT,
-                     tr("請直接點擊在某條 3D Alignment 折線上："));
+                     tr("請直接點擊在某條 3D Alignment 折線上，或輸入高程數值："));
+        // 點擊落空後，命令列的「等待輸入」狀態已因前一次 processInput() 而
+        // 重設，這裡重新啟用，讓使用者仍可改用輸入高程數值的方式繼續。
+        core::CommandLineManager::instance()->waitForInput(core::InputType::Number);
         return;
     }
+
+    applyElevation(elevation, QString("里程 %1").arg(chainage, 0, 'f', 3));
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  handleNumberInput
+// ────────────────────────────────────────────────────────────────────────────
+
+void Alignment3DAddVProfileCommand::handleNumberInput(const QString& text)
+{
+    if (m_isFinishing) return;
+
+    EventBus* bus = Application::instance()->eventBus();
+    const QString trimmed = text.trimmed();
+
+    double elevation = 0.0;
+    // 接受 "EL=12.345" 或純數字 "12.345"（tryParseKeyedOrPlainDouble 兩者皆可）。
+    if (!command::InputParser::tryParseKeyedOrPlainDouble(trimmed, "EL", elevation)) {
+        const QString stepPrompt = (m_step == Step::PickStartRef)
+            ? tr("【起點】高程")
+            : tr("【終點】高程");
+        outputMessage(QString("無法辨識的高程輸入 — 請輸入 EL=<高程> 或純數字，"
+                              "或直接點擊某條 3D Alignment 折線。"));
+        bus->publish(Events::COMMAND_PROMPT,
+                     tr("請重新輸入%1，或點擊某條 3D Alignment 折線：").arg(stepPrompt));
+        core::CommandLineManager::instance()->waitForInput(core::InputType::Number);
+        return;
+    }
+
+    applyElevation(elevation, QString());
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  applyElevation
+// ────────────────────────────────────────────────────────────────────────────
+
+void Alignment3DAddVProfileCommand::applyElevation(double elevation,
+                                                    const QString& originDesc)
+{
+    EventBus* bus = Application::instance()->eventBus();
+    const QString suffix = originDesc.isEmpty() ? QString() : QString("（%1）").arg(originDesc);
 
     switch (m_step) {
     case Step::PickStartRef:
         m_startElev = elevation;
-        outputMessage(QString("起點高程 = %1 m（里程 %2）")
+        outputMessage(QString("起點高程 = %1 m%2")
                           .arg(elevation, 0, 'f', 3)
-                          .arg(chainage, 0, 'f', 3));
+                          .arg(suffix));
         bus->publish(Events::COMMAND_PROMPT,
-                     tr("點擊某條 3D Alignment 折線以取得【終點】高程："));
+                     tr("點擊某條 3D Alignment 折線，或直接輸入【終點】高程（EL=<高程> 或純數字）："));
         m_step = Step::PickEndRef;
+        // 進入下一步仍要重新開放文字輸入通道（每次 processInput() 後會自動關閉）。
+        core::CommandLineManager::instance()->waitForInput(core::InputType::Number);
         break;
 
     case Step::PickEndRef:
         m_endElev = elevation;
-        outputMessage(QString("終點高程 = %1 m（里程 %2）")
+        outputMessage(QString("終點高程 = %1 m%2")
                           .arg(elevation, 0, 'f', 3)
-                          .arg(chainage, 0, 'f', 3));
+                          .arg(suffix));
         commitAll();
         break;
     }
@@ -274,6 +397,14 @@ void Alignment3DAddVProfileCommand::cleanup()
     EventBus* bus = Application::instance()->eventBus();
     bus->unsubscribeAll(this);
 
+    // 換回進入命令前的 CadView 互動模式（見 execute() 內切到 GetPoint 的說明）。
+    // m_ctx 保有 execute() 當時的 context 副本，其中的 cadView 指標在命令
+    // 生命週期內維持有效。
+    if (m_modeChanged && m_ctx.cadView) {
+        m_ctx.cadView->setMode(m_prevMode);
+    }
+    m_modeChanged = false;
+
     m_step        = Step::PickStartRef;
     m_isFinishing = false;
     m_targets.clear();
@@ -290,8 +421,9 @@ QString Alignment3DAddVProfileCommand::getUsage() const
     return "Usage: V3D\n"
            "  1. 先在 3D Alignment 顯示中選取（可多選）欲加入垂直線形的線路。\n"
            "  2. 執行 V3D。\n"
-           "  3. 點擊某條 3D Alignment 折線 → 取得【起點】高程。\n"
-           "  4. 點擊某條 3D Alignment 折線 → 取得【終點】高程。\n"
+           "  3. 點擊某條 3D Alignment 折線，或直接輸入 EL=<高程>（或純數字）\n"
+           "     → 取得【起點】高程。\n"
+           "  4. 同上 → 取得【終點】高程。\n"
            "  各目標線路的起訖里程沿用其自身平面線形頭尾里程。\n"
            "  Right-click / ESC 可隨時取消。";
 }

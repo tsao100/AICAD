@@ -1040,30 +1040,75 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
                 arcElem.setPlacement(place);
                 arcElem.setLength(p0.length);
 
-                int arcIdx = addFixedCurve(p0xy, p1xy, arcElem.centreXY(), radius);
+                // ── 依鏈行(chainage)順序插入，而非附加在 m_elems 尾端 ──────
+                // 先前的作法是呼叫 addFixedCurve()（永遠 append 到 m_elems
+                // 尾端）再用 addLC()/addCA() 相對於該圓弧位置插入，這在
+                // tanBefore 不是目前 m_elems 中「最後一個」Tangent 時（也就
+                // 是本群組並非整條線形最後一段時）沒有問題，因為所有其他
+                // 元素本來就在更早的 index；但當本群組是整條線形的最後一
+                // 段（tanAfter 是最後一個 Fixed Tangent，於 Pass 2b 已提早
+                // 建立、其 m_elems index 早於這裡即將 append 的圓弧/螺旋）
+                // 時，就會把 tanAfter 這個「應該在圓弧之後」的 Tangent 錯誤
+                // 地留在圓弧/螺旋「之前」的位置。後續資料表／3D 算圖沿
+                // m_elems 順序逐一輸出時，會先吐出 tanAfter（誤判其前一個
+                // 非-handled 元素、把終點 tsc 判成 CT 而非 TT，且該 Tangent
+                // 的長度欄位因為輸出順序錯亂而對不上），再吐出圓弧與出螺
+                // 旋，整段順序整個顛倒。
+                //
+                // 修正：比照 addSCS() 的作法，用 insertElementsOrdered() 把
+                // SpiralIn／Arc／SpiralOut 一次性插入 tanBefore+1（緊接在
+                // 起始 Tangent 之後），讓 m_elems 的實際順序與真實鏈行順序
+                // 一致；該函式會自動修正所有既有元素（包含 tanAfter 自身）
+                // 的 tangentIdxBefore/After 欄位。
+                QVector<EditableElement> group;
 
-                if (arcIdx >= 0 && L1 > 1e-9) {
-                    const int lcIdx = addLC(tanBefore, arcIdx, t1);
-                    if (lcIdx >= 0) ++arcIdx;   // spiralIn inserted immediately before the arc
+                if (L1 > 1e-9) {
+                    EditableElement spiralIn;
+                    spiralIn.type             = EditableElementType::SpiralIn;
+                    spiralIn.mode             = ConstraintMode::Floating;
+                    spiralIn.radius           = radius;
+                    spiralIn.length           = 0.0;   // solver 反解
+                    spiralIn.tangentIdxBefore = tanBefore;
+                    spiralIn.tangentIdxAfter  = -1;     // 不依附出口 Tangent（同 addLC）
+                    spiralIn.spiralType1      = t1;
+                    spiralIn.spiralType2      = t1;
+                    group.append(spiralIn);
                 }
-                if (arcIdx >= 0 && L2 > 1e-9) {
-                    const int caIdx = addCA(arcIdx, tanAfter, t2);
-                    if (caIdx < 0) {
-                        qWarning() << "[HorizontalAlignmentEdit] seedFromRawPoints:"
-                                      " addCA() failed for the >=180deg fallback arc at"
-                                      " raw point" << buf.first().ptIdx
-                                   << "-- spiral-out will be missing from the alignment"
-                                      " (check that the reconstructed arc centre/side is"
-                                      " correct).";
+
+                EditableElement arc;
+                arc.type      = EditableElementType::CircularArc;
+                arc.mode      = ConstraintMode::Fixed;
+                arc.startPI   = p0xy;
+                arc.endPI     = p1xy;
+                arc.arcCenter = arcElem.centreXY();
+                arc.radius    = radius;
+                group.append(arc);
+
+                if (L2 > 1e-9) {
+                    EditableElement spiralOut;
+                    spiralOut.type             = EditableElementType::SpiralOut;
+                    spiralOut.mode             = ConstraintMode::Floating;
+                    spiralOut.radius           = radius;
+                    spiralOut.length           = 0.0;   // solver 反解
+                    spiralOut.tangentIdxBefore = -1;     // 不依附入口 Tangent（同 addCA）
+                    spiralOut.tangentIdxAfter  = tanAfter;
+                    spiralOut.spiralType1      = t2;
+                    spiralOut.spiralType2      = t2;
+                    group.append(spiralOut);
+                }
+
+                const int sizeBefore = m_elems.size();
+                const int insertPos  = tanBefore + 1;
+                insertElementsOrdered(insertPos, group);
+                const int inserted = m_elems.size() - sizeBefore;
+                if (inserted > 0) {
+                    // 同步 tangentElemIdx，理由與 addSCS() 分支相同（見下方
+                    // 該分支的註解）。
+                    for (int& idx : tangentElemIdx) {
+                        if (idx >= insertPos) idx += inserted;
                     }
                 }
 
-                // Both addFixedCurve() and addLC()/addCA() here always insert
-                // at (or push past) the current end of m_elems -- by
-                // construction every entry in tangentElemIdx still refers to
-                // a strictly earlier index, so unlike the addSCS()/
-                // addCompoundChain() branches, no tangentElemIdx shift is
-                // required for later groups in this loop.
                 qDebug() << "[HorizontalAlignmentEdit] seedFromRawPoints:"
                             " deflection angle >= 180 deg at raw point"
                          << buf.first().ptIdx << "-- reconstructed as Fixed"

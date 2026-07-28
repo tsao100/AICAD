@@ -226,6 +226,18 @@ CommandResult CommandManager::executeCommand(
             this, &CommandManager::onCommandFinished,
             Qt::UniqueConnection);
 
+    // Command::outputMessage() 發出的 messageOutput 訊號，在此之前整個專案
+    // 沒有任何地方連接過——所有互動命令（V3D、SCS、AlignmentAddSpiral…）呼叫
+    // outputMessage() 顯示的提示/結果訊息因此從未真正出現在命令列，屬於
+    // 靜默遺失。統一轉發到 COMMAND_LOG，讓 UIManager 既有的命令列輸出訂閱
+    // （見 connectCommandLineEvents() 對 COMMAND_LOG 的處理）能顯示出來。
+    if (auto* bus = core::Application::instance()->eventBus()) {
+        connect(cmd, &Command::messageOutput, this,
+                [bus](const QString& message) {
+                    bus->publish(core::Events::COMMAND_LOG, message);
+                }, Qt::UniqueConnection);
+    }
+
     Q_EMIT commandStarted(canonicalName);
 
     if (auto* bus = core::Application::instance()->eventBus()) {
@@ -362,10 +374,18 @@ void CommandManager::onCommandFinished(const CommandResult& result)
     Q_EMIT commandFinished(name, result);
 
     if (auto* bus = core::Application::instance()->eventBus()) {
+        // 失敗時原本只發佈命令名稱（例如 "alignment3daddvprofile"），
+        // ResultPopup 等訂閱者只能顯示這個名稱，看不到真正的失敗原因
+        // （例如「尚未選取任何線路」），使用者因而完全不知道命令為何
+        // 沒有反應。成功時仍維持發佈命令名稱（既有行為，COMMAND_EXECUTED
+        // 訂閱者預期的是名稱），失敗時改為發佈 result.message（若為空則
+        // 退回命令名稱，避免顯示空字串）。
+        const QString failureText =
+            result.message.isEmpty() ? name : result.message;
         bus->publish(
             result.success ? core::Events::COMMAND_EXECUTED
                            : core::Events::COMMAND_FAILED,
-            name
+            result.success ? name : failureText
             );
     }
 

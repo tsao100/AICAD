@@ -105,8 +105,8 @@ QString AIS_DimensionLine::labelText() const {
         base = QString::number(v, 'f', 2);
         break;
     }
-    if (!m_constraint.paramExpr.isEmpty())
-        return QString("%1 = %2").arg(m_constraint.paramExpr, base);
+    // 需求：尺寸約束只顯示計算結果（值），不顯示公式本身。
+    // 公式仍保留在 m_constraint.paramExpr 中，雙擊編輯時會帶出公式供使用者修改。
     return base;
 }
 
@@ -739,9 +739,8 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
 
     // 角度轉換：弧度 → 度
     double deg = m_constraint.value * 180.0 / M_PI;
+    // 需求：只顯示計算結果（角度值），不顯示公式本身。
     QString lbl = QString::number(deg, 'f', 2) + "°";
-    if (!m_constraint.paramExpr.isEmpty())
-        lbl = m_constraint.paramExpr + " = " + lbl;
 
     Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
     gtext->SetText(TCollection_ExtendedString(lbl.toUtf8().constData(), Standard_True));

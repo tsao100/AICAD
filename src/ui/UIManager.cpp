@@ -3462,8 +3462,13 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         d->cadView->setViewType(d->cadView->viewType());
 
         // ✅ 正視於 Sketch Plane，並顯示格線（仿 ViewManager::onSketchCreated）
+        // 先呼叫 setTopView()/setFrontView()/setRightView() 同步 CadView 內部
+        // 記錄的 viewType（供其他 UI，如視圖工具列高亮使用），
+        // 再呼叫 alignToPlane() 由它做最終、正確的 Proj/Up 設定 ——
+        // 因為 setViewType() 在 viewType 未變動時會提前 return（不會呼叫
+        // updateProjection()），若 alignToPlane() 先執行，後續某些情況下的
+        // updateProjection() 仍可能覆蓋掉正確的 Up 向量。
         cad::Plane* gridPlane = sketch->plane();
-        d->cadView->alignToPlane(gridPlane);
 
         if (gridPlane->isXY()) {
             d->cadView->setTopView();
@@ -3473,6 +3478,8 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
             d->cadView->setRightView();
         }
         // 自訂平面：alignToPlane 已對齊，不需額外設定標準視角
+
+        d->cadView->alignToPlane(gridPlane);
 
         view::ViewGrid* grid = d->cadView->grid();
         if (grid)

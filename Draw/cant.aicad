@@ -1,0 +1,256 @@
+{
+    "features": [
+        {
+            "constraints": [
+                {
+                    "dimOffX": 0,
+                    "dimOffY": 0,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "",
+                    "refs": [
+                        {
+                            "geomUuid": "75a70654-2b66-4b02-a2e5-008543bf7697",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 20,
+                    "uuid": "6b0af262-9eaf-47d5-a7ad-d2dc0ca96dab",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": 449.26373291015625,
+                    "dimOffY": -399.7740783691406,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "=if(cant>=0,0,-cant)",
+                    "refs": [
+                        {
+                            "geomUuid": "73052ae8-096e-4e8e-a5a0-8fcf37a48853",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "0a6b37a3-15d0-4586-b10c-0caabd524136",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 24,
+                    "uuid": "627c37f3-7fdc-41d9-91ab-9a49218c7e98",
+                    "value": 0,
+                    "value2": 0
+                },
+                {
+                    "dimOffX": -503.56146240234375,
+                    "dimOffY": -295.59796142578125,
+                    "distMode": 0,
+                    "driving": true,
+                    "paramExpr": "=if(cant>=0,cant,0)",
+                    "refs": [
+                        {
+                            "geomUuid": "b45881e7-c480-4313-9b20-0cfa2b62ea8d",
+                            "handle": 9
+                        },
+                        {
+                            "geomUuid": "445d862a-315a-4b46-b57a-fef93b9067ea",
+                            "handle": 9
+                        }
+                    ],
+                    "type": 24,
+                    "uuid": "8d9f2629-4c4d-40ba-a2e1-fc38cac47480",
+                    "value": 130,
+                    "value2": 0
+                }
+            ],
+            "geometries": [
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -753.5,
+                            "y": 8.124483887299999e-14
+                        }
+                    ],
+                    "px": -753.5,
+                    "py": 8.124483887299999e-14,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "a78583d3-c138-4b54-827d-38a159b1611b"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -753.5,
+                            "y": 1.1359342015192925e-13
+                        }
+                    ],
+                    "px": -753.5,
+                    "py": 1.0648799279432825e-13,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "b45881e7-c480-4313-9b20-0cfa2b62ea8d"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 753.5,
+                            "y": 1.9676300248416129e-13
+                        }
+                    ],
+                    "px": 753.5,
+                    "py": 1.993144012465628e-13,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "73052ae8-096e-4e8e-a5a0-8fcf37a48853"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -753.5,
+                            "y": 9.40767849364442e-14
+                        }
+                    ],
+                    "px": -753.5,
+                    "py": 9.40767849364442e-14,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "04dac035-a1d2-489c-bbd3-5c949176926d"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -753.5,
+                            "y": 0
+                        }
+                    ],
+                    "px": -753.5,
+                    "py": 0,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "ae3ca7d5-f876-4007-ba94-b4a1530516c4"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": -752.2652587890625,
+                            "y": 130
+                        }
+                    ],
+                    "px": -752.2652587890625,
+                    "py": 130,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "445d862a-315a-4b46-b57a-fef93b9067ea"
+                },
+                {
+                    "origin": 1,
+                    "points": [
+                        {
+                            "x": 745.9620361328125,
+                            "y": 1.9676300248416129e-13
+                        }
+                    ],
+                    "px": 745.9620361328125,
+                    "py": 1.7053025658242404e-13,
+                    "role": 0,
+                    "type": 6,
+                    "uuid": "0a6b37a3-15d0-4586-b10c-0caabd524136"
+                },
+                {
+                    "endUuid": "73052ae8-096e-4e8e-a5a0-8fcf37a48853",
+                    "points": [
+                        {
+                            "x": -753.5,
+                            "y": 1.0648799279432825e-13
+                        },
+                        {
+                            "x": 753.5,
+                            "y": 1.993144012465628e-13
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "b45881e7-c480-4313-9b20-0cfa2b62ea8d",
+                    "type": 0,
+                    "uuid": "75a70654-2b66-4b02-a2e5-008543bf7697"
+                },
+                {
+                    "endUuid": "0a6b37a3-15d0-4586-b10c-0caabd524136",
+                    "points": [
+                        {
+                            "x": -752.2652587890625,
+                            "y": 130
+                        },
+                        {
+                            "x": 745.9620361328125,
+                            "y": 1.7053025658242404e-13
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "445d862a-315a-4b46-b57a-fef93b9067ea",
+                    "type": 0,
+                    "uuid": "5803e88f-4aad-4e93-8bbc-2bdb8a8c9f79"
+                }
+            ],
+            "id": "{e0077e27-6a5d-42a5-9615-a4d71ade5dea}",
+            "name": "Sketch 1",
+            "parameters": {
+                "=if(cant>=0,cant,0)": "130",
+                "cant": "130",
+                "fn1": "=if(cant>=0,cant,0)",
+                "fn2": "=if(cant>=0,0,-cant)"
+            },
+            "planeData": {
+                "createdTime": "2026-07-27T16:06:43",
+                "geometry": {
+                    "normal": [
+                        0,
+                        0,
+                        1
+                    ],
+                    "origin": [
+                        0,
+                        0,
+                        0
+                    ],
+                    "xAxis": [
+                        1,
+                        0,
+                        0
+                    ]
+                },
+                "id": "bc36f837-53a3-400f-a71d-fcaf999c72bc",
+                "isLocked": true,
+                "modifiedTime": "2026-07-27T16:06:43",
+                "name": "XY",
+                "type": 0
+            },
+            "planeId": "bc36f837-53a3-400f-a71d-fcaf999c72bc",
+            "planeName": "XY",
+            "suppressed": false,
+            "type": "Sketch",
+            "visible": false
+        }
+    ],
+    "fileName": "cant.aicad",
+    "parameters": {
+    },
+    "version": "1.0",
+    "viewState": {
+        "atX": -18.329218458364466,
+        "atY": 339.05746335138394,
+        "atZ": 0,
+        "eyeX": -18.329218458364466,
+        "eyeY": 339.05746335138394,
+        "eyeZ": 0,
+        "scale": 0.3073994679449393,
+        "upX": 0,
+        "upY": 1,
+        "upZ": 0,
+        "viewType": 1
+    }
+}

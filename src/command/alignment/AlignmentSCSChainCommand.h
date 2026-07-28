@@ -13,7 +13,19 @@
  *  PickEntryTangent   — 點擊選取入切線
  *       ↓ POINT_ACQUIRED
  *  PickExitTangent    — 點擊選取出切線
- *       ↓ POINT_ACQUIRED *  WaitingForArcCount — 提示 "N=<整數>"（或純數字），N≥2
+ *       ↓ POINT_ACQUIRED — 兩條切線都選定後，立即以 Modal 開啟
+ *         CompoundChainCalcDialog（見 openCalcDialog()），入/出切線下拉
+ *         選單已預先鎖定為 m_idx1/m_idx2；使用者在對話框內選擇螺線形式、
+ *         填入各段螺線長度與各段圓弧半徑／弧長（最後一段圓弧弧長由程式
+ *         自動算出，不需輸入），按「試算」核對節點座標、「套用」寫入線形。
+ *         對話框「套用」成功（QDialog::Accepted）時，本指令直接以
+ *         Success 結束（addCompoundChain()/solve() 已由對話框完成）。
+ *       ↓ 對話框被取消（QDialog::Rejected，例如按「取消」或直接關閉）
+ *  WaitingForArcCount — 退回原本的純文字循序輸入模式（見下）；提示
+ *       "N=<整數>"（或純數字），N≥2。保留此模式是為了不中斷既有的
+ *       Phase 4「恰好一個 Rk/Lk 未知數交給 solver 反解」能力——
+ *       CompoundChainCalcDialog 是封閉解限定（無未知數選項，見其標頭檔
+ *       說明），需要反解未知數時仍須使用文字模式。
  *       ↓ NUMBER_INPUT
  *  WaitingForChainInput — 依序詢問 L0（入螺旋，0=省略）、R1、L1（中段螺
  *       旋）、R2、L2、…、RN、LN（出螺旋，0=省略），共 2N+1 個提示。
@@ -31,20 +43,16 @@
  *       ↓ 確認
  *  → addCompoundChain(idx1, idx2, spec) → solve() → refresh()
  *
- * 簡化說明（相較於計畫文件 Phase 7 的逐步精靈）：本指令採用純文字循序
- * 輸入，不驅動 RubberBand 即時預覽圖形（AlignmentSCSCommand 的
- * RubberBand::scs 模式是針對固定 3 元素設計，N 可變的鏈結需要另外擴充
- * RubberBand 才能重用，超出本次修改範圍）；確認前的文字預覽已足以核對
- * 參數，正式插入後即可在畫面上看到最終幾何。
- *
- * 螺旋類型固定使用 Clothoid（預設）；如需個別指定其他類型，插入後可在
- * AlignmentDataTableDialog 的資料表對 TS/CS 列雙擊「曲線類型」欄修改
- * （見 AlignmentSolver.cpp Pass 2b / AlignmentDataTableDialog.cpp 的
- * isSingleArcSCSHead() 相關處理）。
+ * 螺旋類型：GUI（CompoundChainCalcDialog）路徑下可在對話框選擇，套用到
+ * 該次插入的全部緩和曲線段；文字模式路徑固定使用 Clothoid。任一路徑插入
+ * 後皆可在 AlignmentDataTableDialog 的資料表對 TS/CS 列雙擊「曲線類型」欄
+ * 個別修改（見 AlignmentSolver.cpp Pass 2b / AlignmentDataTableDialog.cpp
+ * 的 isSingleArcSCSHead() 相關處理）。
  *
  * @see AlignmentSCSCommand （單弧版本，N==1 時請改用該指令）
  * @see HorizontalAlignmentEdit::addCompoundChain()
  * @see AlignmentFloatCurveCommand::nearestTangentIndex()（複用）
+ * @see aicad::ui::CompoundChainCalcDialog
  */
 
 #include "command/alignment/AlignmentCommandBase.h"
@@ -53,6 +61,8 @@
 #include "railway/AlignmentDocument.h"   // CompoundChainSpec, SpiralType
 #include <QPointF>
 #include <QVector>
+
+class QWidget;
 
 namespace aicad {
 namespace command {
@@ -92,6 +102,15 @@ private:
     void cleanup() override;
     void goToConfirm();
 
+    /**
+     * @brief 兩條切線都選定後呼叫：Modal 開啟 CompoundChainCalcDialog（入/
+     *        出切線已鎖定為 m_idx1/m_idx2）。使用者按「套用」成功
+     *        （QDialog::Accepted）→ 本指令直接結束（Success）；取消/關閉
+     *        （QDialog::Rejected）→ 退回文字循序輸入模式（Step::
+     *        WaitingForArcCount），保留 Phase 4 未知數反解能力。
+     */
+    void openCalcDialog();
+
     /** 高亮或清除指定切線元素（idx=-1 清除全部）。 */
     void highlightTangent(int elemIdx);
 
@@ -112,6 +131,7 @@ private:
 
     // ── 狀態 ─────────────────────────────────────────────────────────────────
     railway::AlignmentDocument* m_alignDoc    = nullptr;
+    QWidget*                    m_parentWidget = nullptr;  ///< CompoundChainCalcDialog 的父視窗（來自 CommandContext::cadView）
     Step                        m_step        = Step::PickEntryTangent;
     bool                        m_isFinishing = false;
 

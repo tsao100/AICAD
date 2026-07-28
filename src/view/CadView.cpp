@@ -1787,10 +1787,36 @@ void CadView::alignToPlane(const cad::Plane* plane)
     gp_Ax3 ax  = pln.Position();
 
     gp_Dir normal = ax.Direction();
-    gp_Dir xDir   = ax.XDirection();
+
+    // 螢幕「向上」方向：
+    // 注意 toGpPln() 只用 origin+normal 建構 gp_Pln，OCCT 會自動選一個與 normal
+    // 垂直的任意參考方向做為 XDirection()，並不等於 Plane::m_xAxis / m_yAxis。
+    // 因此不可用 ax.XDirection() 當作 Up，否則會得到與平面實際 X/Y 軸無關的
+    // 任意方向（此為原本 Y 軸/Z 軸方向錯誤的根因）。
+    //
+    // 標準平面採固定世界座標慣例，與主工具列 Top/Front/Right 視圖按鈕一致：
+    //   XY 平面（俯視圖）→ Y 軸向上
+    //   XZ 平面（前視圖）→ Z 軸向上
+    //   YZ 平面（右視圖）→ Z 軸向上
+    // 非標準（自訂）平面則退回使用該平面自身的局部 Y 軸（螢幕 X＝平面 X 軸，
+    // 螢幕 Y＝平面 Y 軸，符合一般 2D 草圖繪製慣例）。
+    gp_Dir upDir;
+    if (plane->isXY()) {
+        upDir = gp_Dir(0, 1, 0);
+    } else if (plane->isXZ()) {
+        upDir = gp_Dir(0, 0, 1);
+    } else if (plane->isYZ()) {
+        upDir = gp_Dir(0, 0, 1);
+    } else {
+        QVector3D qy = plane->yAxis();
+        if (qy.length() > 1e-6)
+            upDir = gp_Dir(qy.x(), qy.y(), qy.z());
+        else
+            upDir = ax.XDirection();  // 極端退化情形的保底
+    }
 
     d->view->SetProj(normal.X(), normal.Y(), normal.Z());
-    d->view->SetUp(xDir.X(), xDir.Y(), xDir.Z());
+    d->view->SetUp(upDir.X(), upDir.Y(), upDir.Z());
 
     d->viewer->SetPrivilegedPlane(ax);
 
@@ -3514,10 +3540,25 @@ void CadView::startDimValueEdit(const Handle(aicad::cad::AIS_DimensionLine)& dim
     d->dimValueEditor->setText(initialText);
     d->dimValueEditor->selectAll();
 
-    constexpr int kEditorWidth  = 90;
-    constexpr int kEditorHeight = 22;
-    d->dimValueEditor->setGeometry(sx - kEditorWidth / 2, sy - kEditorHeight / 2,
-                                    kEditorWidth, kEditorHeight);
+    // 編輯欄寬度需能容納公式（不只是數值），故依文字內容動態調整寬度，
+    // 並設定較寬的下限，避免使用者輸入公式時看不到完整內容。
+    constexpr int kEditorMinWidth = 160;
+    constexpr int kEditorMaxWidth = 420;
+    constexpr int kEditorHeight   = 24;
+    const int textWidth = d->dimValueEditor->fontMetrics().horizontalAdvance(
+                              initialText.isEmpty() ? QStringLiteral("0.00") : initialText)
+                          + 24;  // 邊距 + 游標空間
+    const int editorWidth = qBound(kEditorMinWidth, textWidth, kEditorMaxWidth);
+
+    // 讓編輯欄以標籤位置為中心，並限制在視窗可見範圍內，避免超出邊界被裁切。
+    int ex = sx - editorWidth / 2;
+    int ey = sy - kEditorHeight / 2;
+    ex = qBound(0, ex, qMax(0, width()  - editorWidth));
+    ey = qBound(0, ey, qMax(0, height() - kEditorHeight));
+
+    d->dimValueEditor->setGeometry(ex, ey, editorWidth, kEditorHeight);
+    // 輸入框內容可能比可視寬度長（例如較長的公式），仍允許使用者用左右鍵/Home/End 捲動查看。
+    d->dimValueEditor->setMinimumWidth(kEditorMinWidth);
     d->dimValueEditor->show();
     d->dimValueEditor->setFocus(Qt::MouseFocusReason);
 
@@ -3525,6 +3566,20 @@ void CadView::startDimValueEdit(const Handle(aicad::cad::AIS_DimensionLine)& dim
             this, [this]() { commitDimValueEdit(); });
     d->dimValueEditor->onConfirm = [this]() { commitDimValueEdit(); };
     d->dimValueEditor->onCancel  = [this]() { cancelDimValueEdit(); };
+
+    // 使用者輸入較長公式時，動態加寬編輯欄（維持置中，並限制在視窗可見範圍內）。
+    connect(d->dimValueEditor, &QLineEdit::textChanged,
+            this, [this](const QString& text) {
+        if (!d->dimValueEditor) return;
+        QRect geo = d->dimValueEditor->geometry();
+        const int centerX = geo.center().x();
+        const int needed = d->dimValueEditor->fontMetrics().horizontalAdvance(text) + 24;
+        const int newWidth = qBound(160, needed, 420);
+        if (newWidth == geo.width()) return;
+        int ex = centerX - newWidth / 2;
+        ex = qBound(0, ex, qMax(0, width() - newWidth));
+        d->dimValueEditor->setGeometry(ex, geo.y(), newWidth, geo.height());
+    });
 
     setMode(InteractionMode::DimValueEdit);
 }

@@ -217,7 +217,7 @@
                     "dimOffY": -55.79484558105469,
                     "distMode": 1,
                     "driving": true,
-                    "paramExpr": "cant",
+                    "paramExpr": "if(cant<0, cant,0)",
                     "refs": [
                         {
                             "geomUuid": "33173da8-abb4-49fc-9b37-5e6bdd0ca121",
@@ -230,7 +230,7 @@
                     ],
                     "type": 15,
                     "uuid": "20847291-5417-4e69-8ff3-f3310ce04fa9",
-                    "value": -130,
+                    "value": 0,
                     "value2": 0
                 }
             ],
@@ -278,23 +278,6 @@
                     "uuid": "dd18f1a7-e5dc-4369-a53e-fb4763cc2ec5"
                 },
                 {
-                    "endUuid": "dd18f1a7-e5dc-4369-a53e-fb4763cc2ec5",
-                    "points": [
-                        {
-                            "x": -300,
-                            "y": -232
-                        },
-                        {
-                            "x": -1000,
-                            "y": -232
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "ce364db9-44a7-44ad-bdc5-f040278d9d7f",
-                    "type": 0,
-                    "uuid": "4afcb976-6256-47d9-bfeb-284096442d98"
-                },
-                {
                     "origin": 1,
                     "points": [
                         {
@@ -321,23 +304,6 @@
                     "role": 0,
                     "type": 6,
                     "uuid": "9fba4fa5-6f84-4fa0-92f7-4b226734a23c"
-                },
-                {
-                    "endUuid": "9fba4fa5-6f84-4fa0-92f7-4b226734a23c",
-                    "points": [
-                        {
-                            "x": -1000,
-                            "y": -232
-                        },
-                        {
-                            "x": -1000,
-                            "y": -10
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "c07be09b-98d0-49bf-94fc-23c1ad5f69aa",
-                    "type": 0,
-                    "uuid": "d1f6a131-1c8c-46f3-a97d-779fa6c7dca6"
                 },
                 {
                     "origin": 1,
@@ -368,23 +334,6 @@
                     "uuid": "9ede360f-cb66-4444-a3e3-759637eb30ff"
                 },
                 {
-                    "endUuid": "9ede360f-cb66-4444-a3e3-759637eb30ff",
-                    "points": [
-                        {
-                            "x": -1000,
-                            "y": -10
-                        },
-                        {
-                            "x": -1200,
-                            "y": -10
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "74a63ce2-9935-422b-9473-52b22cd9b4f1",
-                    "type": 0,
-                    "uuid": "78192845-fdf9-4393-8fe7-3f876005ae49"
-                },
-                {
                     "origin": 1,
                     "points": [
                         {
@@ -411,23 +360,6 @@
                     "role": 0,
                     "type": 6,
                     "uuid": "c821cead-f37f-45a3-a430-ff0e373ea41c"
-                },
-                {
-                    "endUuid": "c821cead-f37f-45a3-a430-ff0e373ea41c",
-                    "points": [
-                        {
-                            "x": -1200,
-                            "y": -10
-                        },
-                        {
-                            "x": -1200,
-                            "y": -400
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "2124e259-9bcd-4190-8c80-62767fe7f70a",
-                    "type": 0,
-                    "uuid": "2455d178-6876-4f08-995b-45a2a7a5e4cc"
                 },
                 {
                     "origin": 1,
@@ -458,23 +390,6 @@
                     "uuid": "59a3b830-aea8-4939-8090-b1684fec3a12"
                 },
                 {
-                    "endUuid": "59a3b830-aea8-4939-8090-b1684fec3a12",
-                    "points": [
-                        {
-                            "x": -1200,
-                            "y": -400
-                        },
-                        {
-                            "x": -300,
-                            "y": -400
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "a4ee0c68-2c5f-4fa7-bb66-693ef0e0d947",
-                    "type": 0,
-                    "uuid": "42bcd7b3-4705-48e0-8b70-f351fe6559e8"
-                },
-                {
                     "origin": 1,
                     "points": [
                         {
@@ -503,23 +418,6 @@
                     "uuid": "4190a506-49d9-492d-942b-dd80c9b02dfc"
                 },
                 {
-                    "endUuid": "4190a506-49d9-492d-942b-dd80c9b02dfc",
-                    "points": [
-                        {
-                            "x": -300,
-                            "y": -400
-                        },
-                        {
-                            "x": -300,
-                            "y": -232
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "d882c1d5-c199-4360-80af-407143b1a5cc",
-                    "type": 0,
-                    "uuid": "adca26f3-8804-46aa-b66f-67e26c2c90b9"
-                },
-                {
                     "origin": 1,
                     "points": [
                         {
@@ -546,23 +444,6 @@
                     "role": 0,
                     "type": 6,
                     "uuid": "33173da8-abb4-49fc-9b37-5e6bdd0ca121"
-                },
-                {
-                    "endUuid": "33173da8-abb4-49fc-9b37-5e6bdd0ca121",
-                    "points": [
-                        {
-                            "x": -624.797607421875,
-                            "y": 161.52789306640625
-                        },
-                        {
-                            "x": 817.85595703125,
-                            "y": 458.0986328125
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "15fb1b9e-db41-40ec-8b6c-c9b789d79a8f",
-                    "type": 0,
-                    "uuid": "0521821a-0ffa-464d-9be0-bb2790dbcd56"
                 },
                 {
                     "origin": 1,
@@ -607,23 +488,6 @@
                     "uuid": "1def6954-fb04-421d-a8cf-e8d4e2d1b277"
                 },
                 {
-                    "endUuid": "1def6954-fb04-421d-a8cf-e8d4e2d1b277",
-                    "points": [
-                        {
-                            "x": 300,
-                            "y": -232
-                        },
-                        {
-                            "x": 1000,
-                            "y": -232
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "e5d4fa17-194c-45e2-a58c-c54fcf9f17d9",
-                    "type": 0,
-                    "uuid": "2523c593-896b-41c7-8cda-b2a03c5b6d7c"
-                },
-                {
                     "origin": 1,
                     "points": [
                         {
@@ -650,23 +514,6 @@
                     "role": 0,
                     "type": 6,
                     "uuid": "a8b52030-96e6-4614-8b82-7bd21445be99"
-                },
-                {
-                    "endUuid": "a8b52030-96e6-4614-8b82-7bd21445be99",
-                    "points": [
-                        {
-                            "x": 1000,
-                            "y": -232
-                        },
-                        {
-                            "x": 1000,
-                            "y": -10
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "69ade275-46c5-4fbe-abc1-6d9d9135f498",
-                    "type": 0,
-                    "uuid": "bf264a2f-f716-4651-9c3e-4b51499c288b"
                 },
                 {
                     "origin": 1,
@@ -697,23 +544,6 @@
                     "uuid": "ec772e13-0085-4f5b-ad9f-17eb086854d1"
                 },
                 {
-                    "endUuid": "ec772e13-0085-4f5b-ad9f-17eb086854d1",
-                    "points": [
-                        {
-                            "x": 1000,
-                            "y": -10
-                        },
-                        {
-                            "x": 1200,
-                            "y": -10
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "88a7f953-a98c-4ec1-bcf0-0c55bde07123",
-                    "type": 0,
-                    "uuid": "2ed17dac-7f03-450b-bd0e-b54cb1ebb3e7"
-                },
-                {
                     "origin": 1,
                     "points": [
                         {
@@ -740,23 +570,6 @@
                     "role": 0,
                     "type": 6,
                     "uuid": "9ced5a5c-e7ab-4f87-a87f-b8efb101ce5b"
-                },
-                {
-                    "endUuid": "9ced5a5c-e7ab-4f87-a87f-b8efb101ce5b",
-                    "points": [
-                        {
-                            "x": 1200,
-                            "y": -10
-                        },
-                        {
-                            "x": 1200,
-                            "y": -400
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "4af646a4-fdb4-4dc8-8717-c0562d384a7e",
-                    "type": 0,
-                    "uuid": "74de57bf-15d5-4122-98d4-fe42ebbd1b6c"
                 },
                 {
                     "origin": 1,
@@ -787,23 +600,6 @@
                     "uuid": "c3b4ee35-2401-488e-b3cf-6ef828dd94a5"
                 },
                 {
-                    "endUuid": "c3b4ee35-2401-488e-b3cf-6ef828dd94a5",
-                    "points": [
-                        {
-                            "x": 1200,
-                            "y": -400
-                        },
-                        {
-                            "x": 300,
-                            "y": -400
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "1fd809ca-4043-4b1e-a78c-93860afae363",
-                    "type": 0,
-                    "uuid": "31496cd0-d6a2-4d2c-9336-8af3a72a8d9d"
-                },
-                {
                     "origin": 1,
                     "points": [
                         {
@@ -830,23 +626,6 @@
                     "role": 0,
                     "type": 6,
                     "uuid": "afdf2b1f-3439-488e-a0ef-4560d83c2b84"
-                },
-                {
-                    "endUuid": "afdf2b1f-3439-488e-a0ef-4560d83c2b84",
-                    "points": [
-                        {
-                            "x": 300,
-                            "y": -400
-                        },
-                        {
-                            "x": 300,
-                            "y": -232
-                        }
-                    ],
-                    "role": 0,
-                    "startUuid": "d3606489-078c-4f27-9677-5c530508021a",
-                    "type": 0,
-                    "uuid": "d6805036-5f03-40c8-9470-2d0947782402"
                 },
                 {
                     "origin": 1,
@@ -877,6 +656,227 @@
                     "uuid": "72016098-f521-40d3-8cbb-03cd5d83a541"
                 },
                 {
+                    "endUuid": "dd18f1a7-e5dc-4369-a53e-fb4763cc2ec5",
+                    "points": [
+                        {
+                            "x": -300,
+                            "y": -232
+                        },
+                        {
+                            "x": -1000,
+                            "y": -232
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "ce364db9-44a7-44ad-bdc5-f040278d9d7f",
+                    "type": 0,
+                    "uuid": "4afcb976-6256-47d9-bfeb-284096442d98"
+                },
+                {
+                    "endUuid": "9fba4fa5-6f84-4fa0-92f7-4b226734a23c",
+                    "points": [
+                        {
+                            "x": -1000,
+                            "y": -232
+                        },
+                        {
+                            "x": -1000,
+                            "y": -10
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "c07be09b-98d0-49bf-94fc-23c1ad5f69aa",
+                    "type": 0,
+                    "uuid": "d1f6a131-1c8c-46f3-a97d-779fa6c7dca6"
+                },
+                {
+                    "endUuid": "9ede360f-cb66-4444-a3e3-759637eb30ff",
+                    "points": [
+                        {
+                            "x": -1000,
+                            "y": -10
+                        },
+                        {
+                            "x": -1200,
+                            "y": -10
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "74a63ce2-9935-422b-9473-52b22cd9b4f1",
+                    "type": 0,
+                    "uuid": "78192845-fdf9-4393-8fe7-3f876005ae49"
+                },
+                {
+                    "endUuid": "c821cead-f37f-45a3-a430-ff0e373ea41c",
+                    "points": [
+                        {
+                            "x": -1200,
+                            "y": -10
+                        },
+                        {
+                            "x": -1200,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "2124e259-9bcd-4190-8c80-62767fe7f70a",
+                    "type": 0,
+                    "uuid": "2455d178-6876-4f08-995b-45a2a7a5e4cc"
+                },
+                {
+                    "endUuid": "59a3b830-aea8-4939-8090-b1684fec3a12",
+                    "points": [
+                        {
+                            "x": -1200,
+                            "y": -400
+                        },
+                        {
+                            "x": -300,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "a4ee0c68-2c5f-4fa7-bb66-693ef0e0d947",
+                    "type": 0,
+                    "uuid": "42bcd7b3-4705-48e0-8b70-f351fe6559e8"
+                },
+                {
+                    "endUuid": "4190a506-49d9-492d-942b-dd80c9b02dfc",
+                    "points": [
+                        {
+                            "x": -300,
+                            "y": -400
+                        },
+                        {
+                            "x": -300,
+                            "y": -232
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "d882c1d5-c199-4360-80af-407143b1a5cc",
+                    "type": 0,
+                    "uuid": "adca26f3-8804-46aa-b66f-67e26c2c90b9"
+                },
+                {
+                    "endUuid": "33173da8-abb4-49fc-9b37-5e6bdd0ca121",
+                    "points": [
+                        {
+                            "x": -624.797607421875,
+                            "y": 161.52789306640625
+                        },
+                        {
+                            "x": 817.85595703125,
+                            "y": 458.0986328125
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "15fb1b9e-db41-40ec-8b6c-c9b789d79a8f",
+                    "type": 0,
+                    "uuid": "0521821a-0ffa-464d-9be0-bb2790dbcd56"
+                },
+                {
+                    "endUuid": "1def6954-fb04-421d-a8cf-e8d4e2d1b277",
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -232
+                        },
+                        {
+                            "x": 1000,
+                            "y": -232
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "e5d4fa17-194c-45e2-a58c-c54fcf9f17d9",
+                    "type": 0,
+                    "uuid": "2523c593-896b-41c7-8cda-b2a03c5b6d7c"
+                },
+                {
+                    "endUuid": "a8b52030-96e6-4614-8b82-7bd21445be99",
+                    "points": [
+                        {
+                            "x": 1000,
+                            "y": -232
+                        },
+                        {
+                            "x": 1000,
+                            "y": -10
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "69ade275-46c5-4fbe-abc1-6d9d9135f498",
+                    "type": 0,
+                    "uuid": "bf264a2f-f716-4651-9c3e-4b51499c288b"
+                },
+                {
+                    "endUuid": "ec772e13-0085-4f5b-ad9f-17eb086854d1",
+                    "points": [
+                        {
+                            "x": 1000,
+                            "y": -10
+                        },
+                        {
+                            "x": 1200,
+                            "y": -10
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "88a7f953-a98c-4ec1-bcf0-0c55bde07123",
+                    "type": 0,
+                    "uuid": "2ed17dac-7f03-450b-bd0e-b54cb1ebb3e7"
+                },
+                {
+                    "endUuid": "9ced5a5c-e7ab-4f87-a87f-b8efb101ce5b",
+                    "points": [
+                        {
+                            "x": 1200,
+                            "y": -10
+                        },
+                        {
+                            "x": 1200,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "4af646a4-fdb4-4dc8-8717-c0562d384a7e",
+                    "type": 0,
+                    "uuid": "74de57bf-15d5-4122-98d4-fe42ebbd1b6c"
+                },
+                {
+                    "endUuid": "c3b4ee35-2401-488e-b3cf-6ef828dd94a5",
+                    "points": [
+                        {
+                            "x": 1200,
+                            "y": -400
+                        },
+                        {
+                            "x": 300,
+                            "y": -400
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "1fd809ca-4043-4b1e-a78c-93860afae363",
+                    "type": 0,
+                    "uuid": "31496cd0-d6a2-4d2c-9336-8af3a72a8d9d"
+                },
+                {
+                    "endUuid": "afdf2b1f-3439-488e-a0ef-4560d83c2b84",
+                    "points": [
+                        {
+                            "x": 300,
+                            "y": -400
+                        },
+                        {
+                            "x": 300,
+                            "y": -232
+                        }
+                    ],
+                    "role": 0,
+                    "startUuid": "d3606489-078c-4f27-9677-5c530508021a",
+                    "type": 0,
+                    "uuid": "d6805036-5f03-40c8-9470-2d0947782402"
+                },
+                {
                     "endUuid": "72016098-f521-40d3-8cbb-03cd5d83a541",
                     "points": [
                         {
@@ -897,10 +897,10 @@
             "id": "{c377ceb7-5f74-493f-9b23-a363db4aac47}",
             "name": "Sketch 1",
             "parameters": {
-                "cant": "-130"
+                "cant": "130"
             },
             "planeData": {
-                "createdTime": "2026-07-23T11:50:14",
+                "createdTime": "2026-07-27T15:33:36",
                 "geometry": {
                     "normal": [
                         0,
@@ -918,13 +918,13 @@
                         0
                     ]
                 },
-                "id": "c0c24168-f3ce-4ad8-a5ab-2eba73c6a413",
+                "id": "42a150af-7e05-45f3-8b9b-761653f21057",
                 "isLocked": true,
-                "modifiedTime": "2026-07-23T11:50:14",
+                "modifiedTime": "2026-07-27T15:33:36",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "c0c24168-f3ce-4ad8-a5ab-2eba73c6a413",
+            "planeId": "42a150af-7e05-45f3-8b9b-761653f21057",
             "planeName": "XY",
             "suppressed": false,
             "type": "Sketch",
@@ -936,13 +936,13 @@
     },
     "version": "1.0",
     "viewState": {
-        "atX": 947.6562559161007,
-        "atY": -117.2949960002493,
+        "atX": 337.72950278502714,
+        "atY": 226.71096261334543,
         "atZ": 0,
-        "eyeX": 947.6562559161007,
-        "eyeY": -117.2949960002493,
+        "eyeX": 337.72950278502714,
+        "eyeY": 226.71096261334543,
         "eyeZ": 0,
-        "scale": 0.3099483502069215,
+        "scale": 0.25965899700186884,
         "upX": 0,
         "upY": 1,
         "upZ": 0,

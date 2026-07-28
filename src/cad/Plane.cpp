@@ -204,9 +204,14 @@ bool Plane::isZX() const {
 
 bool Plane::isXZ() const {
     const double tolerance = 1e-6;
+    // 注意：PlaneManager 建立的標準 XZ（前視圖）平面法向量為 (0,-1,0)，
+    // 即 Y 分量為 -1 而非 +1；原本此處只接受 +1.0，導致標準 XZ 平面
+    // 被誤判為「非標準／自訂平面」，使得依賴 isXZ() 的邏輯（例如
+    // CadView::alignToPlane() 的視角向上方向設定）永遠走不到正確分支。
+    // 故改用 abs()，容許法向量朝 +Y 或 -Y 皆視為 XZ 平面。
     return m_origin.length() < tolerance &&
            std::abs(m_normal.x()) < tolerance &&
-           std::abs(m_normal.y() - 1.0) < tolerance &&
+           std::abs(std::abs(m_normal.y()) - 1.0) < tolerance &&
            std::abs(m_normal.z()) < tolerance;
 }
 

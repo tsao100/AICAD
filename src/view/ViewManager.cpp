@@ -251,7 +251,9 @@ void ViewManager::onSketchCreated(const QVariant& data) {
     // ✅ Update grid plane to match sketch plane
     cad::PlaneManager* manager = cad::PlaneManager::instance();
     cad::Plane* gridPlane = manager->activePlane();
-    view->alignToPlane(gridPlane);
+    // 先同步 viewType（供 UI 高亮等用途），再呼叫 alignToPlane() 做最終、
+    // 正確的 Proj/Up 設定，避免其被 setTopView()/setFrontView() 內部的
+    // updateProjection() 覆蓋（原因見 CadView::alignToPlane() 註解）。
     if (planeName == "XY") {
         view->setTopView();
     } else if (planeName == "XZ") {
@@ -260,6 +262,7 @@ void ViewManager::onSketchCreated(const QVariant& data) {
         view->setRightView();
     } //else{
     //}
+    view->alignToPlane(gridPlane);
 
     ViewGrid* grid = view->grid();  // Need to add getter method
     if (grid) {

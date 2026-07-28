@@ -9,8 +9,11 @@
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
 #include "railway/AlignmentDocument.h"
+#include "ui/CompoundChainCalcDialog.h"
+#include "view/CadView.h"   // CadView : public QWidget — 供 openCalcDialog() 取用 parent
 
 #include <QDebug>
+#include <QDialog>
 #include <QtMath>
 #include <QRegularExpression>
 #include <algorithm>
@@ -39,7 +42,8 @@ AlignmentSCSChainCommand::AlignmentSCSChainCommand(QObject* parent)
 
 CommandResult AlignmentSCSChainCommand::execute(const CommandContext& context)
 {
-    m_alignDoc = context.alignmentDoc;
+    m_alignDoc     = context.alignmentDoc;
+    m_parentWidget = static_cast<QWidget*>(context.cadView);   // CadView : public QWidget
     if (!m_alignDoc) {
         return CommandResult::Failure(
             "No AlignmentDocument — open or create an alignment first.");
@@ -154,10 +158,8 @@ void AlignmentSCSChainCommand::handlePointAcquired(const QPointF& point)
         }
         m_idx2 = idx;
         highlightTangent(m_idx2);
-        outputMessage(QString("Exit tangent #%1 selected.  Enter arc count N (>=2):").arg(idx));
-        bus->publish(Events::COMMAND_PROMPT, tr("N=<arc count, e.g. N=3>:"));
-        m_step = Step::WaitingForArcCount;
-        CommandLineManager::instance()->waitForInput(core::InputType::Number);
+        outputMessage(QString("Exit tangent #%1 selected.  Opening compound chain dialog...").arg(idx));
+        openCalcDialog();
         break;
     }
 
@@ -169,6 +171,40 @@ void AlignmentSCSChainCommand::handlePointAcquired(const QPointF& point)
     default:
         break;
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  openCalcDialog
+// ────────────────────────────────────────────────────────────────────────────
+
+void AlignmentSCSChainCommand::openCalcDialog()
+{
+    EventBus* bus = Application::instance()->eventBus();
+
+    auto* dlg = new ui::CompoundChainCalcDialog(m_alignDoc, m_idx1, m_idx2, m_parentWidget);
+    const int result = dlg->exec();   // Modal — 阻塞直到使用者按「套用」或取消/關閉
+    delete dlg;
+
+    if (m_isFinishing) return;   // 對話框開啟期間指令被外部取消（極少見，保險檢查）
+
+    if (result == QDialog::Accepted) {
+        // 對話框「套用」已完成 addCompoundChain() + solve()，這裡只需結束指令。
+        outputMessage(
+            QString("Compound Chain added via dialog (tangents %1\xE2\x86\x92%2).")
+                .arg(m_idx1).arg(m_idx2));
+        m_isFinishing = true;
+        Q_EMIT finished(CommandResult::Success("AlignmentSCSChain completed via dialog"));
+        return;
+    }
+
+    // 取消/關閉對話框 → 退回文字循序輸入模式，保留 Phase 4 未知數反解能力
+    // （見標頭檔流程說明；CompoundChainCalcDialog 是封閉解限定，沒有未知數
+    // 選項）。
+    outputMessage("Dialog cancelled.  Falling back to text input — enter arc count N (>=2)"
+                  " (or ESC / right-click to cancel the command entirely):");
+    bus->publish(Events::COMMAND_PROMPT, tr("N=<arc count, e.g. N=3>:"));
+    m_step = Step::WaitingForArcCount;
+    CommandLineManager::instance()->waitForInput(core::InputType::Number);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -637,28 +673,31 @@ QString AlignmentSCSChainCommand::getUsage() const
         "Usage: SCSCHAIN\n"
         "  1. Click near the ENTRY tangent line.\n"
         "  2. Click near the EXIT tangent line.\n"
-        "  3. Enter arc count:        N=3  (or just 3; must be >= 2)\n"
-        "  4. Enter, in order:        L0, R1, L1, R2, L2, ..., RN, LN\n"
-        "       Lk = spiral length (0 = omit that spiral)\n"
-        "       Rk = arc k radius (must be > 0)\n"
-        "       Type \"?\" for ANY ONE of these to mark it as an unknown for\n"
-        "       the solver to find (at most one -- only 1 closure equation\n"
-        "       is available, see AlignmentSolver.h CompoundChainUnknown).\n"
-        "  5. If you marked an unknown: enter A1..AN (each arc's central\n"
-        "     angle, in degrees). This is mandatory once an unknown is set,\n"
-        "     because auto-split angles would absorb the closure equation\n"
-        "     and leave nothing to solve for.\n"
-        "  6. Press Enter or click to confirm.\n"
-        "     At confirm, re-enter any (non-unknown) value with\n"
-        "     Rk=.../Lk=.../Ak=...\n"
+        "  3. The Compound Chain dialog opens automatically (entry/exit\n"
+        "     tangent already locked). In the dialog:\n"
+        "       - Pick the spiral form (applies to every spiral segment).\n"
+        "       - Enter L0, L1, ..., LN (spiral lengths; 0 = omit).\n"
+        "       - Enter R1..RN (each arc's radius) and D1..D(N-1) (each\n"
+        "         arc's length, EXCEPT the last arc -- its length is\n"
+        "         computed automatically from the remaining turning angle\n"
+        "         and its row is locked to \"Auto\").\n"
+        "       - Click Calculate to preview the node sequence, then Apply.\n"
+        "  4. If the dialog is cancelled, the command falls back to the\n"
+        "     original text-input mode:\n"
+        "       Enter arc count:        N=3  (or just 3; must be >= 2)\n"
+        "       Enter, in order:        L0, R1, L1, R2, L2, ..., RN, LN\n"
+        "         Lk = spiral length (0 = omit that spiral)\n"
+        "         Rk = arc k radius (must be > 0)\n"
+        "         Type \"?\" for ANY ONE of these to mark it as an unknown\n"
+        "         for the solver to find (at most one -- only 1 closure\n"
+        "         equation is available, see AlignmentSolver.h\n"
+        "         CompoundChainUnknown). This text-mode unknown-solving\n"
+        "         feature is not available in the dialog.\n"
+        "       If you marked an unknown: enter A1..AN (each arc's central\n"
+        "         angle, in degrees) -- mandatory once an unknown is set.\n"
+        "       Press Enter or click to confirm; re-enter any (non-unknown)\n"
+        "         value with Rk=.../Lk=.../Ak=...\n"
         "  Right-click / ESC to cancel.\n"
-        "\n"
-        "  Without a marked unknown, all arcs' central angles are\n"
-        "  automatically split from the remaining turning angle (equal\n"
-        "  share) -- see AlignmentDocument.h CompoundChainSpec for the\n"
-        "  rationale. Spiral type is fixed at Clothoid; use the data\n"
-        "  table's TS/CS double-click menu to change individual spiral\n"
-        "  types after insertion.\n"
         "\n"
         "  For a single arc (N=1), use SCS instead.";
 }
