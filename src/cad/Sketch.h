@@ -11,6 +11,7 @@
 #include "Plane.h"
 #include "sketch/ConstraintSolver.h"
 #include "sketch/SketchConstraint.h"
+#include "sketch/SketchAnnotation.h"
 #include "sketch/SketchRegion.h"
 #include "../core/ParameterStore.h"
 
@@ -376,6 +377,45 @@ public:
     void removeConstraintsOf(const QString& geomUuid);
     /// 僅更新尺寸線偏移，不重新求解（拖曳尺寸線時輕量更新）
     bool updateConstraintDimOffset(const QString& uuid, double offsetX, double offsetY);
+
+    // ==================== 標註管理（GDIM v2 Phase 1）====================
+    // SketchAnnotation 是「標註」的唯一對外資料來源（GeneralDimClassifier /
+    // GeneralDimCommand / AnnotationAIS 家族皆應改用這組 API，而非直接操作
+    // m_constraints 中的尺寸型別）。driving == true 的標註會透過
+    // addImplicitConstraint() 自動於 m_constraints 中維護一個對應的隱含約束
+    // 供 ConstraintSolver 使用；使用者/UI 完全不需要知道這個隱含約束的存在。
+
+    /// 新增或更新一筆標註（依 uuid 判斷；若不存在則新增）。
+    /// 會同步呼叫 addImplicitConstraint() 建立/更新對應的隱含約束。
+    QString addAnnotation(const SketchAnnotation& a);
+    /// 移除標註，並一併移除其對應的隱含約束（若有）。
+    bool removeAnnotation(const QString& uuid);
+    const QList<SketchAnnotation>& annotations() const { return m_annotations; }
+    QList<SketchAnnotation>& annotationsMutable() { return m_annotations; }
+    SketchAnnotation* findAnnotation(const QString& uuid);
+    QList<SketchAnnotation*> annotationsOf(const QString& geomUuid);
+    void removeAnnotationsOf(const QString& geomUuid);
+
+    /// 依 annotation 目前內容，在 m_constraints 中新增/同步對應的隱含約束。
+    /// driving == false 或非尺寸型別（如 LeaderNote）時，會移除既有的隱含
+    /// 約束（若有）且不新增。呼叫端（addAnnotation 已自動呼叫）通常不需要
+    /// 手動呼叫，除非是在標註內容變更後（例如 Mini Toolbar 編輯數值）想
+    /// 單獨同步、稍後再手動 solveConstraints()。
+    void addImplicitConstraint(const SketchAnnotation& a);
+    /// 移除 uuid 對應標註的隱含約束（若有），不影響標註本身。
+    void removeImplicitConstraint(const QString& annotationUuid);
+
+    /**
+     * @brief GDIM v2 Phase 6：重複尺寸偵測
+     *
+     * 若已存在一筆標註，其 kind 與 refs（不分順序比對——例如 A→B 距離
+     * 與 B→A 距離視為相同）皆與給定條件相符，回傳該標註；否則回傳
+     * nullptr。供 GeneralDimCommand 在 commit 前提醒使用者「已存在相同
+     * 標註」，避免過度標註（見 GDIM.md 第九節「重複尺寸檢查」）。
+     */
+    const SketchAnnotation* findDuplicateAnnotation(
+        const QList<GeomRef>& refs, AnnotationKind kind) const;
+
     SolveResult solveConstraints();
     SolveResult solveWithStore(const aicad::core::ParameterStore* store);
     int degreesOfFreedom() const;
@@ -440,6 +480,8 @@ Q_SIGNALS:
     void rebuilt();
     void constraintAdded(const QString& uuid);
     void constraintRemoved(const QString& uuid);
+    void annotationAdded(const QString& uuid);      ///< GDIM v2 Phase 1
+    void annotationRemoved(const QString& uuid);
     void constraintSolved(SolveResult result);
 
 public Q_SLOTS:
@@ -484,6 +526,7 @@ private:
      */
     QHash<QString, quint64> m_geomFingerprints;
     QList<SketchConstraint> m_constraints;
+    QList<SketchAnnotation> m_annotations;  ///< GDIM v2 Phase 1
     QList<Handle(AIS_Shape)>  m_constructionShapes;
     QHash<QString, quint64>   m_constructionFingerprints;  ///< parallel cache for m_constructionShapes
     ConstraintSolver        m_solver;

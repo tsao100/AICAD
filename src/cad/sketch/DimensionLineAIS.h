@@ -1,5 +1,6 @@
 #pragma once
 #include "SketchConstraint.h"
+#include "SketchAnnotation.h"
 #include <AIS_InteractiveObject.hxx>
 #include <Prs3d_Presentation.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -49,6 +50,15 @@ public:
     /// 顯示文字：優先顯示 paramExpr，次顯示純數值
     QString labelText() const;
 
+    // ── GDIM v2 Phase 3 ──────────────────────────────────────────────────
+    /// 掛載對應的 SketchAnnotation（若有）。掛載後 labelText() 會改用
+    /// AnnotationTextFormatter 依 prefix/suffix/tolerance/precision/
+    /// isBasic/isInspection 組字；未掛載時行為與掛載前完全相同
+    /// （僅顯示純數值，向下相容既有純 SketchConstraint 驅動的尺寸線）。
+    void setAnnotation(const SketchAnnotation& a) { m_annotation = a; m_hasAnnotation = true; }
+    void clearAnnotation() { m_hasAnnotation = false; }
+    bool hasAnnotation() const { return m_hasAnnotation; }
+
     const QString& constraintUuid() const { return m_constraint.uuid; }
 
     /// 明確設定兩個參考點（供 FixedDistance 端點 handle 使用）
@@ -85,6 +95,11 @@ public:
                          bool oriented = true,
                          Graphic3d_HorizontalTextAlignment hAlign = Graphic3d_HTA_CENTER,
                          Graphic3d_VerticalTextAlignment   vAlign = Graphic3d_VTA_CENTER);
+
+    /// GDIM v2 Phase 7：目前 Compute() 收集到的所有數值標籤世界座標區域
+    /// （唯讀），供 CadView::checkAnnotationCollisions() 投影到螢幕座標
+    /// 做碰撞偵測使用。
+    const QList<LabelRegion>& labelRegions() const { return m_labelRegions; }
 
     /// 由自訂 EntityOwner 在 hover 時呼叫：僅重繪指定索引的數值文字（反白色），
     /// 不重繪尺寸線、延伸線、箭頭，確保只有數值本身會高亮
@@ -140,6 +155,10 @@ private:
 
     // hover/選取用：本次 Compute() 收集到的所有數值標籤世界座標區域
     QList<LabelRegion>       m_labelRegions;
+
+    // GDIM v2 Phase 3：可選掛載的標註資料（見 setAnnotation()）
+    SketchAnnotation          m_annotation;
+    bool                      m_hasAnnotation = false;
 };
 
 } // namespace aicad::cad

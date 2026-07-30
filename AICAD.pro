@@ -241,6 +241,10 @@ SOURCES += \
     src/cad/sketch/DimensionLineAIS.cpp \
     src/cad/sketch/SketchAxisAIS.cpp \
     src/cad/sketch/SketchConstraint.cpp \
+    src/cad/sketch/SketchAnnotation.cpp \
+    src/cad/sketch/AnnotationTextFormatter.cpp \
+    src/cad/sketch/LeaderNoteAIS.cpp \
+    src/cad/sketch/AnnotationStandardsChecker.cpp \
     src/cad/sketch/SketchLoopFinder.cpp \
     src/cad/sketch/SketchPointAIS.cpp \
     src/cad/sketch/SketchRegion.cpp \
@@ -250,7 +254,9 @@ SOURCES += \
     src/command/ConstraintCommands.cpp \
     src/command/SketchEditCommand.cpp \
     src/command/GeneralDimCommand.cpp \
+    src/command/LeaderNoteCommand.cpp \
     src/cad/sketch/GeneralDimClassifier.cpp \
+    src/cad/sketch/GeometryRelationshipAnalyzer.cpp \
     src/command/ExtrudeCommand.cpp \
     src/command/alignment/SetOriginCommand.cpp \
     src/command/alignment/AlignmentAddSpiralCommand.cpp \
@@ -383,6 +389,10 @@ HEADERS += \
     src/cad/sketch/DimensionLineAIS.h \
     src/cad/sketch/SketchAxisAIS.h \
     src/cad/sketch/SketchConstraint.h \
+    src/cad/sketch/SketchAnnotation.h \
+    src/cad/sketch/AnnotationTextFormatter.h \
+    src/cad/sketch/LeaderNoteAIS.h \
+    src/cad/sketch/AnnotationStandardsChecker.h \
     src/cad/sketch/SketchLoopFinder.h \
     src/cad/sketch/SketchPointAIS.h \
     src/cad/sketch/SketchRegion.h \
@@ -391,7 +401,9 @@ HEADERS += \
     src/command/CommandAlias.h \
     src/command/ConstraintCommands.h \
     src/command/GeneralDimCommand.h \
+    src/command/LeaderNoteCommand.h \
     src/cad/sketch/GeneralDimClassifier.h \
+    src/cad/sketch/GeometryRelationshipAnalyzer.h \
     src/command/ExtrudeCommand.h \
     src/command/GripMoveCommand.h \
     src/command/SketchEditCommand.h \

@@ -142,6 +142,14 @@ struct SketchConstraint {
     double          dimLineOffsetX = 0.0;  ///< 尺寸線偏移 X（草圖平面座標）
     double          dimLineOffsetY = 0.0;  ///< 尺寸線偏移 Y
 
+    // ── GDIM v2 Phase 1 ──────────────────────────────────────────────────
+    /// 非空時，表示這是由某個 SketchAnnotation（uuid == implicitOf）
+    /// 透過 Sketch::addImplicitConstraint() 自動生成/同步的「隱含約束」，
+    /// 純供 ConstraintSolver 內部使用。這類約束不由使用者直接建立/編輯，
+    /// 存檔時會被排除（不寫入 "constraints" JSON 陣列），改由對應的
+    /// SketchAnnotation 於載入後重新生成，避免資料重複。
+    QString         implicitOf;
+
     /**
      * 判斷此約束是否為尺寸約束（帶數值）
      */

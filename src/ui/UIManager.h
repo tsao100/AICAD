@@ -309,6 +309,18 @@ private:
 
     void showFeatureProperties(cad::Feature* feature);
 
+    /**
+     * @brief GDIM v2 Phase 4：顯示標註（SketchAnnotation）屬性 Mini Toolbar
+     *
+     * 於 PropertyPanel 顯示 Prefix/Suffix/Tolerance/Precision/
+     * Basic Dimension/Inspection Dimension 欄位，並讓
+     * PropertyPanel::propertyChanged 的寫回目標指向這個 (sketch, uuid)。
+     * 這些屬性只影響顯示（不影響幾何求解），寫回時走
+     * Sketch::addAnnotation() → ConstraintOverlayManager 的輕量刷新路徑
+     * （見 Sketch::annotationAdded 訊號），不觸發完整 rebuildAll()/重新求解。
+     */
+    void showAnnotationProperties(cad::Sketch* sketch, const QString& annotationUuid);
+
     class Private;
     Private* d;
 };

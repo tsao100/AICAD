@@ -192,6 +192,20 @@ constexpr const char* GEOM_HOVER         = "input.geom_hover";        ///< GetGe
 constexpr const char* DIM_LINE_CONFIRMED = "input.dim_line_confirmed";
 constexpr const char* DIM_LINE_PREVIEW   = "input.dim_line_preview";  ///< 拖曳預覽（非 pickSession 路徑）
 
+// ── GDIM v2 Phase 2：多候選引擎（取代字母選單）─────────────────────────────
+/// payload: QVariantMap { "direction": int }  +1 = 下一個候選（Tab/Space）、
+/// -1 = 上一個候選（Shift+Tab）。由 CadView::keyPressEvent 在 GetGeom /
+/// WaitCandidate 情境下按 Tab/Space 時發布，取代舊的「輸入字母選單」機制。
+/// 確認目前高亮候選沿用既有 STRING_INPUT（Enter 空白輸入 = 採用預設/當前
+/// 高亮候選），不另外新增事件。
+constexpr const char* CANDIDATE_CYCLE     = "input.candidate_cycle";
+
+// ── GDIM v2 Phase 4：Mini Toolbar ──────────────────────────────────────────
+/// payload: QString（annotationUuid）。點選一個有對應 SketchAnnotation 的
+/// 尺寸線時發布，供 PropertyPanel（Mini Toolbar）顯示 Prefix/Suffix/
+/// Tolerance/Precision/Basic/Inspection 欄位。
+constexpr const char* ANNOTATION_SELECTED = "input.annotation_selected";
+
 // ── ProjectOrigin / TM2 雙座標系統 ─────────────────────────────────────────
 /// ProjectOrigin::setOrigin() 或 clear() 呼叫後發布。
 /// payload: QVariantMap { "isSet": bool, "originE": double, "originN": double,

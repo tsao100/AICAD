@@ -12,8 +12,16 @@ namespace aicad::command {
 /**
  * @brief GDIM — General Dimension 命令
  *
- * 先選取幾何，由 GeneralDimClassifier 推斷類型，
+ * 先選取幾何，由 GeneralDimClassifier::classifyAll() 一次列出所有候選型別，
  * 再互動式設定尺寸線位置與數值。
+ *
+ * GDIM 昇級規劃 v2 — Phase 2：
+ * 狀態機由 Idle → WaitSecond → WaitMenu → WaitArcType → WaitDimPlace →
+ * WaitValue 簡化為 Idle → WaitSecond → WaitCandidate → WaitDimPlace →
+ * WaitValue。WaitMenu/WaitArcType（字母選單）與 MenuKey/MenuOption 機制
+ * 整套移除，統一併入 WaitCandidate：進入即列出 classifyAll() 全部結果、
+ * 預覽第一個、TAB/SPACE 循環（見 CadView::keyPressEvent 發布的
+ * Events::CANDIDATE_CYCLE）、Enter 或輸入快捷字母確認。
  */
 class GeneralDimCommand : public Command {
     Q_OBJECT
@@ -25,9 +33,8 @@ public:
 private:
     enum class State {
         Idle,           ///< 等待第一個幾何
-        WaitSecond,     ///< 等待第二個幾何（Point 選取後）
-        WaitMenu,       ///< 等待使用者從選單選擇束制類型
-        WaitArcType,    ///< 等待使用者選 Radius / ArcLength（已棄用，由 WaitMenu 取代）
+        WaitSecond,     ///< 等待第二個幾何（點狀 / 選了「量距第二點」候選後）
+        WaitCandidate,  ///< 等待使用者從候選陣列中確認一個標註型別（Phase 2）
         WaitDimPlace,   ///< PlaceDimLine 模式，等待點擊確認偏移
         WaitValue,      ///< 等待使用者輸入數值/表達式
     };
@@ -52,14 +59,19 @@ private:
     /// commitDimension() 會在此時轉換為弧度存入 SketchConstraint::value。
     bool                 m_pendingIsRawUserInput = false;
 
-    /// WaitMenu 選單選項列表，key=使用者輸入字母, value=ConstraintType
-    struct MenuOption {
-        QString           key;   ///< 使用者輸入（單個字母，大小寫均可）
-        QString           label; ///< 顯示給使用者的說明
-        cad::ConstraintType type;
-        bool              needSecond = false; ///< true = 選此項後進 WaitSecond
-    };
-    QList<MenuOption>    m_menuOptions;
+    // ── GDIM v2 Phase 2：多候選引擎 ───────────────────────────────────────
+    QList<cad::GeneralDimClassifier::Candidate> m_candidates;
+    int                  m_candidateIndex = 0;   ///< 目前高亮候選的索引
+    /// 目前高亮/已確認候選是否要用補角（180°－夾角），見
+    /// GeneralDimClassifier::Candidate::useSupplementAngle
+    bool                 m_useSupplementAngle = false;
+
+    /// 單一幾何選取後，若能立即判斷唯一預設候選（見 onGeomPicked），
+    /// 會先顯示預覽並排一個短暫延遲的自動確認（QTimer::singleShot），
+    /// 讓使用者仍有機會在延遲時間內點第二個幾何改成配對。這個計數器
+    /// 用來讓「點了第二個幾何」或「cleanup()」能讓舊的延遲確認失效
+    /// （比對時 token 不符就直接不執行，不需要真的管理 QTimer 物件）。
+    int                  m_pendingConfirmToken = 0;
 
     void subscribeGeomPicked   ();
     void subscribeGeomHover    ();   ///< 新增：GetGeom 模式 hover 預覽
@@ -67,6 +79,7 @@ private:
     void subscribeDimConfirmed ();
     void subscribePreview      ();
     void subscribeCancelled    ();
+    void subscribeCandidateCycle();  ///< Phase 2：Tab/Space 候選循環
     void unsubscribeGeomPicked ();
     void unsubscribeAll        ();
 
@@ -75,14 +88,21 @@ private:
     void onStringInput  (const QVariant& payload);
     void onDimConfirmed (const QVariant& payload);
     void onCancelled    (const QVariant&);
+    void onCandidateCycle(const QVariant& payload);  ///< Phase 2
 
-    void transitionToWaitSecond  ();
-    void transitionToWaitMenu    (const QList<MenuOption>& options, const QString& prompt);
-    void transitionToWaitArcType ();
-    void transitionToWaitDimPlace();
-    void transitionToWaitValue   ();
-    void commitDimension         ();
-    void cleanup                 ();
+    void transitionToWaitSecond   ();
+    void transitionToWaitCandidate(const QList<cad::GeneralDimClassifier::Candidate>& candidates);
+    void transitionToWaitDimPlace ();
+    void transitionToWaitValue    ();
+    void commitDimension          ();
+    void cleanup                  ();
+
+    /// 依 m_candidateIndex 把候選內容套用到 m_type/m_distMode，並刷新命令列提示 + 預覽
+    void applyHighlightedCandidate();
+
+    /// 確認第 index 個候選（Enter/快捷字母/滑鼠再次點擊/單一候選自動確認 皆走此路徑）。
+    /// needsSecondPick 則進 WaitSecond；否則直接進 WaitDimPlace。
+    void confirmCandidate(int index);
 
     /// 依目前 m_refs + 可選的 extraRef 組出預覽，推送到 CadView
     void updateDimPreview(const cad::GeomRef* extraRef = nullptr);

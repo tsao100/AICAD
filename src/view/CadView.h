@@ -555,6 +555,21 @@ public:
      */
     void requestEscapeCancel() { performEscapeCancel(); }
 
+    /**
+     * @brief GDIM v2 Phase 7：碰撞偵測（Collision Avoidance 的偵測部分）
+     *
+     * 掃描目前 context() 中所有已顯示的 AIS_DimensionLine，把每個數值
+     * 標籤（見 AIS_DimensionLine::labelRegions()）投影到螢幕座標
+     * （view()->Convert()），做簡單的 2D AABB 相交測試，回傳重疊的
+     * 標註 uuid 配對清單。
+     *
+     * 實作限制：沒有精確字型量測，文字寬高用「字元數 × 固定像素」估計
+     * （見 .cpp 的 kCharPxWidth/kLabelPxHeight），屬近似值，不是像素級
+     * 精確的碰撞判定；足以偵測「明顯重疊」，但抓不到剛好擦邊的情況。
+     */
+    struct AnnotationCollision { QString uuidA, uuidB; };
+    QList<AnnotationCollision> checkAnnotationCollisions() const;
+
 private:
     /**
      * @brief 執行「完整取消」：與舊行為「InputJig 作用中按 ESC 兩次」/

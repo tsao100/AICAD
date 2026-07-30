@@ -82,9 +82,20 @@ ViewManager::ViewManager(QObject* parent)
 
         bus->subscribe("command.cancelled", this, [this](const QVariant& /*data*/) {
             CadView* view = activeView();
-            if (view) {
-                view->setMode(InteractionMode::Idle);
+            if (!view) return;
+            // ⚠️ "command.cancelled" 與 Events::COMMAND_CANCELLED 是同一個事件
+            //    （見 EventBus.h: COMMAND_CANCELLED = "command.cancelled"），
+            //    在 Sketch 編輯中執行指令（LINE/ARC/CIRCLE...）時按 Escape
+            //    取消該指令，也會發布這個事件。過去這裡無條件把互動模式
+            //    重設為 Idle，導致「取消指令」被誤當成「離開 Sketch edit
+            //    mode」（Finish Sketch 按鈕、OSnap/grips 等 Sketching 專屬
+            //    行為一併被關閉）。取消單一指令不應該影響是否仍在 Sketch
+            //    編輯中，因此這裡排除 Sketching 模式，讓使用者維持在
+            //    Sketch 內，只是回到「等待下一個指令」的閒置狀態。
+            if (view->mode() == InteractionMode::Sketching) {
+                return;
             }
+            view->setMode(InteractionMode::Idle);
         });
 
         // ✅ 監聽可見性變更

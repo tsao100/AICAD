@@ -1,4 +1,5 @@
 #include "DimensionLineAIS.h"
+#include "AnnotationTextFormatter.h"
 #include "../Sketch.h"
 
 #include <Graphic3d_ArrayOfPolylines.hxx>
@@ -88,10 +89,22 @@ void AIS_DimensionLine::Update(
     m_geoms      = geoms;
     m_status     = status;
     m_hasRefPos  = false;  // 清除舊的端點快取，待呼叫端重新設定
+    m_hasAnnotation = false;  // GDIM v2 Phase 3：清除舊的標註掛載，待呼叫端重新 setAnnotation()
 }
 
 QString AIS_DimensionLine::labelText() const {
     const double v = m_constraint.value;
+
+    // GDIM v2 Phase 3：若有掛載 SketchAnnotation，改用共用的
+    // AnnotationTextFormatter 組字（套用 prefix/suffix/tolerance/precision/
+    // isBasic/isInspection）。目前僅取 mainText 單行顯示；Limit/Deviation
+    // 模式的雙行堆疊與 Basic 外框，留待 Compute() 真正拆分為
+    // AnnotationAIS 家族時再繪製（此處先確保「文字內容」本身是對的）。
+    if (m_hasAnnotation) {
+        auto label = AnnotationTextFormatter::format(m_annotation, v);
+        return label.mainText;
+    }
+
     QString base;
     switch (m_constraint.type) {
     case ConstraintType::FixedDiameter:

@@ -58,6 +58,23 @@ private:
     void rebuild();   ///< 重新計算並顯示 presentation
     void clearPrs();  ///< 清除 OCCT presentation
 
+    /**
+     * @brief GDIM v2 Phase 5：自動吸附偏移量
+     *
+     * 對應 GDIM_昇級規劃_v2.md 附錄「Phase 5（Auto Snap Position）」：
+     * 讀取同草圖內既有標註（尺寸線）的偏移量列表，若目前算出的原始偏移
+     * rawOffset 與某個既有偏移在容許誤差內，優先吸附到該既有值，讓多條
+     * 尺寸線的偏移量自然對齊（不需使用者手動微調到完全一致）。
+     *
+     * 實作限制：這裡比較的是偏移「量值」（|dimLineOffset|），而非兩條
+     * 尺寸線在螢幕上的像素位置——本類別沒有取得 view 的縮放/投影資訊，
+     * 無法直接做「螢幕空間像素」判定，因此改以草圖平面單位的容許誤差
+     * （m_snapToleranceUnits，預設隨 rawOffset 量級估計）近似。日後若要做
+     * 真正的螢幕像素吸附，需要 CadView 提供 planeToScreen() 之類的轉換
+     * 函式給這裡使用。
+     */
+    float snapOffset(float rawOffset) const;
+
     // 草圖平面座標 → world gp_Pnt
     gp_Pnt toWorld(const QVector2D& pt) const;
 

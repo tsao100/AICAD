@@ -135,6 +135,32 @@ void DimPreviewOverlay::addArrow3D(const Handle(Graphic3d_Group)& grp,
 // ─────────────────────────────────────────────────────────────────────────────
 // 主要繪製：重建 OCCT Presentation
 // ─────────────────────────────────────────────────────────────────────────────
+// GDIM v2 Phase 5：自動吸附偏移量（見 DimPreviewOverlay.h 的說明）
+float DimPreviewOverlay::snapOffset(float rawOffset) const
+{
+    if (!m_sketch) return rawOffset;
+
+    // 容許誤差：以 rawOffset 量級的固定比例估計「大約幾個像素」，
+    // 沒有 view 縮放資訊，只能取一個平面單位下的合理值（見 .h 說明的限制）
+    constexpr float kSnapToleranceUnits = 3.0f;
+
+    float best = rawOffset;
+    float bestDelta = kSnapToleranceUnits;
+
+    for (const auto& c : m_sketch->constraints()) {
+        if (c.dimLineOffsetX == 0.0 && c.dimLineOffsetY == 0.0) continue;
+        float mag = static_cast<float>(std::sqrt(
+            c.dimLineOffsetX * c.dimLineOffsetX +
+            c.dimLineOffsetY * c.dimLineOffsetY));
+        float delta = std::abs(mag - std::abs(rawOffset));
+        if (delta < bestDelta) {
+            bestDelta = delta;
+            best = mag;
+        }
+    }
+    return best;
+}
+
 void DimPreviewOverlay::rebuild()
 {
     if (m_context.IsNull() || !m_sketch) return;
@@ -352,7 +378,7 @@ void DimPreviewOverlay::rebuild()
             QVector2D mid = (A + B) * 0.5f;
             float dot = QVector2D::dotProduct(m_mouse - mid, perpDir);
             if (dot < 0) perpDir = -perpDir;
-            float offset = std::max(std::abs(dot), 15.f);
+            float offset = snapOffset(std::max(std::abs(dot), 15.f));
             dA = A + perpDir * offset;
             dB = B + perpDir * offset;
         }
@@ -375,7 +401,7 @@ void DimPreviewOverlay::rebuild()
         QVector2D mid = (A + B) * 0.5f;
         float dot = QVector2D::dotProduct(m_mouse - mid, perpDir);
         if (dot < 0) perpDir = -perpDir;
-        float offset = std::max(std::abs(dot), 15.f);
+        float offset = snapOffset(std::max(std::abs(dot), 15.f));
         dA = A + perpDir * offset;
         dB = B + perpDir * offset;
     } else if (m_info.type == CT::CoordinateDim) {
@@ -401,6 +427,7 @@ void DimPreviewOverlay::rebuild()
         if (dot < 0) perpDir = -perpDir;
         float offset = std::abs(dot);
         if (offset < 5.f) offset = 20.f;
+        offset = snapOffset(offset);
         dA = A + perpDir * offset;
         dB = B + perpDir * offset;
     }

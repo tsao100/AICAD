@@ -1,4 +1,5 @@
 #include "GeneralDimCommand.h"
+#include "cad/sketch/AnnotationStandardsChecker.h"
 #include "ConstraintCommands.h"  // reportSolveResult
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
@@ -8,6 +9,7 @@
 #include "../ui/UIManager.h"
 #include "../view/CadView.h"
 #include <QMetaObject>
+#include <QTimer>
 #include <cmath>
 #include <Geom_Circle.hxx>
 
@@ -169,7 +171,8 @@ double GeneralDimCommand::measureCurrentValue() const {
         QVector2D dirB = (lineB->end - lineB->start).normalized();
         double dot   = static_cast<double>(QVector2D::dotProduct(dirA, dirB));
         double cross = static_cast<double>(dirA.x() * dirB.y() - dirA.y() * dirB.x());
-        double ang   = std::atan2(std::abs(cross), dot);  // 0..π/2，銳角
+        double ang   = std::atan2(std::abs(cross), dot);  // 0..π
+        if (m_useSupplementAngle) ang = M_PI - ang;        // 補角（Auto_DIM.md 第三節）
         return ang;  // 弧度
     }
     default:
@@ -387,6 +390,17 @@ void GeneralDimCommand::unsubscribeAll() {
     bus->unsubscribe(core::Events::DIM_LINE_CONFIRMED,  this);
     bus->unsubscribe(core::Events::DIM_LINE_PREVIEW,    this);
     bus->unsubscribe(core::Events::COMMAND_CANCELLED,   this);
+    bus->unsubscribe(core::Events::CANDIDATE_CYCLE,     this);  // Phase 2
+}
+
+void GeneralDimCommand::subscribeCandidateCycle() {
+    auto* bus = core::Application::instance()->eventBus();
+    if (!bus) return;
+    bus->subscribe(core::Events::CANDIDATE_CYCLE, this,
+        [this](const QVariant& v) {
+            // 直接處理（不排隊），確保 Tab/Space 連續按下時反應即時
+            onCandidateCycle(v);
+        });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -504,18 +518,22 @@ void GeneralDimCommand::updateDimPreview(const cad::GeomRef* extraRef)
 
     if (tempRefs.isEmpty()) { cadView->clearDimPreview(); return; }
 
-    // WaitDimPlace 狀態：m_type/m_distMode 已由 subscribePreview 動態設好（F/H/V），
-    // 直接使用，不重新 classify（classify 會覆蓋掉使用者的選擇）
+    // WaitDimPlace / WaitCandidate 狀態：m_type/m_distMode 已確定
+    // （WaitDimPlace 由 subscribePreview 動態設好 F/H/V；WaitCandidate 由
+    // applyHighlightedCandidate() 依目前高亮候選設定），直接使用，
+    // 不重新 classify（classify 會覆蓋掉使用者目前的選擇/高亮）
     ConstraintType useType;
     DistanceMode   useMode;
-    if (m_state == State::WaitDimPlace) {
+    if (m_state == State::WaitDimPlace || m_state == State::WaitCandidate) {
         useType = m_type;
         useMode = m_distMode;
     } else {
-        auto result = GeneralDimClassifier::classify(tempRefs, sk);
-        if (!result.valid) { cadView->clearDimPreview(); return; }
-        useType = result.type;
-        useMode = result.distMode;
+        auto candidates = GeneralDimClassifier::classifyAll(tempRefs, sk);
+        if (candidates.isEmpty()) { cadView->clearDimPreview(); return; }
+        auto ct = annotationKindToConstraintType(candidates[0].kind);
+        if (!ct) { cadView->clearDimPreview(); return; }
+        useType = *ct;
+        useMode = candidates[0].distMode;
     }
 
     // 用 useType/useMode 量測數值
@@ -553,13 +571,28 @@ void GeneralDimCommand::clearDimPreview()
 
 void GeneralDimCommand::onGeomHover(const QVariant& payload)
 {
-    // WaitMenu 狀態下 hover 不更新預覽（等待鍵盤輸入）
-    if (m_state == State::WaitMenu) return;
-    if (m_state != State::Idle && m_state != State::WaitSecond) return;
-
     QVariantMap map    = payload.toMap();
     QString hoverUuid  = map.value("geomUuid").toString();
     int     hoverHandle= map.value("handle", -1).toInt();
+    QVector2D mousePt  = map.value("point").value<QVector2D>();
+
+    // Auto_DIM.md 第八節：WaitCandidate 狀態下，若目前只選了一個幾何
+    // （圓/弧），用滑鼠位置即時切換 半徑↔直徑 / 半徑↔弧長，不需要按
+    // Tab/Space。其餘情況（Line/Point 的候選、或已有 2 個 refs）沒有
+    // 自然的滑鼠位置對應關係，維持原本的 Tab/Space/快捷字母方式。
+    if (m_state == State::WaitCandidate) {
+        if (m_refs.size() == 1 && !m_candidates.isEmpty()) {
+            auto* sk = activeSketch();
+            int idx = GeneralDimClassifier::pickCandidateByMouse(
+                m_candidates, m_refs[0], sk, mousePt);
+            if (idx >= 0 && idx != m_candidateIndex) {
+                m_candidateIndex = idx;
+                applyHighlightedCandidate();
+            }
+        }
+        return;  // 不繼續往下走 Idle/WaitSecond 的預覽邏輯
+    }
+    if (m_state != State::Idle && m_state != State::WaitSecond) return;
 
     if (hoverUuid.isEmpty()) {
         if (m_state == State::Idle) clearDimPreview();
@@ -570,39 +603,16 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
     auto* sk = activeSketch();
 
     if (m_state == State::Idle) {
-        // 尚未選任何幾何：用 hover 幾何顯示預覽
-        // 對 needMenu 情況，用預設類型預覽（整條線→長度，圓→直徑，弧→半徑）
+        // 尚未選任何幾何：用 hover 幾何顯示預覽（取第一個候選，例如整條線→長度、
+        // 圓→直徑、弧→半徑，與 classifyAll() 回傳陣列的排序一致）
         QList<GeomRef> tempRefs = { extraRef };
-        auto result = GeneralDimClassifier::classify(tempRefs, sk);
+        auto candidates = GeneralDimClassifier::classifyAll(tempRefs, sk);
+        if (candidates.isEmpty()) { clearDimPreview(); return; }
 
-        ConstraintType previewType = result.type;
-        DistanceMode   previewMode = result.distMode;
-
-        if (result.needMenu) {
-            // 為 hover 選一個合理的預覽類型
-            using MK = GeneralDimClassifier::MenuKey;
-            switch (result.menuKey) {
-            case MK::LineType:
-                previewType = cad::ConstraintType::FixedLength;
-                break;
-            case MK::CircleType:
-                previewType = cad::ConstraintType::FixedDiameter;
-                break;
-            case MK::ArcType:
-                previewType = cad::ConstraintType::FixedRadius;
-                break;
-            case MK::PointCoord:
-                // 點類 hover 不顯示預覽（不知道要顯示哪種）
-                clearDimPreview();
-                return;
-            default:
-                clearDimPreview();
-                return;
-            }
-        } else if (!result.valid) {
-            clearDimPreview();
-            return;
-        }
+        auto ct = annotationKindToConstraintType(candidates[0].kind);
+        if (!ct) { clearDimPreview(); return; }  // 例如點狀首選需要第二點，不預覽
+        ConstraintType previewType = *ct;
+        DistanceMode   previewMode = candidates[0].distMode;
 
         QList<GeomRef> savedRefs = m_refs;
         ConstraintType savedType = m_type;
@@ -643,8 +653,8 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
             }
         }
 
-        auto result = GeneralDimClassifier::classify(tempRefs, sk);
-        if (!result.valid) {
+        auto candidates = GeneralDimClassifier::classifyAll(tempRefs, sk);
+        if (candidates.isEmpty()) {
             updateDimPreview(nullptr);
             return;
         }
@@ -661,6 +671,20 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
 
 void GeneralDimCommand::onGeomPicked(const QVariant& payload)
 {
+    // Auto_DIM.md 精神：滑鼠為主。WaitCandidate 狀態下再次點擊「同一個」
+    // 幾何元素，視同滑鼠確認目前高亮候選（不需要按 Enter 或輸入快捷字母）。
+    // 點擊到其他幾何則忽略（避免誤觸打亂目前已確定的分類結果）。
+    if (m_state == State::WaitCandidate) {
+        QVariantMap map = payload.toMap();
+        QString  uuid   = map.value("geomUuid").toString();
+        int      handle = map.value("handle", static_cast<int>(GeomHandle::WholeGeom)).toInt();
+        if (!m_refs.isEmpty() && uuid == m_refs.last().geomUuid
+            && static_cast<GeomHandle>(handle) == m_refs.last().handle) {
+            confirmCandidate(m_candidateIndex);
+        }
+        return;
+    }
+
     if (m_state != State::Idle && m_state != State::WaitSecond)
         return;
 
@@ -762,86 +786,63 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
         }
     }
 
-    auto result = GeneralDimClassifier::classify(m_refs, sk ? sk : activeSketch());
+    auto candidates = GeneralDimClassifier::classifyAll(m_refs, sk ? sk : activeSketch());
 
-    // ── 非法組合（例如選了同一物件的不同 handle）：撤銷，留在 WaitSecond ────
-    if (m_refs.size() == 2 && !result.valid && !result.needMore && !result.needMenu) {
+    // ── 無合法候選：撤銷最後一次選取 ─────────────────────────────────────────
+    // （例如雙選時選了同一物件的不同 handle，或選到無法解析的幾何）
+    if (candidates.isEmpty()) {
         m_refs.removeLast();
         if (cmdMgr)
-            cmdMgr->printError("無法與前一個選取組合，請重新選擇");
+            cmdMgr->printError(
+                m_refs.isEmpty() ? "無法辨識此幾何元素，請重新選擇"
+                                 : "無法與前一個選取組合，請重新選擇");
         return;
     }
 
-    // ── 需要再選第二個 ────────────────────────────────────────────────────────
-    if (result.needMore && m_refs.size() == 1) {
-        transitionToWaitSecond();
-        return;
-    }
-
-    // ── 需要彈出選單讓使用者選類型 ───────────────────────────────────────────
-    if (result.needMenu) {
-        using MK = GeneralDimClassifier::MenuKey;
-        using CT = cad::ConstraintType;
-
-        QList<MenuOption> opts;
-        QString prompt = result.nextPrompt;
-
-        switch (result.menuKey) {
-
-        case MK::LineType:
-            // 整條線：線長 / 量距第二點
-            opts.append({"L", "線長",      CT::FixedLength,  false});
-            opts.append({"D", "量距第二點", CT::FixedDistance, true});
-            break;
-
-        case MK::CircleType:
-            // 整個圓：直徑 / 半徑
-            opts.append({"D", "直徑 Ø",  CT::FixedDiameter, false});
-            opts.append({"R", "半徑 R",  CT::FixedRadius,   false});
-            break;
-
-        case MK::ArcType:
-            // 整條弧：半徑 / 弧長
-            opts.append({"R", "半徑 R",  CT::FixedRadius,   false});
-            opts.append({"L", "弧長 ~",  CT::FixedArcLength,false});
-            break;
-
-        case MK::PointCoord:
-            // 點/圓心/弧圓心：X / Y / XY / 量距第二點
-            opts.append({"X", "X 座標",   CT::FixedX,        false});
-            opts.append({"Y", "Y 座標",   CT::FixedY,        false});
-            opts.append({"C", "XY 座標",  CT::CoordinateDim, false});
-            opts.append({"D", "量距第二點",CT::FixedDistance, true});
-            break;
-
-        default:
-            break;
+    // ── 使用者需求：「選第一條線就是線長，不用按 L」──────────────────────────
+    // 單一幾何選取時，若能立即判斷出唯一的預設候選（Line→線長；
+    // Circle/Arc→滑鼠位置判斷半徑/直徑/弧長，見 pickCandidateByMouse），
+    // 就不進 WaitCandidate 選單，立即顯示預覽並排一個短暫延遲後自動確認
+    // ——這段延遲留給使用者「點第二個幾何改配對」的機會（見下方：第二次
+    // GEOM_PICKED 到達時 m_refs.size()==2，會讓這個延遲確認失效，改走
+    // 兩個幾何的配對分類）。真正有歧義、滑鼠也判斷不出來的情況
+    // （例如單一點的 X/Y/座標）才維持原本 WaitCandidate + Tab 循環。
+    if (m_refs.size() == 1) {
+        QVector2D mousePt = map.value("point").value<QVector2D>();
+        int idx = GeneralDimClassifier::pickCandidateByMouse(candidates, ref, sk, mousePt);
+        if (idx < 0) {
+            int nonSecondIdx = -1, nonSecondCount = 0;
+            for (int i = 0; i < candidates.size(); ++i) {
+                if (!candidates[i].needsSecondPick) { ++nonSecondCount; nonSecondIdx = i; }
+            }
+            if (nonSecondCount == 1) idx = nonSecondIdx;
         }
 
-        if (!opts.isEmpty()) {
-            transitionToWaitMenu(opts, prompt);
-            return;
+        if (idx >= 0) {
+            m_candidates     = candidates;
+            m_candidateIndex = idx;
+            applyHighlightedCandidate();  // 立即顯示預覽（零鍵盤操作）
+
+            constexpr int kAutoConfirmDelayMs = 350;  // 給「點第二個幾何改配對」的緩衝時間
+            ++m_pendingConfirmToken;
+            int token = m_pendingConfirmToken;
+            QTimer::singleShot(kAutoConfirmDelayMs, this, [this, token, idx]() {
+                if (token != m_pendingConfirmToken) return;  // 已被第二個幾何/取消動作作廢
+                if (m_state != State::Idle) return;
+                confirmCandidate(idx);
+            });
+            return;  // 停留在 Idle，GEOM_PICKED 繼續訂閱，等待可能的第二次選取
         }
+        // idx < 0：真的有歧義（例如點的 X/Y/座標），落到下面走 WaitCandidate
+    } else {
+        // 這次點擊是「第二個幾何」，讓任何來自第一次點擊的延遲自動確認失效
+        ++m_pendingConfirmToken;
     }
 
-    // ── 已分類完成，進入 DimPlace ─────────────────────────────────────────────
-    if (result.valid) {
-        m_type     = result.type;
-        m_distMode = result.distMode;
-
-        if (cmdMgr)
-            cmdMgr->printMessage(
-                QString("  類型: %1").arg(constraintTypeName()));
-
-        updateDimPreview(nullptr);
-
-        if (m_type == ConstraintType::FixedRadius ||
-            m_type == ConstraintType::FixedArcLength) {
-            transitionToWaitArcType();
-        } else {
-            transitionToWaitDimPlace();
-        }
-    }
+    // ── GDIM v2 Phase 2：其餘情況（歧義的單一幾何、或雙選配對）一律進入
+    //    WaitCandidate 列出全部候選，由 Tab/Space 循環、快捷字母、或
+    //    Enter/再次點擊 確認 ────────────────────────────────────────────────
+    transitionToWaitCandidate(candidates);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -853,54 +854,30 @@ void GeneralDimCommand::onStringInput(const QVariant& payload)
     auto* cmdMgr = core::CommandLineManager::instance();
     QString input = payload.toString().trimmed();
 
-    // ── WaitMenu：使用者從選單選擇束制類型 ───────────────────────────────────
-    if (m_state == State::WaitMenu) {
-        QString key = input.toUpper();
+    // ── WaitCandidate：GDIM v2 Phase 2 多候選引擎 ───────────────────────────
+    // - 空白輸入（直接按 Enter）：確認目前高亮候選（TAB/SPACE 循環後的結果）
+    // - 輸入單一字母（沿用舊選單快捷鍵，如 L/D/R/X/Y/C/A）：直接跳到並確認
+    //   該候選，不需要先 Tab 循環過去——維持老手使用者的肌肉記憶
+    if (m_state == State::WaitCandidate) {
+        int confirmIndex = m_candidateIndex;
 
-        // 找符合的選項
-        const MenuOption* chosen = nullptr;
-        for (const auto& opt : m_menuOptions) {
-            if (opt.key.compare(key, Qt::CaseInsensitive) == 0) {
-                chosen = &opt;
-                break;
+        if (!input.isEmpty()) {
+            QChar key = input.trimmed().at(0).toUpper();
+            int found = -1;
+            for (int i = 0; i < m_candidates.size(); ++i) {
+                if (m_candidates[i].shortcut.toUpper() == key) { found = i; break; }
             }
-        }
-
-        if (!chosen) {
-            // 無效輸入，列出選項重試
-            if (cmdMgr) {
-                QStringList keys;
-                for (const auto& o : m_menuOptions)
-                    keys << QString("%1=%2").arg(o.key).arg(o.label);
-                cmdMgr->printError(
-                    QString("無效選項，請輸入：%1").arg(keys.join(" / ")));
+            if (found < 0) {
+                if (cmdMgr)
+                    cmdMgr->printError(
+                        QString("無效選項，請輸入：%1，或按 Tab/Space 切換候選")
+                        .arg(GeneralDimClassifier::candidatesPrompt(m_candidates, m_candidateIndex)));
+                return;  // 留在 WaitCandidate
             }
-            return;  // 留在 WaitMenu
+            confirmIndex = found;
         }
 
-        m_type = chosen->type;
-
-        if (chosen->needSecond) {
-            // 選「量距第二點」→ 進 WaitSecond
-            transitionToWaitSecond();
-        } else {
-            // 直接確定類型，進 WaitDimPlace
-            if (cmdMgr)
-                cmdMgr->printMessage(
-                    QString("  類型: %1").arg(constraintTypeName()));
-            updateDimPreview(nullptr);
-            transitionToWaitDimPlace();
-        }
-        return;
-    }
-
-    // ── WaitArcType（舊路徑，保留相容）────────────────────────────────────────
-    if (m_state == State::WaitArcType) {
-        if (input.compare("L", Qt::CaseInsensitive) == 0)
-            m_type = cad::ConstraintType::FixedArcLength;
-        else
-            m_type = cad::ConstraintType::FixedRadius;
-        transitionToWaitDimPlace();
+        confirmCandidate(confirmIndex);
         return;
     }
 
@@ -966,18 +943,103 @@ void GeneralDimCommand::onCancelled(const QVariant&) {
 // 狀態轉換
 // ─────────────────────────────────────────────────────────────────────────────
 
-void GeneralDimCommand::transitionToWaitMenu(
-    const QList<MenuOption>& options, const QString& prompt)
+void GeneralDimCommand::transitionToWaitCandidate(
+    const QList<cad::GeneralDimClassifier::Candidate>& candidates)
 {
-    m_state       = State::WaitMenu;
-    m_menuOptions = options;
+    m_state          = State::WaitCandidate;
+    m_candidates     = candidates;
+    m_candidateIndex = 0;
+
+    // Auto_DIM.md 精神：滑鼠為主，鍵盤只在輸入數據時使用。
+    // 只有一個候選、且不需要再選第二個幾何時（例如兩點距離、兩線角度、
+    // 兩線間距...絕大多數「2 個幾何」的情況都只有單一候選），
+    // 不需要使用者再按任何鍵確認型別，直接進下一步。
+    if (candidates.size() == 1 && !candidates[0].needsSecondPick) {
+        confirmCandidate(0);
+        return;
+    }
+
+    subscribeStringInput();     // Enter / 快捷字母 確認（保留給鍵盤慣用者/邊緣情況）
+    subscribeCandidateCycle();  // Tab / Space 循環（見 CadView::keyPressEvent）
+    // GEOM_HOVER 在 Idle/WaitSecond 已訂閱過；WaitCandidate 繼續沿用同一份
+    // 訂閱，讓 onGeomHover() 能在候選選擇階段也用滑鼠位置即時切換候選
+    // （見 onGeomHover 的 WaitCandidate 分支，Auto_DIM.md 第八節）
+    subscribeGeomHover();
+
+    applyHighlightedCandidate();
+}
+
+void GeneralDimCommand::confirmCandidate(int index) {
+    if (index < 0 || index >= m_candidates.size()) return;
+    const auto& chosen = m_candidates[index];
+    m_candidateIndex = index;
+
+    // 若此候選帶有 pairedRefs（例如線段的水平/垂直投影，實際量測對象是
+    // 該線的兩個端點，不是線本身的 WholeGeom 參考），確認後永久替換
+    // m_refs——之後 measureCurrentValue()/commitDimension() 都直接沿用
+    // m_refs，不需要另外改動這些既有函式。
+    if (!chosen.pairedRefs.isEmpty())
+        m_refs = chosen.pairedRefs;
+
+    applyHighlightedCandidate();  // 確保 m_type/m_distMode 對應到 index
+
+    auto* cmdMgr = core::CommandLineManager::instance();
+    if (chosen.needsSecondPick) {
+        // 選「量距第二點」→ 進 WaitSecond
+        transitionToWaitSecond();
+    } else {
+        if (cmdMgr)
+            cmdMgr->printMessage(
+                QString("  類型: %1").arg(constraintTypeName()));
+        updateDimPreview(nullptr);
+        transitionToWaitDimPlace();
+    }
+}
+
+/// 依 m_candidateIndex 把候選內容套用到 m_type/m_distMode，更新預覽與命令列提示。
+/// AnnotationKind → ConstraintType 的轉換沿用 Phase 1 提供的
+/// annotationKindToConstraintType()，讓 GeneralDimCommand 內部（測量/預覽/
+/// commit）維持既有、已驗證過的 ConstraintType 邏輯不變。
+void GeneralDimCommand::applyHighlightedCandidate()
+{
+    if (m_candidates.isEmpty()) return;
+    const auto& c = m_candidates[m_candidateIndex];
+
+    auto ct = cad::annotationKindToConstraintType(c.kind);
+    if (ct) m_type = *ct;
+    m_distMode = c.distMode;
+    m_useSupplementAngle = c.useSupplementAngle;
+
+    if (!c.pairedRefs.isEmpty()) {
+        // 例如「水平投影/垂直投影」：暫時代入衍生的端點 refs 算預覽，
+        // 算完立刻還原，這樣使用者還能 Tab 回其他候選（例如「線長」），
+        // 不會因為預覽而永久改掉目前的選取狀態
+        QList<cad::GeomRef> saved = m_refs;
+        m_refs = c.pairedRefs;
+        updateDimPreview(nullptr);
+        m_refs = saved;
+    } else {
+        updateDimPreview(nullptr);
+    }
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) {
-        cmdMgr->showPrompt(prompt);
+        cmdMgr->showPrompt(
+            GeneralDimClassifier::candidatesPrompt(m_candidates, m_candidateIndex));
         cmdMgr->waitForInput(core::InputType::String);
     }
-    subscribeStringInput();
+}
+
+void GeneralDimCommand::onCandidateCycle(const QVariant& payload)
+{
+    if (m_state != State::WaitCandidate) return;
+    if (m_candidates.isEmpty()) return;
+
+    int direction = payload.toMap().value("direction", 1).toInt();
+    int n = m_candidates.size();
+    m_candidateIndex = ((m_candidateIndex + direction) % n + n) % n;  // 正確處理負數循環
+
+    applyHighlightedCandidate();
 }
 
 void GeneralDimCommand::transitionToWaitSecond()
@@ -992,16 +1054,6 @@ void GeneralDimCommand::transitionToWaitSecond()
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) cmdMgr->showPrompt("GDIM 再選一個幾何元素（或按 Enter 採用單選）");
-}
-
-void GeneralDimCommand::transitionToWaitArcType()
-{
-    m_state = State::WaitArcType;
-    auto* cmdMgr = core::CommandLineManager::instance();
-    if (cmdMgr) {
-        cmdMgr->showPrompt("GDIM 弧：半徑(R)/弧長(L)？");
-        cmdMgr->waitForInput(core::InputType::String);
-    }
 }
 
 void GeneralDimCommand::transitionToWaitDimPlace()
@@ -1138,8 +1190,55 @@ void GeneralDimCommand::commitDimension()
     }
 
     int dofBefore = sk->degreesOfFreedom();
-    sk->addConstraint(c);
-    SolveResult result = sk->solveConstraints();
+
+    // GDIM v2 Phase 6：重複尺寸偵測——commit 前檢查是否已存在相同標註，
+    // 有的話僅提醒（不阻擋），避免使用者誤以為建立失敗；仍會照常建立/更新
+    // （若剛好是同一組 refs+kind 再次標註，屬於使用者刻意調整位置等正常操作）。
+    auto akind = cad::constraintTypeToAnnotationKind(m_type);
+    if (akind) {
+        if (sk->findDuplicateAnnotation(m_refs, *akind)) {
+            if (cmdMgr)
+                cmdMgr->printMessage(
+                    tr("⚠ 已存在相同標註（%1），仍會建立此標註").arg(constraintTypeName()),
+                    core::MessageType::Warning);
+        }
+    }
+
+    // GDIM v2 Phase 1/6：優先走 SketchAnnotation 統一路徑（Phase 1 提供的
+    // annotationKindToConstraintType()/toImplicitConstraint() 確保產生的
+    // 隱含約束與過去直接 addConstraint() 完全等價）。只有在 m_type 是純
+    // 幾何約束型別（理論上 GDIM 不會走到，此處僅作防呆 fallback）時，
+    // 才退回舊的 addConstraint() 路徑。
+    SolveResult result;
+    if (akind) {
+        cad::SketchAnnotation ann;
+        ann.kind         = *akind;
+        ann.refs         = c.refs;
+        ann.value        = c.value;
+        ann.value2       = c.value2;
+        ann.paramExpr    = c.paramExpr;
+        ann.driving      = c.driving;
+        ann.distMode     = c.distMode;
+        ann.dimLineOffset = QVector2D(static_cast<float>(c.dimLineOffsetX),
+                                       static_cast<float>(c.dimLineOffsetY));
+
+        // GDIM v2 Phase 9：規範檢查（優先度最低，只提醒不阻擋）
+        for (const auto& w : cad::AnnotationStandardsChecker::checkAnnotation(ann, ann.value)) {
+            if (cmdMgr)
+                cmdMgr->printMessage(
+                    tr("⚠ [%1] %2").arg(w.code, w.message),
+                    core::MessageType::Warning);
+        }
+
+        sk->addAnnotation(ann);
+        // addAnnotation() 內部已呼叫過一次 solveConstraints()（driving 標註皆如此），
+        // 這裡再呼叫一次單純是為了取得 SolveResult 回傳值供下方訊息回報使用——
+        // 此時系統已收斂在同一組數值，重複求解成本可忽略、無數值風險。
+        result = sk->solveConstraints();
+    } else {
+        sk->addConstraint(c);
+        result = sk->solveConstraints();
+    }
     int dofAfter = sk->degreesOfFreedom();
 
     if (cmdMgr) {
@@ -1161,7 +1260,10 @@ void GeneralDimCommand::cleanup()
     unsubscribeAll();
     m_state          = State::Idle;
     m_refs.clear();
-    m_menuOptions.clear();
+    m_candidates.clear();
+    m_candidateIndex = 0;
+    m_useSupplementAngle = false;
+    ++m_pendingConfirmToken;  // 讓任何待定的延遲自動確認（見 onGeomPicked）失效
     m_originalLineRef = cad::GeomRef{};
     m_pendingValue   = 0.0;
     m_pendingExpr.clear();

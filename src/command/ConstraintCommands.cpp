@@ -10,6 +10,7 @@
 #include "CommandAlias.h"
 #include "CommandManager.h"
 #include "GeneralDimCommand.h"
+#include "LeaderNoteCommand.h"
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
 #include "../cad/Sketch.h"
@@ -1042,6 +1043,11 @@ void registerConstraintCommands(core::Application* app)
     cmdMgr->registerCommand("GDIM", QStringList{"GD"},
         []() -> Command* { return new GeneralDimCommand(); });
     aliasMgr->registerAlias("GD", "GDIM", "General Dimension", true);
+
+    // GDIM v2 Phase 8：Leader / Hole Note
+    cmdMgr->registerCommand("LEADER", QStringList{"LN"},
+        []() -> Command* { return new LeaderNoteCommand(); });
+    aliasMgr->registerAlias("LN", "LEADER", "Leader / Hole Note", true);
 
     qDebug() << "[ConstraintCommands] Registered" << 24 << "constraint commands and aliases.";
 }

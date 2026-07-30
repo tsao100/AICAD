@@ -29,6 +29,8 @@
 #include "core/geometry/ProjectOrigin.h"
 
 #include "cad/sketch/DimensionLineAIS.h"
+#include <AIS_ListOfInteractive.hxx>
+#include <algorithm>
 #include "cad/sketch/ConstraintSymbolAIS.h"
 #include "cad/sketch/SketchConstraint.h"
 #include "cad/sketch/SketchAxisAIS.h"
@@ -3504,6 +3506,50 @@ void CadView::mouseDoubleClickEvent(QMouseEvent* event) {
 // startDimValueEdit — 建立/定位行內編輯欄，預填目前數值或表達式
 // ─────────────────────────────────────────────────────────────────────────────
 
+// GDIM v2 Phase 7：碰撞偵測（見 CadView.h 的說明與限制）
+QList<CadView::AnnotationCollision> CadView::checkAnnotationCollisions() const {
+    QList<AnnotationCollision> collisions;
+
+    Handle(AIS_InteractiveContext) ctx = context();
+    Handle(V3d_View) v = view();
+    if (ctx.IsNull() || v.IsNull()) return collisions;
+
+    // 沒有精確字型量測，用「字元數 × 固定像素寬」＋固定行高近似估計文字方框
+    constexpr int kCharPxWidth  = 7;
+    constexpr int kLabelPxHeight = 9;
+
+    struct ScreenLabel { QString ownerUuid; int x1, y1, x2, y2; };
+    QList<ScreenLabel> labels;
+
+    AIS_ListOfInteractive displayed;
+    ctx->DisplayedObjects(displayed);
+    for (AIS_ListIteratorOfListOfInteractive it(displayed); it.More(); it.Next()) {
+        Handle(aicad::cad::AIS_DimensionLine) dim =
+            Handle(aicad::cad::AIS_DimensionLine)::DownCast(it.Value());
+        if (dim.IsNull()) continue;
+
+        for (const auto& region : dim->labelRegions()) {
+            Standard_Integer sx = 0, sy = 0;
+            v->Convert(region.pos.X(), region.pos.Y(), region.pos.Z(), sx, sy);
+            int halfW = std::max(10, static_cast<int>(region.text.length()) * kCharPxWidth / 2);
+            int halfH = kLabelPxHeight;
+            labels.append({dim->constraintUuid(),
+                            sx - halfW, sy - halfH, sx + halfW, sy + halfH});
+        }
+    }
+
+    for (int i = 0; i < labels.size(); ++i) {
+        for (int j = i + 1; j < labels.size(); ++j) {
+            const auto& a = labels[i];
+            const auto& b = labels[j];
+            if (a.ownerUuid == b.ownerUuid) continue;  // 同一條尺寸線自己的多個標籤不算碰撞
+            bool overlap = !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
+            if (overlap) collisions.append({a.ownerUuid, b.ownerUuid});
+        }
+    }
+    return collisions;
+}
+
 void CadView::startDimValueEdit(const Handle(aicad::cad::AIS_DimensionLine)& dimAIS) {
     if (dimAIS.IsNull()) return;
 
@@ -3802,6 +3848,22 @@ void CadView::keyPressEvent(QKeyEvent* event) {
         if (d->mode == InteractionMode::Sketching) {
             // TODO: 完成當前繪圖
         }
+        return;
+    }
+
+    // ── GDIM v2 Phase 2：WaitCandidate 多候選循環（Tab/Space 切換，取代舊的
+    //    「輸入字母選單」機制）。僅在 GetGeom 模式下攔截，不影響 Sketching
+    //    模式下 Space＝結束命令、或框選模式下 Space＝完成多邊形的既有行為。
+    if ((event->key() == Qt::Key_Tab || event->key() == Qt::Key_Space) &&
+        d->mode == InteractionMode::GetGeom) {
+        int direction = (event->modifiers() & Qt::ShiftModifier) ? -1 : +1;
+        EventBus* bus = Application::instance()->eventBus();
+        if (bus) {
+            QVariantMap m;
+            m["direction"] = direction;
+            bus->publish(Events::CANDIDATE_CYCLE, m);
+        }
+        event->accept();
         return;
     }
 

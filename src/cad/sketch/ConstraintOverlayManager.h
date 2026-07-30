@@ -2,6 +2,7 @@
 #include "SketchConstraint.h"
 #include "ConstraintSymbolAIS.h"
 #include "DimensionLineAIS.h"
+#include "LeaderNoteAIS.h"
 #include "SketchPointAIS.h"
 #include <QObject>
 #include <QHash>
@@ -60,6 +61,15 @@ public:
     Handle(AIS_DimensionLine) dimLineAISForConstraint(const QString& constraintUuid) const;
 
     /**
+     * GDIM v2 Phase 4：輕量刷新——只重新計算指定標註對應的
+     * AIS_DimensionLine 顯示文字（Prefix/Suffix/Tolerance/Precision/
+     * Basic/Inspection），不觸發 solveConstraints()、不 rebuildAll()。
+     * annotationUuid 對應的 AIS 不存在時安靜略過（例如標註剛建立、
+     * AIS 尚未由 rebuildAll() 產生時）。
+     */
+    void refreshAnnotation(const QString& annotationUuid);
+
+    /**
      * 取得指定約束的幾何符號 AIS 物件（供 EraseCommand 互動取物時 hover 高亮使用）
      */
     Handle(AIS_ConstraintSymbol) symbolAISForConstraint(const QString& constraintUuid) const;
@@ -102,6 +112,7 @@ private:
 
     // ✅ Task D: 重建 SketchPoint AIS 物件
     void rebuildPoints();
+    void rebuildLeaderNotes();  ///< GDIM v2 Phase 8
 
     Handle(AIS_InteractiveContext)                m_ctx;
     Mode                                          m_mode = Mode::Master;
@@ -113,6 +124,7 @@ private:
 
     QHash<QString, Handle(AIS_ConstraintSymbol)>  m_geomSymbols;
     QHash<QString, Handle(AIS_DimensionLine)>     m_dimLines;
+    QHash<QString, Handle(AIS_LeaderNote)>        m_leaderNotes;  ///< GDIM v2 Phase 8
     QHash<QString, Handle(SketchPointAIS)>        m_pointAISMap;  // ✅ Task D
 };
 

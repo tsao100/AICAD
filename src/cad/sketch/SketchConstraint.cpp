@@ -219,6 +219,7 @@ QJsonObject SketchConstraint::toJson() const {
     o["distMode"]  = static_cast<int>(distMode);
     o["dimOffX"]   = dimLineOffsetX;
     o["dimOffY"]   = dimLineOffsetY;
+    if (!implicitOf.isEmpty()) o["implicitOf"] = implicitOf;
     QJsonArray arr;
     for (const auto& r : refs) arr.append(r.toJson());
     o["refs"] = arr;
@@ -236,6 +237,7 @@ SketchConstraint SketchConstraint::fromJson(const QJsonObject& j) {
     c.distMode  = static_cast<DistanceMode>(j["distMode"].toInt(0));
     c.dimLineOffsetX = j["dimOffX"].toDouble(0.0);
     c.dimLineOffsetY = j["dimOffY"].toDouble(0.0);
+    c.implicitOf     = j["implicitOf"].toString();
     for (const auto& rv : j["refs"].toArray())
         c.refs.append(GeomRef::fromJson(rv.toObject()));
     return c;

@@ -35,6 +35,7 @@
 #include "core/MenuParser.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
+#include "cad/sketch/AnnotationStandardsChecker.h"
 #include "cad/sketch/SketchPointAIS.h"
 #include "cad/Plane.h"
 #include "cad/PlaneManager.h"
@@ -123,6 +124,11 @@ public:
     MainWindow* mainWindow;
     FeatureBrowser* featureBrowser;
     PropertyPanel* propertyPanel;
+    // GDIM v2 Phase 4：PropertyPanel 目前正在顯示哪個標註（Mini Toolbar），
+    // 供 propertyChanged 寫回時判斷目標；為空字串代表目前顯示的是
+    // Feature 屬性（showFeatureProperties），而非標註屬性。
+    cad::Sketch* propAnnotationSketch = nullptr;
+    QString      propAnnotationUuid;
     ToolManager* toolManager;
     view::CadView* cadView;          // ✅ 添加
     core::MenuParser* menuParser;  // 新增
@@ -460,6 +466,69 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         qDebug() << "[UIManager] Creating PropertyPanel...";
         d->propertyPanel = new PropertyPanel(d->mainWindow);
         d->mainWindow->addDockWidget(Qt::RightDockWidgetArea, d->propertyPanel);
+
+        // GDIM v2 Phase 4：Mini Toolbar 寫回。propertyChanged 目前僅在
+        // showAnnotationProperties() 顯示標註屬性時有意義（d->propAnnotationUuid
+        // 非空）；showFeatureProperties() 顯示一般 Feature 屬性時
+        // d->propAnnotationUuid 為空，這裡直接略過（維持既有行為不變）。
+        connect(d->propertyPanel, &PropertyPanel::propertyChanged,
+                this, [this](const QString& name, const QVariant& value) {
+            if (d->propAnnotationUuid.isEmpty() || !d->propAnnotationSketch) return;
+            cad::Sketch* sk = d->propAnnotationSketch;
+            cad::SketchAnnotation* ann = sk->findAnnotation(d->propAnnotationUuid);
+            if (!ann) return;
+
+            if (name == tr("字首 Prefix")) {
+                ann->prefix = value.toString();
+            } else if (name == tr("字尾 Suffix")) {
+                ann->suffix = value.toString();
+            } else if (name == tr("精度 Precision")) {
+                bool ok = false;
+                int p = value.toInt(&ok);
+                if (ok && p >= 0) ann->precision = p;
+            } else if (name == tr("公差模式")) {
+                QString v = value.toString();
+                if (v == tr("無"))        ann->tolerance.mode = cad::ToleranceMode::None;
+                else if (v == tr("對稱±")) ann->tolerance.mode = cad::ToleranceMode::Symmetric;
+                else if (v == tr("偏差+/-")) ann->tolerance.mode = cad::ToleranceMode::Deviation;
+                else if (v == tr("極限值"))  ann->tolerance.mode = cad::ToleranceMode::Limit;
+                else if (v == tr("Basic")) ann->tolerance.mode = cad::ToleranceMode::Basic;
+            } else if (name == tr("公差上限")) {
+                bool ok = false; double v = value.toDouble(&ok);
+                if (ok) ann->tolerance.upper = v;
+            } else if (name == tr("公差下限")) {
+                bool ok = false; double v = value.toDouble(&ok);
+                if (ok) ann->tolerance.lower = v;
+            } else if (name == tr("Basic Dimension")) {
+                ann->isBasic = (value.toString() == tr("是"));
+            } else if (name == tr("Inspection Dimension")) {
+                ann->isInspection = (value.toString() == tr("是"));
+            } else {
+                return;  // 不認得的欄位（理論上不會發生）
+            }
+
+            // addAnnotation() 依 uuid 判斷為「更新」；prefix/suffix/tolerance/
+            // precision/isBasic/isInspection 皆為純顯示屬性，不影響
+            // refs/value/driving，因此隱含約束內容與 DOF 都不受影響。
+            // 注意：Sketch::addAnnotation() 目前對所有 driving==true 的標註
+            // 一律呼叫 solveConstraints()（沿用既有、統一的同步路徑），
+            // 所以這裡實際上會觸發一次完整 rebuildAll()（其中
+            // createSymbolFor() 已會重新掛載 annotation，見該函式）；
+            // 隨後的 annotationAdded → refreshAnnotation() 屬於保險的
+            // 輕量二次刷新（AIS 已是最新內容，此步驟為 no-op，僅在
+            // rebuildAll 之外的路徑——例如未來非 driving 的顯示更新——
+            // 才會是唯一真正生效的刷新）。以未變更數值重新求解一次，
+            // 對現有已驗證過的求解器邏輯不構成風險（收斂於同一組數值）。
+            sk->addAnnotation(*ann);
+
+            // GDIM v2 Phase 9：規範檢查（只提醒，不阻擋寫回）
+            for (const auto& w : cad::AnnotationStandardsChecker::checkAnnotation(*ann, ann->value)) {
+                if (d->commandLineManager)
+                    d->commandLineManager->printMessage(
+                        tr("⚠ [%1] %2").arg(w.code, w.message),
+                        core::MessageType::Warning);
+            }
+        });
 
         // 4. 建立工具管理器
         qDebug() << "[UIManager] Creating ToolManager...";
@@ -2989,14 +3058,24 @@ void UIManager::setupSketchPanel()
     // 尺寸線點擊（SketchPanel 的 slot 已處理，此處轉發給 ParameterPanel）
     connect(d->sketchPanel,
             &SketchPanel::dimensionConstraintClicked,
-            this, [](const QString& uuid,
+            this, [this](const QString& uuid,
                          cad::ConstraintOverlayManager::Mode mode,
                          const QString& instanceId) {
-        Q_UNUSED(uuid)
         if (mode == cad::ConstraintOverlayManager::Mode::Instance) {
             // 找到對應 instance 並切換 ParameterPanel 顯示
             // （Document 查找留給後續 command layer 實作）
             Q_UNUSED(instanceId)
+            return;
+        }
+
+        // GDIM v2 Phase 4：Master 模式下，若這條尺寸線對應到一個
+        // SketchAnnotation（implicitOf == uuid，見 Sketch::addImplicitConstraint），
+        // 顯示 Mini Toolbar；否則維持舊行為（純 SketchConstraint，無 Mini Toolbar）。
+        cad::Sketch* sk = currentActiveSketch();
+        if (sk && sk->findAnnotation(uuid)) {
+            showAnnotationProperties(sk, uuid);
+            auto* bus = core::Application::instance()->eventBus();
+            if (bus) bus->publish(core::Events::ANNOTATION_SELECTED, uuid);
         }
     });
 
@@ -3251,6 +3330,40 @@ void UIManager::applyConstraintToSketch(cad::Sketch* sketch,
     int dof = sketch->degreesOfFreedom();
     QString msg = tr("約束已加入 [DOF: %1]").arg(dof);
     showCommandMessage(msg, dof == 0 ? "lime" : "cyan");
+}
+
+void UIManager::showAnnotationProperties(cad::Sketch* sketch, const QString& annotationUuid) {
+    auto* panel = d->propertyPanel;
+    if (!panel || !sketch) return;
+
+    cad::SketchAnnotation* ann = sketch->findAnnotation(annotationUuid);
+    if (!ann) return;
+
+    panel->clear();
+    d->propAnnotationSketch = sketch;
+    d->propAnnotationUuid   = annotationUuid;
+
+    panel->addProperty(tr("字首 Prefix"), ann->prefix, /*editable*/true);
+    panel->addProperty(tr("字尾 Suffix"), ann->suffix, /*editable*/true);
+    panel->addProperty(tr("精度 Precision"), ann->precision, /*editable*/true);
+
+    QString toleranceModeStr;
+    switch (ann->tolerance.mode) {
+    case cad::ToleranceMode::None:      toleranceModeStr = tr("無");      break;
+    case cad::ToleranceMode::Symmetric: toleranceModeStr = tr("對稱±");   break;
+    case cad::ToleranceMode::Deviation: toleranceModeStr = tr("偏差+/-"); break;
+    case cad::ToleranceMode::Limit:     toleranceModeStr = tr("極限值");  break;
+    case cad::ToleranceMode::Basic:     toleranceModeStr = tr("Basic");   break;
+    }
+    // 提示可輸入的合法值放在說明列，避免使用者不知道要打什麼
+    panel->addProperty(tr("公差模式"), toleranceModeStr, /*editable*/true);
+    panel->addProperty(tr("公差模式可選值"),
+                        tr("無 / 對稱± / 偏差+/- / 極限值 / Basic"), false);
+    panel->addProperty(tr("公差上限"), ann->tolerance.upper, /*editable*/true);
+    panel->addProperty(tr("公差下限"), ann->tolerance.lower, /*editable*/true);
+
+    panel->addProperty(tr("Basic Dimension"),      ann->isBasic ? tr("是") : tr("否"), true);
+    panel->addProperty(tr("Inspection Dimension"), ann->isInspection ? tr("是") : tr("否"), true);
 }
 
 void UIManager::showFeatureProperties(cad::Feature* feature) {

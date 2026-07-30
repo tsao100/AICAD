@@ -41,6 +41,25 @@ void ConstraintOverlayManager::attachMaster(Sketch* sketch, const gp_Trsf& toWor
     connect(sketch, &Sketch::constraintSolved,
             this, [this](SolveResult){ rebuildAll(); });
 
+    // GDIM v2 Phase 4：Mini Toolbar 編輯 Prefix/Suffix/Tolerance/Precision/
+    // Basic/Inspection 等純顯示屬性後，走這條「輕量刷新」路徑，只重新計算
+    // 對應那一個 AIS_DimensionLine 的顯示文字，不觸發 solveConstraints()
+    // （這些屬性對幾何求解無意義，見 SketchAnnotation 設計說明）。
+    connect(sketch, &Sketch::annotationAdded,
+            this, [this](const QString& uuid){
+        refreshAnnotation(uuid);
+        // GDIM v2 Phase 8：LeaderNote 標註 driving 恆為 false，不會出現在
+        // m_dimLines（refreshAnnotation() 只認得 m_dimLines），因此新增/
+        // 更新 LeaderNote 時必須額外呼叫 rebuildLeaderNotes()。只在確實是
+        // LeaderNote 時才做，避免每次一般標註編輯都多一次不必要的重建。
+        if (m_sketch) {
+            if (auto* ann = m_sketch->findAnnotation(uuid)) {
+                if (ann->kind == AnnotationKind::LeaderNote)
+                    rebuildLeaderNotes();
+            }
+        }
+    });
+
     rebuildAll();
 }
 
@@ -153,6 +172,15 @@ void ConstraintOverlayManager::createSymbolFor(const SketchConstraint& c) {
         }
         // 套用已儲存的尺寸線偏移（使用者拖曳後存入 constraint）
         dim->setDimLineOffset(c.dimLineOffsetX, c.dimLineOffsetY);
+
+        // GDIM v2 Phase 4：若這是由 SketchAnnotation 產生的隱含約束
+        // （implicitOf 非空），掛載對應標註，讓 labelText() 套用
+        // Prefix/Suffix/Tolerance/Precision/Basic/Inspection
+        if (!c.implicitOf.isEmpty() && m_sketch) {
+            if (SketchAnnotation* ann = m_sketch->findAnnotation(c.implicitOf))
+                dim->setAnnotation(*ann);
+        }
+
         m_dimLines[c.uuid] = dim;
         m_ctx->Display(dim, Standard_False);
         if (!m_visible) m_ctx->Erase(dim, Standard_False);
@@ -224,11 +252,14 @@ void ConstraintOverlayManager::clearAll() {
         for (auto& dim : m_dimLines)    m_ctx->Remove(dim, Standard_False);
         // ✅ Task D: 清除點 AIS
         for (auto& pt  : m_pointAISMap) m_ctx->Remove(pt,  Standard_False);
+        // GDIM v2 Phase 8：清除 Leader Note AIS
+        for (auto& ln  : m_leaderNotes) m_ctx->Remove(ln,  Standard_False);
         m_ctx->UpdateCurrentViewer();
     }
     m_geomSymbols.clear();
     m_dimLines.clear();
     m_pointAISMap.clear();  // ✅ Task D
+    m_leaderNotes.clear();  // GDIM v2 Phase 8
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -245,6 +276,11 @@ void ConstraintOverlayManager::rebuildAll() {
 
     // ✅ Task D: 重建 SketchPoint AIS 物件
     rebuildPoints();
+
+    // GDIM v2 Phase 8：重建 Leader Note AIS（僅 Master 模式；
+    // LeaderNote 標註 driving 恆為 false，不出現在 constraints 清單，
+    // 必須另外走 m_sketch->annotations() 這條路徑）
+    rebuildLeaderNotes();
 
     if (!m_ctx.IsNull())
         m_ctx->UpdateCurrentViewer();
@@ -323,6 +359,25 @@ Handle(AIS_DimensionLine) ConstraintOverlayManager::dimLineAISForConstraint(
     return m_dimLines.value(constraintUuid);
 }
 
+void ConstraintOverlayManager::refreshAnnotation(const QString& annotationUuid) {
+    // 隱含約束的 uuid 恆等於其來源標註的 uuid（見 SketchAnnotation::toImplicitConstraint()）
+    auto it = m_dimLines.find(annotationUuid);
+    if (it == m_dimLines.end()) return;   // AIS 尚未建立（例如標註剛新增，rebuildAll 還沒跑），略過
+
+    Handle(AIS_DimensionLine) dimAIS = it.value();
+    if (dimAIS.IsNull() || !m_sketch) return;
+
+    SketchAnnotation* ann = m_sketch->findAnnotation(annotationUuid);
+    if (ann) dimAIS->setAnnotation(*ann);
+    else     dimAIS->clearAnnotation();
+
+    if (!m_ctx.IsNull()) {
+        m_ctx->RecomputePrsOnly(dimAIS, Standard_False);
+        m_ctx->RecomputeSelectionOnly(dimAIS);
+        m_ctx->UpdateCurrentViewer();
+    }
+}
+
 Handle(AIS_ConstraintSymbol) ConstraintOverlayManager::symbolAISForConstraint(
     const QString& constraintUuid) const
 {
@@ -344,6 +399,33 @@ void ConstraintOverlayManager::rebuildPoints()
     for (const auto& obj : m_sketch->aisShapes()) {
         if (auto ptAis = Handle(SketchPointAIS)::DownCast(obj)) {
             m_pointAISMap.insert(ptAis->pointUuid(), ptAis);
+        }
+    }
+}
+
+// GDIM v2 Phase 8：Leader Note AIS 重建
+//
+// LeaderNote 標註（driving 恆為 false，見 SketchAnnotation::toImplicitConstraint()）
+// 不會出現在 sourceConstraints() 清單中，因此不能沿用 createSymbolFor() 那條走
+// m_constraints 的路徑，改直接走 m_sketch->annotations()。
+void ConstraintOverlayManager::rebuildLeaderNotes()
+{
+    if (m_mode != Mode::Master || !m_sketch) return;
+
+    for (const auto& ann : m_sketch->annotations()) {
+        if (ann.kind != AnnotationKind::LeaderNote) continue;
+        if (ann.refs.isEmpty()) continue;
+
+        QVector2D targetPos = ann.refs[0].resolvePosition(m_sketch);
+
+        Handle(AIS_LeaderNote) ln = m_leaderNotes.value(ann.uuid);
+        if (ln.IsNull()) {
+            ln = new AIS_LeaderNote(ann, targetPos, m_toWorld);
+            m_leaderNotes[ann.uuid] = ln;
+            if (!m_ctx.IsNull()) m_ctx->Display(ln, Standard_False);
+        } else {
+            ln->Update(ann, targetPos);
+            if (!m_ctx.IsNull()) m_ctx->Redisplay(ln, Standard_False);
         }
     }
 }

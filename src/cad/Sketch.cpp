@@ -99,6 +99,7 @@ void Sketch::removeGeometry(int index) {
     if (index >= 0 && index < m_geometries.size()) {
         QString uuid = m_geometries[index]->uuid;
         removeConstraintsOf(uuid);          // ← 新增
+        removeAnnotationsOf(uuid);          // ← GDIM v2 Phase 1：連同標註一併清除
         delete m_geometries.takeAt(index);
         Q_EMIT geometryChanged();
         Q_EMIT rebuildRequested();
@@ -916,10 +917,22 @@ QJsonObject Sketch::toJson() const {
 
     // Phase 1 重構後：Point 已統一在 "geometries" 陣列中，不需要獨立儲存
 
+    // GDIM v2 Phase 1：schemaVersion=2 起，"constraints" 只存「純約束」，
+    // implicitOf 非空的隱含約束（由 SketchAnnotation 產生）排除在外，
+    // 改由 "annotations" 陣列儲存、載入後由 addAnnotation() 重新生成，
+    // 避免資料重複、也避免舊隱含約束值與標註值不同步。
     QJsonArray conArr;
-    for (const auto& c : m_constraints)
+    for (const auto& c : m_constraints) {
+        if (!c.implicitOf.isEmpty()) continue;
         conArr.append(c.toJson());
+    }
     json["constraints"] = conArr;
+
+    QJsonArray annArr;
+    for (const auto& a : m_annotations)
+        annArr.append(a.toJson());
+    json["annotations"]    = annArr;
+    json["schemaVersion"]  = 2;
 
     // ✅ 儲存 Sketch 自身的參數（cant、H 等），否則重新載入後參數列表會消失
     if (m_parameterStore)
@@ -1187,6 +1200,20 @@ bool Sketch::fromJson(const QJsonObject& json) {
             m_constraints.append(SketchConstraint::fromJson(v.toObject()));
     }
 
+    // GDIM v2 Phase 1：讀取標註（schemaVersion >= 2）。
+    // 舊檔（無 "annotations" 欄位、schemaVersion 缺省視為 1）目前尚無自動
+    // 遷移路徑內嵌於此處——請改用隨附的一次性腳本
+    // tools/migrate_gdim_schema_v2.py 離線轉檔（見該腳本說明），
+    // 避免在 runtime 為每個舊欄位寫 fallback 判斷式。
+    m_annotations.clear();
+    if (json.contains("annotations")) {
+        for (const QJsonValue& v : json["annotations"].toArray())
+            m_annotations.append(SketchAnnotation::fromJson(v.toObject()));
+        // 依標註內容重新生成隱含約束（存檔時已被排除，避免與標註值不同步）
+        for (const auto& a : m_annotations)
+            addImplicitConstraint(a);
+    }
+
     // ✅ 還原 Sketch 自身的參數（cant、H 等），確保重新載入後參數列表正常顯示
     if (json.contains("parameters")) {
         parameterStore()->fromJson(json["parameters"].toObject());
@@ -1264,6 +1291,122 @@ void Sketch::removeConstraintsOf(const QString& geomUuid) {
                                               [&](const GeomRef& r){ return r.geomUuid == geomUuid; });
                        }),
         m_constraints.end());
+}
+
+// ── 標註管理（GDIM v2 Phase 1）─────────────────────────────────────────────
+
+void Sketch::addImplicitConstraint(const SketchAnnotation& a) {
+    // 先移除舊的（若存在），再視需要重新加入，簡化「同步」邏輯
+    removeImplicitConstraint(a.uuid);
+
+    auto implicit = a.toImplicitConstraint();
+    if (!implicit) return;   // driving==false 或 LeaderNote 等非尺寸型別
+
+    // 驗證參考幾何存在，行為與 addConstraint 一致
+    for (const GeomRef& ref : implicit->refs) {
+        bool found = std::any_of(m_geometries.begin(), m_geometries.end(),
+                                 [&](const SketchGeometry* g){ return g->uuid == ref.geomUuid; });
+        if (!found) {
+            qWarning() << "[Sketch] addImplicitConstraint: geom not found:" << ref.geomUuid;
+            return;
+        }
+    }
+    m_constraints.append(*implicit);
+}
+
+void Sketch::removeImplicitConstraint(const QString& annotationUuid) {
+    m_constraints.erase(
+        std::remove_if(m_constraints.begin(), m_constraints.end(),
+                       [&](const SketchConstraint& c){ return c.implicitOf == annotationUuid; }),
+        m_constraints.end());
+}
+
+QString Sketch::addAnnotation(const SketchAnnotation& a) {
+    SketchAnnotation* existing = findAnnotation(a.uuid);
+    if (existing) {
+        *existing = a;
+    } else {
+        m_annotations.append(a);
+    }
+    addImplicitConstraint(a);
+    if (a.driving)
+        solveConstraints();   // 觸發 constraintSolved → ConstraintOverlayManager::rebuildAll()，
+                               // 確保下面 annotationAdded 觸發輕量刷新時 AIS 已存在
+    Q_EMIT annotationAdded(a.uuid);
+    return a.uuid;
+}
+
+bool Sketch::removeAnnotation(const QString& uuid) {
+    for (int i = 0; i < m_annotations.size(); ++i) {
+        if (m_annotations[i].uuid == uuid) {
+            m_annotations.removeAt(i);
+            removeImplicitConstraint(uuid);
+            Q_EMIT annotationRemoved(uuid);
+            solveConstraints();
+            return true;
+        }
+    }
+    return false;
+}
+
+SketchAnnotation* Sketch::findAnnotation(const QString& uuid) {
+    for (SketchAnnotation& a : m_annotations) {
+        if (a.uuid == uuid) return &a;
+    }
+    return nullptr;
+}
+
+QList<SketchAnnotation*> Sketch::annotationsOf(const QString& geomUuid) {
+    QList<SketchAnnotation*> result;
+    for (SketchAnnotation& a : m_annotations) {
+        bool refs_it = std::any_of(a.refs.begin(), a.refs.end(),
+                                   [&](const GeomRef& r){ return r.geomUuid == geomUuid; });
+        if (refs_it) result.append(&a);
+    }
+    return result;
+}
+
+void Sketch::removeAnnotationsOf(const QString& geomUuid) {
+    QList<QString> toRemove;
+    for (const SketchAnnotation& a : m_annotations) {
+        bool hit = std::any_of(a.refs.begin(), a.refs.end(),
+                               [&](const GeomRef& r){ return r.geomUuid == geomUuid; });
+        if (hit) toRemove.append(a.uuid);
+    }
+    for (const QString& uuid : toRemove) {
+        m_annotations.erase(
+            std::remove_if(m_annotations.begin(), m_annotations.end(),
+                           [&](const SketchAnnotation& a){ return a.uuid == uuid; }),
+            m_annotations.end());
+        removeImplicitConstraint(uuid);
+    }
+}
+
+// GDIM v2 Phase 6：重複尺寸偵測
+const SketchAnnotation* Sketch::findDuplicateAnnotation(
+    const QList<GeomRef>& refs, AnnotationKind kind) const
+{
+    auto sameRefs = [](const QList<GeomRef>& a, const QList<GeomRef>& b) {
+        if (a.size() != b.size()) return false;
+        QList<GeomRef> remaining = b;   // 不分順序比對（例如 A→B 距離與 B→A 距離視為相同）
+        for (const auto& ra : a) {
+            int idx = -1;
+            for (int i = 0; i < remaining.size(); ++i) {
+                if (remaining[i].geomUuid == ra.geomUuid && remaining[i].handle == ra.handle) {
+                    idx = i; break;
+                }
+            }
+            if (idx < 0) return false;
+            remaining.removeAt(idx);
+        }
+        return true;
+    };
+
+    for (const auto& a : m_annotations) {
+        if (a.kind != kind) continue;
+        if (sameRefs(a.refs, refs)) return &a;
+    }
+    return nullptr;
 }
 
 SolveResult Sketch::solveConstraints() {
