@@ -14,6 +14,8 @@ class AIS_GripHandle : public AIS_InteractiveObject
     DEFINE_STANDARD_RTTIEXT(AIS_GripHandle, AIS_InteractiveObject)
 
 public:
+    /// @param size Grip 的螢幕空間固定像素大小（Graphic3d_AspectMarker3d scale），
+    ///             不受視圖縮放影響 —— 比照 SketchPointAIS::drawEndpointMarker 的作法。
     explicit AIS_GripHandle(const GripPoint& grip, double size = 3.0);
 
     void SetPlaneAxes(const gp_Dir& xAxis, const gp_Dir& yAxis) {
@@ -36,7 +38,10 @@ public:
                           Standard_Integer mode) override;
 
 private:
-    gp_Dir  m_planeX = gp_Dir(1, 0, 0);  // 預設 world XY ← 這是 bug 根源
+    // ✅ 修正後 Compute() 改用螢幕空間 marker（AspectMarker3d），不再用
+    // m_planeX/m_planeY 建構模型空間方框，故以下兩個欄位目前僅保留供
+    // SetPlaneAxes() 呼叫相容，不影響繪製。
+    gp_Dir  m_planeX = gp_Dir(1, 0, 0);
     gp_Dir  m_planeY = gp_Dir(0, 1, 0);
     Quantity_Color colorForState(GripState s) const;
 

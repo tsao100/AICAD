@@ -1322,6 +1322,19 @@ void Document::showAllReferenceGeometry() {
     for (const ReferenceGeometry& refGeom : m_referenceGeometries) {
         if (!refGeom.aisObject.IsNull()) {
             m_aisContext->Display(refGeom.aisObject, Standard_False);
+
+            // ⚠️ 僅呼叫 Display() 不保證選取模式一定被(重新)啟用：物件先前被
+            //    Erase() 後其選取會被 Deactivate，之後單純再 Display() 在部分
+            //    OCCT 情境下並不會自動重新 Activate。過去因此造成第一次下
+            //    Sketch 指令時 XY/XZ/YZ 平面顯示了卻點不到，需要再下一次
+            //    Sketch 指令（Erase→Display 循環一次）才「意外」變成可選取。
+            //    此處明確依 selectable 旗標呼叫 Activate()/Deactivate()，
+            //    確保每次顯示都保證選取狀態正確、可重現。
+            if (refGeom.selectable) {
+                m_aisContext->Activate(refGeom.aisObject);
+            } else {
+                m_aisContext->Deactivate(refGeom.aisObject);
+            }
         }
     }
     m_aisContext->UpdateCurrentViewer();
@@ -1331,6 +1344,7 @@ void Document::showAllReferenceGeometry() {
 void Document::hideAllReferenceGeometry() {
     for (const ReferenceGeometry& refGeom : m_referenceGeometries) {
         if (!refGeom.aisObject.IsNull()) {
+            m_aisContext->Deactivate(refGeom.aisObject);
             m_aisContext->Erase(refGeom.aisObject, Standard_False);
         }
     }

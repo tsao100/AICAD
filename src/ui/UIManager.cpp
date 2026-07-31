@@ -391,6 +391,15 @@ void UIManager::initGripSystem()
                            if (!sk) sk = m_currentActiveSketch;
                            if (sk) d->cadView->showSketchAxes(sk);
                        }
+                       // ✅ 修正：displayAllFeatures() 的 RemoveAll 同樣會把
+                       // SketchPanel::enterSketchMode() 剛剛才顯示出來的約束
+                       // 符號/尺寸約束 AIS 物件整個移出 context —— 這正是
+                       // 「進入 sketch 編輯畫面閃一下、約束符號隨即消失」的
+                       // 成因。RemoveAll 之後必須跟草圖軸一樣重新顯示。
+                       if (d->sketchPanel && d->sketchPanel->overlay()) {
+                           d->sketchPanel->overlay()->rebuildAll();
+                           d->sketchPanel->overlay()->setVisible(true);
+                       }
                    });
 
     // ESC 取消 PickSession（若正在選點中）
@@ -3551,11 +3560,41 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
 
     auto* bus = core::Application::instance()->eventBus();
 
+    // ⚠️ 暫時性 workaround（尚未找到 OCCT 相機/視角切換的真正根因）：
+    //    實測發現「直接從另一個平面的 Sketch 切換過來編輯」會導致繪圖
+    //    平面錯誤並崩潰，但只要中間先強制切一次 isometric view、再切到
+    //    這個 Sketch 對應的正視圖，就完全正常。目前判斷這與 OCCT
+    //    V3d_View 的相機/投影矩陣在「兩個標準視圖之間直接切換」時，某些
+    //    內部狀態（例如 Camera 的 Up/Direction 或 SetPrivilegedPlane）
+    //    沒有被完整刷新有關；先經過 isometric 這個「非標準、三軸都不平行」
+    //    的中繼視角，等於強制讓 OCCT 把相機狀態完整重算一輪。
+    //    這裡先用這個方式讓功能可用，之後若能實際除錯/複現找到 OCCT 端
+    //    的真正根因，應移除此 workaround，直接呼叫下面對應的
+    //    setTopView()/setFrontView()/setRightView() + alignToPlane()。
+    if (d->cadView) {
+        d->cadView->setIsometricView();
+    }
+
     // OSnap 平面設定
     if (d->cadView && d->cadView->snapManager()) {
         d->cadView->snapManager()->setActivePlane(sketch->plane());
         d->cadView->snapManager()->setActiveSketch(sketch);
         d->cadView->snapManager()->setSnapEnabled(false);
+    }
+
+    // ⚠️ 根因修正：RubberBand（互動畫圖時的橡皮筋／預覽線——直線、SCS、
+    //    螺旋線等所有預覽圖形皆由它負責繪製）內部持有一份「自己的」
+    //    cad::Plane* 快取（見 RubberBand::Private::plane），只有在 CadView
+    //    建構當下用 PlaneManager::activePlane() 初始化一次；RubberBand::
+    //    setPlane() 這個公開介面在全專案中從未被呼叫過。也就是說，不管
+    //    使用者切換到哪個 Sketch、哪個平面編輯，RubberBand::planeToWorld()
+    //    永遠是用「應用程式啟動當下那個平面」（通常剛好是 XY）去把 2D 預覽
+    //    點轉成 3D 世界座標——這才是編輯 YZ 平面 Sketch 時，畫出來的圖形
+    //    沒有落在 YZ 平面上的真正原因；純粹修正 2D 座標計算
+    //    （screenToPlane()/screenToPlaneD()）並不會影響這個完全獨立、專責
+    //    視覺呈現的平面參考。此處補上遺漏的同步呼叫。
+    if (d->cadView && d->cadView->rubberBand() && sketch->plane()) {
+        d->cadView->rubberBand()->setPlane(sketch->plane());
     }
 
     // GripFilter / GripManager 平面軸向
@@ -3572,16 +3611,25 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
                 gp_Dir(qy.x(), qy.y(), qy.z()));
 
         cad::PlaneManager::instance()->setActivePlane(sketch->plane());
-        d->cadView->setViewType(d->cadView->viewType());
 
         // ✅ 正視於 Sketch Plane，並顯示格線（仿 ViewManager::onSketchCreated）
-        // 先呼叫 setTopView()/setFrontView()/setRightView() 同步 CadView 內部
-        // 記錄的 viewType（供其他 UI，如視圖工具列高亮使用），
-        // 再呼叫 alignToPlane() 由它做最終、正確的 Proj/Up 設定 ——
-        // 因為 setViewType() 在 viewType 未變動時會提前 return（不會呼叫
-        // updateProjection()），若 alignToPlane() 先執行，後續某些情況下的
-        // updateProjection() 仍可能覆蓋掉正確的 Up 向量。
+        //
+        // 順序很重要：先把 ViewGrid 內部的平面（d->plane）更新為這個 Sketch
+        // 的平面，再呼叫 setTopView()/setFrontView()/setRightView()／
+        // alignToPlane()。這幾個函式內部都可能連帶觸發 fitAll()（而 fitAll()
+        // 只要格線目前是啟用狀態就會呼叫 grid->update()）；如果格線的平面還
+        // 沒更新，這些「順便」觸發的 update() 會拿舊平面（例如上一個正在編輯
+        // 的 Sketch 的平面）計算格線範圍與基準面，等於多做一次錯誤結果，
+        // 雖然最後 alignToPlane() 與 fitAll() 仍會用正確平面再刷新一次、
+        // 表面上「最終結果正確」，但只要中間任何一步的假設改變（例如格線
+        // 尚未 show() 時的隱含 early-return），就可能讓錯誤的中間結果變成
+        // 最終顯示結果。把 grid->setPlane() 移到最前面，讓後續每一次
+        // update() 用的都已經是正確平面，徹底消除這個時序風險。
         cad::Plane* gridPlane = sketch->plane();
+
+        view::ViewGrid* grid = d->cadView->grid();
+        if (grid)
+            grid->setPlane(gridPlane);
 
         if (gridPlane->isXY()) {
             d->cadView->setTopView();
@@ -3593,10 +3641,6 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         // 自訂平面：alignToPlane 已對齊，不需額外設定標準視角
 
         d->cadView->alignToPlane(gridPlane);
-
-        view::ViewGrid* grid = d->cadView->grid();
-        if (grid)
-            grid->setPlane(gridPlane);
 
         d->cadView->setGridEnabled(true);
         d->cadView->fitAll();
@@ -3903,6 +3947,14 @@ void UIManager::onViewReady() {
     // ✅ 現在 view/context 已就緒，補上 GripManager/Filter 初始化
     if (d->gripManager && d->cadView)
         d->gripManager->setContext(d->cadView->context());
+    // ✅ 修正：先前只補了 setContext()，漏掉重新呼叫 setView()。
+    // GripManager::setView() 在此之前（view 尚未就緒時）就已經呼叫過一次，
+    // 當時拿到的是尚未就緒的 handle，導致 m_view 之後一直是空/無效的，
+    // hitTestGrip() 裡 `if (!m_view.IsNull())` 恆為 false，一律落到寫死的
+    // 50.0 fallback 門檻值 —— 這正是 Grip hover/點擊範圍異常固定在
+    // threshold=50 的成因。這裡補上正確、已就緒的 view。
+    if (d->gripManager && d->cadView)
+        d->gripManager->setView(d->cadView->view());
     if (d->gripFilter && d->cadView)
         d->gripFilter->setView(d->cadView->view());
 

@@ -31,7 +31,16 @@ AIS_ConstraintSymbol::AIS_ConstraintSymbol(
     , m_status(status)
 {
     m_symbolPos = computeSymbolPos();
-    SetInfiniteState(Standard_True);
+    // ✅ 修正：約束符號是位置固定的小圖標，不是真正的「無限」物件
+    // （無限物件應該是貫穿整個場景的軸線之類）。原本誤設為
+    // Standard_True，導致 OCCT 在 View 的 Z-clip 範圍尚未涵蓋這個
+    // 物件時，第一次 Display() 常常直接不畫出來，要等到之後一次
+    // Erase()+Display()（例如按下「顯示/隱藏約束符號」切換鈕觸發
+    // setVisible()）強迫重新計算才會顯示 —— 這正是「新增約束/開啟
+    // 已存檔 sketch 時符號不出現，需手動切換一次才顯示」的成因。
+    // 比照 SketchPointAIS / AIS_GripHandle / DimensionLineAIS，改為
+    // Standard_False。
+    SetInfiniteState(Standard_False);
 }
 
 void AIS_ConstraintSymbol::Update(

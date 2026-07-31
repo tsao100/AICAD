@@ -31,7 +31,10 @@ AIS_LeaderNote::AIS_LeaderNote(const SketchAnnotation& ann,
     , m_targetPos(targetPos)
     , m_sketchToWorld(sketchToWorld)
 {
-    SetInfiniteState(Standard_True);
+    // ✅ 同 ConstraintSymbolAIS 的修正：LeaderNote 也是位置固定的小型
+    // 標註物件，不該標記為無限物件，否則會有同樣「首次 Display() 常
+    // 常不畫出來，要等下一次 Erase()+Display() 才顯示」的問題。
+    SetInfiniteState(Standard_False);
 }
 
 void AIS_LeaderNote::Update(const SketchAnnotation& ann, const QVector2D& targetPos) {

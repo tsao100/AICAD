@@ -12,16 +12,28 @@ namespace aicad::command {
 /**
  * @brief GDIM — General Dimension 命令
  *
- * 先選取幾何，由 GeneralDimClassifier::classifyAll() 一次列出所有候選型別，
- * 再互動式設定尺寸線位置與數值。
+ * GDIM 昇級規劃 v3（無選單版，見《GDIM_滑鼠動作組合清單_無選單版.md》）：
  *
- * GDIM 昇級規劃 v2 — Phase 2：
- * 狀態機由 Idle → WaitSecond → WaitMenu → WaitArcType → WaitDimPlace →
- * WaitValue 簡化為 Idle → WaitSecond → WaitCandidate → WaitDimPlace →
- * WaitValue。WaitMenu/WaitArcType（字母選單）與 MenuKey/MenuOption 機制
- * 整套移除，統一併入 WaitCandidate：進入即列出 classifyAll() 全部結果、
- * 預覽第一個、TAB/SPACE 循環（見 CadView::keyPressEvent 發布的
- * Events::CANDIDATE_CYCLE）、Enter 或輸入快捷字母確認。
+ * 取代 v2 Phase 2 的候選陣列引擎（WaitCandidate / classifyAll() /
+ * Tab-Space 循環 / 快捷字母）。核心原則：**型別不是被選出來的，是被
+ * 「量」出來的**——遊標當下位置本身就是分類函式的輸入，點擊只是把
+ * 當下已經在預覽的型別鎖定下來。
+ *
+ * 狀態機由 Idle → WaitSecond → WaitCandidate → WaitDimPlace → WaitValue
+ * 簡化為 Idle → Anchored → WaitDimPlace → WaitValue：
+ *   - Idle     : 尚未鎖定任何幾何，hover 依 GeneralDimClassifier::inferSingle()
+ *                即時預覽單幾何型別。
+ *   - Anchored : 已鎖定第一個幾何（起點）。持續依滑鼠位置在「單幾何型別」
+ *                （沒有可配對的第二幾何時，inferSingle()）與「雙幾何型別」
+ *                （滑鼠落在可配對的第二幾何上時，inferPair()）之間即時切換
+ *                預覽。取代舊的 WaitSecond + WaitCandidate 兩個狀態。
+ *   - WaitDimPlace : 僅雙幾何型別會進入此階段（第二次點擊落在可配對的第二
+ *                幾何上）。移動滑鼠決定偏移位置，第三次點擊確認。
+ *   - WaitValue: Dynamic Input Jig 輸入數值／公式（沿用既有邏輯不變）。
+ *
+ * 單幾何型別＝2 次點擊（選起點、選型別兼定位，第 2 次點擊落在空白處或無法
+ * 配對的位置時直接鎖定）；雙幾何型別＝3 次點擊（選起點、選第二點兼定型、
+ * 定位）。不再有任何離散選單、候選陣列、Tab/Space 循環或字母快捷鍵。
  */
 class GeneralDimCommand : public Command {
     Q_OBJECT
@@ -30,18 +42,25 @@ public:
     CommandResult execute(const CommandContext& ctx) override;
     bool isInteractive() const override { return true; }
 
+    /// 右鍵／Esc 在 Idle 以外的任何階段都只退一步（見 onCancelled()/backTo*()），
+    /// 不應讓 CommandManager 把整個指令收掉。只有 Idle 狀態才真正允許
+    /// CommandManager::cancelCurrentCommand() 執行完整的 cleanup()/deleteLater()；
+    /// 其餘狀態一律回傳 false，COMMAND_CANCELLED 事件仍會發布（onCancelled() 走
+    /// 內部的「退一步」邏輯），但指令物件本身不會被摧毀。
+    bool canCancel() const override;
+
 private:
     enum class State {
-        Idle,           ///< 等待第一個幾何
-        WaitSecond,     ///< 等待第二個幾何（點狀 / 選了「量距第二點」候選後）
-        WaitCandidate,  ///< 等待使用者從候選陣列中確認一個標註型別（Phase 2）
-        WaitDimPlace,   ///< PlaceDimLine 模式，等待點擊確認偏移
+        Idle,           ///< 等待第一個幾何（起點）
+        Anchored,       ///< 已鎖定起點，持續依滑鼠位置即時切換單/雙幾何型別預覽
+        WaitDimPlace,   ///< （僅雙幾何型別）PlaceDimLine 模式，等待點擊確認偏移
         WaitValue,      ///< 等待使用者輸入數值/表達式
     };
 
     State                m_state         = State::Idle;
-    QList<cad::GeomRef>  m_refs;
-    cad::GeomRef         m_originalLineRef;  ///< FixedLength 切換 H/V 時保存的原始單 ref
+    QList<cad::GeomRef>  m_refs;         ///< 目前鎖定/預覽用的量測 refs
+    cad::GeomRef         m_anchorRef;    ///< Anchored 狀態鎖定的起點（原始 ref，不受
+                                          ///< pairedRefs 正規化影響，供退回 Anchored 時還原）
     cad::ConstraintType  m_type          = cad::ConstraintType::FixedDistance;
     cad::DistanceMode    m_distMode      = cad::DistanceMode::PointToPoint;
     double               m_measuredValue = 0.0;
@@ -59,54 +78,58 @@ private:
     /// commitDimension() 會在此時轉換為弧度存入 SketchConstraint::value。
     bool                 m_pendingIsRawUserInput = false;
 
-    // ── GDIM v2 Phase 2：多候選引擎 ───────────────────────────────────────
-    QList<cad::GeneralDimClassifier::Candidate> m_candidates;
-    int                  m_candidateIndex = 0;   ///< 目前高亮候選的索引
-    /// 目前高亮/已確認候選是否要用補角（180°－夾角），見
-    /// GeneralDimClassifier::Candidate::useSupplementAngle
+    /// 目前預覽/已鎖定的型別是否要用補角（180°－夾角）。相交兩線的夾角型別
+    /// 在 WaitDimPlace 階段依滑鼠落在角平分線的哪一側動態切換（無選單版
+    /// 第 B 組第 16 項）。
     bool                 m_useSupplementAngle = false;
 
-    /// 單一幾何選取後，若能立即判斷唯一預設候選（見 onGeomPicked），
-    /// 會先顯示預覽並排一個短暫延遲的自動確認（QTimer::singleShot），
-    /// 讓使用者仍有機會在延遲時間內點第二個幾何改成配對。這個計數器
-    /// 用來讓「點了第二個幾何」或「cleanup()」能讓舊的延遲確認失效
-    /// （比對時 token 不符就直接不執行，不需要真的管理 QTimer 物件）。
-    int                  m_pendingConfirmToken = 0;
+    /// 目前這筆標註是從「單幾何流程」（Anchored 第 2 次點擊同時定型定位，
+    /// 直接跳進 WaitValue）還是「雙幾何流程」（經過 WaitDimPlace 第 3 次
+    /// 點擊定位）進來的。用於 Esc/右鍵在 WaitValue 階段退回正確的上一步
+    /// （無選單版第 D 組第 27 項）。
+    bool                 m_wasSingleGeomFlow = false;
 
     void subscribeGeomPicked   ();
-    void subscribeGeomHover    ();   ///< 新增：GetGeom 模式 hover 預覽
+    void subscribeGeomHover    ();
     void subscribeStringInput  ();
     void subscribeDimConfirmed ();
     void subscribePreview      ();
     void subscribeCancelled    ();
-    void subscribeCandidateCycle();  ///< Phase 2：Tab/Space 候選循環
     void unsubscribeGeomPicked ();
     void unsubscribeAll        ();
 
     void onGeomPicked   (const QVariant& payload);
-    void onGeomHover    (const QVariant& payload);   ///< 新增
+    void onGeomHover    (const QVariant& payload);
     void onStringInput  (const QVariant& payload);
     void onDimConfirmed (const QVariant& payload);
     void onCancelled    (const QVariant&);
-    void onCandidateCycle(const QVariant& payload);  ///< Phase 2
 
-    void transitionToWaitSecond   ();
-    void transitionToWaitCandidate(const QList<cad::GeneralDimClassifier::Candidate>& candidates);
+    /// Anchored 狀態下，第 2 次點擊落在可配對的第二幾何上：鎖定雙幾何型別，
+    /// 進入 WaitDimPlace（第 3 次點擊定位）。
+    void lockPairGeom(const cad::GeomRef& anchor, const cad::GeomRef& second,
+                       const QVector2D& mousePt);
+
+    /// Anchored 狀態下，第 2 次點擊落在空白處或無法配對的位置：直接依滑鼠
+    /// 位置鎖定單幾何型別，同時用這次點擊的位置算出 offset，直接進 WaitValue
+    /// （不經過 WaitDimPlace，因為型別與位置已經在同一次點擊裡一起決定）。
+    void lockSingleGeom(const cad::GeomRef& anchor, const QVector2D& mousePt);
+
     void transitionToWaitDimPlace ();
     void transitionToWaitValue    ();
     void commitDimension          ();
     void cleanup                  ();
 
-    /// 依 m_candidateIndex 把候選內容套用到 m_type/m_distMode，並刷新命令列提示 + 預覽
-    void applyHighlightedCandidate();
+    /// Esc/右鍵狀態退回（無選單版第 D 組）
+    void backToIdle               ();  ///< 25：Anchored → Idle
+    void backToAnchoredFromDimPlace(); ///< 26：WaitDimPlace → Anchored
+    void backToAnchoredFromValue  ();  ///< 27a：WaitValue（單幾何流程）→ Anchored
+    void backToDimPlaceFromValue  ();  ///< 27b：WaitValue（雙幾何流程）→ WaitDimPlace
 
-    /// 確認第 index 個候選（Enter/快捷字母/滑鼠再次點擊/單一候選自動確認 皆走此路徑）。
-    /// needsSecondPick 則進 WaitSecond；否則直接進 WaitDimPlace。
-    void confirmCandidate(int index);
-
-    /// 依目前 m_refs + 可選的 extraRef 組出預覽，推送到 CadView
-    void updateDimPreview(const cad::GeomRef* extraRef = nullptr);
-    void clearDimPreview ();
+    /// 將 refs/type/mode 直接推送到 CadView 做預覽（不影響 m_refs/m_type/m_distMode，
+    /// 供 Idle hover 這類「尚未鎖定任何狀態」的場合使用內部暫存計算）。
+    void pushPreview(const QList<cad::GeomRef>& refs, cad::ConstraintType type,
+                      cad::DistanceMode mode);
+    void clearDimPreview();
 
     double        measureCurrentValue () const;  ///< 從幾何量測現有尺寸
     double        measureCurrentValue2() const;  ///< CoordinateDim Y 分量

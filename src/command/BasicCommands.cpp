@@ -72,6 +72,13 @@ public:
             return CommandResult::Failure("No active document");
         }
 
+        // ✅ 需求 1：Sketch 命令執行時一律切換到等角視圖（Isometric View）
+        if (ui::UIManager* uiMgr = app->uiManager()) {
+            if (view::CadView* cadView = uiMgr->cadView()) {
+                cadView->setIsometricView();
+            }
+        }
+
         cad::PlaneManager* manager = cad::PlaneManager::instance();
 
         // 如果有參數，直接使用

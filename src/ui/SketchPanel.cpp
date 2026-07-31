@@ -241,6 +241,9 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
 
     m_btnToggleOverlay = new QPushButton(tr("隱藏約束符號"), listBox);
     m_btnToggleOverlay->setCheckable(true);
+    // ✅ 明確設定預設值為「顯示」（unchecked = 未隱藏）。約束符號/尺寸
+    // 約束應預設顯示，不應依賴 QPushButton 隱含的預設狀態。
+    m_btnToggleOverlay->setChecked(true);
     m_btnToggleOverlay->setToolTip(tr("切換 3D 視埠中約束符號的顯示"));
 
     connect(m_constraintTree, &QTreeWidget::itemClicked,
@@ -540,6 +543,14 @@ void SketchPanel::enterSketchMode(
     exitOverlayMode();
     m_overlay = std::make_unique<cad::ConstraintOverlayManager>(ctx, this);
     m_overlay->attachMaster(sketch, toWorld);
+    // ✅ 明確強制顯示，不依賴 ConstraintOverlayManager 內部欄位初始值或
+    // 按鈕狀態 —— 約束符號/尺寸約束一律預設顯示，完全不需要使用者
+    // 手動按一次「顯示約束符號」。
+    m_overlay->setVisible(true);
+    if (m_btnToggleOverlay) {
+        m_btnToggleOverlay->setChecked(false);
+        m_btnToggleOverlay->setText(tr("隱藏約束符號"));
+    }
     connect(m_overlay.get(),
             &cad::ConstraintOverlayManager::dimensionConstraintClicked,
             this, &SketchPanel::onDimensionClicked);
@@ -553,6 +564,12 @@ void SketchPanel::enterInstanceMode(
     exitOverlayMode();
     m_overlay = std::make_unique<cad::ConstraintOverlayManager>(ctx, this);
     m_overlay->attachInstance(inst, toWorld);
+    // ✅ 同 enterSketchMode()：明確強制顯示，不依賴內部預設值或按鈕狀態。
+    m_overlay->setVisible(true);
+    if (m_btnToggleOverlay) {
+        m_btnToggleOverlay->setChecked(false);
+        m_btnToggleOverlay->setText(tr("隱藏約束符號"));
+    }
     connect(m_overlay.get(),
             &cad::ConstraintOverlayManager::dimensionConstraintClicked,
             this, &SketchPanel::onDimensionClicked);

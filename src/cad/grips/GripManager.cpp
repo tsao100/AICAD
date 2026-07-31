@@ -172,12 +172,30 @@ void GripManager::refreshGrips()
 }
 
 // ── Hit Test ─────────────────────────────────────────────────────────
-QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double /*unused*/) const
+QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double threshold) const
 {
     // Compute worldThreshold = world distance for pixThreshold pixels at Z=0,
     // using the same ray-plane method as GripEventFilter::screenToWorld.
-    const double pixThreshold = 12.0;
-    double worldThreshold = 50.0;   // fallback
+    //
+    // ✅ 修正：原本忽略呼叫端傳入的 threshold，內部寫死 12px，比 SketchPointAIS
+    // 等其他可選取物件慣用的判定範圍明顯大上許多，導致 Grip 的 hover/點擊
+    // 感應範圍過大（容易誤觸相鄰 Grip）。現在改為實際使用傳入的 threshold
+    // （預設 6px，見 GripManager.h），與 sketch point 的判定尺度一致。
+    const double pixThreshold = threshold;
+    // ✅ fallback 值原本是 50.0——對一般 sketch 局部座標（通常只有幾十
+    // 單位）來說完全不合理，一旦真的落到 fallback（例如 m_view 意外失效）
+    // 會讓 hover/點擊範圍大到幾乎涵蓋整張圖。改成明顯偏小、安全失敗的值，
+    // 並記錄警告以便未來若再發生能立刻在 log 中發現，而不是靜默吃下一個
+    // 不合理的大範圍。正常情況下（m_view 有效）下面會被即時計算出的
+    // worldThreshold 覆蓋，不會用到這個 fallback。
+    double worldThreshold = 2.0;   // fallback（僅在 m_view 無效時使用）
+
+    if (m_view.IsNull()) {
+        qWarning() << "[GripManager] hitTestGrip: m_view is null, "
+                       "falling back to a small default threshold ("
+                    << worldThreshold << "). This should not happen "
+                       "once the view is ready — check GripManager::setView() wiring.";
+    }
 
     if (!m_view.IsNull()) {
         auto projectToZ0 = [&](int sx, int sy) -> gp_Pnt {
@@ -205,8 +223,18 @@ QString GripManager::hitTestGrip(const gp_Pnt& worldPos, double /*unused*/) cons
             return gp_Pnt(Xv,Yv,0.0);
         };
 
-        gp_Pnt w0 = projectToZ0(0, 0);
-        gp_Pnt w1 = projectToZ0((int)pixThreshold, 0);
+        // ✅ 修正：原本固定在螢幕角落 (0,0) 附近取樣像素→世界座標的比例，
+        // 但只要目前視角不是正上方俯視（例如稍微傾斜、或透視投影），
+        // 螢幕角落的射線打到 Z=0 平面的角度可能與實際游標/Grip 所在
+        // 位置差異很大（甚至接近掠射角），算出來的「每像素對應世界
+        // 距離」會被嚴重放大 —— 這正是回報的「約 100 單位」異常大範圍
+        // 的成因。改為先把 worldPos 換算成它自己的螢幕座標，再以該點
+        // 為基準做局部取樣，讓比例尺與實際判定位置一致。
+        Standard_Integer sx0 = 0, sy0 = 0;
+        m_view->Convert(worldPos.X(), worldPos.Y(), worldPos.Z(), sx0, sy0);
+
+        gp_Pnt w0 = projectToZ0(sx0, sy0);
+        gp_Pnt w1 = projectToZ0(sx0 + (int)pixThreshold, sy0);
         double d  = w0.Distance(w1);
         if (d > 1e-6) worldThreshold = d;
     }

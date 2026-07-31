@@ -3,90 +3,97 @@
 #include "SketchAnnotation.h"
 #include <QList>
 #include <QString>
-#include <QChar>
 #include <QVector2D>
+#include <optional>
 
 namespace aicad::cad {
 
 /**
- * @brief GDIM 型別推斷器 —— GDIM 昇級規劃 v2 Phase 2：多候選引擎
+ * @brief GDIM 型別推斷器 —— GDIM 昇級規劃 v3（無選單版）
  *
- * 舊版 classify() 是「單一候選、字母選單、命中即定案」：每次只回傳一個
- * MenuKey，要求使用者輸入字母（L/D/R/X/Y/C...）才能決定尺寸型別。
+ * 對應《GDIM_滑鼠動作組合清單_無選單版.md》：型別不是被選出來的，是被
+ * 「量」出來的——遊標當下位置本身就是分類函式的輸入。點擊只是把當下
+ * 已經在預覽的型別鎖定下來，不存在任何離散選單、候選陣列、Tab/Space
+ * 循環或字母快捷鍵。
  *
- * 新版 classifyAll() 直接回傳「目前選取狀態下所有合法候選」的陣列，
- * 呼叫端（GeneralDimCommand）自行決定預設高亮第幾個、如何用 TAB/SPACE
- * 循環、按 Enter 或點擊時如何確認——分類器本身不再管理「選單狀態」。
- *
- * MenuKey / MenuOption / needMenu 整套機制已完全移除。
+ * v2 Phase 2 的 Candidate / classifyAll() / WaitCandidate 整套「多候選
+ * 引擎」已完全移除，改為兩個純函式：
+ *   - inferSingle()：單一幾何 + 滑鼠位置 → 唯一的單幾何型別推斷結果
+ *   - inferPair()  ：兩個幾何（+ 滑鼠位置，僅點+點需要）→ 唯一的雙幾何
+ *                    型別推斷結果
+ * 兩者都直接回傳「現在這一刻應該預覽/鎖定成什麼」，呼叫端（GeneralDimCommand）
+ * 不需要管理任何「目前選到第幾個候選」的狀態。
  */
 class GeneralDimClassifier {
 public:
 
-    struct Candidate {
+    struct Inference {
         AnnotationKind kind       = AnnotationKind::Distance;
         DistanceMode   distMode   = DistanceMode::PointToPoint;
-        QString        label;              ///< UI 顯示用（取代舊 nextPrompt 字串選單）
-        QChar          shortcut;            ///< 可選：仍給一個快捷字母，但不強制先讀選單
-                                             ///< （TAB/SPACE 循環才是主要互動方式）
-        /// true = 選定此候選後，還需要使用者再選一個幾何才能真正定案
-        /// （取代舊 MenuOption::needSecond，例如「量距第二點(D)」選項）。
-        bool           needsSecondPick = false;
+        QString        label;              ///< UI/命令列顯示用
 
-        /// Auto_DIM.md 第六節：若兩線已知垂直（見 GeometryRelationshipAnalyzer），
-        /// 角度是固定的 90°，只具參考意義（Reference），不是使用者需要決定
-        /// 的自由數值。UI 可依此欄位加註「(Reference)」字樣，不影響求解。
-        bool           isReferenceOnly = false;
+        /// Auto_DIM.md 精神延續：若兩線已知垂直，角度固定 90°，只具參考
+        /// 意義，UI 可依此加註「(Reference)」字樣，不影響求解。
+        bool           isReferenceOnly    = false;
 
-        /// 兩線相交時，補角（180°－夾角）作為第二個候選使用；此候選的
-        /// kind 仍是 AngleDim，只是 GeneralDimCommand 量測時改算補角。
+        /// 相交兩線的補角（180°－夾角）。WaitDimPlace 階段依滑鼠落在哪個
+        /// 象限（見 GeneralDimCommand::subscribePreview）動態切換。
         bool           useSupplementAngle = false;
 
-        /// 若非空，確認此候選時應改用這組 refs（而非呼叫端目前的 m_refs），
-        /// 例如「整條線」候選底下衍生出的「水平投影/垂直投影」，實際量測
-        /// 對象是該線的兩個端點，不是線本身的 WholeGeom 參考。
+        /// 若非空，鎖定此推斷結果時應改用這組 refs（而非呼叫端原始傳入的
+        /// [a, b]）。用於：
+        ///   - 點 + 線／線 + 點 → 正規化成 [點, 線]（PointToLine 量測需要
+        ///     refs[0]=點、refs[1]=線的固定順序）
+        ///   - 線 + 弧／線 + 圓 → 正規化成 [圓心衍生點, 線]
+        ///   - 弧/圓 + 弧/圓 → 正規化成兩個圓心衍生點
         QList<GeomRef> pairedRefs;
     };
 
-    /// 依目前選取的幾何參考（0～2 個），回傳所有合法候選。
-    /// refs.isEmpty()：回傳空陣列，呼叫端應顯示 initialPrompt()。
-    /// refs.size()==1：回傳該幾何可建立的所有標註型別（見 classifySingle）。
-    /// refs.size()==2：回傳這組幾何配對唯一決定的標註型別（見 classifyPair；
-    ///                 目前配對規則本身即決定唯一結果，故僅回傳 0 或 1 筆，
-    ///                 若日後配對規則也需要多候選，於此擴充即可）。
-    static QList<Candidate> classifyAll(const QList<GeomRef>& refs, const Sketch* sketch);
-
     static QString initialPrompt() {
-        return "GDIM 選取幾何元素（線段 / 圓 / 弧 / 點）";
+        return "GDIM 選取幾何元素（線段 / 圓 / 弧 / 點）作為起點";
     }
-
-    /// 候選清單的提示文字，供 CommandLineManager 顯示
-    /// （例：「線段：線長(L) / 量距第二點(D)　[Tab/Space 切換候選，Enter 確認]」）
-    static QString candidatesPrompt(const QList<Candidate>& candidates, int highlightIndex);
 
     static bool isPointLike(const GeomRef& r, const Sketch* sketch);
 
     /**
-     * @brief Auto_DIM.md 第八節：依滑鼠位置在候選清單中挑出最合理的一個
+     * @brief 單一幾何，純粹依滑鼠位置推斷型別（無選單版第 1 節表格）。
      *
-     * 目前實作涵蓋文件表格中明確列出的兩種情況：
-     *   - Circle：滑鼠在圓內 → 半徑(R)；滑鼠在圓外 → 直徑(Ø)
-     *   - Arc：滑鼠靠近圓心 → 半徑(R)；滑鼠靠近弧本身/外側 → 弧長(~)
+     * 用於：
+     *   - Idle 狀態 hover 一個幾何時的即時預覽
+     *   - Anchored 狀態下，滑鼠目前沒有落在「可配對的第二幾何」上時的
+     *     即時預覽（此時仍只有一個幾何，型別由滑鼠相對這個幾何的位置
+     *     決定，即時跟著滑鼠切換）
      *
-     * 其餘幾何（Point/Line 的候選之間沒有自然的「滑鼠位置」對應關係，
-     * 例如 X 座標 vs Y 座標無法用滑鼠位置區分）維持原本靠 Tab/Space/
-     * 快捷字母/再次點擊確認的方式，回傳 -1 表示「不做滑鼠推論，維持
-     * 呼叫端目前的高亮索引」。
+     * 回傳 std::nullopt 表示此幾何無法建立任何單幾何標註（理論上不會
+     * 發生，因為 isPointLike/Line/Circle/Arc 皆有對應規則）。
      */
-    static int pickCandidateByMouse(const QList<Candidate>& candidates,
-                                     const GeomRef& primaryRef,
-                                     const Sketch* sketch,
-                                     const QVector2D& mousePlanePt);
+    static std::optional<Inference> inferSingle(const GeomRef& r, const Sketch* sketch,
+                                                 const QVector2D& mousePt);
+
+    /**
+     * @brief 判斷 (a, b) 是否為合法的雙幾何配對（不考慮滑鼠位置）。
+     *
+     * 用於 Anchored 狀態下，判斷「滑鼠目前 hover 到的第二個幾何」是否
+     * 真的能與起點配對——能配對就切換成雙幾何型別預覽，不能配對就
+     * 維持單幾何型別預覽（見 inferSingle）。
+     */
+    static bool canPair(const GeomRef& a, const GeomRef& b, const Sketch* sketch);
+
+    /**
+     * @brief 兩個幾何 → 唯一的雙幾何標註型別（無選單版第 1 節表格）。
+     *
+     * 除了「點 + 點」需要滑鼠位置決定 水平/垂直/對齊 之外，其餘組合的
+     * 型別由幾何本身唯一決定，mousePt 不影響結果（見表格中「無歧義」
+     * 標記的列）。
+     *
+     * 回傳 std::nullopt 表示 (a, b) 不是合法配對（見 canPair）。
+     */
+    static std::optional<Inference> inferPair(const GeomRef& a, const GeomRef& b,
+                                               const Sketch* sketch, const QVector2D& mousePt);
 
 private:
-    static QList<Candidate> classifySingle(const GeomRef& r, const Sketch* sketch);
-    static QList<Candidate> classifyPair  (const GeomRef& a, const GeomRef& b,
-                                            const Sketch* sketch);
+    static std::optional<Inference> inferPointLike(const GeomRef& r, const Sketch* sketch,
+                                                     const QVector2D& mousePt);
 };
 
 } // namespace aicad::cad

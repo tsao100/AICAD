@@ -1144,10 +1144,15 @@ cad::Document* CadView::document() const {
 }
 
 void CadView::setViewType(ViewType type) {
-    if (d->viewType == type) {
-        return;
-    }
-
+    // ⚠️ 移除原本的 `if (d->viewType == type) return;` 早退判斷：
+    //    d->viewType 只在本函式內被寫入，使用者以滑鼠旋轉(orbit)相機並不會
+    //    同步更新它；因此「要求的視圖型別與快取值相同」不代表相機或格線
+    //    目前真的對齊該視圖/平面。此早退曾導致 setTopView()/setFrontView()/
+    //    setRightView()（連帶影響 onSketchEditStarted() 內的格線同步）在下列
+    //    情境下悄悄失效：使用者手動旋轉過畫面後、或連續編輯兩個平面種類相同
+    //    （例如都在 XY 平面）的既有 Sketch 時，第二次呼叫會被判定「型別未變」
+    //    而整個跳過 updateProjection()（連同其中的 fitAll()/格線刷新）。
+    //    因此改為每次呼叫都強制重新套用，代價僅是極小的重複運算。
     d->viewType = type;
     updateProjection();
 
@@ -1554,25 +1559,52 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
     Standard_Integer xp, yp;
     qtToOCCT(screenPos, xp, yp);
 
-    cad::Plane* plane;
-    cad::PlaneManager* manager = cad::PlaneManager::instance();
-
-    switch (d->viewType) {
-    case ViewType::Top:
-    case ViewType::Bottom:
-        plane = manager->xyPlane();
-        break;
-    case ViewType::Front:
-    case ViewType::Back:
-        plane = manager->xzPlane();
-        break;
-    case ViewType::Right:
-    case ViewType::Left:
-        plane = manager->yzPlane();
-        break;
-    default:
-        plane = manager->xyPlane();
-        break;
+    // ⚠️ 修正根因：優先使用「目前正在編輯的 Sketch」實際的 Plane 物件，
+    //    而不是單靠 d->viewType 這個間接列舉值反查 PlaneManager 的標準
+    //    XY/XZ/YZ 平面。
+    //
+    //    d->viewType 只在明確呼叫 setViewType()/setTopView()/... 時才會更新，
+    //    任何時序落差（例如 isXY()/isXZ()/isYZ() 因浮點誤差未命中、呼叫順序
+    //    改變、或使用者手動旋轉相機）都可能讓它與 Sketch 實際所在平面不同步；
+    //    若 Sketch 用的是自訂（非 XY/XZ/YZ）平面，viewType 的三選一 switch
+    //    更是永遠對不上，一律誤用 default 分支的 XY 平面。
+    //
+    //    一旦點擊算出的座標落在錯誤平面上：輕則繪出的圖形偏離、不在正確平面
+    //    上；重則在「目前相機視線方向恰好與誤用的那個平面平行」的極端情況
+    //    下，下面的射線-平面交點運算會失敗、每次點擊都退化回同一個 (0,0)，
+    //    導致後續建立出零長度線段等退化幾何，在求解/顯示階段拋出未被接住的
+    //    例外而讓整個應用程式崩潰（例如：Sketch1(XY) 編輯完成後直接編輯
+    //    Sketch2(YZ)，相機仍停留在近似「正視 XY」的方向，此時對 YZ 平面
+    //    來說視線方向幾乎與其平行）。
+    cad::Plane* plane = nullptr;
+    if (core::Application* app = core::Application::instance()) {
+        if (cad::Sketch* sk = app->activeSketch()) {
+            plane = sk->plane();
+        }
+    }
+    if (!plane) {
+        // 沒有正在編輯的 Sketch（例如量測/一般選取情境）才退回用 viewType 猜測。
+        cad::PlaneManager* manager = cad::PlaneManager::instance();
+        switch (d->viewType) {
+        case ViewType::Top:
+        case ViewType::Bottom:
+            plane = manager->xyPlane();
+            break;
+        case ViewType::Front:
+        case ViewType::Back:
+            plane = manager->xzPlane();
+            break;
+        case ViewType::Right:
+        case ViewType::Left:
+            plane = manager->yzPlane();
+            break;
+        default:
+            plane = manager->xyPlane();
+            break;
+        }
+    }
+    if (!plane) {
+        return QVector2D(0, 0);
     }
 
     gp_Pln gpPlane(
@@ -1586,7 +1618,17 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
     d->view->Proj(Xproj, Yproj, Zproj);
 
     gp_Pnt eyePoint(Xeye, Yeye, Zeye);
-    gp_Dir projDir(Xproj, Yproj, Zproj);
+
+    // ✅ 防護：gp_Dir() 建構子在傳入零向量時會丟出
+    //    gp_VectorWithNullMagnitude 例外，而這裡沒有任何 try/catch 承接，
+    //    一旦相機投影向量在某個過渡狀態下退化成 0，就會讓整個程式崩潰。
+    //    先檢查長度，異常時直接安全回退，不讓例外往外拋。
+    gp_Vec projVec(Xproj, Yproj, Zproj);
+    if (projVec.Magnitude() < Precision::Confusion()) {
+        qWarning() << "[CadView] screenToPlane: degenerate camera projection vector";
+        return QVector2D(0, 0);
+    }
+    gp_Dir projDir(projVec);
 
     Standard_Real Xv, Yv, Zv;
     d->view->Convert(xp, yp, Xv, Yv, Zv);
@@ -1624,6 +1666,9 @@ QVector2D CadView::screenToPlane(const QPoint& screenPos) const {
         return QVector2D(u, v);
     }
 
+    // 射線與平面（近似）平行，交點運算失敗：現在改用真正的 Sketch 平面後，
+    // 此分支理論上不應再因為「誤用平面」而觸發；仍保留警告方便日後排查。
+    qWarning() << "[CadView] screenToPlane: ray-plane intersection failed (parallel?)";
     return QVector2D(0, 0);
 }
 
@@ -1633,14 +1678,26 @@ QPointF CadView::screenToPlaneD(const QPoint& screenPos) const {
     Standard_Integer xp, yp;
     qtToOCCT(screenPos, xp, yp);
 
-    cad::Plane* plane;
-    cad::PlaneManager* manager = cad::PlaneManager::instance();
-    switch (d->viewType) {
-    case ViewType::Top: case ViewType::Bottom: plane = manager->xyPlane(); break;
-    case ViewType::Front: case ViewType::Back: plane = manager->xzPlane(); break;
-    case ViewType::Right: case ViewType::Left: plane = manager->yzPlane(); break;
-    default: plane = manager->xyPlane(); break;
+    // 與 screenToPlane() 相同的根因修正：優先用目前正在編輯的 Sketch 實際
+    // Plane 物件，而非單靠 d->viewType 反查標準平面（詳見 screenToPlane()
+    // 內的完整說明——d->viewType 可能與 Sketch 實際平面不同步，自訂平面更
+    // 是永遠對不上）。
+    cad::Plane* plane = nullptr;
+    if (core::Application* app = core::Application::instance()) {
+        if (cad::Sketch* sk = app->activeSketch()) {
+            plane = sk->plane();
+        }
     }
+    if (!plane) {
+        cad::PlaneManager* manager = cad::PlaneManager::instance();
+        switch (d->viewType) {
+        case ViewType::Top: case ViewType::Bottom: plane = manager->xyPlane(); break;
+        case ViewType::Front: case ViewType::Back: plane = manager->xzPlane(); break;
+        case ViewType::Right: case ViewType::Left: plane = manager->yzPlane(); break;
+        default: plane = manager->xyPlane(); break;
+        }
+    }
+    if (!plane) return QPointF(0, 0);
 
     gp_Pln gpPlane(
         gp_Pnt(plane->origin().x(), plane->origin().y(), plane->origin().z()),
@@ -1652,7 +1709,14 @@ QPointF CadView::screenToPlaneD(const QPoint& screenPos) const {
     d->view->Proj(Xproj, Yproj, Zproj);
 
     gp_Pnt eyePoint(Xeye, Yeye, Zeye);
-    gp_Dir projDir(Xproj, Yproj, Zproj);
+
+    // ✅ 同 screenToPlane()：避免零向量餵給 gp_Dir() 造成未接住的例外而崩潰。
+    gp_Vec projVec(Xproj, Yproj, Zproj);
+    if (projVec.Magnitude() < Precision::Confusion()) {
+        qWarning() << "[CadView] screenToPlaneD: degenerate camera projection vector";
+        return QPointF(0, 0);
+    }
+    gp_Dir projDir(projVec);
 
     Standard_Real Xv, Yv, Zv;
     d->view->Convert(xp, yp, Xv, Yv, Zv);
@@ -1676,6 +1740,7 @@ QPointF CadView::screenToPlaneD(const QPoint& screenPos) const {
         // gp_Pnt 座標是 double，直接用 plane->toPlaneD() 保持精度
         return plane->toPlaneD(QVector3D(ip.X(), ip.Y(), ip.Z()));
     }
+    qWarning() << "[CadView] screenToPlaneD: ray-plane intersection failed (parallel?)";
     return QPointF(0, 0);
 }
 
@@ -1831,7 +1896,24 @@ void CadView::alignToPlane(const cad::Plane* plane)
 }
 
 void CadView::setIsometricView() {
-    setViewType(ViewType::Isometric);
+    // ⚠️ 不可直接呼叫 setViewType(ViewType::Isometric)：
+    //    setViewType() 內部有 `if (d->viewType == type) return;` 的早退判斷，
+    //    而滑鼠旋轉（orbit）並不會更新 d->viewType，因此使用者以滑鼠任意旋轉
+    //    視角後，d->viewType 仍停留在 Isometric，導致再次呼叫等同無效果，
+    //    相機不會真的被重設回等角視圖。此處強制重新套用投影，確保 Sketch
+    //    指令執行時一定會切到等角視圖，不受目前相機實際朝向影響。
+    d->viewType = ViewType::Isometric;
+    updateProjection();
+
+    qDebug() << "[CadView] View type changed to: Isometric (forced)";
+
+    Q_EMIT viewTypeChanged(d->viewType);
+
+    using namespace core;
+    EventBus* bus = Application::instance()->eventBus();
+    if (bus) {
+        bus->publish(Events::VIEW_CHANGED, QVariant());
+    }
 }
 
 void CadView::showFinishSketchButton() {
@@ -1876,7 +1958,14 @@ void CadView::onFinishSketchClicked() {
 
     setMode(InteractionMode::Idle);
     hideFinishSketchButton();
-    d->grid->hide();
+
+    // ⚠️ 改用 setGridEnabled(false) 而非直接呼叫 d->grid->hide()：
+    //    CadView::d->gridEnabled 與 ViewGrid 內部的 d->visible 是兩個分開的
+    //    旗標，理應永遠同步，僅能透過 setGridEnabled() 維持一致。直接呼叫
+    //    grid->hide() 會讓格線視覺上隱藏，但 d->gridEnabled 仍停留在 true，
+    //    造成後續任何「if (d->gridEnabled) grid->update()」的呼叫產生不一致
+    //    的狀態判斷。
+    setGridEnabled(false);
 
     Application* app = Application::instance();
     cad::Sketch* sketch = app->activeSketch();
@@ -1887,6 +1976,15 @@ void CadView::onFinishSketchClicked() {
         data["visible"] = false;
         bus->publish("feature.visibility-changed", data);
     }
+
+    // ⚠️ 完成草圖後必須清除 Application 層級的 activeSketch，否則
+    //    Application::activeSketch() 會一直停留在剛結束編輯的 Sketch。
+    //    這本身雖然會被「下一次進入編輯」時的 setActiveSketch(newSketch)
+    //    覆蓋掉、不是本次 crash 的直接成因，但只要中間有任何「非草圖」情境
+    //    （例如按 ESC 後直接量測、或指令流程提早呼叫到 screenToPlane()/
+    //    screenToPlaneD()）會誤用已結束編輯的 Sketch 平面，是必須一併修正
+    //    的既有缺口。
+    app->setActiveSketch(nullptr);
 
     Q_EMIT sketchFinished();
 }
@@ -3851,21 +3949,8 @@ void CadView::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // ── GDIM v2 Phase 2：WaitCandidate 多候選循環（Tab/Space 切換，取代舊的
-    //    「輸入字母選單」機制）。僅在 GetGeom 模式下攔截，不影響 Sketching
-    //    模式下 Space＝結束命令、或框選模式下 Space＝完成多邊形的既有行為。
-    if ((event->key() == Qt::Key_Tab || event->key() == Qt::Key_Space) &&
-        d->mode == InteractionMode::GetGeom) {
-        int direction = (event->modifiers() & Qt::ShiftModifier) ? -1 : +1;
-        EventBus* bus = Application::instance()->eventBus();
-        if (bus) {
-            QVariantMap m;
-            m["direction"] = direction;
-            bus->publish(Events::CANDIDATE_CYCLE, m);
-        }
-        event->accept();
-        return;
-    }
+    // GDIM v3（無選單版）已移除 WaitCandidate / Tab-Space 候選循環機制，
+    // 不再攔截 GetGeom 模式下的 Tab/Space（改由 Anchored 狀態即時 hover 分類）。
 
     if (event->key() == Qt::Key_Space) {
         if (d->boxSelectArmed && d->boxSelectShape != BoxSelectShape::Rectangle) {

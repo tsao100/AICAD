@@ -67,42 +67,39 @@ void AIS_GripHandle::Compute(
     prs->Clear();
 
     Quantity_Color col = colorForState(m_state);
-    double half = m_size * 0.5;
 
-    // ✅ 用 sketch plane 的 X/Y 軸計算方塊角點，而非固定 XY offset
-    gp_Vec vX = gp_Vec(m_planeX) * half;
-    gp_Vec vY = gp_Vec(m_planeY) * half;
+    // ✅ 修正：原本用 planeX/planeY 在「模型空間」算方塊角點（Compute()
+    // 產生的是實際幾何頂點），大小會隨視圖縮放而放大/縮小 —— 在真實世界
+    // 座標（如鐵路測量的 TM2/TWD97，單位為公尺）下，同一個 m_size 在不同
+    // 縮放層級下對應的螢幕像素差異極大，導致 Grip 視覺大小、以及使用者
+    // 主觀感受的 hover/點擊範圍忽大忽小、普遍偏大。
+    //
+    // 改用 Graphic3d_AspectMarker3d（比照 SketchPointAIS::drawEndpointMarker）：
+    // marker 的 scale 參數以「螢幕像素」為單位，不受視圖縮放影響，行為與
+    // SketchPoint 的固定大小圓點一致。外框用環狀 marker 表示方塊/十字選取框，
+    // 中心再疊一個較小的實心點以維持原本「外框 + 中心填充」的視覺層次。
 
-    gp_Pnt p0 = m_position.Translated(-vX - vY);  // bottom-left
-    gp_Pnt p1 = m_position.Translated( vX - vY);  // bottom-right
-    gp_Pnt p2 = m_position.Translated( vX + vY);  // top-right
-    gp_Pnt p3 = m_position.Translated(-vX + vY);  // top-left
+    // 外框
+    Handle(Graphic3d_Group) grpOuter = prs->NewGroup();
+    Handle(Graphic3d_ArrayOfPoints) outerPt = new Graphic3d_ArrayOfPoints(1);
+    outerPt->AddVertex(m_position);
 
-    // 方塊邊框
-    Handle(Graphic3d_Group) grp = prs->NewGroup();
-    Handle(Graphic3d_ArrayOfPolylines) border =
-        new Graphic3d_ArrayOfPolylines(5);
-    border->AddVertex(p0);
-    border->AddVertex(p1);
-    border->AddVertex(p2);
-    border->AddVertex(p3);
-    border->AddVertex(p0);  // close
-
-    Handle(Graphic3d_AspectLine3d) lineAspect =
-        new Graphic3d_AspectLine3d(col, Aspect_TOL_SOLID, 1.5f);
-    grp->SetGroupPrimitivesAspect(lineAspect);
-    grp->AddPrimitiveArray(border);
+    Handle(Graphic3d_AspectMarker3d) outerAspect =
+        new Graphic3d_AspectMarker3d(Aspect_TOM_RING1, col,
+                                      static_cast<Standard_ShortReal>(m_size));
+    grpOuter->SetGroupPrimitivesAspect(outerAspect);
+    grpOuter->AddPrimitiveArray(outerPt);
 
     // 中心填充點
-    Handle(Graphic3d_Group) grp2 = prs->NewGroup();
-    Handle(Graphic3d_ArrayOfPoints) centerPt =
-        new Graphic3d_ArrayOfPoints(1);
+    Handle(Graphic3d_Group) grpCenter = prs->NewGroup();
+    Handle(Graphic3d_ArrayOfPoints) centerPt = new Graphic3d_ArrayOfPoints(1);
     centerPt->AddVertex(m_position);
 
-    Handle(Graphic3d_AspectMarker3d) markerAspect =
-        new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, col, m_size * 0.4);
-    grp2->SetGroupPrimitivesAspect(markerAspect);
-    grp2->AddPrimitiveArray(centerPt);
+    Handle(Graphic3d_AspectMarker3d) centerAspect =
+        new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, col,
+                                      static_cast<Standard_ShortReal>(m_size * 0.4));
+    grpCenter->SetGroupPrimitivesAspect(centerAspect);
+    grpCenter->AddPrimitiveArray(centerPt);
 }
 
 void AIS_GripHandle::ComputeSelection(

@@ -107,7 +107,7 @@ private:
     gp_Dir  m_planeY = gp_Dir(0, 1, 0);
 
     SnapResult  computeSnap(const gp_Pnt& rawPos) const;
-    QString     hitTestGrip(const gp_Pnt& worldPos, double threshold = 5.0) const;
+    QString     hitTestGrip(const gp_Pnt& worldPos, double threshold = 6.0) const;
     void        displayHandles();
     void        eraseHandles();
     void        updateHandleColor(const QString& id, GripState state);
