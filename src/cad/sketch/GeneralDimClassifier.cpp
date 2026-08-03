@@ -167,9 +167,28 @@ GeneralDimClassifier::inferPair(const GeomRef& a, const GeomRef& b,
     if (!geomA && !aIsIndepPt) return std::nullopt;
     if (!geomB && !bIsIndepPt) return std::nullopt;
 
-    // 不允許選到同一個物件
-    if (!a.geomUuid.isEmpty() && a.geomUuid == b.geomUuid)
+    const bool aIsPoint = aIsIndepPt || isPointLike(a, sketch);
+    const bool bIsPoint = bIsIndepPt || isPointLike(b, sketch);
+
+    // 不允許選到同一個點（例如同一個獨立點被選了兩次）。
+    // ⚠️ 修正：先前直接比較 a.geomUuid == b.geomUuid 會誤殺「同一條線的
+    // 起點與終點」這種合法配對——線的 Start/End 兩個 GeomRef 的 geomUuid
+    // 都是「線」本身的 uuid（見 GeomRef::resolvedPointUuid()：Line 的
+    // Start/End 是從 line->startUuid / line->endUuid 這兩個不同的
+    // SketchPoint 解析出來的，geomUuid 欄位只是「掛在哪個幾何底下」，
+    // 不代表兩者是同一個點）。這導致「點錨點在線的一端、hover 到同一條線
+    // 的另一端」時 inferPair() 一律回傳 nullopt，退回單點的 X/Y/XY 預覽，
+    // 使用者因此完全看不到「一條線」水平/垂直/對齊距離的 H/V/Align 預覽
+    // （無選單版第 1 節表格第 5 列：點+點依滑鼠位置判斷水平/垂直/對齊）。
+    // 改為比較「實際解析出的點 UUID」，只有兩者真的是同一個點時才拒絕。
+    if (aIsPoint && bIsPoint) {
+        const QString aPtUuid = a.resolvedPointUuid(sketch);
+        const QString bPtUuid = b.resolvedPointUuid(sketch);
+        if (!aPtUuid.isEmpty() && aPtUuid == bPtUuid)
+            return std::nullopt;
+    } else if (!a.geomUuid.isEmpty() && a.geomUuid == b.geomUuid) {
         return std::nullopt;
+    }
 
     // ── 依 Constraint/關係推論（優先於下面逐一比對幾何型別的規則）───────────
     // 重合的兩點不提供距離；同心的兩個圓/弧「中心距」沒有意義（＝0），
@@ -182,8 +201,6 @@ GeneralDimClassifier::inferPair(const GeomRef& a, const GeomRef& b,
         break;
     }
 
-    const bool aIsPoint = aIsIndepPt || isPointLike(a, sketch);
-    const bool bIsPoint = bIsIndepPt || isPointLike(b, sketch);
     const bool aIsWholeLine   = geomA && geomA->type == SketchGeometryType::Line
                                 && a.handle == GeomHandle::WholeGeom;
     const bool bIsWholeLine   = geomB && geomB->type == SketchGeometryType::Line

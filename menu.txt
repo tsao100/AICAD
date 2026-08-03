@@ -24,6 +24,7 @@ toolbar|main|separator|||
 
 toolbar|main|sketch|Create Sketch|:/icons/sketch.png|
 toolbar|main|extrude|Create Extrusion|:/icons/extrude.png|
+toolbar|main|chamfer|Chamfer Solid Edges|:/icons/extrude.png|
 
 toolbar|main|separator|||
 
@@ -93,6 +94,7 @@ menu|Sketch|ellipse|Draw Ellipse||
 # ======================
 
 menu|Features|extrude|Create Extrusion||
+menu|Features|chamfer|Chamfer Solid Edges||
 
 
 # ======================
@@ -145,6 +147,7 @@ command|alignmentaddspiral||0
 command|alignment3daddvprofile||0
 command|profilearray||0
 command|profileloft||0
+command|chamfer|cha|0
 command|setorigin||0
 
 # ======================

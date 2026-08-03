@@ -375,6 +375,7 @@ QIcon FeatureBrowser::getIconForType(ItemType type) {
     case ItemType::VAlignment:      return QIcon(":/icons/plane.png");       // 縱斷面
     case ItemType::Pattern:         return QIcon(":/icons/sketch.png");      // 沿線斷面陣列（暫沿用 sketch 圖示）
     case ItemType::Loft:            return QIcon(":/icons/extrude.png");     // 放樣實體（暫沿用 extrude 圖示）
+    case ItemType::Chamfer:         return QIcon(":/icons/extrude.png");     // 倒角特徵（暫沿用 extrude 圖示，待補專用圖示）
     default:                        return QIcon();
     }
 }

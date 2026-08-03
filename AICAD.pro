@@ -248,16 +248,31 @@ SOURCES += \
     src/cad/sketch/SketchLoopFinder.cpp \
     src/cad/sketch/SketchPointAIS.cpp \
     src/cad/sketch/SketchRegion.cpp \
+    src/cad/sketch/SketchGeomTransformUtil.cpp \
+    src/cad/sketch/SketchGeom2DMath.cpp \
     src/command/ArcCommand.cpp \
     src/command/CircleCommand.cpp \
     src/command/CommandAlias.cpp \
     src/command/ConstraintCommands.cpp \
     src/command/SketchEditCommand.cpp \
+    src/command/SketchSelectionPicker.cpp \
+    src/command/CommandRubberBandHelper.cpp \
+    src/command/SketchTransformCommandBase.cpp \
+    src/command/MoveCommand.cpp \
+    src/command/CopyCommand.cpp \
+    src/command/RotateCommand.cpp \
+    src/command/MirrorCommand.cpp \
+    src/command/StretchCommand.cpp \
+    src/command/TrimExtendHelper.cpp \
+    src/command/TrimCommand.cpp \
+    src/command/ExtendCommand.cpp \
+    src/command/FilletCommand.cpp \
     src/command/GeneralDimCommand.cpp \
     src/command/LeaderNoteCommand.cpp \
     src/cad/sketch/GeneralDimClassifier.cpp \
     src/cad/sketch/GeometryRelationshipAnalyzer.cpp \
     src/command/ExtrudeCommand.cpp \
+    src/command/ChamferCommand.cpp \
     src/command/alignment/SetOriginCommand.cpp \
     src/command/alignment/AlignmentAddSpiralCommand.cpp \
     src/command/alignment/Alignment3DAddVProfileCommand.cpp \
@@ -306,6 +321,7 @@ SOURCES += \
     src/cad/Extrude.cpp \
     src/cad/AlignedProfileArray.cpp \
     src/cad/ProfileLoftSolid.cpp \
+    src/cad/ChamferSolid.cpp \
     src/cad/FeatureTree.cpp \
     src/cad/Plane.cpp \
     \
@@ -396,6 +412,8 @@ HEADERS += \
     src/cad/sketch/SketchLoopFinder.h \
     src/cad/sketch/SketchPointAIS.h \
     src/cad/sketch/SketchRegion.h \
+    src/cad/sketch/SketchGeomTransformUtil.h \
+    src/cad/sketch/SketchGeom2DMath.h \
     src/command/ArcCommand.h \
     src/command/CircleCommand.h \
     src/command/CommandAlias.h \
@@ -405,8 +423,21 @@ HEADERS += \
     src/cad/sketch/GeneralDimClassifier.h \
     src/cad/sketch/GeometryRelationshipAnalyzer.h \
     src/command/ExtrudeCommand.h \
+    src/command/ChamferCommand.h \
     src/command/GripMoveCommand.h \
     src/command/SketchEditCommand.h \
+    src/command/SketchSelectionPicker.h \
+    src/command/CommandRubberBandHelper.h \
+    src/command/SketchTransformCommandBase.h \
+    src/command/MoveCommand.h \
+    src/command/CopyCommand.h \
+    src/command/RotateCommand.h \
+    src/command/MirrorCommand.h \
+    src/command/StretchCommand.h \
+    src/command/TrimExtendHelper.h \
+    src/command/TrimCommand.h \
+    src/command/ExtendCommand.h \
+    src/command/FilletCommand.h \
     src/command/alignment/SetOriginCommand.h \
     src/command/alignment/AlignmentAddSpiralCommand.h \
     src/command/alignment/Alignment3DAddVProfileCommand.h \
@@ -449,6 +480,7 @@ HEADERS += \
     src/cad/Extrude.h \
     src/cad/AlignedProfileArray.h \
     src/cad/ProfileLoftSolid.h \
+    src/cad/ChamferSolid.h \
     src/cad/FeatureTree.h \
     src/cad/Plane.h \                # ✅ 添加
     \

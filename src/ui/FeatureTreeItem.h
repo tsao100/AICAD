@@ -31,7 +31,8 @@ enum class ItemType {
     TrackCenterLine,  ///< 單條線路實例
     VAlignment,       ///< 縱斷面（TrackCenterLine 的子節點）
     Pattern,          ///< 沿線斷面陣列（AlignedProfileArray）
-    Loft              ///< 斷面放樣實體（ProfileLoftSolid）
+    Loft,             ///< 斷面放樣實體（ProfileLoftSolid）
+    Chamfer           ///< 倒角特徵（ChamferSolid）
 };
 
 /**
@@ -70,6 +71,7 @@ struct FeatureTreeItem {
             case ItemType::VAlignment:      return "VAlignment";
             case ItemType::Pattern:         return "Pattern";
             case ItemType::Loft:            return "Loft";
+            case ItemType::Chamfer:         return "Chamfer";
             default:                        return "Feature";
         }
     }

@@ -10,11 +10,13 @@
 #include "Document.h"
 #include "Feature.h"
 #include "Sketch.h"
+#include "sketch/SketchPointAIS.h"
 #include "Extrude.h"
 #include "Plane.h"
 #include "SketchInstance.h"
 #include "AlignedProfileArray.h"
 #include "ProfileLoftSolid.h"
+#include "ChamferSolid.h"
 #include "ui/FeatureTreeItem.h"
 
 #include <AIS_Point.hxx>
@@ -282,6 +284,7 @@ bool Document::load(const QString& fileName) {
                 else if (typeStr == "Extrude") feature = new Extrude(this);
                 else if (typeStr == "Pattern") feature = new AlignedProfileArray(this);
                 else if (typeStr == "Loft") feature = new ProfileLoftSolid(this);
+                else if (typeStr == "Chamfer") feature = new ChamferSolid(this);
 
                 if (feature) {
                     if (feature->fromJson(featureJson)) {
@@ -421,6 +424,23 @@ bool Document::load(const QString& fileName) {
                 //    CadView::setDocument() 裡那唯一一次 QTimer::singleShot
                 //    是否還沒被其他時序蓋掉。
                 rebuildFeature(loft);
+            }
+        }
+
+        // ✅ ChamferSolid 依賴另一個實體 Feature（例如 ProfileLoftSolid），必須
+        //    在來源已完成 rebuild 後才能取得正確的 shape() 來重新配對邊，故
+        //    在所有其他 Feature（含 Loft）rebuild 完成後再補一輪（理由同上方
+        //    ProfileLoftSolid 依賴 AlignedProfileArray 的那兩輪）。
+        const QList<Feature*> chamferSnapshot = m_features;
+        for (Feature* feature : chamferSnapshot) {
+            if (auto* cf = qobject_cast<ChamferSolid*>(feature))
+                cf->resolveReferences(this);
+        }
+        for (Feature* feature : chamferSnapshot) {
+            if (auto* cf = qobject_cast<ChamferSolid*>(feature)) {
+                // ⚠️ 同上：改用 rebuildFeature() 而非直接 rebuild()，確保
+                //    Q_EMIT featureShapeUpdated 讓 CadView 收到通知並重繪。
+                rebuildFeature(cf);
             }
         }
 
@@ -858,6 +878,61 @@ ProfileLoftSolid* Document::createProfileLoftSolid(
     return loft;
 }
 
+ChamferSolid* Document::createChamferSolid(
+    Feature* source,
+    double distance,
+    const QVector<EdgeSignature>& edges,
+    const QString& name)
+{
+    if (!source) {
+        qWarning() << "[Document] createChamferSolid: source is null";
+        return nullptr;
+    }
+    if (edges.isEmpty()) {
+        qWarning() << "[Document] createChamferSolid: no edges given";
+        return nullptr;
+    }
+
+    auto* cf = new ChamferSolid(this);
+    cf->setName(name.isEmpty()
+        ? QString("Chamfer %1").arg(m_nextFeatureNumber++)
+        : name);
+    cf->setSourceFeature(source);
+    cf->setDistance(distance);
+    cf->setEdgeSignatures(edges);
+
+    // ✅ 比照 createExtrude() 對來源 Sketch 的既定慣例（見上方
+    //    "hide sketch when it becomes child of extrude"）：來源實體變成
+    //    Chamfer 的父節點後就隱藏，否則兩個幾乎完全重疊的 shape 會疊在一起
+    //    顯示——倒角量通常遠小於整體尺寸，原本不透明的來源實體會直接擋住
+    //    新倒角實體的角落，畫面上完全看不出差異，像是「沒有顯示」。
+    source->setVisible(false);
+
+    addFeature(cf);
+
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::Chamfer;
+    item.id         = cf->id();
+    item.name       = cf->name();
+    item.parentId   = source->id();
+    item.visible    = cf->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(cf));
+    m_treeItems.append(item);
+
+    rebuildFeature(cf);
+    Q_EMIT treeStructureChanged();
+
+    if (cf->hasError()) {
+        qWarning() << "[Document] ChamferSolid created with error:" << cf->name()
+                    << "-" << cf->errorMessage();
+    } else {
+        qDebug() << "[Document] ChamferSolid created:" << cf->name();
+    }
+    return cf;
+}
+
+
 Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& name) {
     if (!sketch) {
         qWarning() << "[Document] Cannot create extrude: sketch is null";
@@ -979,6 +1054,31 @@ void Document::rebuildFeature(Feature* feature) {
     } else {
         // ✅ 修正：不再自己管 AIS cache，改發事件讓 CadView 統一重繪
         Q_EMIT featureShapeUpdated(feature);   // ← 新增信號，見 Document.h
+    }
+
+    // ⚠️ 修正：SketchPoint 雙擊尺寸約束編輯數值後被隱藏。
+    // 這個函式由 Feature::markDirty() → rebuildRequested 觸發，而
+    // Sketch::solveConstraints()（雙擊編輯數值的提交路徑就是呼叫這個）
+    // 內部本身也會在 markDirty() 之後、緊接著再呼叫一次自己的
+    // rebuildShapesOnly()（見 Sketch.cpp）——兩者對同一個 sketch 的
+    // m_aisShapes/AIS context 做重複且時序上互相競爭的 Erase/rebuild()/
+    // Display，任何一個環節的邊界情況（例如上面 ③ 的 isVisible() 判斷、
+    // 或兩次 rebuild() 之間 fingerprint 快照不同步）都可能讓某些
+    // SketchPointAIS 在①被 Erase 之後，沒有被任何一邊真正重新 Display。
+    // 與其繼續在複雜的雙重 rebuild 交互中追根究柢，這裡直接做最後一道
+    // 保險：只要 sketch 存在且 context 有效，就無條件確保所有
+    // SketchPointAIS 都是「顯示＋可選取」的狀態，滿足「SketchPoint 永遠
+    // 顯示」的需求，且此操作對已經正確顯示的點是完全無副作用的
+    // no-op（Display/Activate 對已顯示/已啟用的物件重複呼叫是安全的）。
+    if (sketch && !m_aisContext.IsNull()) {
+        for (const auto& obj : sketch->aisShapes()) {
+            if (obj.IsNull()) continue;
+            if (!Handle(SketchPointAIS)::DownCast(obj).IsNull()) {
+                m_aisContext->Display(obj, Standard_False);
+                m_aisContext->Activate(obj, 0, Standard_False);
+            }
+        }
+        m_aisContext->UpdateCurrentViewer();
     }
 }
 

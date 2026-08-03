@@ -1,6 +1,8 @@
 {
     "features": [
         {
+            "annotations": [
+            ],
             "constraints": [
                 {
                     "dimOffX": -45.26409912109375,
@@ -768,7 +770,7 @@
                 "cant": "100"
             },
             "planeData": {
-                "createdTime": "2026-07-23T13:07:20",
+                "createdTime": "2026-08-02T10:19:10",
                 "geometry": {
                     "normal": [
                         0,
@@ -786,17 +788,18 @@
                         0
                     ]
                 },
-                "id": "219091c3-ca91-4570-8077-88f3f572cb97",
+                "id": "68b5e119-74d1-4799-a6d8-52dcd35fbbb2",
                 "isLocked": true,
-                "modifiedTime": "2026-07-23T13:07:20",
+                "modifiedTime": "2026-08-02T10:19:10",
                 "name": "XY",
                 "type": 0
             },
-            "planeId": "219091c3-ca91-4570-8077-88f3f572cb97",
+            "planeId": "68b5e119-74d1-4799-a6d8-52dcd35fbbb2",
             "planeName": "XY",
+            "schemaVersion": 2,
             "suppressed": false,
             "type": "Sketch",
-            "visible": true
+            "visible": false
         },
         {
             "endChainage": 267,
@@ -834,13 +837,15 @@
             "visible": true
         },
         {
+            "errorMessage": "Station 1 has 0 closed profile(s), expected 2 — cannot loft (check the master sketch for unclosed geometry)",
+            "hasError": true,
             "id": "{3393a55b-1d65-4c5c-a3f5-2ed78a98ddf1}",
             "name": "ProfileLoft 12",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
             "sourceArrayId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
             "suppressed": false,
             "type": "Loft",
-            "visible": true
+            "visible": false
         },
         {
             "endChainage": 295.8,
@@ -884,7 +889,7 @@
             "sourceArrayId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
             "suppressed": false,
             "type": "Loft",
-            "visible": true
+            "visible": false
         },
         {
             "endChainage": 325.8,
@@ -909,7 +914,147 @@
             "visible": true
         },
         {
-            "id": "{c04290a2-90f4-4722-b894-c3322ef24a18}",
+            "distance": 0.025,
+            "edges": [
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16799965520816176,
+                    "loopIndex": -1,
+                    "mx": -180.21433258056655,
+                    "my": 104.58715438842779,
+                    "mz": 16.951851844787612
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.8999957549040108,
+                    "loopIndex": -1,
+                    "mx": -180.3812942504884,
+                    "my": 105.00503921508795,
+                    "mz": 17.035833358764656
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16799965520816132,
+                    "loopIndex": -1,
+                    "mx": -180.55150604248058,
+                    "my": 105.42160415649423,
+                    "mz": 16.951851844787612
+                },
+                {
+                    "cornerIndex": 0,
+                    "length": 14.663562124076119,
+                    "loopIndex": 1,
+                    "mx": -186.9901186572977,
+                    "my": 101.79425972456974,
+                    "mz": 17.18955747662274
+                },
+                {
+                    "cornerIndex": 1,
+                    "length": 14.69251550553259,
+                    "loopIndex": 1,
+                    "mx": -187.3393123631421,
+                    "my": 102.6237595762339,
+                    "mz": 17.18955747662274
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16799965520817034,
+                    "loopIndex": -1,
+                    "mx": -180.77629852294933,
+                    "my": 105.97790908813482,
+                    "mz": 16.951851844787605
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.899995754903955,
+                    "loopIndex": -1,
+                    "mx": -180.94326019287118,
+                    "my": 106.39579391479495,
+                    "mz": 17.035833358764652
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16799965520817253,
+                    "loopIndex": -1,
+                    "mx": -181.11347198486334,
+                    "my": 106.8123588562012,
+                    "mz": 16.951851844787605
+                },
+                {
+                    "cornerIndex": 3,
+                    "length": 14.711801007892195,
+                    "loopIndex": 0,
+                    "mx": -187.5743161460888,
+                    "my": 103.17582057403125,
+                    "mz": 17.18960772610018
+                },
+                {
+                    "cornerIndex": 2,
+                    "length": 14.740754428478109,
+                    "loopIndex": 0,
+                    "mx": -187.923514203985,
+                    "my": 104.00531858068393,
+                    "mz": 17.18960772610018
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16800088370617436,
+                    "loopIndex": -1,
+                    "mx": -194.6925506591798,
+                    "my": 101.08689880371097,
+                    "mz": 17.250343322753913
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.899999129664498,
+                    "loopIndex": -1,
+                    "mx": -194.5093154907227,
+                    "my": 100.67589187622073,
+                    "mz": 17.33433151245118
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.1680008837061779,
+                    "loopIndex": -1,
+                    "mx": -194.32870483398438,
+                    "my": 100.26372528076175,
+                    "mz": 17.250343322753913
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16800088370616986,
+                    "loopIndex": -1,
+                    "mx": -194.08615112304688,
+                    "my": 99.71494293212888,
+                    "mz": 17.250343322753906
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.8999991296643672,
+                    "loopIndex": -1,
+                    "mx": -193.90291595458984,
+                    "my": 99.30393600463869,
+                    "mz": 17.33433151245117
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16800088370616967,
+                    "loopIndex": -1,
+                    "mx": -193.7223052978516,
+                    "my": 98.89176940917972,
+                    "mz": 17.250343322753906
+                }
+            ],
+            "id": "{75531042-de08-446d-a642-dc96043aba5d}",
+            "name": "Chamfer 23",
+            "parentId": "{0f4de7f4-4055-4907-9a88-ec77e011ce0b}",
+            "sourceFeatureId": "{0f4de7f4-4055-4907-9a88-ec77e011ce0b}",
+            "suppressed": false,
+            "type": "Chamfer",
+            "visible": false
+        },
+        {
+            "id": "{e74eb70a-58f8-4585-bc31-9b3026c6c5fd}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -917,13 +1062,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station0",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "8e875d6c-8d45-4207-bf85-1bce5845000e",
+            "planeId": "2809cff0-fbb5-44da-8e50-e912443c134d",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{dff2dae9-ea2b-4b88-94fd-bf35d4357c28}",
+            "id": "{a2ccf44e-615f-4d67-9c4e-505acf6f1558}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -931,13 +1076,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station1",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "0ae26a47-9311-490e-905d-032f8e21fd5c",
+            "planeId": "ce3f608c-c734-4460-bdb4-e025f8b577e3",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{fe9aa977-4386-438a-828c-1c43d6710900}",
+            "id": "{c48812d6-86e4-49e1-a2c1-c46b0faf1e62}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -945,13 +1090,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station2",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "4eee5d36-abf9-4392-9f91-61ee75c974a3",
+            "planeId": "a51ae9fb-efd5-4892-b0d2-e9f6844dc4ae",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{614ac000-0b7d-4e08-bd1e-5c0a03f9b8d9}",
+            "id": "{c2a63ade-df14-4917-ac1a-0d6e879057e6}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -959,13 +1104,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station3",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "a9fdb4cf-503c-438b-9ce1-304df0a632a7",
+            "planeId": "e5231c7d-739d-4abd-a258-b5fe59fd6a08",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{8961a152-ac91-41a3-92fc-edd033463ea3}",
+            "id": "{f75a0cfe-1a7a-484e-8fdf-73e612d32efa}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -973,13 +1118,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station4",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "be4623cd-2cdc-4c9f-8485-e3d9db4af862",
+            "planeId": "d82142e5-b3d8-4fe3-95c9-96282a9f07cc",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{3eb33273-91a0-425e-96d5-3a37ba61d6b1}",
+            "id": "{440f275c-8a94-4bdc-b985-df3e5b057016}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -987,13 +1132,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station5",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "65994b1b-7058-42aa-b40d-022d018811c2",
+            "planeId": "700103e5-e6a0-464a-916d-260f9b653c26",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{cdc47750-c602-45f1-aa18-5f124e96b6e5}",
+            "id": "{95ad4167-fa06-46e3-aa22-f0061f8b4d9a}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1001,13 +1146,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station6",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "722efb55-5f4b-4c68-a2e5-0a2625bf1f8a",
+            "planeId": "79cad1a4-0da6-41a6-abdf-65b0d548026a",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{8baa2435-3d1e-4a47-b8fa-865cb0ce646a}",
+            "id": "{35600cdf-e3ec-4989-9946-ccba6b095581}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1015,13 +1160,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station7",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "cc694eba-23bb-40b8-bcaa-bad943363b13",
+            "planeId": "c77c6ede-e80d-4873-9b8b-729cc9f020bc",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{5aa96daf-4836-4bd9-8342-fe51010dc7b9}",
+            "id": "{28e9dc8f-fc69-4916-a629-321887244178}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1029,13 +1174,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station8",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "91b17873-f96d-4383-877e-07b1349c3ccd",
+            "planeId": "d393ea4c-5a49-4823-af88-c67c02fbe305",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{358e09a2-1920-4332-b719-fef311560bbe}",
+            "id": "{314e8c4a-be15-4b5a-a4fb-1b5bfd773346}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1043,13 +1188,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 9_Station9",
             "parentId": "{cc25f972-4316-43f6-b21f-52f5557a79a5}",
-            "planeId": "80cc3a27-b3e9-4239-9d30-21d727b36d53",
+            "planeId": "25deaa50-9192-4941-b455-2f140b1d3a24",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{1227e2ef-a3c6-4952-bdfd-7c6828658bcd}",
+            "id": "{4ebaf937-5e7e-4f58-bcd2-c97a42739601}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1057,13 +1202,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station0",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "9de4f540-9989-4939-89cc-d795af6d811f",
+            "planeId": "a2946ca4-9590-4371-bb30-8385afe2c95c",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{3d58d668-dcbf-4bf5-8dc2-1d3952b0c486}",
+            "id": "{8b256486-a0ff-42e0-94ad-68db721de0f0}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1071,13 +1216,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station1",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "684b0aad-01fc-44f4-ae41-7a60ee1b6ca6",
+            "planeId": "e99f1315-7516-474f-b6a0-e96b48f9ebfb",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{0b774cf0-9194-4d44-8b2a-1a814bcc731e}",
+            "id": "{91928932-55da-4049-b270-13e30589b388}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1085,13 +1230,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station2",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "17f7c568-d8bb-475c-b1bc-98f607a105dd",
+            "planeId": "a2484508-12c9-4f7c-b03f-f998f549018a",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{ff8b1242-1962-4837-b263-90ec40d70dcf}",
+            "id": "{9be61c22-25b8-4b28-b98d-91059072d976}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1099,13 +1244,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station3",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "c84b9ab1-29f7-40fa-bb98-5bf40a6de820",
+            "planeId": "5ed5122e-37bf-4d6e-83a9-4413ec892994",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{070d8782-9d29-44cd-aa0c-73acc4957479}",
+            "id": "{666b3294-1607-450f-9444-2de318515130}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1113,13 +1258,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station4",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "d3c98be1-08d3-42f9-a5e0-f4fa1f91a426",
+            "planeId": "a4d63c78-a9c1-4dc1-ba5b-83e03dfdadf7",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{07500892-ee3d-49ce-ba6b-caca6974c210}",
+            "id": "{3eeebc13-4c68-409b-a626-29a7e84fb923}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1127,13 +1272,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station5",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "3b9139e5-c9c9-4b9e-bb7f-d732cfd0ddb8",
+            "planeId": "e1f08882-38bc-4df5-8257-dac62fa791c6",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{bb37a526-2320-4db5-bf6e-494ce7efb7f6}",
+            "id": "{00a2138c-602b-4509-acec-a9f37595304d}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1141,13 +1286,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station6",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "7d9b8d75-b001-446f-8356-936fd70c003c",
+            "planeId": "735137fe-6204-439e-9a6b-c03cf31e8fa9",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{2ce26781-2658-4046-b28b-0a181586327a}",
+            "id": "{1dc603fd-867c-4734-87fd-6acd2098bc8a}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1155,13 +1300,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station7",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "efc8c8f5-b827-4f08-b757-df279aa74d96",
+            "planeId": "0fb4d8ac-0d07-4955-8eba-0fa703e5847d",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{05d09f6b-3399-4628-9acd-b5363f03d552}",
+            "id": "{1144a5df-b633-48ba-8c5e-0c2fea17a700}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1169,13 +1314,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station8",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "bcddabf2-51f2-4c4b-ac60-6e3a9ffc8cce",
+            "planeId": "3f335a56-4235-448a-9ab6-f79e369e22fa",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{634d4fa7-3774-40a2-8228-bfd75ad3238f}",
+            "id": "{c7a3cb0d-2d12-49f2-9a81-c59278c23726}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1183,13 +1328,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station9",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "12240092-f53b-42c1-8dc8-ef250888637b",
+            "planeId": "77ec0e7b-d45f-47ea-9b0c-781d23bc25fb",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{891740b8-3e88-4540-b175-85a9faa189d4}",
+            "id": "{13d4ec2e-97d7-46f9-8791-a45a16716f4b}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1197,13 +1342,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 11_Station10",
             "parentId": "{8fd5b8ee-6308-4ee9-8e7a-45a0dee8eef3}",
-            "planeId": "c4f1afd1-0b68-4716-a22d-7cfa505c3e6e",
+            "planeId": "0559cb9b-11db-4b5f-ba2c-edcbce0ae982",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{076aff37-ab2c-479f-b781-867593a9330c}",
+            "id": "{a4aae5a7-69f3-4772-97ae-3b4d6f5d67f0}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1211,13 +1356,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station0",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "7a468e8a-5122-4f97-b3b9-4b7f636e92d1",
+            "planeId": "ad1c76f8-301e-43e9-80c3-6aba80577e3f",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{106399d1-e14a-4265-9166-c93c0ea76f40}",
+            "id": "{638e36a1-0974-4552-9e0d-aac1b277d9f5}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1225,13 +1370,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station1",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "e8cda9b0-2622-48be-bc73-89b1b42867b5",
+            "planeId": "d0243f52-0e54-472c-86b8-5752005239fa",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{eda3e47a-ed5b-4fde-81d7-bdd8391dd8b3}",
+            "id": "{1e3e0368-a406-4869-bdd0-7599d2e15b45}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1239,13 +1384,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station2",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "5b3e2243-1e45-4cae-a12e-e2f2ca947d31",
+            "planeId": "4dcd38ce-113c-4498-ad73-40a924196552",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{65662441-bcba-40eb-bc2b-e749d7c60666}",
+            "id": "{10846a64-1608-41b5-a905-20640feb0d27}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1253,13 +1398,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station3",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "1274a178-0b02-471c-84c5-0decd270c7cd",
+            "planeId": "f5b4c7a1-11e9-48a3-b5d7-4a59b753aafb",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{21e71b03-5409-4583-9083-bed807d88d0d}",
+            "id": "{6574e881-22e7-486a-b669-cb5872e406c7}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1267,13 +1412,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station4",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "c7306ec2-45fd-4116-96d9-bd9602c4d26a",
+            "planeId": "a01451da-44ca-4ec7-b92c-3400145032f8",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{34c4eb9c-9435-4405-81ab-741f2ed32137}",
+            "id": "{d87639c4-54ab-4930-8979-6008411b9499}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1281,13 +1426,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station5",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "5b17fe88-c344-4916-95d6-994c1ef3ecdf",
+            "planeId": "3eb07484-c68a-42c0-b086-85a3edd9a8b5",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{582f6d3f-14ff-461f-b741-908d03d3774e}",
+            "id": "{6f64c5b3-7ea8-4456-8e2f-f4a420c84162}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1295,13 +1440,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station6",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "24241e30-af06-45b2-9c5c-3de621c247aa",
+            "planeId": "56e67954-8361-46be-a3f5-39af7c14a06a",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{06e1d7f4-bec3-4922-9475-96f28f0879e4}",
+            "id": "{b1b6e5d0-daff-4aeb-aa0c-03809430b895}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1309,13 +1454,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station7",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "3453a16c-a602-4449-9d14-ca849baef086",
+            "planeId": "231119b0-4bb2-4d87-9857-611387174de1",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{80d6848f-7fce-464b-bbad-28f08598644f}",
+            "id": "{42c68ab2-dec3-4098-97e6-1beffcc6615d}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1323,13 +1468,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station8",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "4c388dee-164b-4bcd-ac5d-4b4f29aa0dfd",
+            "planeId": "28d79dd2-cb90-4632-834a-8461d0d493ac",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{4e4b7052-5b1c-49de-93c6-9d5a6da3f236}",
+            "id": "{e9f7485c-ab79-4a85-881d-be7e0e6c9186}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1337,13 +1482,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station9",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "b6da8d3b-9c28-4826-9f4f-808e0ace926a",
+            "planeId": "ed217753-ff6f-4651-83b7-65669993f01b",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{71b6224a-7030-4f73-8e03-1286421cae19}",
+            "id": "{9d314cab-1a17-4b08-94dc-2214d0b4850d}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1351,13 +1496,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 13_Station10",
             "parentId": "{165bb27a-6e1c-4236-85b8-47ef8cfefa6d}",
-            "planeId": "650f299c-c4b2-4cad-a9de-641fd2688457",
+            "planeId": "efcd265c-6943-4aba-aef5-f2e896a3e1b6",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{93261f96-7e2a-4ebe-b2d4-7e127ab1f832}",
+            "id": "{03231d9d-fde4-4848-874a-bb19a3ffaba4}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1365,13 +1510,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station0",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "8a0650ff-c5c2-4e90-a82b-64f9df805f06",
+            "planeId": "d955fdd4-7c6f-4136-ab18-995dcacb1134",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{db59261b-3ff6-4037-af9a-8948b346f30b}",
+            "id": "{b5971c39-a19e-4d14-9406-69ca7ff1a091}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1379,13 +1524,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station1",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "55d9fbec-1fb7-4e5a-b360-6454f4ac387b",
+            "planeId": "893305fb-4359-492a-8749-7538a5762eb7",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{61c38b78-48d8-4709-8c92-be608f608ef7}",
+            "id": "{453d893a-b9c6-4ce4-8b06-bd531f2615cb}",
             "instanceParams": {
                 "H": "-60",
                 "cant": "50"
@@ -1393,13 +1538,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station2",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "a844caa7-8af9-47a5-a7e1-e05e716f4517",
+            "planeId": "aea43755-19bd-40ca-ad11-86214659ddfc",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{dbdb4fb7-c1c7-494e-a08a-53b5a50d4b19}",
+            "id": "{f2d1df71-3b19-43e5-88c9-e95ddaf5bb65}",
             "instanceParams": {
                 "H": "-58.9742435115588",
                 "cant": "49.145202926299"
@@ -1407,13 +1552,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station3",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "bd2eb946-c25d-4532-80c5-88894cc941c1",
+            "planeId": "377c3a4b-8dab-4bb1-94c0-ab646a221606",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{2ace0c6e-0f98-4ad5-bf3d-68beb3bb554b}",
+            "id": "{f26804f4-b1d8-450e-818b-0b966581a1a0}",
             "instanceParams": {
                 "H": "-57.3706071479225",
                 "cant": "47.8088392899354"
@@ -1421,13 +1566,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station4",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "3076021d-6a6e-4f3a-a4c9-6e6622139479",
+            "planeId": "49ab6f88-2bfc-4a1c-9f5c-1c041730f1da",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{657d960d-bf18-42d1-9d7e-547c4ef195e2}",
+            "id": "{0cf9aeb8-6637-43b3-a364-0d1657cc28df}",
             "instanceParams": {
                 "H": "-55.7669707842861",
                 "cant": "46.4724756535717"
@@ -1435,13 +1580,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station5",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "f4f0353f-0d42-47a4-9ce5-d5e4121d6e93",
+            "planeId": "c2145a22-5239-45ee-a312-bb6396a746c4",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{fc1c1890-a9e6-4300-aa25-87b4a103357d}",
+            "id": "{9e4be57a-8663-4d55-abdb-f578465de6bf}",
             "instanceParams": {
                 "H": "-54.1633344206498",
                 "cant": "45.1361120172081"
@@ -1449,13 +1594,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station6",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "861050fc-38c3-4407-a88d-ec0349cdde25",
+            "planeId": "88747215-d90a-4245-bd12-b18440941df1",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{798abb73-a409-41dd-b062-4e3f70b1152a}",
+            "id": "{483aa244-e0b8-41e6-b846-60a5cc75876b}",
             "instanceParams": {
                 "H": "-52.5596980570134",
                 "cant": "43.7997483808445"
@@ -1463,13 +1608,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station7",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "ab3f10bd-95ae-4a1c-b8f3-0cb613d097d1",
+            "planeId": "8a136e78-f1bc-4c88-b69c-48eae538ec1e",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{dc2c60f6-7e7b-4fc6-b326-b074c7527861}",
+            "id": "{214e9119-c405-45b7-ab16-049a967d39ec}",
             "instanceParams": {
                 "H": "-50.956061693377",
                 "cant": "42.4633847444809"
@@ -1477,13 +1622,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station8",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "2cd5a201-cda2-4d33-b77b-b2809996e690",
+            "planeId": "52685c5a-53f6-4f61-bd8f-ae250191450c",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{6f80c670-b092-48d3-95af-2c9dac35537d}",
+            "id": "{6d7c953a-8870-404d-bb05-c2c49158ddd8}",
             "instanceParams": {
                 "H": "-49.3524253297406",
                 "cant": "41.1270211081172"
@@ -1491,13 +1636,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station9",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "2653a32a-3cc2-473b-8089-686a70ca777a",
+            "planeId": "b52ffb07-ade5-49a9-bc85-35b4daf3ddbe",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{94c33d9e-15d5-47f2-9723-7324dd9dadb2}",
+            "id": "{1a8edb20-0ec3-42a4-baa9-f812555902fb}",
             "instanceParams": {
                 "H": "-47.7487889661043",
                 "cant": "39.7906574717536"
@@ -1505,13 +1650,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 15_Station10",
             "parentId": "{5e3c947e-4bff-4587-a32a-61656542968c}",
-            "planeId": "ae9b356f-0d00-4aa2-8432-da3eca60c69b",
+            "planeId": "2ee6e9df-5235-4c85-983a-11a9d3a59f73",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{ed63b964-a12b-4764-8f2d-98626e043e1e}",
+            "id": "{d6417cb5-c3ed-4aa6-b698-b1055f61679b}",
             "instanceParams": {
                 "H": "-47.4215162388316",
                 "cant": "39.5179301990263"
@@ -1519,13 +1664,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station0",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "8d2894fa-f12c-4962-8248-f597d5410295",
+            "planeId": "c1f3902e-eff0-40d3-a6fc-24b8f0865e3e",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{43ee3111-477d-4cad-b449-1f4f5d985a3f}",
+            "id": "{9bd7ae36-44f2-4249-ae04-914d63748a53}",
             "instanceParams": {
                 "H": "-45.8178798751952",
                 "cant": "38.1815665626627"
@@ -1533,13 +1678,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station1",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "1f0d3281-d9ef-449a-af7c-0b33baab99d7",
+            "planeId": "977202e9-c002-49dd-9e5f-f95a0ef6cefa",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{2d9b316a-dd30-44d7-91b7-861b13ed5de5}",
+            "id": "{897de4c2-acda-41a3-aba8-1b27af675711}",
             "instanceParams": {
                 "H": "-44.2142435115588",
                 "cant": "36.845202926299"
@@ -1547,13 +1692,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station2",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "f4c11dac-daec-46cf-930c-9fc14d918af4",
+            "planeId": "008b7b38-2e12-4b55-8b49-abd90388b52a",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{4d66edae-c502-47b5-bbe6-ab236cf7e418}",
+            "id": "{8e0bcbb3-7b2c-4e4a-b3eb-b1642299831d}",
             "instanceParams": {
                 "H": "-42.6106071479225",
                 "cant": "35.5088392899354"
@@ -1561,13 +1706,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station3",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "2031d37c-cc03-4c7d-8540-b51433bd136c",
+            "planeId": "1d22aa9c-dff3-4454-8b18-853d718d4309",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{48501290-dc88-4f40-a25e-b67e8942adc5}",
+            "id": "{af31a59a-04d2-44ce-847c-64393b71e13c}",
             "instanceParams": {
                 "H": "-41.0069707842861",
                 "cant": "34.1724756535718"
@@ -1575,13 +1720,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station4",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "600a2347-fe15-4d1f-a4f2-b8d760b48e52",
+            "planeId": "df37276b-0c9e-4891-b0c5-44e81097bd89",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{cfd34a2f-adad-42de-91ff-3667da6bb8f0}",
+            "id": "{abbae7b0-a963-4092-b79d-be531d81130e}",
             "instanceParams": {
                 "H": "-39.4033344206497",
                 "cant": "32.8361120172081"
@@ -1589,13 +1734,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station5",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "c70650d6-1615-47c1-a937-e5c77b686cf0",
+            "planeId": "1b8e5da1-67bf-4c76-9dae-89b569f0f9f6",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{35970b7e-889f-4c87-b7dd-acf758ddd8b7}",
+            "id": "{db6df2af-e148-4721-8784-cc9f2aeca44b}",
             "instanceParams": {
                 "H": "-37.7996980570134",
                 "cant": "31.4997483808445"
@@ -1603,13 +1748,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station6",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "97779840-3476-47e1-bca8-ba29b2e0b435",
+            "planeId": "dd0248d5-f8ba-4005-a4eb-502a4dc7ef95",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{a4c3cb59-0943-441e-ac29-bac8e33649a2}",
+            "id": "{f828e799-b201-4c2c-9071-feb1f42befa8}",
             "instanceParams": {
                 "H": "-36.196061693377",
                 "cant": "30.1633847444808"
@@ -1617,13 +1762,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station7",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "995a13f3-8ceb-4750-a15d-c1ad074eb4bf",
+            "planeId": "947a373d-a051-4234-a17f-fd187ba9f97c",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{ce3ff0d5-1bba-4e6e-ad1a-f8799d869e87}",
+            "id": "{43ecafdb-7343-458c-ab05-daf8abddd9ce}",
             "instanceParams": {
                 "H": "-34.5924253297407",
                 "cant": "28.8270211081172"
@@ -1631,13 +1776,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station8",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "0105ce34-d472-4a2a-a9ce-fc492dc1e625",
+            "planeId": "f2161b67-87e3-441c-accc-0a52176c648c",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{c61dd3e2-cf64-4492-98f6-da2db79cf405}",
+            "id": "{fdff7bf6-d586-4f44-a9f1-7c9b0fd4c57a}",
             "instanceParams": {
                 "H": "-32.9887889661043",
                 "cant": "27.4906574717536"
@@ -1645,13 +1790,13 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station9",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "58096f6b-c311-4f15-a31b-5c172fdba18f",
+            "planeId": "6e951908-30f6-43fe-8f83-241b751d4a29",
             "suppressed": false,
             "type": "SketchInstance",
             "visible": true
         },
         {
-            "id": "{d09c6202-e8f5-46da-ab6f-856d158cb609}",
+            "id": "{d729d763-62e8-4288-ad7e-0e6c2e8ddc7b}",
             "instanceParams": {
                 "H": "-31.385152602468",
                 "cant": "26.15429383539"
@@ -1659,9 +1804,135 @@
             "masterSketchId": "{178d764b-6fd3-4c17-907f-3edd878edf9a}",
             "name": "ProfileArray 17_Station10",
             "parentId": "{c328f1ef-1a45-4822-aa65-aac07d741d76}",
-            "planeId": "1d94f49b-2059-4668-9959-c288104e6ed7",
+            "planeId": "97d57f91-1be4-4c68-8ea8-70856e593adf",
             "suppressed": false,
             "type": "SketchInstance",
+            "visible": true
+        },
+        {
+            "distance": 0.025,
+            "edges": [
+                {
+                    "cornerIndex": 0,
+                    "length": 14.643966224067327,
+                    "loopIndex": 1,
+                    "mx": -200.65781436785835,
+                    "my": 95.7372977592769,
+                    "mz": 17.441102568332653
+                },
+                {
+                    "cornerIndex": 1,
+                    "length": 14.68463597694826,
+                    "loopIndex": 1,
+                    "mx": -201.03961612548324,
+                    "my": 96.55229427819235,
+                    "mz": 17.441102568332653
+                },
+                {
+                    "cornerIndex": 3,
+                    "length": 14.711721851390838,
+                    "loopIndex": 0,
+                    "mx": -201.29613349573353,
+                    "my": 97.09470619308,
+                    "mz": 17.441126160309665
+                },
+                {
+                    "cornerIndex": 2,
+                    "length": 14.752391626735871,
+                    "loopIndex": 0,
+                    "mx": -201.67794076925864,
+                    "my": 97.9097001427429,
+                    "mz": 17.441126160309665
+                }
+            ],
+            "errorMessage": "OCC error during chamfer: There are no suitable edges for chamfer or fillet",
+            "hasError": true,
+            "id": "{9deedfbc-91a5-4098-b220-52f19984317a}",
+            "name": "Chamfer 24",
+            "parentId": "{f4d7fdf5-a199-4f7c-8a26-986acf6bc502}",
+            "sourceFeatureId": "{f4d7fdf5-a199-4f7c-8a26-986acf6bc502}",
+            "suppressed": false,
+            "type": "Chamfer",
+            "visible": true
+        },
+        {
+            "distance": 0.025,
+            "edges": [
+                {
+                    "cornerIndex": -1,
+                    "length": 14.613562123960792,
+                    "loopIndex": -1,
+                    "mx": -186.9901154488949,
+                    "my": 101.7942610752355,
+                    "mz": 17.189557403701528
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 14.642515505623784,
+                    "loopIndex": -1,
+                    "mx": -187.33931867885826,
+                    "my": 102.62375691742211,
+                    "mz": 17.18955761988559
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 14.661801007852132,
+                    "loopIndex": -1,
+                    "mx": -187.57431325220978,
+                    "my": 103.17582179230915,
+                    "mz": 17.189607660544354
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 14.690754428452726,
+                    "loopIndex": -1,
+                    "mx": -187.92352077336264,
+                    "my": 104.00531581504,
+                    "mz": 17.189607874626663
+                }
+            ],
+            "id": "{40a5dc8b-2499-4af7-8b04-597f16413473}",
+            "name": "Chamfer 25",
+            "parentId": "{75531042-de08-446d-a642-dc96043aba5d}",
+            "sourceFeatureId": "{75531042-de08-446d-a642-dc96043aba5d}",
+            "suppressed": false,
+            "type": "Chamfer",
+            "visible": true
+        },
+        {
+            "distance": 0.025,
+            "edges": [
+                {
+                    "cornerIndex": 0,
+                    "length": 14.63985740014687,
+                    "loopIndex": 1,
+                    "mx": -227.04062769810008,
+                    "my": 81.74381430828011,
+                    "mz": 17.398973239863174
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.16800044095724717,
+                    "loopIndex": -1,
+                    "mx": -220.7079467773438,
+                    "my": 85.41518783569336,
+                    "mz": 17.393238067626946
+                },
+                {
+                    "cornerIndex": -1,
+                    "length": 0.8999994873183577,
+                    "loopIndex": -1,
+                    "mx": -220.92942810058594,
+                    "my": 85.80691146850586,
+                    "mz": 17.477235794067383
+                }
+            ],
+            "id": "{fceca9ab-f51c-4e3a-b353-d2e4f629d1e2}",
+            "name": "Chamfer 26",
+            "parentId": "{3393a55b-1d65-4c5c-a3f5-2ed78a98ddf1}",
+            "sourceFeatureId": "{3393a55b-1d65-4c5c-a3f5-2ed78a98ddf1}",
+            "suppressed": false,
+            "type": "Chamfer",
             "visible": true
         }
     ],
@@ -1819,7 +2090,7 @@
                     ]
                 }
             },
-            "hAlignVisible": true,
+            "hAlignVisible": false,
             "horizontal": {
                 "rawPoints": [
                     {
@@ -2033,16 +2304,16 @@
     ],
     "version": "1.0",
     "viewState": {
-        "atX": 1025.0135164366789,
-        "atY": -258.6652880707224,
-        "atZ": 311.7108459472656,
-        "eyeX": 1025.0135164366789,
-        "eyeY": -258.6652880707224,
-        "eyeZ": 935.1325378417969,
-        "scale": 0.6122623324279338,
-        "upX": 0,
-        "upY": 1,
-        "upZ": 0,
-        "viewType": 1
+        "atX": -241.4543698201821,
+        "atY": 84.05027758178086,
+        "atZ": 12.850729120258931,
+        "eyeX": -183.51175482165917,
+        "eyeY": 87.75958535089927,
+        "eyeZ": 25.86323507124047,
+        "scale": 2166.1420805312932,
+        "upX": -0.2273801614719966,
+        "upY": 0.2807534806576591,
+        "upZ": 0.9324568329244943,
+        "viewType": 7
     }
 }

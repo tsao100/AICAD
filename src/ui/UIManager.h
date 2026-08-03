@@ -298,6 +298,26 @@ private:
      */
     void refreshAlignmentOSnapSources();
 
+    /**
+     * @brief 重新顯示「Sketch 編輯期間、但不屬於 Feature::m_aisShapes、因此
+     *        不會被 CadView::displayAllFeatures() 自動還原」的所有 AIS 物件：
+     *        草圖平面 X/Y 軸與原點、束制符號／尺寸標註（ConstraintOverlayManager
+     *        overlay）、以及 SketchPointAIS（草圖點；見
+     *        CadView::setGdimWholeGeomHitTestEnabled() 旁註解與
+     *        CadView::featuresRedisplayed() 訊號說明）。
+     *
+     *        displayAllFeatures() 每次都會先 RemoveAll() 整個 OCCT context，
+     *        上述物件因此會被整批清掉；本函式統一在收到
+     *        CadView::featuresRedisplayed() 訊號、或進入 Sketch 編輯
+     *        （SKETCH_ENTERED）時呼叫，確保它們「永遠顯示」，不會因為任何
+     *        觸發 displayAllFeatures() 的操作（例如 GDIM 命令完成後的
+     *        solveConstraints() → shapeChanged() → featureShapeUpdated()）
+     *        而消失。只在目前正在編輯某個 Sketch 時才動作。
+     *
+     * @param sketch 若為 nullptr，改用 m_currentActiveSketch。
+     */
+    void reshowSketchEditOverlays(cad::Sketch* sketch = nullptr);
+
     osnap::OSnapToolbar* m_snapToolbar = nullptr;
     cad::Sketch* m_currentActiveSketch = nullptr;
 

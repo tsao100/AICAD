@@ -123,6 +123,13 @@ private:
     void drawRadiusDimension (const Handle(Prs3d_Presentation)& prs);
     void drawHorizontalDim   (const Handle(Prs3d_Presentation)& prs);
     void drawVerticalDim     (const Handle(Prs3d_Presentation)& prs);
+    // 單點座標標註（FixedX/FixedY）專用：與 FixedHorizDist/FixedVertDist
+    // 共用 drawHorizontalDim/drawVerticalDim 會經過 getRefPoints() 的雙點
+    // 合成邏輯，對單點來說 c2 恆等於 c1（退化成零長度尺寸線）。改用這兩個
+    // 專屬函式，直接用點本身 + m_dimOffsetX/Y（提交當下的滑鼠位置）畫出
+    // 水平/垂直引線，與 DimPreviewOverlay 的預覽演算法一致。
+    void drawXDimension      (const Handle(Prs3d_Presentation)& prs);
+    void drawYDimension      (const Handle(Prs3d_Presentation)& prs);
     void drawAngleDim        (const Handle(Prs3d_Presentation)& prs);
     void drawLengthDimension    (const Handle(Prs3d_Presentation)& prs);
     void drawDiameterDimension  (const Handle(Prs3d_Presentation)& prs);

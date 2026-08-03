@@ -11,6 +11,15 @@
 #include "CommandManager.h"
 #include "GeneralDimCommand.h"
 #include "LeaderNoteCommand.h"
+#include "MoveCommand.h"
+#include "CopyCommand.h"
+#include "RotateCommand.h"
+#include "MirrorCommand.h"
+#include "StretchCommand.h"
+#include "TrimCommand.h"
+#include "ExtendCommand.h"
+#include "FilletCommand.h"
+#include "ChamferCommand.h"
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
 #include "../cad/Sketch.h"
@@ -1049,7 +1058,42 @@ void registerConstraintCommands(core::Application* app)
         []() -> Command* { return new LeaderNoteCommand(); });
     aliasMgr->registerAlias("LN", "LEADER", "Leader / Hole Note", true);
 
-    qDebug() << "[ConstraintCommands] Registered" << 24 << "constraint commands and aliases.";
+    // Sketch Edit 進階編輯命令 Phase 1：MOVE / COPY
+    // 別名 M / CO 已在 CommandAlias 內建立（isSystem=true），這裡不重複註冊。
+    cmdMgr->registerCommand("MOVE", QStringList{"M"},
+        []() -> Command* { return new MoveCommand(); });
+
+    cmdMgr->registerCommand("COPY", QStringList{"CO"},
+        []() -> Command* { return new CopyCommand(); });
+
+    cmdMgr->registerCommand("ROTATE", QStringList{"RO"},
+        []() -> Command* { return new RotateCommand(); });
+
+    cmdMgr->registerCommand("MIRROR", QStringList{"MI"},
+        []() -> Command* { return new MirrorCommand(); });
+
+    // STRETCH：別名 S 尚未在 CommandAlias 內建立（不像 M/CO/RO/MI 早已預先
+    // 存在），這裡需要額外註冊。
+    cmdMgr->registerCommand("STRETCH", QStringList{"S"},
+        []() -> Command* { return new StretchCommand(); });
+    aliasMgr->registerAlias("S", "STRETCH", "Stretch objects", true);
+
+    // 別名 TR / EX 已在 CommandAlias 內建立，這裡不重複註冊。
+    cmdMgr->registerCommand("TRIM", QStringList{"TR"},
+        []() -> Command* { return new TrimCommand(); });
+
+    cmdMgr->registerCommand("EXTEND", QStringList{"EX"},
+        []() -> Command* { return new ExtendCommand(); });
+
+    // 別名 F / CHA 已在 CommandAlias 內建立，這裡不重複註冊。
+    cmdMgr->registerCommand("FILLET", QStringList{"F"},
+        []() -> Command* { return new FilletCommand(); });
+
+    cmdMgr->registerCommand("CHAMFER", QStringList{"CHA"},
+        []() -> Command* { return new ChamferCommand(); });
+
+    qDebug() << "[ConstraintCommands] Registered" << 33
+             << "constraint/editing commands and aliases.";
 }
 
 } // namespace command

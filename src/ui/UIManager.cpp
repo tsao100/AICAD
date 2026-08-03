@@ -382,25 +382,32 @@ void UIManager::initGripSystem()
                            d->cadView->setMode(view::InteractionMode::Sketching);
                        // Grip Filter 啟動
                        if (d->gripFilter) d->gripFilter->setEnabled(true);
-                       // displayAllFeatures 會 RemoveAll，因此之後必須重新顯示草圖軸
-                       if (d->cadView) {
+                       if (d->cadView)
                            d->cadView->displayAllFeatures();
-                           // 重新顯示 X 軸 / Y 軸 / 原點
-                           // (displayAllFeatures 內的 RemoveAll 會清掉它們)
-                           cad::Sketch* sk = v.value<cad::Sketch*>();
-                           if (!sk) sk = m_currentActiveSketch;
-                           if (sk) d->cadView->showSketchAxes(sk);
-                       }
-                       // ✅ 修正：displayAllFeatures() 的 RemoveAll 同樣會把
-                       // SketchPanel::enterSketchMode() 剛剛才顯示出來的約束
-                       // 符號/尺寸約束 AIS 物件整個移出 context —— 這正是
-                       // 「進入 sketch 編輯畫面閃一下、約束符號隨即消失」的
-                       // 成因。RemoveAll 之後必須跟草圖軸一樣重新顯示。
-                       if (d->sketchPanel && d->sketchPanel->overlay()) {
-                           d->sketchPanel->overlay()->rebuildAll();
-                           d->sketchPanel->overlay()->setVisible(true);
-                       }
+                       // displayAllFeatures() 內的 RemoveAll 會把草圖軸／束制
+                       // 符號／SketchPoint 全部清掉；理論上會透過
+                       // CadView::featuresRedisplayed() 訊號（見下方連線）自動
+                       // 補回，這裡仍明確再呼叫一次，確保「剛進入」這個時間點
+                       // 不受訊號連線順序影響。
+                       cad::Sketch* sk = v.value<cad::Sketch*>();
+                       reshowSketchEditOverlays(sk);
                    });
+
+    // ── F') displayAllFeatures() 完成 → 還原不屬於 Feature::m_aisShapes 的
+    //     Sketch 編輯期間 overlay（草圖軸／束制符號／SketchPoint）──
+    //     displayAllFeatures() 幾乎在任何幾何/約束變更（包含 GDIM 命令新增
+    //     尺寸標註後的 solveConstraints() → shapeChanged()）後都會被觸發，
+    //     不只是進入 Sketch 的當下；若只在 SKETCH_ENTERED 還原一次，後續任何
+    //     一次 displayAllFeatures() 都會讓這些物件再次消失（例如「GDIM 命令
+    //     結束後束制符號被隱藏」）。
+    if (d->cadView) {
+        connect(d->cadView, &view::CadView::featuresRedisplayed,
+                this, [this]() {
+            if (!m_currentActiveSketch) return;   // 未在編輯任何 Sketch，無需處理
+            reshowSketchEditOverlays(m_currentActiveSketch);
+        });
+    }
+
 
     // ESC 取消 PickSession（若正在選點中）
     bus->subscribe(core::Events::POINT_CANCELLED, this,
@@ -1906,6 +1913,35 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         connect(d->featureBrowser, &FeatureBrowser::featureSelectedById,
                 this, [this, docMgr](const QString& featureId) {
 
+                    // ── issue #10 修正 ──────────────────────────────────
+                    // Create Sketch 互動選平面時，先前只有在 3D 視圖裡直接
+                    // 點擊平面才會生效；改為也接受 Feature Browser 的
+                    // Origin 資料夾底下 XY/XZ/YZ Plane 項目點選，行為與
+                    // CadView::mousePressEvent() 裡處理 3D 視圖平面拾取的
+                    // 那段完全對應（同樣發布 "plane.selected" 事件、同樣
+                    // 負責清掉高亮與重設 filter）。
+                    if (d->cadView &&
+                        d->cadView->selectionFilter() == "plane" &&
+                        d->cadView->mode() == view::InteractionMode::Selecting) {
+
+                        QString planeName;
+                        if      (featureId == "plane_xy") planeName = "XY";
+                        else if (featureId == "plane_xz") planeName = "XZ";
+                        else if (featureId == "plane_yz") planeName = "YZ";
+
+                        if (!planeName.isEmpty()) {
+                            if (auto* bus = core::Application::instance()->eventBus()) {
+                                QVariantMap planeData;
+                                planeData["plane"]     = planeName;
+                                planeData["cancelled"] = false;
+                                bus->publish("plane.selected", planeData);
+                            }
+                            d->cadView->highlightSelectablePlanes(false);
+                            d->cadView->setSelectionFilter("all");
+                            return;  // 不要再往下當一般 feature 選取處理
+                        }
+                    }
+
                     // Feature Browser 選取時只清除舊 grips、顯示屬性
                     // 不在此附加 provider，grips 只在 Sketching mode 幾何被選取時才顯示
                     d->gripManager->detach();
@@ -2007,6 +2043,20 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
 
                     auto* tcl = doc->findTrackCenterLine(tclId);
                     if (!tcl) return;
+
+                    // ── issue #9 修正 ───────────────────────────────────────
+                    // Alignment（平面線形）編輯本質上是 XY 平面圖作業，
+                    // 但先前這裡完全沒有切換視角，導致開啟 edit Alignment
+                    // 時畫面停留在使用者進入前剛好在看的任意視角（不一定是
+                    // 俯視圖），還得手動切到 Top 才能正常編輯。
+                    // 比照 Sketch 編輯流程（UIManager::onSketchEditStarted），
+                    // 進入 Alignment 編輯一律正視 XY 平面；alignToPlane()
+                    // 內部已包含避免視角切換崩潰的等角視圖重設步驟。
+                    if (d->cadView) {
+                        cad::Plane* xyPlane = cad::PlaneManager::instance()->xyPlane();
+                        d->cadView->setTopView();
+                        d->cadView->alignToPlane(xyPlane);
+                    }
 
                     // ── 啟用 H-alignment 3D 可見性 ────────────────────────────
                     if (!tcl->hAlignVisible()) {
@@ -3062,6 +3112,12 @@ void UIManager::setupSketchPanel()
         command::applyDimensionEdit(sk, uuid, newExprOrValue, cmdMgr);
         // applyDimensionEdit 內部已呼叫 sk->solveConstraints()，
         // 其 constraintSolved 訊號會自動觸發 ConstraintOverlayManager::rebuildAll()。
+        // ⚠️ 修正：雙擊編輯尺寸數值完成後 SketchPoint 被隱藏——見
+        // Document::rebuildFeature() 的說明，這條路徑牽涉 solveConstraints()
+        // 內部與 markDirty() 觸發的 Document 端 rebuild 互相競爭 AIS
+        // Erase/Display 時序。除了在 rebuildFeature() 內加了保險，這裡也
+        // 直接補一道最終保險：確保軸／束制符號／SketchPoint 都還原顯示。
+        reshowSketchEditOverlays(sk);
     });
 
     // 尺寸線點擊（SketchPanel 的 slot 已處理，此處轉發給 ParameterPanel）
@@ -3560,20 +3616,10 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
 
     auto* bus = core::Application::instance()->eventBus();
 
-    // ⚠️ 暫時性 workaround（尚未找到 OCCT 相機/視角切換的真正根因）：
-    //    實測發現「直接從另一個平面的 Sketch 切換過來編輯」會導致繪圖
-    //    平面錯誤並崩潰，但只要中間先強制切一次 isometric view、再切到
-    //    這個 Sketch 對應的正視圖，就完全正常。目前判斷這與 OCCT
-    //    V3d_View 的相機/投影矩陣在「兩個標準視圖之間直接切換」時，某些
-    //    內部狀態（例如 Camera 的 Up/Direction 或 SetPrivilegedPlane）
-    //    沒有被完整刷新有關；先經過 isometric 這個「非標準、三軸都不平行」
-    //    的中繼視角，等於強制讓 OCCT 把相機狀態完整重算一輪。
-    //    這裡先用這個方式讓功能可用，之後若能實際除錯/複現找到 OCCT 端
-    //    的真正根因，應移除此 workaround，直接呼叫下面對應的
-    //    setTopView()/setFrontView()/setRightView() + alignToPlane()。
-    if (d->cadView) {
-        d->cadView->setIsometricView();
-    }
+    // ⚠️ 崩潰工作繞道已於 2026 修正回合中集中搬到 CadView::alignToPlane()
+    //    內部（見該函式開頭註解），所有平面切換路徑（新建 Sketch／編輯既有
+    //    Sketch／編輯 Alignment）都會自動先重設等角視圖再對齊目標平面，
+    //    這裡不再需要手動呼叫 setIsometricView()。
 
     // OSnap 平面設定
     if (d->cadView && d->cadView->snapManager()) {
@@ -4022,6 +4068,34 @@ void UIManager::refreshAlignmentOSnapSources() {
         }
     }
     d->cadView->snapManager()->setHorizontalAlignments(haligns);
+}
+
+void UIManager::reshowSketchEditOverlays(cad::Sketch* sketch) {
+    if (!sketch) sketch = m_currentActiveSketch;
+    if (!sketch || !d->cadView) return;
+
+    // 1) 草圖平面 X/Y 軸與原點
+    d->cadView->showSketchAxes(sketch);
+
+    // 2) 束制符號／尺寸標註（ConstraintOverlayManager）——見
+    //    「GDIM 命令結束後束制符號被隱藏」的成因說明（CadView::featuresRedisplayed()）。
+    if (d->sketchPanel && d->sketchPanel->overlay()) {
+        d->sketchPanel->overlay()->rebuildAll();
+        d->sketchPanel->overlay()->setVisible(true);
+    }
+
+    // 3) SketchPoint（草圖點）——永遠顯示＋可選取，不因 displayAllFeatures()
+    //    的 RemoveAll 而消失。
+    auto ctx = d->cadView->context();
+    if (!ctx.IsNull()) {
+        for (const auto& obj : sketch->aisShapes()) {
+            if (auto ptAis = Handle(cad::SketchPointAIS)::DownCast(obj)) {
+                ctx->Display(ptAis, Standard_False);
+                ctx->Activate(ptAis, 0, Standard_False);
+            }
+        }
+        ctx->UpdateCurrentViewer();
+    }
 }
 
 // ✅ 新增：初始化參考幾何的方法

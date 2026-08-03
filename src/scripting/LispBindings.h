@@ -71,6 +71,10 @@ public:
      * - sketch-create (plane name)
      * - extrude-create (sketch-id height name)
      * - feature-delete (feature-id)
+     * - chamfer-edges (loft-id distance '((loop-index corner-index) ...))
+     *   ✅ 真正動 Document 的 binding（不是占位事件），見 .cpp 內註解。
+     * - loft-loop-count (loft-id)
+     * - loft-corner-count (loft-id loop-index)
      */
     void registerDocumentAPI();
     

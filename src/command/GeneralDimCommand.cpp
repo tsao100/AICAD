@@ -171,6 +171,7 @@ double GeneralDimCommand::measureCurrentValue() const {
         return static_cast<double>((pb - pa).length());
     }
     case ConstraintType::CoordinateDim: {
+        if (m_refs.isEmpty()) return 0.0;
         QVector2D p = m_refs[0].resolvePosition(sk);
         return static_cast<double>(p.x());  // value = x
     }
@@ -402,8 +403,12 @@ CommandResult GeneralDimCommand::execute(const CommandContext& ctx)
 
     // 進入 GetGeom 模式
     auto* ui = app->uiManager();
-    if (ui && ui->cadView())
+    if (ui && ui->cadView()) {
         ui->cadView()->setMode(view::InteractionMode::GetGeom);
+        // 無選單版第 1 節：讓「整個圓／整條弧」的內部 hover/點擊也能被偵測到
+        // （見 CadView::setGdimWholeGeomHitTestEnabled() 說明）。
+        ui->cadView()->setGdimWholeGeomHitTestEnabled(true);
+    }
 
     // ★ 必須設為 Running，命令才會持續存活等待使用者互動
     setState(CommandState::Running);
@@ -487,24 +492,31 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
         if (!sk || m_refs.isEmpty()) return;
         const GeomRef anchor = m_anchorRef;
 
-        bool paired = false;
-        GeomRef hoverRef;
+        // 見 m_stickyPairedRef 註解：先用「目前 hover 到的東西」更新/清除
+        // sticky 候選，但分類本身一律用 sticky 候選（若有）+ 目前滑鼠位置，
+        // 不要求滑鼠必須停留在候選幾何正上方。
         if (!hoverUuid.isEmpty()) {
-            hoverRef = GeomRef(hoverUuid, static_cast<GeomHandle>(hoverHandle));
-            normalizeSecondRef(anchor, hoverRef, sk);
+            GeomRef candidate(hoverUuid, static_cast<GeomHandle>(hoverHandle));
+            normalizeSecondRef(anchor, candidate, sk);
             const bool sameAsAnchor =
-                (hoverRef.geomUuid == anchor.geomUuid && hoverRef.handle == anchor.handle);
-            if (!sameAsAnchor)
-                paired = GeneralDimClassifier::canPair(anchor, hoverRef, sk);
+                (candidate.geomUuid == anchor.geomUuid && candidate.handle == anchor.handle);
+            if (sameAsAnchor) {
+                // 滑鼠移回錨點本身：視為取消目前的配對候選，回到單幾何預覽。
+                m_stickyPairedRef.reset();
+            } else if (GeneralDimClassifier::canPair(anchor, candidate, sk)) {
+                m_stickyPairedRef = candidate;
+            }
+            // 其餘情況（hover 到不可配對的東西）：維持既有 sticky 候選不變，
+            // 讓使用者可以繼續往空白處移動滑鼠切換 H/V/Align。
         }
 
-        if (paired) {
-            auto inf = GeneralDimClassifier::inferPair(anchor, hoverRef, sk, mousePt);
+        if (m_stickyPairedRef) {
+            auto inf = GeneralDimClassifier::inferPair(anchor, *m_stickyPairedRef, sk, mousePt);
             if (inf) {
                 auto ct = annotationKindToConstraintType(inf->kind);
                 if (ct) {
                     QList<GeomRef> refs = inf->pairedRefs.isEmpty()
-                        ? QList<GeomRef>{ anchor, hoverRef } : inf->pairedRefs;
+                        ? QList<GeomRef>{ anchor, *m_stickyPairedRef } : inf->pairedRefs;
                     m_type = *ct;
                     m_distMode = inf->distMode;
                     m_useSupplementAngle = inf->useSupplementAngle;
@@ -544,7 +556,15 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
     QVariantMap map    = payload.toMap();
     QString     uuid   = map.value("geomUuid").toString();
     int         handle = map.value("handle", static_cast<int>(GeomHandle::WholeGeom)).toInt();
-    QVector2D   mousePt= map.value("point").value<QVector2D>();
+    // ⚠️ 型別分類（半徑/直徑、H/V/Align、X/Y/XY）一律用 rawPoint（未被
+    // OSnap 吸附的原始游標位置），才會跟 onGeomHover() 的即時預覽用同一份
+    // 座標基準，避免「hover 預覽顯示半徑，點擊卻因為吸附到圓周上的點而
+    // 變成直徑」這種預覽與實際點擊結果不一致的問題（見 CadView::
+    // handlePointInput() 的 rawPlanePt 說明）。若上游（舊版或其他來源）
+    // 沒有帶 rawPoint，退回 point 以維持相容。
+    QVector2D mousePt = map.contains("rawPoint")
+                        ? map.value("rawPoint").value<QVector2D>()
+                        : map.value("point").value<QVector2D>();
 
     auto* cmdMgr = core::CommandLineManager::instance();
     Sketch* sk   = activeSketch();
@@ -598,6 +618,7 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
         m_anchorRef = anchor;
         m_refs = { anchor };
         m_state = State::Anchored;
+        m_stickyPairedRef.reset();  // 新錨點，清空舊的 sticky 配對候選
 
         // 起點鎖定後立刻進入連續判斷階段：依當下滑鼠位置顯示單幾何預覽
         // （無選單版第 0 節：「起點鎖定後，系統立刻進入一個連續判斷階段」）
@@ -633,8 +654,20 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
         }
     }
 
-    // 落在空白處，或落在無法與起點配對的幾何上 → 直接依滑鼠位置鎖定單幾何
-    // 型別，並用這次點擊的位置同時定位（無選單版第 0 節）
+    // ⚠️ 修正（issue #5）：這次點擊本身沒有命中任何可配對的幾何，但如果
+    // hover 階段已經有 sticky 配對候選（見 m_stickyPairedRef 說明——使用者
+    // 不需要把滑鼠停留在第二個點正上方才能維持配對狀態），這次點擊仍應
+    // 視為「確認目前 sticky 候選的配對」，而不是退回單幾何流程。這樣才會
+    // 跟 onGeomHover() 當下顯示的預覽一致（使用者看到什麼型別的預覽，
+    // 點下去就得到什麼型別）。
+    if (m_stickyPairedRef && GeneralDimClassifier::canPair(anchor, *m_stickyPairedRef, sk)) {
+        lockPairGeom(anchor, *m_stickyPairedRef, mousePt);
+        return;
+    }
+
+    // 落在空白處，或落在無法與起點配對的幾何上、也沒有 sticky 候選 →
+    // 直接依滑鼠位置鎖定單幾何型別，並用這次點擊的位置同時定位
+    // （無選單版第 0 節）
     lockSingleGeom(anchor, mousePt);
 }
 
@@ -873,6 +906,7 @@ void GeneralDimCommand::backToIdle()
     // 25：Anchored（已鎖定起點，尚未第二次點擊）→ Idle，清空起點
     m_refs.clear();
     m_anchorRef = cad::GeomRef{};
+    m_stickyPairedRef.reset();
     m_state = State::Idle;
     clearDimPreview();
 
@@ -895,6 +929,7 @@ void GeneralDimCommand::backToAnchoredFromDimPlace()
     m_state = State::Anchored;
     m_dimOffsetX = 0.0; m_dimOffsetY = 0.0;
     m_useSupplementAngle = false;
+    m_stickyPairedRef.reset();  // 取消目前的配對鎖定，強制重新 hover 選第二幾何
 
     auto* app     = core::Application::instance();
     auto* ui      = app ? app->uiManager() : nullptr;
@@ -922,6 +957,7 @@ void GeneralDimCommand::backToAnchoredFromValue()
     m_refs = { m_anchorRef };
     m_state = State::Anchored;
     m_dimOffsetX = 0.0; m_dimOffsetY = 0.0;
+    m_stickyPairedRef.reset();
 
     auto* app     = core::Application::instance();
     auto* ui      = app ? app->uiManager() : nullptr;
@@ -1115,6 +1151,7 @@ void GeneralDimCommand::cleanup()
     if (cadView) {
         cadView->clearDimPreview();
         cadView->setMode(view::InteractionMode::Sketching);
+        cadView->setGdimWholeGeomHitTestEnabled(false);
     }
 
     auto* cmdMgr = core::CommandLineManager::instance();

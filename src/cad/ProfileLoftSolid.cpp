@@ -11,6 +11,8 @@
 #include <Approx_ParametrizationType.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Compound.hxx>
@@ -82,6 +84,18 @@ AlignedProfileArray* ProfileLoftSolid::sourceArray() const {
     return m_array.data();
 }
 
+int ProfileLoftSolid::cornerCount(int loopIndex) const {
+    if (loopIndex < 0 || loopIndex >= m_loopCornerEdges.size()) return 0;
+    return m_loopCornerEdges[loopIndex].size();
+}
+
+TopoDS_Edge ProfileLoftSolid::longitudinalEdge(int loopIndex, int cornerIndex) const {
+    if (loopIndex < 0 || loopIndex >= m_loopCornerEdges.size()) return TopoDS_Edge();
+    const QVector<TopoDS_Edge>& corners = m_loopCornerEdges[loopIndex];
+    if (cornerIndex < 0 || cornerIndex >= corners.size()) return TopoDS_Edge();
+    return corners[cornerIndex];
+}
+
 bool ProfileLoftSolid::rebuild() {
     if (!m_array) { setError("No source profile array specified"); return false; }
 
@@ -114,6 +128,13 @@ bool ProfileLoftSolid::rebuild() {
         BRep_Builder builder;
         TopoDS_Compound compound;
         builder.MakeCompound(compound);
+
+        // ✅ 跟 compound 一起、對稱地建立「角點編號 → 縱向邊」對照表
+        //    （見 ProfileLoftSolid.h 的 loopCount()/cornerCount()/
+        //    longitudinalEdge() 說明）。用區域變數收集，只有整個 rebuild()
+        //    成功才覆寫 m_loopCornerEdges，失敗時維持舊資料跟舊 shape() 一致。
+        QVector<QVector<TopoDS_Edge>> newLoopCornerEdges;
+        newLoopCornerEdges.reserve(loopCount);
 
         // 每一個迴圈（例如左右兩個獨立墊塊）各自沿測站方向放樣成一個實體，
         // 全部實體再組成一個 compound 當作本特徵的最終形狀。
@@ -154,9 +175,44 @@ bool ProfileLoftSolid::rebuild() {
                 return false;
             }
             builder.Add(compound, generator.Shape());
+
+            // ✅ 角點編號 → 縱向邊：走訪第一站（station 0）該迴圈 wire 的頂點
+            //    順序（BRepTools_WireExplorer，跟建 wire 時的線段順序一致，
+            //    見 wireCoordinatesFinite 上方的角點編號說明），對每個頂點查
+            //    generator.Generated(vertex)。已用獨立驗證程式確認：目前這組
+            //    ThruSections 設定下，每個角點都會剛好對應一條貫穿全部測站的
+            //    縱向邊（見 ProfileLoftSolid.h 對應方法的說明）。
+            QVector<TopoDS_Edge> cornerEdges;
+            for (BRepTools_WireExplorer wexp(valid.first()); wexp.More(); wexp.Next()) {
+                const TopoDS_Vertex v = wexp.CurrentVertex();
+                const TopTools_ListOfShape& gen = generator.Generated(v);
+
+                TopoDS_Edge cornerEdge;
+                if (!gen.IsEmpty()) {
+                    if (gen.Extent() != 1) {
+                        // 驗證程式在標準矩形斷面下每次都是剛好 1 條；真的遇到
+                        // 多條時保守取第一個 EDGE 型別的，並記警告方便回頭排查
+                        // 是不是遇到了驗證程式沒覆蓋到的特殊斷面拓樸。
+                        qWarning() << "[ProfileLoftSolid]" << name() << "loop" << loopIdx
+                                   << "corner" << cornerEdges.size() << ": Generated(vertex) 回傳"
+                                   << gen.Extent() << "個 shape（預期 1 個），取第一個 EDGE。";
+                    }
+                    for (TopTools_ListIteratorOfListOfShape it(gen); it.More(); it.Next()) {
+                        if (it.Value().ShapeType() == TopAbs_EDGE) {
+                            cornerEdge = TopoDS::Edge(it.Value());
+                            break;
+                        }
+                    }
+                }
+                // cornerEdge 可能是 Null（Generated() 查不到）——longitudinalEdge()
+                // 呼叫端一律要檢查 IsNull()，不假設一定查得到。
+                cornerEdges.append(cornerEdge);
+            }
+            newLoopCornerEdges.append(cornerEdges);
         }
 
         setShape(compound);
+        m_loopCornerEdges = newLoopCornerEdges;
         return true;
 
     } catch (const Standard_Failure& ex) {

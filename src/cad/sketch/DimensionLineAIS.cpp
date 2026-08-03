@@ -2,6 +2,9 @@
 #include "AnnotationTextFormatter.h"
 #include "../Sketch.h"
 
+#include <Geom_Circle.hxx>
+#include <Geom_TrimmedCurve.hxx>
+
 #include <Graphic3d_ArrayOfPolylines.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
@@ -110,9 +113,18 @@ QString AIS_DimensionLine::labelText() const {
     case ConstraintType::FixedDiameter:
         base = QString("Ø%1").arg(v, 0, 'f', 2);
         break;
+    case ConstraintType::FixedX:
+        // 與 DimPreviewOverlay 的預覽格式一致：(X,-)
+        base = QString("(%1,-)").arg(v, 0, 'f', 2);
+        break;
+    case ConstraintType::FixedY:
+        // 與 DimPreviewOverlay 的預覽格式一致：(-,Y)
+        base = QString("(-,%1)").arg(v, 0, 'f', 2);
+        break;
     case ConstraintType::CoordinateDim:
-        // drawCoordinateDimension 各自畫 X/Y 標籤；此處回傳 X 標籤
-        base = QString("X=%1").arg(v, 0, 'f', 2);
+        // drawCoordinateDimension 各自畫 X/Y 標籤；此處回傳的是共用 fallback，
+        // 與 DimPreviewOverlay 的預覽格式一致：(X,Y)（value=X, value2=Y）
+        base = QString("(%1,%2)").arg(v, 0, 'f', 2).arg(m_constraint.value2, 0, 'f', 2);
         break;
     default:
         base = QString::number(v, 'f', 2);
@@ -219,9 +231,9 @@ void AIS_DimensionLine::Compute(
     case ConstraintType::FixedRadius:
         drawRadiusDimension(prs);  break;
     case ConstraintType::FixedX:
-        drawHorizontalDim(prs);    break;
+        drawXDimension(prs);       break;
     case ConstraintType::FixedY:
-        drawVerticalDim(prs);      break;
+        drawYDimension(prs);       break;
     case ConstraintType::FixedAngleDim:
     case ConstraintType::FixedAngle:
         drawAngleDim(prs);         break;
@@ -278,6 +290,58 @@ static void addArrow(const Handle(Prs3d_Presentation)& prs,
     seg->AddBound(1);
     seg->AddVertex(base);
     grp->AddPrimitiveArray(seg);
+}
+
+// 半徑（Radius）專用尺寸線：無選單版需求—— 無延伸線，尺寸線就是「圓心→圓線」
+// 這一段本身；圓心側不畫箭頭，只在圓線側畫一個指向圓心的箭頭。
+// （與 addDimLine() 不同——addDimLine() 是給線性/角度等雙端點尺寸共用，
+// 兩端都會畫箭頭、且會依 offset 畫出延伸線，不適合半徑這種「單端箭頭、
+// 起點固定在圓心」的樣式，因此獨立一份，不動到其他尺寸類型共用的邏輯。）
+static void addRadiusDimLine(const Handle(Prs3d_Presentation)& prs,
+                             AIS_DimensionLine* self,
+                             const gp_Pnt& center, const gp_Pnt& edge,
+                             const QString& label)
+{
+    gp_Vec along(center, edge);
+    if (along.Magnitude() < Precision::Confusion()) return;
+    along.Normalize();
+
+    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+    Handle(Graphic3d_Group) grp = prs->NewGroup();
+    Handle(Graphic3d_AspectLine3d) asp =
+        new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
+    grp->SetPrimitivesAspect(asp);
+
+    // 無延線：尺寸線本身就是 center→edge
+    Handle(Graphic3d_ArrayOfPolylines) line =
+        new Graphic3d_ArrayOfPolylines(2, 1);
+    line->AddBound(2); line->AddVertex(center); line->AddVertex(edge);
+    grp->AddPrimitiveArray(line);
+
+    // 圓心側無箭頭；圓線側箭頭（尖端在 edge，指向圓心方向）
+    addArrow(prs, edge, along * -1., lineCol);
+
+    if (!label.isEmpty()) {
+        gp_Pnt mid(
+            (center.X() + edge.X()) * 0.5,
+            (center.Y() + edge.Y()) * 0.5,
+            (center.Z() + edge.Z()) * 0.5);
+
+        Handle(Graphic3d_Text) gtext = new Graphic3d_Text(36.0f);
+        gtext->SetText(TCollection_ExtendedString(label.toUtf8().constData(), Standard_True));
+        gtext->SetPosition(mid);
+        gp_Vec zAxis(0, 0, 1);
+        gp_Vec yAxis = zAxis.Crossed(along);
+        if (yAxis.Magnitude() > Precision::Confusion())
+            gtext->SetOrientation(gp_Ax2(mid, gp_Dir(zAxis), gp_Dir(along)));
+        gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
+        gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
+        Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
+        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        txtGrp->AddText(gtext);
+
+        if (self) self->addLabelRegion(mid, along, label);
+    }
 }
 
 static void addDimLine(const Handle(Prs3d_Presentation)& prs,
@@ -605,8 +669,47 @@ void AIS_DimensionLine::drawVerticalDim(const Handle(Prs3d_Presentation)& prs) {
                        labelText());
 }
 
+void AIS_DimensionLine::drawXDimension(const Handle(Prs3d_Presentation)& prs) {
+    // 單點 X 座標：從點沿水平方向畫一條引線，長度由 m_dimOffsetX 決定
+    // （提交當下滑鼠的水平偏移量），與 DimPreviewOverlay 的預覽演算法一致。
+    // ⚠️ 不能沿用 getRefPoints()：ConstraintOverlayManager::createSymbolFor()/
+    // updateSymbolFor() 對 FixedX 合成的 rp2 = (c.value, rp1.y())，而
+    // c.value 就是這個點的 X 座標本身，rp2 因此恆等於 rp1——這正是「座標
+    // 標註的結果與預覽不同」的成因：預覽已改用滑鼠位置決定引線長度，但
+    // commit 後如果沿用 getRefPoints() 的雙點合成，只會畫出零長度的
+    // 退化尺寸線。這裡只取 rp1（點本身），引線終點改用 m_dimOffsetX。
+    gp_Pnt p1, dummy;
+    if (m_hasRefPos) {
+        p1 = gp_Pnt(m_refPos1.x(), m_refPos1.y(), 0.0);
+        p1.Transform(m_sketchToWorld);
+    } else if (!getRefPoints(p1, dummy)) {
+        return;
+    }
+    gp_Pnt lp1 = p1.Transformed(m_sketchToWorld.Inverted());
+    gp_Pnt lp2(lp1.X() + m_dimOffsetX, lp1.Y(), 0.0);
+    gp_Pnt p2 = lp2.Transformed(m_sketchToWorld);
+
+    addRadiusDimLine(prs, this, p1, p2, labelText());
+}
+
+void AIS_DimensionLine::drawYDimension(const Handle(Prs3d_Presentation)& prs) {
+    // 單點 Y 座標：同上，沿垂直方向，長度由 m_dimOffsetY 決定。
+    gp_Pnt p1, dummy;
+    if (m_hasRefPos) {
+        p1 = gp_Pnt(m_refPos1.x(), m_refPos1.y(), 0.0);
+        p1.Transform(m_sketchToWorld);
+    } else if (!getRefPoints(p1, dummy)) {
+        return;
+    }
+    gp_Pnt lp1 = p1.Transformed(m_sketchToWorld.Inverted());
+    gp_Pnt lp2(lp1.X(), lp1.Y() + m_dimOffsetY, 0.0);
+    gp_Pnt p2 = lp2.Transformed(m_sketchToWorld);
+
+    addRadiusDimLine(prs, this, p1, p2, labelText());
+}
+
 void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& prs) {
-    // 半徑：從圓心到圓周（方向由 m_dimOffsetX/Y 決定）
+    // 半徑：從圓心到圓周（方向由 m_dimOffsetX/Y 決定，即圓心→滑鼠方向）
     // 支援 SketchCircle 和 SketchArc
     if (m_geoms.isEmpty()) return;
 
@@ -616,18 +719,35 @@ void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& pr
     if (auto* circ = dynamic_cast<const SketchCircle*>(m_geoms[0])) {
         center2D = circ->center;
     } else if (auto* arc = dynamic_cast<const SketchArc*>(m_geoms[0])) {
-        // SketchArc: points[2] = center（若有），否則從 GeomRef 取
-        if (arc->points.size() >= 3)
-            center2D = arc->points[2];
-        else if (!m_constraint.refs.isEmpty())
-            center2D = GeomRef(m_constraint.refs[0].geomUuid,
-                               GeomHandle::Center)
-                       .resolvePosition(nullptr);  // fallback = (0,0)
+        // ✅ 修正：SketchArc 的 points[] 陣列從未被填入（只有 Polyline／
+        // Spline 會用到 points），先前「arc->points[2] = center」的假設
+        // 恆假，因此一律落入下面 resolvePosition(nullptr) 的 fallback，
+        // 而 resolvePosition() 在 sketch 為 nullptr 時直接回傳 (0,0) ——
+        // 這正是「弧的半徑約束尺寸線位置不正確、圓心變成 (0,0)」的成因。
+        //
+        // arc->curve 是在 Sketch::addArcGeom() 建立時，先把三個點透過
+        // planeToWorld() 轉成世界座標才拿去 GC_MakeArcOfCircle，因此
+        // curve 內建的圓心本身就是「世界座標」。這裡直接從 curve 取出
+        // 圓心，再用 m_sketchToWorld 的反變換換回草圖平面局部座標，
+        // 讓後面的既有流程（先在局部座標算方向/邊界點，最後統一
+        // Transform 到世界座標）維持不變、且對任意草圖平面方向都正確，
+        // 不需要額外持有 Sketch* 或依賴 centerUuid 查表。
+        bool resolved = false;
+        if (!arc->curve.IsNull()) {
+            if (auto circGeom = Handle(Geom_Circle)::DownCast(arc->curve->BasisCurve())) {
+                gp_Pnt worldCenter = circGeom->Location();
+                gp_Pnt localCenter = worldCenter.Transformed(m_sketchToWorld.Inverted());
+                center2D = QVector2D(static_cast<float>(localCenter.X()),
+                                      static_cast<float>(localCenter.Y()));
+                resolved = true;
+            }
+        }
+        if (!resolved) return;  // 幾何異常（curve 為空／非圓弧），寧可不畫也不要畫在原點
     } else {
         return;
     }
 
-    // 方向（草圖平面內），優先用 offset，否則草圖 X 軸
+    // 方向（草圖平面內），優先用 offset（= 圓心→滑鼠方向），否則草圖 X 軸
     gp_Vec sk_dir(1.0, 0.0, 0.0);
     if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
         gp_Vec off(m_dimOffsetX, m_dimOffsetY, 0.0);
@@ -641,9 +761,9 @@ void AIS_DimensionLine::drawRadiusDimension(const Handle(Prs3d_Presentation)& pr
     sk_ctr.Transform(m_sketchToWorld);
     sk_edge.Transform(m_sketchToWorld);
 
-    addDimLine(prs, this, sk_ctr, sk_edge, 0.0,
-               dimColor(m_constraint.driving, m_status),
-               "R " + labelText());
+    // ✅ 無選單版需求：無延線，尺寸線從圓心到圓線上，圓心側無箭頭、
+    // 圓線側有箭頭（見 addRadiusDimLine()）。
+    addRadiusDimLine(prs, this, sk_ctr, sk_edge, "R " + labelText());
 }
 
 void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
@@ -854,7 +974,34 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
     // 弧長：以同心弧（半徑略大）為尺寸線，標籤加 ~ 前綴
     if (m_geoms.isEmpty()) return;
     auto* arc = dynamic_cast<const SketchArc*>(m_geoms[0]);
-    if (!arc || arc->points.size() < 3) {
+
+    // ✅ 修正：SketchArc::points[] 從未被填入（該欄位只給 Polyline／Spline
+    // 使用），先前「arc->points.size() < 3」恆真、一律落入下方的線性
+    // fallback，導致弧長標註完全沒有依弧本身繪製尺寸線（也是「弧長約束
+    // 的尺寸線沒有預覽」的根本原因之一——commit 後畫的都不對，
+    // DimPreviewOverlay 的即時預覽自然也對不上）。
+    //
+    // 改為直接從 arc->curve（Sketch::addArcGeom() 建立時已是世界座標）
+    // 取出圓心與兩端點，再用 m_sketchToWorld 反變換換回草圖平面局部座標，
+    // 作法與 drawRadiusDimension() 的修正一致。
+    QVector2D startPt, endPt, ctrPt;
+    bool arcResolved = false;
+    if (arc && !arc->curve.IsNull()) {
+        if (auto circGeom = Handle(Geom_Circle)::DownCast(arc->curve->BasisCurve())) {
+            gp_Trsf worldToSketch = m_sketchToWorld.Inverted();
+            gp_Pnt wCtr   = circGeom->Location();
+            gp_Pnt wStart = arc->curve->Value(arc->curve->FirstParameter());
+            gp_Pnt wEnd   = arc->curve->Value(arc->curve->LastParameter());
+            gp_Pnt lCtr   = wCtr.Transformed(worldToSketch);
+            gp_Pnt lStart = wStart.Transformed(worldToSketch);
+            gp_Pnt lEnd   = wEnd.Transformed(worldToSketch);
+            ctrPt   = QVector2D(static_cast<float>(lCtr.X()),   static_cast<float>(lCtr.Y()));
+            startPt = QVector2D(static_cast<float>(lStart.X()), static_cast<float>(lStart.Y()));
+            endPt   = QVector2D(static_cast<float>(lEnd.X()),   static_cast<float>(lEnd.Y()));
+            arcResolved = true;
+        }
+    }
+    if (!arc || !arcResolved) {
         // fallback：線性
         gp_Pnt p1, p2;
         if (!getRefPoints(p1, p2)) return;
@@ -864,9 +1011,6 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
         return;
     }
 
-    QVector2D startPt = arc->points[0];
-    QVector2D endPt   = arc->points[1];
-    QVector2D ctrPt   = arc->points[2];
     double r = (startPt - ctrPt).length();
 
     // 同心弧半徑（略大，由 offset 決定偏移距離）
@@ -880,10 +1024,31 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
     double dimR = r + std::abs(extraR);
 
     double angStart = std::atan2(startPt.y() - ctrPt.y(), startPt.x() - ctrPt.x());
-    double angEnd   = std::atan2(endPt.y()   - ctrPt.y(), endPt.x()   - ctrPt.x());
-    // 保持 CCW 掃角
-    while (angEnd <= angStart) angEnd += 2 * M_PI;
-    if (angEnd - angStart > 2 * M_PI) angEnd = angStart + 2 * M_PI;
+    double angEndRaw = std::atan2(endPt.y()   - ctrPt.y(), endPt.x()   - ctrPt.x());
+    // ⚠️ 修正：「弧長尺寸線繪到另一側沒有弧的那一邊」——先前一律假設弧是走
+    // CCW（angEnd 不斷 +2π 直到大於 angStart），但實際的弧有可能是走 CW，
+    // 這樣抓到的是完全沒有原弧存在的另一側掃角。改成實際從 arc->curve
+    // 取樣弧的中點，判斷真正的掃角是 CCW（[angStart, angEndCcw]）還是
+    // CW（[angStart, angEndCw]），用對應那一段，讓同心弧畫在正確的一側。
+    double angEndCcw = angEndRaw;
+    while (angEndCcw <= angStart) angEndCcw += 2 * M_PI;
+
+    double angEnd = angEndCcw;   // 預設（找不到 curve 可採樣時）維持原本假設
+    if (!arc->curve.IsNull()) {
+        double midParam = 0.5 * (arc->curve->FirstParameter() + arc->curve->LastParameter());
+        gp_Pnt wMid = arc->curve->Value(midParam);
+        gp_Pnt lMid = wMid.Transformed(m_sketchToWorld.Inverted());
+        double midAngle = std::atan2(lMid.Y() - ctrPt.y(), lMid.X() - ctrPt.x());
+        double normMid = midAngle;
+        while (normMid < angStart) normMid += 2 * M_PI;
+        while (normMid >= angStart + 2 * M_PI) normMid -= 2 * M_PI;
+        if (normMid > angEndCcw) {
+            // 中點不在 CCW 這一段內 → 真正的弧是走 CW
+            double angEndCw = angEndRaw;
+            while (angEndCw >= angStart) angEndCw -= 2 * M_PI;
+            angEnd = angEndCw;
+        }
+    }
 
     Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
 
@@ -951,88 +1116,27 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
 }
 
 void AIS_DimensionLine::drawCoordinateDimension(const Handle(Prs3d_Presentation)& prs) {
-    // 座標尺寸：從點畫兩條引線到 X/Y 軸，各自加標籤
-    // 需要從 refs[0] 解析點的草圖位置
-
-    // 取點座標（優先 m_hasRefPos，否則用 geoms 的第一個點）
-    gp_Pnt2d sk_pt;
+    // ⚠️ 修正：先前這裡畫「兩條引線」，X 引線終點 = (m_constraint.value, pt.y)、
+    // Y 引線終點 = (pt.x, m_constraint.value2)——但 value/value2 就是這個點
+    // 自己的 X/Y 座標（約束成立時必然如此），兩條引線因此都退化成零長度、
+    // 完全看不到，這正是「座標標註的結果與預覽不同」的成因：
+    // DimPreviewOverlay 的預覽已經改成「點→滑鼠位置」的單一對角引線＋
+    // 合併的 (X,Y) 標籤，這裡改成完全相同的畫法，用 m_dimOffsetX/Y
+    // （提交當下的滑鼠偏移）決定引線終點，不再依賴 value/value2 合成端點。
+    gp_Pnt p1, dummy;
     if (m_hasRefPos) {
-        sk_pt = gp_Pnt2d(m_refPos1.x(), m_refPos1.y());
-    } else if (!m_geoms.isEmpty() && !m_geoms[0]->points.isEmpty()) {
-        sk_pt = gp_Pnt2d(m_geoms[0]->points[0].x(), m_geoms[0]->points[0].y());
-    } else {
+        p1 = gp_Pnt(m_refPos1.x(), m_refPos1.y(), 0.0);
+        p1.Transform(m_sketchToWorld);
+    } else if (!getRefPoints(p1, dummy)) {
         return;
     }
+    gp_Pnt lp1 = p1.Transformed(m_sketchToWorld.Inverted());
+    gp_Pnt lp2(lp1.X() + m_dimOffsetX, lp1.Y() + m_dimOffsetY, 0.0);
+    gp_Pnt p2 = lp2.Transformed(m_sketchToWorld);
 
-    // 轉世界座標
-    auto toW = [&](double x, double y) {
-        gp_Pnt p(x, y, 0.0);
-        p.Transform(m_sketchToWorld);
-        return p;
-    };
-
-    gp_Pnt wPt = toW(sk_pt.X(), sk_pt.Y());
-
-    // X 引線：從點水平到 (value, pt.y)
-    gp_Pnt wPx = toW(m_constraint.value, sk_pt.Y());
-    // Y 引線：從點垂直到 (pt.x, value2)
-    gp_Pnt wPy = toW(sk_pt.X(), m_constraint.value2);
-
-    // X 尺寸線
-    {
-        Handle(Graphic3d_Group) grp = prs->NewGroup();
-        Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
-        Handle(Graphic3d_AspectLine3d) asp =
-            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
-        grp->SetPrimitivesAspect(asp);
-        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(2, 1);
-        seg->AddBound(2);
-        seg->AddVertex(wPt); seg->AddVertex(wPx);
-        grp->AddPrimitiveArray(seg);
-
-        gp_Pnt midX((wPt.X()+wPx.X())*0.5, (wPt.Y()+wPx.Y())*0.5, wPt.Z());
-        Handle(Graphic3d_Text) gt = new Graphic3d_Text(36.0f);
-        QString xl = QString("X=%1").arg(m_constraint.value, 0, 'f', 2);
-        gt->SetText(TCollection_ExtendedString(xl.toUtf8().constData(), Standard_True));
-        gt->SetPosition(midX);
-        gt->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
-        gt->SetVerticalAlignment(Graphic3d_VTA_BOTTOM);
-        Handle(Graphic3d_Group) tg = prs->NewGroup();
-        tg->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
-        tg->AddText(gt);
-
-        // billboard 文字（未呼叫 SetOrientation）：hover 區域不需 3D 朝向，
-        // 對齊方式須與上方實際繪製一致（CENTER/BOTTOM），確保高亮文字與原文字重疊
-        addLabelRegion(midX, gp_Vec(wPt, wPx), xl,
-                       /*oriented=*/false, Graphic3d_HTA_CENTER, Graphic3d_VTA_BOTTOM);
-    }
-
-    // Y 尺寸線
-    {
-        Handle(Graphic3d_Group) grp = prs->NewGroup();
-        Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
-        Handle(Graphic3d_AspectLine3d) asp =
-            new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
-        grp->SetPrimitivesAspect(asp);
-        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(2, 1);
-        seg->AddBound(2);
-        seg->AddVertex(wPt); seg->AddVertex(wPy);
-        grp->AddPrimitiveArray(seg);
-
-        gp_Pnt midY((wPt.X()+wPy.X())*0.5, (wPt.Y()+wPy.Y())*0.5, wPt.Z());
-        Handle(Graphic3d_Text) gt = new Graphic3d_Text(36.0f);
-        QString yl = QString("Y=%1").arg(m_constraint.value2, 0, 'f', 2);
-        gt->SetText(TCollection_ExtendedString(yl.toUtf8().constData(), Standard_True));
-        gt->SetPosition(midY);
-        gt->SetHorizontalAlignment(Graphic3d_HTA_LEFT);
-        gt->SetVerticalAlignment(Graphic3d_VTA_CENTER);
-        Handle(Graphic3d_Group) tg = prs->NewGroup();
-        tg->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
-        tg->AddText(gt);
-
-        addLabelRegion(midY, gp_Vec(wPt, wPy), yl,
-                       /*oriented=*/false, Graphic3d_HTA_LEFT, Graphic3d_VTA_CENTER);
-    }
+    QString label = QString("(%1,%2)").arg(m_constraint.value, 0, 'f', 2)
+                                       .arg(m_constraint.value2, 0, 'f', 2);
+    addRadiusDimLine(prs, this, p1, p2, label);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1084,19 +1188,50 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
     if (ct == ConstraintType::FixedArcLength) {
         if (!m_geoms.isEmpty()) {
             auto* arc = dynamic_cast<const SketchArc*>(m_geoms[0]);
-            if (arc && arc->points.size() >= 3) {
-                QVector2D ctrPt   = arc->points[2];
-                QVector2D startPt = arc->points[0];
-                QVector2D endPt   = arc->points[1];
+            // ⚠️ 修正：跟 drawArcLengthDimension() 同一個成因——
+            // arc->points[] 從未被填入，「arc->points.size()>=3」恆假，
+            // 這個標籤定位分支因此永遠不會真的執行到，雙擊編輯弧長標註時
+            // 抓到的位置會是錯的。改用 arc->curve 取出圓心/端點（世界座標，
+            // 反變換回局部座標），並比照 drawArcLengthDimension() 的
+            // CCW/CW 掃角方向判斷（採樣 curve 中點），避免標籤落在沒有
+            // 弧存在的另一側。
+            QVector2D ctrPt, startPt, endPt;
+            bool resolved = false;
+            if (arc && !arc->curve.IsNull()) {
+                if (auto circGeom = Handle(Geom_Circle)::DownCast(arc->curve->BasisCurve())) {
+                    gp_Trsf worldToSketch = m_sketchToWorld.Inverted();
+                    gp_Pnt lCtr   = circGeom->Location().Transformed(worldToSketch);
+                    gp_Pnt lStart = arc->curve->Value(arc->curve->FirstParameter()).Transformed(worldToSketch);
+                    gp_Pnt lEnd   = arc->curve->Value(arc->curve->LastParameter()).Transformed(worldToSketch);
+                    ctrPt   = QVector2D(static_cast<float>(lCtr.X()),   static_cast<float>(lCtr.Y()));
+                    startPt = QVector2D(static_cast<float>(lStart.X()), static_cast<float>(lStart.Y()));
+                    endPt   = QVector2D(static_cast<float>(lEnd.X()),   static_cast<float>(lEnd.Y()));
+                    resolved = true;
+                }
+            }
+            if (resolved) {
                 double r    = (startPt - ctrPt).length();
                 double dimR = r + std::abs(m_offsetDist);
                 if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
                     double mag = std::sqrt(m_dimOffsetX*m_dimOffsetX + m_dimOffsetY*m_dimOffsetY);
                     if (mag > 1e-6) dimR = r + mag;
                 }
-                double angStart = std::atan2(startPt.y()-ctrPt.y(), startPt.x()-ctrPt.x());
-                double angEnd   = std::atan2(endPt.y()-ctrPt.y(),   endPt.x()-ctrPt.x());
-                while (angEnd <= angStart) angEnd += 2*M_PI;
+                double angStart  = std::atan2(startPt.y()-ctrPt.y(), startPt.x()-ctrPt.x());
+                double angEndRaw = std::atan2(endPt.y()-ctrPt.y(),   endPt.x()-ctrPt.x());
+                double angEndCcw = angEndRaw;
+                while (angEndCcw <= angStart) angEndCcw += 2*M_PI;
+                double angEnd = angEndCcw;
+                double midParam = 0.5 * (arc->curve->FirstParameter() + arc->curve->LastParameter());
+                gp_Pnt lMid = arc->curve->Value(midParam).Transformed(m_sketchToWorld.Inverted());
+                double midAngle = std::atan2(lMid.Y()-ctrPt.y(), lMid.X()-ctrPt.x());
+                double normMid = midAngle;
+                while (normMid < angStart) normMid += 2*M_PI;
+                while (normMid >= angStart + 2*M_PI) normMid -= 2*M_PI;
+                if (normMid > angEndCcw) {
+                    double angEndCw = angEndRaw;
+                    while (angEndCw >= angStart) angEndCw -= 2*M_PI;
+                    angEnd = angEndCw;
+                }
                 double midAng = (angStart + angEnd) * 0.5;
                 gp_Pnt sk(ctrPt.x() + dimR*std::cos(midAng),
                           ctrPt.y() + dimR*std::sin(midAng), 0.0);
@@ -1106,7 +1241,7 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
         }
     }
 
-    // ── CoordinateDim：標籤在 X 引線中點（主要交互點）───────────────────────
+    // ── CoordinateDim：標籤在對角引線中點（與 drawCoordinateDimension 一致）──
     if (ct == ConstraintType::CoordinateDim) {
         gp_Pnt2d sk_pt;
         if (m_hasRefPos) {
@@ -1116,8 +1251,11 @@ gp_Pnt AIS_DimensionLine::labelPosition3D() const
         } else {
             return gp_Pnt(0,0,0);
         }
-        // X 引線中點（水平方向）
-        gp_Pnt sk((sk_pt.X() + m_constraint.value) * 0.5, sk_pt.Y(), 0.0);
+        // ⚠️ 修正：先前用 (sk_pt.X()+m_constraint.value)*0.5 當中點，但
+        // value 就是這個點自己的 X 座標，算出來的中點恆等於點本身——改成
+        // 跟 drawCoordinateDimension() 一致，用 m_dimOffsetX/Y 算出對角
+        // 引線的中點。
+        gp_Pnt sk(sk_pt.X() + m_dimOffsetX * 0.5, sk_pt.Y() + m_dimOffsetY * 0.5, 0.0);
         sk.Transform(m_sketchToWorld);
         return sk;
     }

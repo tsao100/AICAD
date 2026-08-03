@@ -12,10 +12,12 @@
 #include "DependencyGraph.h"
 #include "core/ParameterStore.h"
 #include "railway/RailwayAlignment.h"
+#include "ChamferSolid.h"   // EdgeSignature 用於 createChamferSolid() 參數，需完整定義
 
 #include <QObject>
 #include <QString>
 #include <QList>
+#include <QVector>
 #include <QJsonObject>
 #include <TDocStd_Document.hxx>
 #include <AIS_Shape.hxx>
@@ -29,6 +31,7 @@ class Sketch;
 class Extrude;
 class AlignedProfileArray;
 class ProfileLoftSolid;
+class ChamferSolid;
 
 /**
  * @brief 參考幾何類型
@@ -213,6 +216,19 @@ public:
      */
     ProfileLoftSolid* createProfileLoftSolid(
         AlignedProfileArray* sourceArray,
+        const QString& name = QString());
+
+    /**
+     * @brief 對來源實體 Feature（Loft/Extrude 等）的選取邊建立 Chamfer（倒角）特徵。
+     * @param source   來源實體 Feature
+     * @param distance 倒角距離（單一值，套用於所有選取邊 — 見 ChamferSolid.h 設計決議）
+     * @param edges    選取邊的幾何簽章（見 EdgeSignature）
+     * @param name     特徵名稱（空則自動命名）
+     */
+    ChamferSolid* createChamferSolid(
+        Feature* source,
+        double distance,
+        const QVector<EdgeSignature>& edges,
         const QString& name = QString());
     
     /**

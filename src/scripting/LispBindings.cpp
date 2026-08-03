@@ -17,12 +17,18 @@
 #include "core/Application.h"
 #include "core/DocumentManager.h"
 #include "core/EventBus.h"
+#include "cad/Document.h"
+#include "cad/Feature.h"
+#include "cad/ProfileLoftSolid.h"
+#include "cad/ChamferSolid.h"
 #include "cad/Sketch.h"
 #include "cad/sketch/SketchConstraint.h"
 
 #include <QDebug>
 #include <QVector2D>
 #include <QVector3D>
+#include <QVector>
+#include <TopoDS_Edge.hxx>
 #include <cmath>
 
 namespace aicad {
@@ -134,6 +140,129 @@ void LispBindings::registerDocumentAPI() {
             
             return true;
         }, 1, 1);
+
+    // ✅ 與上面 sketch-create/extrude-create/feature-delete 不同——這三個是
+    //    真正動 cad::Document 的 binding，不是「發個事件、TODO 之後再接」的
+    //    占位實作。原因：Chamfer 的邊只能用「斷面角點」定址（loop-index,
+    //    corner-index），這組定址資訊沒有地方可以繞過 Document 直接取得，
+    //    所以沒有走占位事件的空間，一開始就得寫成能動的。
+    //
+    // (chamfer-edges loft-id distance '((loop-index corner-index) ...))
+    //   對 loft-id 這個 Loft（ProfileLoftSolid）特徵，依斷面角點定址指定
+    //   一批邊，用同一個 distance 建立一個 ChamferSolid 特徵。
+    //   角點編號查詢見 loft-loop-count / loft-corner-count。
+    //   成功回傳新建 ChamferSolid 的 feature-id（字串），失敗回傳 nil
+    //   （原因會印在 qWarning，之後若需要可以再擴充成回傳詳細錯誤字串）。
+    d->engine->registerFunction("CHAMFER-EDGES",
+        [this](const QVariantList& args) -> QVariant {
+            if (args.size() < 3) {
+                qWarning() << "chamfer-edges: requires loft-id distance edge-list";
+                return QVariant();
+            }
+
+            const QString loftId  = args[0].toString();
+            const double distance = args[1].toDouble();
+
+            if (distance <= 0.0) {
+                qWarning() << "chamfer-edges: distance must be positive, got" << distance;
+                return QVariant();
+            }
+
+            core::DocumentManager* docMgr = d->app->documentManager();
+            cad::Document* doc = docMgr ? docMgr->currentDocument() : nullptr;
+            if (!doc) {
+                qWarning() << "chamfer-edges: no active document";
+                return QVariant();
+            }
+
+            auto* loft = qobject_cast<cad::ProfileLoftSolid*>(doc->findFeature(loftId));
+            if (!loft) {
+                qWarning() << "chamfer-edges: feature" << loftId
+                           << "not found or is not a Loft (ProfileLoftSolid)";
+                return QVariant();
+            }
+
+            QVector<cad::EdgeSignature> sigs;
+            const QVariantList pairs = args[2].toList();
+            for (const QVariant& pairVar : pairs) {
+                const QVariantList pair = pairVar.toList();
+                if (pair.size() != 2) {
+                    qWarning() << "chamfer-edges: each edge must be a "
+                                  "(loop-index corner-index) pair, got" << pairVar;
+                    continue;
+                }
+                const int loopIndex   = pair[0].toInt();
+                const int cornerIndex = pair[1].toInt();
+
+                const TopoDS_Edge edge = loft->longitudinalEdge(loopIndex, cornerIndex);
+                if (edge.IsNull()) {
+                    qWarning() << "chamfer-edges: no such edge — loop" << loopIndex
+                               << "corner" << cornerIndex << "(loft has"
+                               << loft->loopCount() << "loop(s); loop" << loopIndex
+                               << "has" << loft->cornerCount(loopIndex) << "corner(s))";
+                    continue;
+                }
+
+                sigs.append(cad::ChamferSolid::makeSignature(edge, loft));
+            }
+
+            if (sigs.isEmpty()) {
+                qWarning() << "chamfer-edges: no valid edges resolved, nothing to chamfer";
+                return QVariant();
+            }
+
+            cad::ChamferSolid* cf = doc->createChamferSolid(loft, distance, sigs);
+            if (!cf || cf->hasError()) {
+                qWarning() << "chamfer-edges: chamfer failed —"
+                           << (cf ? cf->errorMessage() : QString("createChamferSolid returned null"));
+                return QVariant();
+            }
+
+            doc->setModified(true);
+            qDebug() << "chamfer-edges: created" << cf->name()
+                     << "with" << sigs.size() << "edge(s), distance" << distance;
+            return QVariant::fromValue(cf->id());
+        }, 3, 3);
+
+    // (loft-loop-count loft-id) — 該 Loft 特徵有幾個獨立封閉迴圈（例如左右
+    // 兩個獨立墊塊 = 2）。chamfer-edges 的 loop-index 範圍是 0..(這個值-1)。
+    d->engine->registerFunction("LOFT-LOOP-COUNT",
+        [this](const QVariantList& args) -> QVariant {
+            if (args.size() < 1) {
+                qWarning() << "loft-loop-count: requires loft-id";
+                return QVariant();
+            }
+            core::DocumentManager* docMgr = d->app->documentManager();
+            cad::Document* doc = docMgr ? docMgr->currentDocument() : nullptr;
+            auto* loft = doc ? qobject_cast<cad::ProfileLoftSolid*>(doc->findFeature(args[0].toString()))
+                              : nullptr;
+            if (!loft) {
+                qWarning() << "loft-loop-count: feature" << args[0].toString()
+                           << "not found or is not a Loft";
+                return QVariant();
+            }
+            return loft->loopCount();
+        }, 1, 1);
+
+    // (loft-corner-count loft-id loop-index) — 該迴圈的斷面角點數量。
+    // chamfer-edges 的 corner-index 範圍是 0..(這個值-1)。
+    d->engine->registerFunction("LOFT-CORNER-COUNT",
+        [this](const QVariantList& args) -> QVariant {
+            if (args.size() < 2) {
+                qWarning() << "loft-corner-count: requires loft-id loop-index";
+                return QVariant();
+            }
+            core::DocumentManager* docMgr = d->app->documentManager();
+            cad::Document* doc = docMgr ? docMgr->currentDocument() : nullptr;
+            auto* loft = doc ? qobject_cast<cad::ProfileLoftSolid*>(doc->findFeature(args[0].toString()))
+                              : nullptr;
+            if (!loft) {
+                qWarning() << "loft-corner-count: feature" << args[0].toString()
+                           << "not found or is not a Loft";
+                return QVariant();
+            }
+            return loft->cornerCount(args[1].toInt());
+        }, 2, 2);
 }
 
 void LispBindings::registerGeometryAPI() {

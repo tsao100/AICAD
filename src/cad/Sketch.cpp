@@ -718,12 +718,25 @@ bool Sketch::rebuildShapesOnly()
     }
 
     // Geometries that existed before but are gone now (deleted) — erase them.
+    // ⚠️ 例外：SketchPointAIS 一律不透過這個「uuid 已不在最新列表」的
+    // 捷徑判斷來 Erase。這個判斷式只是拿「這次 rebuild() 產生的
+    // m_aisShapeUuids 有沒有這個 uuid」來猜測「幾何是否被刪除」，但
+    // rebuild() 對 Point 的收錄邏輯（見上方 addPoint 分支：
+    // `if (!geom->isConstruction()) { append... }`）在某些求解路徑下
+    // 可能與呼叫當下的暫時狀態不同步，導致「明明沒被使用者刪除的點」
+    // 也被這裡誤判成「已刪除」而 Erase 掉——這正是「雙擊編輯尺寸約束數值
+    // 完成後 SketchPoint 被隱藏」的成因之一。SketchPoint 依需求必須永遠
+    // 顯示，真正刪除幾何（例如刪除一條線連帶其端點）另有專屬的刪除指令
+    // 路徑（見 EraseCommand），不依賴這裡的捷徑判斷，因此排除 SketchPointAIS
+    // 不會影響「真的刪除幾何」時的清理。
     QSet<QString> currentUuids;
     currentUuids.reserve(m_aisShapeUuids.size());
     for (const QString& u : m_aisShapeUuids)
         currentUuids.insert(u);
     for (auto it = oldByUuid.begin(); it != oldByUuid.end(); ++it) {
         if (!currentUuids.contains(it.key())) {
+            if (!Handle(SketchPointAIS)::DownCast(it.value()).IsNull())
+                continue;   // SketchPoint 永遠顯示，不因這裡的捷徑判斷被隱藏
             anyChanged = true;
             m_aisContext->Erase(it.value(), Standard_False);
         }

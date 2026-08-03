@@ -877,6 +877,32 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
             gp_Ax2 ax2(gp_Pnt(cx, cy, 0), planeNormal);
             Handle(Geom_Circle) circ = new Geom_Circle(ax2, r);
             a->curve = new Geom_TrimmedCurve(circ, t0, t1);
+
+            // ── issue #12 修正 ───────────────────────────────────────
+            // Arc 在求解器裡是獨立的 5 個 DOF（cx, cy, r, t0, t1)，
+            // 「不」與 startUuid/endUuid/centerUuid 這三個獨立存在的
+            // SketchPoint 共用 DOF（見上方 collectVariables 內的註解：
+            // 「arc 目前不共用 SketchPoint」）。但這三個 SketchPoint 才是
+            // 其他幾何（例如相連的 Line）用 Coincident 約束「銜接」到這個
+            // 弧的對象、也是 grip／約束符號讀取端點位置的來源。兩邊各自
+            // 求解、彼此沒有方程式互相牽制，於是加入半徑約束、或加入會
+            // 觸發重新求解的新線條後，弧的 curve 移到了新位置，但這三個
+            // SketchPoint 仍停在舊值 —— 這正是「弧的起終點位置會跑掉」的
+            // 根因。這裡以求解後、絕對正確的 curve 端點/圓心為準，強制寫回
+            // 這三個 SketchPoint，讓它們與 curve 保持一致。
+            auto syncPoint = [&](const QString& uuid, const gp_Pnt& worldPt) {
+                if (uuid.isEmpty()) return;
+                for (SketchGeometry* other : geoms) {
+                    if (other->type == SketchGeometryType::Point && other->uuid == uuid) {
+                        static_cast<SketchPoint*>(other)->pos =
+                            QVector2D(worldPt.X(), worldPt.Y());
+                        break;
+                    }
+                }
+            };
+            syncPoint(a->startUuid,  a->curve->Value(t0));
+            syncPoint(a->endUuid,    a->curve->Value(t1));
+            syncPoint(a->centerUuid, ax2.Location());
             break;
         }
         case SketchGeometryType::Ellipse: {

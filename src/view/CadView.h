@@ -12,11 +12,15 @@
 #include <QPointF>
 #include <QVector2D>
 #include <QPushButton>
+#include <QPair>
+#include <optional>
+#include <QVector>
 
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
+#include <TopoDS_Edge.hxx>
 
 #include "osnap/OSnapManager.h"
 #include "view/DimPreviewOverlay.h"
@@ -71,7 +75,19 @@ enum class InteractionMode {
     PlaceDimLine,   ///< ✅ Task E: 移動預覽尺寸線位置，點擊確認
     DimLineDrag,    ///< 拖曳已存在的尺寸線（移動尺寸線及數值位置）
     DimValueEdit,   ///< 雙擊尺寸線數值 → 行內編輯數值/表達式中
-    Navigation
+    Navigation,
+    PickEdge        ///< ✅ Chamfer 等指令使用：點選任意已顯示實體 Feature 的邊
+};
+
+/**
+ * @brief 一條被選取邊的參照（配合 CadView::beginEdgePicking() 使用）。
+ *
+ * featureId 是該邊所屬 Feature 的 id()（見 aisToFeatureId），edge 是
+ * OCCT 的 TopoDS_Edge，屬於該 Feature 目前顯示中的 shape()。
+ */
+struct PickedEdgeRef {
+    QString     featureId;
+    TopoDS_Edge edge;
 };
 
 /**
@@ -189,6 +205,23 @@ public:
     void clearDimPreview();
 
     /**
+     * @brief GDIM 無選單版第 1 節規則表：「整個圓／整條弧」的位置推論需要
+     *        偵測「遊標落在圓/弧內部（可能遠離邊界曲線本身）」，但 OCCT
+     *        AIS_Shape 的預設選取靈敏度只涵蓋邊界曲線附近（幾個像素內），
+     *        無法偵測「圓內部但遠離邊界」的 hover/點擊。
+     *
+     *        啟用後，hover（mouseMoveEvent）與點擊（handlePointInput）在
+     *        既有 OSnap／OCCT DetectedInteractive 皆未命中時，會額外對目前
+     *        草圖的所有 Circle／Arc 做「距圓心 vs 半徑」的幾何式命中測試，
+     *        取代 OCCT 只認邊界曲線的限制，讓「圓內任一點」都能被視為
+     *        hover/點擊到該圓（Arc 則是「貼近圓心、在半徑範圍內」）。
+     *
+     *        僅供 GeneralDimCommand（GDIM）在 execute()/cleanup() 開關，
+     *        避免影響 Erase／LeaderNote 等其他同樣使用 GetGeom 模式的指令。
+     */
+    void setGdimWholeGeomHitTestEnabled(bool enabled);
+
+    /**
      * @brief 取得當前互動模式
      */
     InteractionMode mode() const;
@@ -301,6 +334,10 @@ public:
      */
     void setSelectionFilter(const QString& filter);
 
+    /// 目前的選取過濾器（供 FeatureBrowser 等外部元件判斷是否正在等待
+    /// 平面選取，例如 Create Sketch 命令互動選平面時 — 見 issue #10）
+    QString selectionFilter() const { return m_selectionFilter; }
+
     /**
      * @brief 高亮顯示可選取的平面
      */
@@ -309,6 +346,28 @@ public:
     bool isReferencePlane(const Handle(AIS_Shape)& shape);
 
     QString identifyPlane(const Handle(AIS_Shape)& shape);
+
+    /**
+     * @brief 對所有已顯示的實體 Feature（非 Sketch）開啟邊（TopAbs_EDGE）
+     *        子形選取，並切換到 InteractionMode::PickEdge。
+     *
+     * 供 ChamferCommand 等指令使用。呼叫端（Command::cleanup()）之後應
+     * 呼叫 endEdgePicking() 並自行把 InteractionMode 換回進入指令前的模式
+     * （比照 GetPoint 模式既有慣例，見 Alignment3DAddVProfileCommand）。
+     */
+    void beginEdgePicking();
+
+    /**
+     * @brief 結束邊選取：還原所有實體 Feature 為整體（whole-shape）選取
+     *        模式，並清空目前 AIS 選取集合。不會自動還原 InteractionMode。
+     */
+    void endEdgePicking();
+
+    /**
+     * @brief 取得目前（AIS_InteractiveContext 選取集合中）已選取的邊。
+     *        僅在 beginEdgePicking() 之後、endEdgePicking() 之前呼叫有意義。
+     */
+    QVector<PickedEdgeRef> pickedEdges() const;
 
     ViewGrid* grid() const;  // Add this public method declaration
 
@@ -389,6 +448,23 @@ public Q_SLOTS:
 Q_SIGNALS:
     /// 返回按鈕被按下（結束 H-Alignment edit 模式）
     void returnAlignmentRequested();
+
+    /**
+     * @brief displayAllFeatures() 完成時發出（每次呼叫皆會 RemoveAll() 整個
+     *        context 後重建）。凡是「不屬於 Feature::m_aisShapes、由外部
+     *        模組（例如 ConstraintOverlayManager 的束制符號／尺寸標註、
+     *        SketchPanel 疊加圖層）另外管理」的 AIS 物件，都會被 RemoveAll()
+     *        清掉且不會被 displayAllFeatures() 自動還原，必須在收到此訊號後
+     *        自行重新顯示，否則會出現「編輯草圖時束制符號忽然消失」之類的
+     *        問題（見 UIManager 對此訊號的訂閱）。
+     */
+    void featuresRedisplayed();
+
+    /**
+     * @brief PickEdge 模式下每次點擊命中/取消一條邊時發出（用於更新指令提示文字，
+     *        例如「已選取 N 條邊」）。實際選取集合請呼叫 pickedEdges() 取得。
+     */
+    void edgePicked();
 
     /**
      * @brief 視圖類型改變時發出
@@ -609,6 +685,21 @@ private:
      * @brief 處理物件選擇
      */
     void handleObjectSelection(const QPoint& screenPos);
+
+    /**
+     * @brief GDIM 專用：對草圖所有 Circle／Arc 做「距圓心 vs 半徑」的幾何式
+     *        命中測試，補足 OCCT AIS_Shape 邊界曲線選取靈敏度無法涵蓋「圓/弧
+     *        內部」的缺口（見 setGdimWholeGeomHitTestEnabled() 說明）。
+     *
+     *        只在既有 OSnap／OCCT DetectedInteractive 皆未命中（geomUuid 仍為
+     *        空）時才呼叫。多個候選時，取「距圓心的距離 相對於半徑 的比例」
+     *        最小者（即最貼近該幾何「感應核心」的一個），以合理處理巢狀圓的
+     *        情況。
+     *
+     * @return {geomUuid, GeomHandle::WholeGeom} 的 pair；找不到則回傳
+     *         std::nullopt。
+     */
+    std::optional<QPair<QString, int>> gdimInteriorHitTest(const QVector2D& planePt) const;
 
     /**
      * @brief 將 Qt 座標轉換為 OCCT 座標

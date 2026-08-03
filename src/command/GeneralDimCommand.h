@@ -6,6 +6,7 @@
 #include <QList>
 #include <QString>
 #include <QVector2D>
+#include <optional>
 
 namespace aicad::command {
 
@@ -88,6 +89,27 @@ private:
     /// 點擊定位）進來的。用於 Esc/右鍵在 WaitValue 階段退回正確的上一步
     /// （無選單版第 D 組第 27 項）。
     bool                 m_wasSingleGeomFlow = false;
+
+    /// ⚠️ issue #5 修正：Anchored 狀態下「目前鎖定的第二幾何候選」。
+    ///
+    /// 問題根因：H/V/Align 的分類用 classifyZone(mousePt - mid)，mid 是
+    /// 兩點的中點；但要讓 hoverUuid 非空（canPair() 才會被呼叫），滑鼠必須
+    /// 停留在 OSnap 的偵測半徑內（通常只有幾個世界座標單位）。當兩點相距
+    /// 較遠（例如幾十個單位以上，這是絕大多數實際使用情境）時，滑鼠只能在
+    /// 第二個點附近極小範圍內晃動，(mousePt - mid) 這個向量幾乎完全由
+    /// 「中點到第二點」這條基準向量決定，使用者微調滑鼠幾乎不會改變其角度
+    /// ——型別因此實質上「不會隨滑鼠切換」，永遠反映兩點本身的相對位置，
+    /// 而不是使用者當下想要的方向。
+    ///
+    /// 修正方式：一旦滑鼠曾經 hover 到某個「可配對」的候選（hoverUuid 非空
+    /// 且 canPair() 成功），就記住它（sticky）。之後即使滑鼠離開該幾何、
+    /// hoverUuid 變回空字串，仍然視為配對候選，讓使用者可以自由把滑鼠移到
+    /// 任何位置（不受 OSnap 偵測半徑限制）去改變 H/V/Align 型別，這才符合
+    /// 「遊標相對兩點連線／中點的方位」原本想要給使用者的自由度。
+    ///
+    /// 只有在滑鼠移回錨點本身、或 hover 到另一個不同的可配對候選時才會
+    /// 更新／清除這個欄位。
+    std::optional<cad::GeomRef> m_stickyPairedRef;
 
     void subscribeGeomPicked   ();
     void subscribeGeomHover    ();

@@ -7,6 +7,7 @@
 
 #include "CadView.h"
 #include "DimPreviewOverlay.h"
+#include <limits>
 #include "InputJig.h"
 #include "RubberBand.h"
 #include "ViewGrid.h"
@@ -207,6 +208,7 @@ public:
     bool commandInProgress = false;
     bool isDisplayingAllFeatures = false;
     bool constraintPickActive = false;  ///< pickSession 等待選取中（GetGeom 但 command 已 finished）
+    bool gdimWholeGeomHitTestEnabled = false;  ///< GDIM 專用：圓/弧內部幾何式命中測試開關（見 CadView::setGdimWholeGeomHitTestEnabled()）
 
     // ── 草圖平面參考幾何 AIS（X 軸 / Y 軸 / 原點）────────────────────────
     // 用 AIS_Shape 基底型別儲存（SketchAxisAIS/SketchOriginAIS 繼承 AIS_Shape）
@@ -842,6 +844,78 @@ QString CadView::identifyPlane(const Handle(AIS_Shape)& shape) {
     return "UNKNOWN";
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+//  邊選取（Chamfer 等指令使用）
+// ────────────────────────────────────────────────────────────────────────────
+
+void CadView::beginEdgePicking() {
+    if (!d->document || d->context.IsNull()) return;
+
+    AIS_ListOfInteractive allObjects;
+    d->context->DisplayedObjects(allObjects);
+
+    for (AIS_ListOfInteractive::Iterator it(allObjects); it.More(); it.Next()) {
+        Handle(AIS_Shape) shape = Handle(AIS_Shape)::DownCast(it.Value());
+        if (shape.IsNull() || isReferencePlane(shape)) continue;
+
+        const QString featureId = d->aisToFeatureId.value(shape.get());
+        if (featureId.isEmpty()) continue;   // 非一般 Feature 顯示的 AIS（view cube、軸…）
+
+        cad::Feature* feature = d->document->findFeature(featureId);
+        // 只對實體 Feature（非 Sketch）開放邊選取——Sketch 的 AIS_Shape 本身就是
+        // 曲線/邊，開放子形選取沒有意義。
+        if (!feature || qobject_cast<cad::Sketch*>(feature)) continue;
+
+        d->context->Deactivate(shape);
+        d->context->Activate(shape, AIS_Shape::SelectionMode(TopAbs_EDGE));
+    }
+
+    setMode(InteractionMode::PickEdge);
+    d->context->UpdateCurrentViewer();
+}
+
+void CadView::endEdgePicking() {
+    if (!d->document || d->context.IsNull()) return;
+
+    d->context->ClearSelected(Standard_False);
+
+    AIS_ListOfInteractive allObjects;
+    d->context->DisplayedObjects(allObjects);
+
+    for (AIS_ListOfInteractive::Iterator it(allObjects); it.More(); it.Next()) {
+        Handle(AIS_Shape) shape = Handle(AIS_Shape)::DownCast(it.Value());
+        if (shape.IsNull() || isReferencePlane(shape)) continue;
+
+        const QString featureId = d->aisToFeatureId.value(shape.get());
+        if (featureId.isEmpty()) continue;
+
+        cad::Feature* feature = d->document->findFeature(featureId);
+        if (!feature || qobject_cast<cad::Sketch*>(feature)) continue;
+
+        d->context->Deactivate(shape);
+        d->context->Activate(shape, AIS_Shape::SelectionMode(TopAbs_SHAPE));  // 還原整體選取
+    }
+
+    d->context->UpdateCurrentViewer();
+}
+
+QVector<PickedEdgeRef> CadView::pickedEdges() const {
+    QVector<PickedEdgeRef> result;
+    if (d->context.IsNull()) return result;
+
+    for (d->context->InitSelected(); d->context->MoreSelected(); d->context->NextSelected()) {
+        const TopoDS_Shape sub = d->context->SelectedShape();
+        if (sub.IsNull() || sub.ShapeType() != TopAbs_EDGE) continue;
+
+        Handle(AIS_InteractiveObject) obj = d->context->SelectedInteractive();
+        const QString featureId = obj.IsNull() ? QString() : d->aisToFeatureId.value(obj.get());
+        if (featureId.isEmpty()) continue;
+
+        result.append({featureId, TopoDS::Edge(sub)});
+    }
+    return result;
+}
+
 ViewGrid* CadView::grid() const {
     return d->grid;
 }
@@ -1302,6 +1376,60 @@ void CadView::clearDimPreview()
         m_dimOverlay->clearPreview();
 }
 
+void CadView::setGdimWholeGeomHitTestEnabled(bool enabled)
+{
+    d->gdimWholeGeomHitTestEnabled = enabled;
+}
+
+std::optional<QPair<QString, int>> CadView::gdimInteriorHitTest(const QVector2D& planePt) const
+{
+    if (!d->gdimWholeGeomHitTestEnabled) return std::nullopt;
+
+    auto* sk = core::Application::instance()
+               ? core::Application::instance()->activeSketch()
+               : nullptr;
+    if (!sk) return std::nullopt;
+
+    // 取「距圓心距離 ÷ 半徑」最小者（最貼近感應核心），合理處理巢狀圓/弧的情況。
+    // 半徑 <= 0（退化幾何）一律略過。
+    bool     found = false;
+    double   bestRatio = std::numeric_limits<double>::max();
+    QString  bestUuid;
+
+    for (cad::SketchGeometry* geom : sk->geometriesRef()) {
+        if (!geom) continue;
+
+        if (geom->type == cad::SketchGeometryType::Circle) {
+            auto* circ = dynamic_cast<const cad::SketchCircle*>(geom);
+            if (!circ || circ->radius <= 0.0) continue;
+            double dist  = static_cast<double>((planePt - circ->center).length());
+            double ratio = dist / circ->radius;
+            // 只在「圓內部」（distance < radius）才視為命中——圓外側已由既有
+            // OCCT 邊界曲線偵測（靠近邊界時）涵蓋，此處只補足內部空白區域。
+            if (ratio < 1.0 && ratio < bestRatio) {
+                bestRatio = ratio; bestUuid = geom->uuid; found = true;
+            }
+        } else if (geom->type == cad::SketchGeometryType::Arc) {
+            cad::GeomRef centerRef(geom->uuid, cad::GeomHandle::Center);
+            cad::GeomRef startRef(geom->uuid, cad::GeomHandle::Start);
+            QVector2D center = centerRef.resolvePosition(sk);
+            QVector2D start  = startRef.resolvePosition(sk);
+            double radius = static_cast<double>((start - center).length());
+            if (radius <= 0.0) continue;
+            double dist  = static_cast<double>((planePt - center).length());
+            double ratio = dist / radius;
+            // 「遊標貼近弧圓心」——同樣只補足 OCCT 偵測不到的「圓心附近但遠離
+            // 實際弧線曲線」這塊空白（見無選單版第 1 節表格第 2 列）。
+            if (ratio < 1.0 && ratio < bestRatio) {
+                bestRatio = ratio; bestUuid = geom->uuid; found = true;
+            }
+        }
+    }
+
+    if (!found) return std::nullopt;
+    return QPair<QString, int>(bestUuid, static_cast<int>(cad::GeomHandle::WholeGeom));
+}
+
 Handle(AIS_InteractiveContext) CadView::context() const {
     return d->context;
 }
@@ -1323,6 +1451,42 @@ void CadView::displayAllFeatures() {
     d->context->RemoveAll(Standard_False);
     d->context->Display(d->viewCube, Standard_False);
     d->aisToFeatureId.clear();  // ✅ 全部重建
+
+    // ✅ 修正「Chamfer 後畫面同時看到有倒角/沒倒角兩個實體」的根因：
+    //    這裡本來就是每次都 RemoveAll() 再整批重新 Display()（不是那種
+    //    「AIS_Shape 快取著沒 Remove、只是又 new 一個疊上去」的典型 OCCT
+    //    anti-pattern），所以問題不是舊 AIS_Shape 沒被移除，而是「來源
+    //    Feature（例如被 Chamfer 消耗掉的 Loft）本身也被當成一個獨立
+    //    Feature 顯示出來」——跟新產生的 Chamfer 實體幾乎完全重疊。
+    //
+    //    上一輪的修法是在 Document::createChamferSolid()/createExtrude()
+    //    個別呼叫 source->setVisible(false)，但這是「每種會消耗別的
+    //    Feature 當輸入的新 Feature 類型，都要自己記得手動隱藏來源」的
+    //    脆弱模式——以後加 Fillet/Shell/Draft/Boolean 都要重新做一次同樣
+    //    的事，忘記加就會重現這個 bug。
+    //
+    //    改成架構層級、一次性的規則：任何被「其他 Feature 的
+    //    featureDependencies()」引用到的 Feature id，一律視為「中間結果」，
+    //    3D 視圖永遠不顯示——不管它自己的 isVisible() 是什麼（跟主流參數式
+    //    CAD：Viewer 只顯示每條特徵鏈最末端的 Result Shape，中間步驟一律
+    //    不單獨顯示的慣例一致）。featureDependencies() 本來就是既有的依賴圖
+    //    機制（Document::addFeatureInternal/addFeature 建 m_depGraph 用的
+    //    同一份資料），不需要新增任何額外的資料結構或每個 Feature 子類別
+    //    各自維護。
+    //
+    //    ⚠️ 已知取捨：這是「一律強制隱藏」，不是「預設隱藏、使用者仍可用
+    //    eye icon 手動打開來檢視中間結果」——後者需要另外的「暫時檢視某個
+    //    歷史步驟」機制（類似主流 CAD 的 rollback bar），目前沒有做，
+    //    之後如果需要再擴充。Sketch 類型的 Feature 不受這條規則影響
+    //    （下面 Sketch 分支維持原本單純看 isVisible() 的邏輯），因為
+    //    Sketch 本來就有自己一套獨立的顯示/隱藏慣例，這次不動它。
+    QSet<QString> consumedFeatureIds;
+    for (Feature* f : d->document->features()) {
+        if (!f) continue;
+        const QSet<QString> deps = f->featureDependencies();
+        for (const QString& depId : deps)
+            consumedFeatureIds.insert(depId);
+    }
 
     // ── 立即重新顯示草圖平面參考幾何（X 軸 / Y 軸 / 原點）──────────────────
     // RemoveAll 會把它們整個移出 context，包括內部 SelectMgr_Selection 狀態，
@@ -1383,7 +1547,9 @@ void CadView::displayAllFeatures() {
             aisShape->SetDisplayMode(AIS_Shaded);
             aisShape->SetMaterial(Graphic3d_NameOfMaterial_Silver);
             aisShape->SetColor(Quantity_NOC_CADETBLUE);   // 不與選取黃色衝突
-            if (feature->isVisible())
+            // ✅ 中間結果（被其他 Feature 依賴）一律不顯示，見上方 consumedFeatureIds
+            //    的說明——即使自己的 isVisible() 是 true 也一樣。
+            if (feature->isVisible() && !consumedFeatureIds.contains(feature->id()))
                 d->context->Display(aisShape, Standard_False);
             d->aisToFeatureId[aisShape.get()] = feature->id();
         }
@@ -1408,6 +1574,11 @@ void CadView::displayAllFeatures() {
 
     d->context->UpdateCurrentViewer();
     d->isDisplayingAllFeatures = false;
+
+    // 見 CadView::featuresRedisplayed() 說明：本函式一開始的 RemoveAll() 會把
+    // 不屬於 Feature::m_aisShapes 的外部管理 AIS 物件（束制符號、尺寸標註、
+    // SketchPoint 選取狀態等）整個清掉，這裡統一發訊號讓外部模組自行還原。
+    Q_EMIT featuresRedisplayed();
 }
 
 // ── Reverse lookup ────────────────────────────────────────────────────
@@ -1850,6 +2021,26 @@ void CadView::alignToPlane(const cad::Plane* plane)
     if (!plane || d->view.IsNull())
         return;
 
+    // ⚠️ 崩潰根因與修正（原本只在 UIManager::onSketchEditStarted() 手動做過
+    //    一次，現在集中到這裡，讓所有呼叫路徑 —— 新建 Sketch
+    //    (ViewManager::onSketchCreated)、編輯既有 Sketch
+    //    (UIManager::onSketchEditStarted)、編輯 Alignment 等 —— 都能自動受益，
+    //    不必每個呼叫端各自記得先切一次等角視圖：
+    //
+    //    d->view->SetProj(Vx,Vy,Vz)（數值版本，下方使用的那個）在 OCCT 內部
+    //    為了讓相機的「Twist／捲轉」在兩次呼叫之間保持連續，會參考*目前*
+    //    的 Up 向量去重新算一次垂直於新 Direction 的基底；一旦新的
+    //    Direction 恰好與目前 Up 平行或反平行（或兩者非常接近），這個內部
+    //    外積會退化成零向量，相機基底變成非正交／NaN，後續 SetUp() 雖然
+    //    覆蓋了 Up，但緊接著的 FitAll()／格線刷新仍可能吃到這個已經壞掉的
+    //    中間狀態而拋例外或直接崩潰 —— 這正是「Sketch1(XY) 結束後直接編輯
+    //    Sketch2(YZ)」等平面對平面直接切換會崩潰的根因。
+    //
+    //    等角視圖 (V3d_XposYnegZpos) 的 Direction 與任何標準平面的 Up 都不
+    //    平行，插入這個中繼步驟等於強迫 OCCT 把相機基底完整重算一輪，
+    //    徹底避開上述退化情形，而不必去猜測「這次切換是否剛好會平行」。
+    setIsometricView();
+
     gp_Pln pln = plane->toGpPln();
     gp_Ax3 ax  = pln.Position();
 
@@ -2127,6 +2318,16 @@ void CadView::updateProjection() {
 
 void CadView::handlePointInput(const QPoint& screenPos) {
     QPointF planePt = screenToPlaneD(screenPos);   // ✅ 改用 double 版
+    // ⚠️ GDIM 分類用：務必保留「未被 OSnap 調整過」的原始滑鼠平面座標。
+    // OSnap 命中時下面會把 planePt 覆寫成吸附點（例如圓的圓心/象限點），
+    // 但 GeneralDimClassifier::inferSingle/inferPair 的「距圓心 vs 半徑」
+    // 判斷，必須跟 mouseMoveEvent（GEOM_HOVER，見下方）用的是同一份「原始
+    // 游標位置」，兩者才會一致——否則會出現「hover 預覽顯示半徑，點擊卻
+    // 吸附到圓周上的象限點（dist==radius，落入 else 分支變成直徑）」這種
+    // 預覽與實際點擊結果不一致的 bug（無選單版第 0 節：「點擊只是把當下
+    // 已經在預覽的型別鎖定下來」——鎖定必須用「當下」的原始游標位置，
+    // 不能被吸附點取代）。
+    const QPointF rawPlanePt = planePt;
 
     // 從 OSnapManager 取得目前鎖定的 snap 候選（含 geomUuid / geomHandle）
     QString geomUuid;
@@ -2150,6 +2351,15 @@ void CadView::handlePointInput(const QPoint& screenPos) {
                 geomUuid   = detUuid;
                 geomHandle = static_cast<int>(GeomHandle::WholeGeom);
             }
+        }
+    }
+    // GDIM 無選單版第 1 節：OCCT 邊界曲線偵測涵蓋不到「圓/弧內部」，用幾何式
+    // 命中測試補足（僅 GDIM 開啟時生效，見 setGdimWholeGeomHitTestEnabled()）。
+    if (geomUuid.isEmpty()) {
+        if (auto hit = gdimInteriorHitTest(QVector2D(static_cast<float>(planePt.x()),
+                                                       static_cast<float>(planePt.y())))) {
+            geomUuid   = hit->first;
+            geomHandle = hit->second;
         }
     }
 
@@ -2182,10 +2392,27 @@ void CadView::handlePointInput(const QPoint& screenPos) {
 
         // GetGeom モード：GEOM_PICKED も発行して命令が幾何を受け取れるようにする
         if (d->mode == InteractionMode::GetGeom) {
+            // ⚠️ 修正：GeneralDimCommand::onGeomPicked() 原本用
+            // map.value("point").value<QVector2D>() 讀取，但這裡的 "point"
+            // 欄位放的是 QPointF（LeaderNoteCommand 也依賴 "point" 是
+            // QPointF，不可更動其型別）——Qt 沒有登記 QPointF↔QVector2D 的
+            // QVariant 轉換器，型別不符時 value<QVector2D>() 會靜默回傳
+            // 預設值 (0,0)，完全不會報錯。這導致 GDIM「點擊當下」的分類
+            // （半徑/直徑、H/V/Align、X/Y/XY）全部都是拿 (0,0) 去判斷，而不
+            // 是使用者實際點擊的位置——這正是「圓的半徑約束選定後變成直徑
+            // 約束」等一系列「點擊結果與 hover 預覽不一致」問題的根本成因
+            // （hover／GEOM_HOVER 那邊送的本來就是 QVector2D，型別對得上，
+            // 所以預覽是對的）。"point" 欄位維持 QPointF 不動（相容
+            // LeaderNoteCommand），另外新增一個型別正確的 "rawPoint"
+            // （QVector2D，且是未被 OSnap 吸附的原始游標位置）專供 GDIM
+            // 的分類邏輯使用。
+            const QVector2D rawPlanePt2D(static_cast<float>(rawPlanePt.x()),
+                                         static_cast<float>(rawPlanePt.y()));
             QVariantMap geomData;
             geomData["geomUuid"] = geomUuid;
             geomData["handle"]   = geomHandle;   // ← "handle" 與 onGeomPicked 一致
-            geomData["point"]    = QVariant::fromValue(planePt);
+            geomData["point"]    = QVariant::fromValue(planePt);      // QPointF，維持相容
+            geomData["rawPoint"] = QVariant::fromValue(rawPlanePt2D); // QVector2D，GDIM 分類專用
             bus->publish(core::Events::GEOM_PICKED, geomData);
         }
     }
@@ -2822,6 +3049,19 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
+    // ── PickEdge 模式：點選/取消點選一條邊（Chamfer 等指令使用）───────────────
+    // AIS_SelectionScheme_XOR：同一條邊再點一次 = 取消選取（比照多數 CAD
+    // 工具「重複點擊即取消」的慣例），不需要額外的 Shift/Ctrl 修飾鍵。
+    if (d->mode == InteractionMode::PickEdge && event->button() == Qt::LeftButton) {
+        if (d->context->HasDetected()) {
+            d->context->SelectDetected(AIS_SelectionScheme_XOR);
+            d->context->UpdateCurrentViewer();
+            Q_EMIT edgePicked();
+        }
+        event->accept();
+        return;
+    }
+
     // ✅ 如果是平面選取模式
     //    ⚠️ 額外加上 d->mode == Selecting 判斷：m_selectionFilter 在平面選取
     //    流程開始時被設為 "plane"（見 ViewManager::onPlaneSelectionRequested），
@@ -3317,6 +3557,15 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
                     hoverHandle = static_cast<int>(cad::GeomHandle::WholeGeom);
                 }
             }
+            // GDIM 無選單版第 1 節：OCCT 邊界曲線偵測涵蓋不到「圓/弧內部」，
+            // 用幾何式命中測試補足（僅 GDIM 開啟時生效，見
+            // setGdimWholeGeomHitTestEnabled()）。
+            if (hoverUuid.isEmpty()) {
+                if (auto hit = gdimInteriorHitTest(planePt)) {
+                    hoverUuid   = hit->first;
+                    hoverHandle = hit->second;
+                }
+            }
             QVariantMap m;
             m["geomUuid"] = hoverUuid;
             m["handle"]   = hoverHandle;
@@ -3365,7 +3614,17 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
     }
 
     // 草圖模式：更新橡皮筋
-    if (d->mode == InteractionMode::Sketching) {
+    // ── 擴充：GetPoint 模式（MOVE/COPY/ROTATE/MIRROR/STRETCH 等互動編輯
+    //    命令取點時使用）在命令主動設定了 RubberBand 模式（非 None）時，
+    //    也採用同一套「跟隨游標即時更新」邏輯——這是既有機制的最小擴充，
+    //    刻意用「rubberBand 模式已被設定」當作 opt-in 條件，沒有主動設定
+    //    的既有 GetPoint 呼叫端（例如純取點、不需要預覽的情境）行為完全
+    //    不變。Sketching 模式的既有行為（LINE 等繪圖命令）也完全不受影響。
+    const bool getPointWithRubberBand =
+        (d->mode == InteractionMode::GetPoint) && d->rubberBand &&
+        d->rubberBand->mode() != view::RubberBandMode::None;
+
+    if (d->mode == InteractionMode::Sketching || getPointWithRubberBand) {
         if (d->rubberBand) {
             QPointF planePtF;
             bool snappedByOSnap = false;
