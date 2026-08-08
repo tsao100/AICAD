@@ -209,6 +209,16 @@ public:
      * @brief 是否有當前點
      */
     bool hasCurrentPoint() const;
+
+    /**
+     * @brief 取得目前追蹤點（平面座標）
+     *
+     * 供指令端（例如 MOVE 的即時搬移預覽）在 updated() signal 觸發時，
+     * 讀出「這次滑鼠移動最新的平面座標」，不需要各自重複
+     * screenToPlane() 換算。呼叫前應先以 hasCurrentPoint() 確認有效；
+     * 尚未設定過時回傳預設建構的 QPointF()。
+     */
+    QPointF currentPoint() const;
     
 Q_SIGNALS:
     /**

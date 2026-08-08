@@ -42,7 +42,8 @@ MirrorCommand::MirrorCommand()
 QString MirrorCommand::getUsage() const
 {
     return "Usage: MIRROR — select geometry first then run MIRROR, "
-           "or run MIRROR then click objects and press Enter, "
+           "or run MIRROR then click objects (window/crossing/fence supported) "
+           "and press Enter or right-click, "
            "then specify two points defining the mirror line, "
            "then choose whether to erase the source objects.";
 }
@@ -108,7 +109,7 @@ void MirrorCommand::beginSelection(cad::Sketch* sketch)
             this, &MirrorCommand::onSelectionCancelled);
 
     m_picker->begin(sketch, SketchSelectionPicker::Mode::PickMultiple,
-                    "[MIRROR] Select objects, then press Enter:");
+                    "[MIRROR] Select objects, then press Enter or right-click:");
 }
 
 void MirrorCommand::onSelectionConfirmed(const QStringList& uuids)

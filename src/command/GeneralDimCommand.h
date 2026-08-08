@@ -111,6 +111,22 @@ private:
     /// 更新／清除這個欄位。
     std::optional<cad::GeomRef> m_stickyPairedRef;
 
+    /// ⚠️ 修正：點＋點（含「一條線的兩端點」——即同一條線的 Start/End 被
+    /// 當成兩個獨立點配對）配對鎖定（lockPairGeom）後，H/V/Align 型別
+    /// 不應該在 WaitDimPlace 階段就此凍結。真實需求（見使用者回饋）是：
+    /// 選定兩個點之後，使用者仍要能持續移動滑鼠，依「滑鼠與兩點中點」的
+    /// 相對方位即時在 水平/垂直/對齊 三者間切換預覽，最後再點一下才確定
+    /// 型別＋位置——而不是第 2 次點擊當下的滑鼠位置就一次性把型別鎖死，
+    /// 之後 WaitDimPlace 只能調整偏移量。
+    ///
+    /// 此欄位標記「目前鎖定的雙幾何配對是否為這種需要在 WaitDimPlace
+    /// 持續依滑鼠位置重新分類的點＋點配對」（GeneralDimClassifier::
+    /// inferPair() point+point 分支：pairedRefs 為空、distMode為
+    /// PointToPoint）。true 時，subscribePreview()/onDimConfirmed() 會在
+    /// 每次滑鼠移動／最終點擊時重新呼叫 inferPair(m_refs[0], m_refs[1],
+    /// ..., mousePtAbs) 更新 m_type/m_distMode，而不僅僅更新 offset。
+    bool m_isPointPairHVA = false;
+
     void subscribeGeomPicked   ();
     void subscribeGeomHover    ();
     void subscribeStringInput  ();

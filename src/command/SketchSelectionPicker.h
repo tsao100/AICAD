@@ -17,10 +17,25 @@
  *  - 草圖平面參考幾何（X 軸／Y 軸／原點，UUID 前綴 "sketch_xaxis:" 等）
  *    一律視為不可選取的固定參考，比照 EraseCommand 的 isFixedReferenceUuid()。
  *
- * CrossingWindow（框選，供 STRETCH 使用）於 Phase 0 尚未實作：目前若呼叫
- * begin() 時傳入 Mode::CrossingWindow，會直接印出警告並發出 cancelled()。
- * 待 Phase 3 確認/補齊 CadView 的窗選矩形機制後再啟用，避免在還沒有對應
- * 基礎設施的情況下呼叫不存在的 API。
+ * ── 窗選／穿越窗選／籬選（見 begin() 對 Mode::PickMultiple 的說明）──────
+ * CadView 本身早已有一套完整的拖曳式窗選/穿越窗選/籬選/多邊形選取機制
+ * （beginBoxSelectCandidate 等，供「無作用中命令」時的預選（模式 A）使用），
+ * 唯一缺口是它原本只在 !hasCmd 時才會被 mousePressEvent 觸發。本選取器
+ * 透過 CadView::setCommandBoxSelectEligible() 在 Mode::PickMultiple 期間
+ * 宣告「現在允許窗選」，讓命令執行中的「選取物件」階段點擊空白處也能啟動
+ * 同一套機制，並訂閱其框選完成後發布的 Events::SKETCH_GEOM_SELECTED 取得
+ * 結果、併入 m_pending。矩形/籬選/多邊形的橡皮筋預覽、即時命中高亮皆由
+ * CadView 既有機制提供，本選取器不需要（也不應該）重新實作幾何相交測試。
+ * Mode::PickSingle（TRIM/EXTEND 逐段點選、FILLET/CHAMFER 逐一點選單一
+ * 物件）語意上是「指定單一物件」而非「選取一批」，不啟用窗選/籬選。
+ *
+ * ── 滑鼠右鍵結束選取 ─────────────────────────────────────────────────────
+ * Mode::PickMultiple 期間，除了按 Enter（送出空字串）結束選取外，也可以
+ * 直接按滑鼠右鍵結束選取（等同於 Enter）。這是在 CadView::mousePressEvent()
+ * 內統一處理的：GetGeom 模式下、命令執行中、命令列正等待 InputType::String
+ * 輸入時，右鍵會直接呼叫與 Enter 相同的
+ * CommandLineManager::executeCommand("") 入口，本選取器不需要另外處理。
+ * 窗選/穿越窗選/籬選拖曳中的右鍵例外（見 CadView.cpp 內該段落註解）。
  */
 #pragma once
 
@@ -47,10 +62,8 @@ public:
         /// 點選一個幾何立即確認，不需要按 Enter。TRIM/EXTEND 逐次點選
         /// 「要裁切/延伸的那一段」、FILLET/CHAMFER 點選「第一個/第二個
         /// 物件」時使用本模式（每次呼叫 begin() 對應一次單一選取）。
+        /// 不支援窗選/籬選（語意上是指定單一物件，不是選取一批）。
         PickSingle,
-
-        /// 框選（Crossing Window）。供 STRETCH 使用，Phase 0 尚未實作。
-        CrossingWindow,
     };
 
     explicit SketchSelectionPicker(QObject* parent = nullptr);
@@ -69,6 +82,11 @@ public:
      * 本函式不會重複做這兩件事，理由是：不同命令在「選取階段」與後續
      * 「取基準點/取角度」階段之間，Running 狀態是連續的（一個命令的一次
      * 執行只應該呼叫一次 setWaitingForInput()），交由呼叫端統一管理。
+     *
+     * Mode::PickMultiple 期間會自動呼叫
+     * CadView::setCommandBoxSelectEligible(true)，讓使用者點擊空白處時
+     * 能啟動窗選/穿越窗選/籬選/多邊形選取（見標頭檔說明）；
+     * cleanup()/abortSilently() 時會自動關閉，呼叫端不需要自行處理。
      */
     void begin(cad::Sketch* sketch, Mode mode, const QString& prompt);
 
@@ -98,6 +116,14 @@ private:
     void onGeomPicked(const QVariant& data);
     void onConfirm(const QVariant& data);
     void onCancelled(const QVariant& data);
+
+    /// CadView 窗選/穿越窗選/籬選/多邊形選取完成時觸發
+    /// （Events::SKETCH_GEOM_SELECTED，僅 Mode::PickMultiple 有意義）。
+    /// 見標頭檔「窗選／穿越窗選／籬選」說明：payload 的 uuids 是框選完成當下
+    /// AIS context 內「完整」的選取結果（因為 CadView 一律以 additive
+    /// 模式套用窗選，包含框選前既有的選取），直接以此覆蓋 m_pending 即可，
+    /// 不需要手動合併。
+    void onBoxSelected(const QVariant& data);
 
     void setHighlight(const QString& uuid, bool on);
     void updatePrompt();

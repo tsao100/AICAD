@@ -29,6 +29,14 @@ namespace command {
  *                高亮），訂閱 STRING_INPUT → 使用者按 Enter（空輸入）時
  *                確認並刪除待刪清單中的幾何，訂閱 COMMAND_CANCELLED →
  *                使用者按 Esc 時取消整個操作。
+ *              點擊空白處另外支援窗選/穿越窗選/籬選/多邊形選取（拖曳出
+ *              矩形，由左至右＝窗選須完全框住，由右至左＝穿越窗選碰到
+ *              即算；或輸入 F/WP/CP 切換籬選/多邊形），一次圈選多個
+ *              一般幾何加入待刪清單（訂閱 SKETCH_GEOM_SELECTED，見
+ *              CadView::setCommandBoxSelectEligible()）；尺寸線/約束
+ *              符號不在窗選命中範圍內，仍需逐一點擊。除了按 Enter 外，
+ *              按滑鼠右鍵也能結束選取並確認刪除（等同 Enter，於
+ *              CadView::mousePressEvent() 統一處理，見該處註解）。
  *            完成或取消後一律呼叫 cleanup()：取消訂閱、還原 CadView 為
  *            Sketching 模式、清空待刪清單、並以 complete() 結束命令。
  *
@@ -52,6 +60,12 @@ private:
     void onGeomPicked(const QVariant& data);
     void onConfirm(const QVariant& data);
     void onCancelled(const QVariant& data);
+
+    /// CadView 窗選/穿越窗選/籬選/多邊形選取完成時觸發（見 execute()
+    /// 模式 B 對 CadView::setCommandBoxSelectEligible() 的說明）。
+    /// 只會回報一般幾何的 UUID（尺寸線/約束符號不在 CadView 的窗選命中
+    /// 範圍內，比照原本設計，仍需逐一點擊才能刪除）。
+    void onBoxSelected(const QVariant& data);
 
     void setHighlight(const QString& uuid, bool on);
     void updatePendingPrompt();

@@ -243,6 +243,11 @@ public:
     bool              boxSelectWaitingSecondClick = false;  ///< 第一次點擊已放開，選取框跟隨滑鼠自由移動，等待第二次點擊
     bool              boxSelectSketchMode = false;  ///< true=Sketch 幾何選取語意；false=一般（H-Alignment 等）
     bool              boxSelectAdditive   = false;  ///< Shift 按下＝疊加選取
+    /// 命令執行中（hasCmd==true）的「選取物件」子階段是否允許窗選/穿越窗選/
+    /// 籬選/多邊形選取。由 SketchSelectionPicker::begin()（PickMultiple 模式）
+    /// 與 EraseCommand::execute() 模式 B 等呼叫端透過
+    /// setCommandBoxSelectEligible() 開啟/關閉，見該函式標頭檔說明。
+    bool              commandBoxSelectEligible = false;
     Standard_Integer  boxSelectStartX = 0, boxSelectStartY = 0;  ///< 起點（OCCT 物理像素，供 SelectRectangle 使用）
     QPoint            boxSelectStartQt;              ///< 起點（Qt 邏輯座標，供選取框視覺 unproject 使用）
     Handle(Prs3d_Presentation) boxSelectPresentation; ///< 選取框顯示物件（沿用 RubberBand 相同技術，非 AIS 物件）
@@ -1050,8 +1055,11 @@ void CadView::showSketchAxes(cad::Sketch* sketch)
     // 放寬選取容差（必須透過 context 呼叫，且在 Activate 之後，
     // 這時 selection mode 0 對應的 SelectMgr_Selection 已存在）：
     // 軸線稍寬方便點擊細線，原點更寬方便點擊單點。
-    d->context->SetSelectionSensitivity(d->sketchXAxisAIS,  0, 4.0);
-    d->context->SetSelectionSensitivity(d->sketchYAxisAIS,  0, 4.0);
+    // 6.0 與 Sketch::kGeomSelectionSensitivityPx 一致（見 Sketch.cpp），
+    // 避免參考軸線反而比一般可編輯幾何更難點到；原點維持 8.0（與
+    // Sketch::kPointSelectionSensitivityPx 一致，點比線更難精準點中）。
+    d->context->SetSelectionSensitivity(d->sketchXAxisAIS,  0, 6.0);
+    d->context->SetSelectionSensitivity(d->sketchYAxisAIS,  0, 6.0);
     d->context->SetSelectionSensitivity(d->sketchOriginAIS, 0, 8.0);
 
     d->context->UpdateCurrentViewer();
@@ -1248,6 +1256,11 @@ ViewType CadView::viewType() const {
 void CadView::setConstraintPickActive(bool active)
 {
     d->constraintPickActive = active;
+}
+
+void CadView::setCommandBoxSelectEligible(bool eligible)
+{
+    d->commandBoxSelectEligible = eligible;
 }
 
 bool CadView::isBoxSelectArmed() const
@@ -1498,8 +1511,8 @@ void CadView::displayAllFeatures() {
             d->context->SetSelectionSensitivity(handle, 0, sensitivity);
         }
     };
-    redisplayAxis(d->sketchXAxisAIS,  4.0);
-    redisplayAxis(d->sketchYAxisAIS,  4.0);
+    redisplayAxis(d->sketchXAxisAIS,  6.0);
+    redisplayAxis(d->sketchYAxisAIS,  6.0);
     redisplayAxis(d->sketchOriginAIS, 8.0);
 
     for (Feature* feature : d->document->features()) {
@@ -1520,6 +1533,30 @@ void CadView::displayAllFeatures() {
                         d->aisToGeomIndex[s.get()] = i;
                     }
                 }
+
+                // ⚠️ 修正：建構線／弧／圓（Construction/Centerline）除了不參與
+                // 輪廓外，其他功能都要與一般幾何相同——包含可被選取、參與
+                // TRIM/EXTEND/FILLET/CHAMFER/MIRROR/ROTATE/MOVE/COPY/STRETCH/
+                // ERASE/GDIM 等命令。這些命令挑選幾何都是透過 aisToGeomUuid
+                // 反查表（見 GEOM_PICKED/GEOM_HOVER 的 DetectedInteractive
+                // fallback，CadView.cpp 內以 d->aisToGeomUuid.value(det.get())
+                // 取得 uuid），建構幾何原本完全沒有登記進這張表，點擊/hover
+                // 一律查無 uuid，等於形同不可選——即使 Sketch::displayInContext()
+                // 那邊已經修正成不再呼叫 Deactivate() 也沒用。這裡補上登記
+                // （不設 aisToGeomIndex：建構幾何目前沒有對應的穩定索引陣列
+                // 消費者，維持未設定／-1，語意上等同「查無索引」，見既有
+                // aisToGeomIndex.value(obj.get(), -1) 的使用方式）。
+                {
+                    const QList<Handle(AIS_Shape)> ctorShapes = sketch->constructionShapes();
+                    const QList<QString>& ctorUuids = sketch->constructionShapeUuids();
+                    for (int i = 0; i < ctorShapes.size(); ++i) {
+                        const auto& s = ctorShapes[i];
+                        if (!s.IsNull()) {
+                            d->aisToFeatureId[s.get()] = feature->id();
+                            d->aisToGeomUuid[s.get()] = (i < ctorUuids.size()) ? ctorUuids[i] : QString();
+                        }
+                    }
+                }
             } else {
                 // ✅ 修正：invisible Sketch 只讀取已建立的 aisShapes，絕對不呼叫 rebuild()
                 //    rebuild() 會 emit shapeChanged → featureShapeUpdated → displayAllFeatures 死循環
@@ -1532,6 +1569,21 @@ void CadView::displayAllFeatures() {
                         d->aisToFeatureId[s.get()] = feature->id();
                         d->aisToGeomUuid[s.get()] = (i < uuids.size()) ? uuids[i] : QString();
                         d->aisToGeomIndex[s.get()] = i;
+                    }
+                }
+
+                // 同上：invisible 狀態下也一併登記建構幾何（不顯示，但反查表
+                // 需與 visible 分支保持一致，避免切回 visible 前有短暫的
+                // 登記缺口）。
+                {
+                    const QList<Handle(AIS_Shape)> ctorShapes = sketch->constructionShapes();
+                    const QList<QString>& ctorUuids = sketch->constructionShapeUuids();
+                    for (int i = 0; i < ctorShapes.size(); ++i) {
+                        const auto& s = ctorShapes[i];
+                        if (!s.IsNull()) {
+                            d->aisToFeatureId[s.get()] = feature->id();
+                            d->aisToGeomUuid[s.get()] = (i < ctorUuids.size()) ? ctorUuids[i] : QString();
+                        }
                     }
                 }
             }
@@ -2000,6 +2052,19 @@ void CadView::onSketchRebuilt()
             d->aisToFeatureId[shapes[i].get()] = fid;
             d->aisToGeomUuid[shapes[i].get()] = (i < uuids.size()) ? uuids[i] : QString();
             d->aisToGeomIndex[shapes[i].get()] = i;
+        }
+    }
+
+    // ⚠️ 修正：同 displayAllFeatures() 內的說明——建構線／弧／圓需要登記進
+    // aisToGeomUuid／aisToFeatureId，才能在 rebuildShapesOnly()（求解後的
+    // 增量更新路徑，實務上比完整的 displayAllFeatures() 更常被觸發）之後
+    // 依然可被選取／參與各命令，不會因為求解一次就「查無 uuid」而形同不可選。
+    const QList<Handle(AIS_Shape)> ctorShapes = sketch->constructionShapes();
+    const QList<QString>& ctorUuids = sketch->constructionShapeUuids();
+    for (int i = 0; i < ctorShapes.size(); ++i) {
+        if (!ctorShapes[i].IsNull()) {
+            d->aisToFeatureId[ctorShapes[i].get()] = fid;
+            d->aisToGeomUuid[ctorShapes[i].get()] = (i < ctorUuids.size()) ? ctorUuids[i] : QString();
         }
     }
 }
@@ -2606,12 +2671,28 @@ void CadView::finishBoxSelect(const QPoint& screenPos)
 
     if (!d->context.IsNull()) d->context->UpdateCurrentViewer();
 
-    // 結束框選流程：清除命令列提示，並重設「等待輸入」狀態
-    // （resetInputWait 不會像 cancelCommand 一樣廣播 COMMAND_CANCELLED，
-    //  避免誤觸其他模組的副作用，例如強制切回 Idle 檢視模式）。
+    // ⚠️ 命令執行中的選取階段（d->commandBoxSelectEligible）例外：
+    // performRectangleSelection() 內部「若有命中」會同步發布
+    // SKETCH_GEOM_SELECTED，SketchSelectionPicker::onBoxSelected()/
+    // EraseCommand::onBoxSelected() 會在那個呼叫當下把命令列重新設回
+    // waitForInput(InputType::String)（繼續等待使用者點選更多物件、
+    // Enter、或滑鼠右鍵結束選取）。但如果這次框選完全沒有命中任何幾何
+    // （uuids 為空），CadView::publishBoxSelectionResult() 根本不會發布
+    // SKETCH_GEOM_SELECTED，上面那個重新設定就不會發生。無論哪種情況，
+    // 這裡都必須把命令列的等待狀態改回 String（框選開始時
+    // beginBoxSelectCandidate() 已經把它切成 InputType::Option 了），
+    // 否則命令列會停在「沒有在等待任何輸入」——這正是滑鼠右鍵結束選取
+    // 沒有反應的根本原因（右鍵判斷式需要 isWaitingForInput()==true 才會
+    // 動作）。命令執行中一律不呼叫 clearPrompt()：提示文字（含「已選取
+    // N 個」）由 onBoxSelected() 自己維護，這裡清掉會覆蓋掉那個狀態。
+    // 只有「無作用中命令」的預選（模式 A）才需要在這裡完整收尾。
     auto* clm = core::CommandLineManager::instance();
-    clm->clearPrompt();
-    clm->resetInputWait();
+    if (d->commandBoxSelectEligible) {
+        clm->waitForInput(core::InputType::String);
+    } else {
+        clm->clearPrompt();
+        clm->resetInputWait();
+    }
 
     d->boxSelectArmed               = false;
     d->boxSelectActive              = false;
@@ -2635,9 +2716,18 @@ void CadView::cancelBoxSelectCandidate()
     if (!d->context.IsNull()) d->context->UpdateCurrentViewer();
 
     // 取消框選流程：清除命令列提示，並重設「等待輸入」狀態。
+    // 同上：命令執行中的選取階段（d->commandBoxSelectEligible）取消的只是
+    // 這次窗選/籬選手勢本身（Esc），命令仍在等待選取——一律把命令列改回
+    // waitForInput(String)（而非直接 resetInputWait 清空），不清提示文字
+    // （選取階段目前為止累積的「已選取 N 個」不該被這次取消的框選手勢
+    // 蓋掉），見 finishBoxSelect() 的完整說明。
     auto* clm = core::CommandLineManager::instance();
-    clm->clearPrompt();
-    clm->resetInputWait();
+    if (d->commandBoxSelectEligible) {
+        clm->waitForInput(core::InputType::String);
+    } else {
+        clm->clearPrompt();
+        clm->resetInputWait();
+    }
 
     d->boxSelectArmed               = false;
     d->boxSelectActive              = false;
@@ -2971,8 +3061,15 @@ void CadView::finishBoxSelectPolygon()
     }
 
     auto* clm = core::CommandLineManager::instance();
-    clm->clearPrompt();
-    clm->resetInputWait();
+    if (d->commandBoxSelectEligible) {
+        // 見 finishBoxSelect() 的完整說明：無論這次籬選/多邊形選取有沒有
+        // 命中幾何，都要把命令列的等待狀態改回 String（而不是清空），
+        // 且不清除提示文字。
+        clm->waitForInput(core::InputType::String);
+    } else {
+        clm->clearPrompt();
+        clm->resetInputWait();
+    }
 
     d->boxSelectArmed               = false;
     d->boxSelectActive              = false;
@@ -3013,6 +3110,37 @@ void CadView::resizeEvent(QResizeEvent* event) {
     }
 
     // GDIM overlay 是 OCCT Presentation，resize 無需更新 widget geometry
+}
+
+bool CadView::tryEndGetGeomSelectionViaRightClick(QMouseEvent* event)
+{
+    if (!event || event->button() != Qt::RightButton) return false;
+
+    // 診斷用：先印出目前狀態，方便排查「滑鼠右鍵沒有結束選取」問題時，
+    // 確認到底是（a）這個函式根本沒被呼叫到、（b）呼叫到了但模式/命令
+    // 狀態不符預期、還是（c）條件都符合、executeCommand("") 已送出但
+    // 後續命令沒有反應。測試穩定後可以把這行 qDebug 拿掉。
+    auto* cmdMgr = Application::instance() ? Application::instance()->commandManager() : nullptr;
+    const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
+    auto* clm = core::CommandLineManager::instance();
+    qDebug() << "[CadView] tryEndGetGeomSelectionViaRightClick: mode="
+             << static_cast<int>(d->mode)
+             << "(GetGeom=" << static_cast<int>(InteractionMode::GetGeom) << ")"
+             << "boxSelectArmed=" << d->boxSelectArmed
+             << "hasCmd=" << hasCmd
+             << "isWaitingForInput=" << (clm ? clm->isWaitingForInput() : false)
+             << "expectedInputType=" << (clm ? static_cast<int>(clm->expectedInputType()) : -1);
+
+    if (d->mode != InteractionMode::GetGeom) return false;
+    if (d->boxSelectArmed)                   return false;
+    if (!hasCmd || !clm || !clm->isWaitingForInput() ||
+        clm->expectedInputType() != core::InputType::String)
+    {
+        return false;
+    }
+
+    clm->executeCommand(QString());
+    return true;
 }
 
 void CadView::mousePressEvent(QMouseEvent* event) {
@@ -3106,6 +3234,25 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         return;
     }
 
+    // ── GetGeom 模式下，滑鼠右鍵＝結束選取（等同於按 Enter 送出空字串）──────
+    // 適用範圍：SketchSelectionPicker::PickMultiple（MOVE/COPY/ROTATE/MIRROR
+    // 的選取階段、TRIM/EXTEND 的選取剪切邊/邊界邊階段）、EraseCommand 模式 B、
+    // 以及 TRIM/EXTEND 逐段點選迴圈——這些階段目前都是靠命令列等待
+    // InputType::String、按 Enter 送出空字串來「結束選取／完成本輪點選」，
+    // 所以直接呼叫與 Enter 完全相同的公開入口
+    // CommandLineManager::executeCommand("")，不需要在每個命令各自加訂閱。
+    // 窗選/穿越窗選/籬選正在拖曳中（d->boxSelectArmed）時不處理，避免和
+    // 框選手勢互相干擾——讓右鍵維持原本啟動視角旋轉的行為，框選本身另有
+    // Esc/Enter/Space 可結束。
+    //
+    // 同一組判斷在 mouseReleaseEvent() 也會再呼叫一次（見該處），純屬保險：
+    // 兩者其中一個實際觸發即可，isWaitingForInput() 在第一次觸發後就會變
+    // false，第二次呼叫會安全地no-op，不會重複送出。
+    if (tryEndGetGeomSelectionViaRightClick(event)) {
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::RightButton && d->mode == InteractionMode::Sketching) {
         // 若目前有指令進行中 → 取消指令（原本行為）
         // 若無指令進行中      → 顯示草圖 context menu
@@ -3117,7 +3264,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         if (commandActive) {
             bus->publish(Events::POINT_CANCELLED, QVariant());
         } else {
-            showSketchContextMenu(event->pos());
+            //showSketchContextMenu(event->pos());
         }
         return;
     }
@@ -3278,6 +3425,22 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                 bus->publish(Events::SKETCH_GEOM_CLEARED, QVariant{});
                 bus->publish("selection.cleared", QVariant());
             }
+            return;
+        }
+
+        // ── 有 command 執行中 + 選取子階段已宣告允許窗選 ──────────────────
+        // 點擊空白處啟動窗選/穿越窗選/籬選/多邊形選取（見
+        // setCommandBoxSelectEligible() 標頭檔說明）。additive 固定為
+        // true：命令執行中的多選階段比照既有單擊 GEOM_PICKED 累加語意，
+        // 不需要按 Shift 才能疊加（也避免非疊加模式下 Replace 掉先前已
+        // 用單擊累積的 m_pending，兩者必須維持一致）。
+        // 有偵測到物件（HasDetected）時仍走既有 handlePointInput()，
+        // 讓單擊個別幾何的 GEOM_PICKED 路徑不受影響。
+        if (d->mode == InteractionMode::GetGeom &&
+            d->commandBoxSelectEligible &&
+            !d->context.IsNull() && !d->context->HasDetected())
+        {
+            beginBoxSelectCandidate(event->pos(), /*additive=*/true, /*sketchMode=*/true);
             return;
         }
 
@@ -3828,6 +3991,13 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
     }
 
     if (event->button() == Qt::RightButton) {
+        // ── 保險：mousePressEvent() 的右鍵結束選取沒有觸發時，這裡再試一次 ──
+        // （見 tryEndGetGeomSelectionViaRightClick() 說明；正常情況下
+        // press 階段就已經處理掉，這裡的呼叫會因為 isWaitingForInput()
+        // 已是 false 而安全地 no-op。）
+        if (tryEndGetGeomSelectionViaRightClick(event)) {
+            event->accept();
+        }
         d->mousePressed = false;
     }
 }

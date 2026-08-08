@@ -273,6 +273,7 @@ SOURCES += \
     src/cad/sketch/GeometryRelationshipAnalyzer.cpp \
     src/command/ExtrudeCommand.cpp \
     src/command/ChamferCommand.cpp \
+    src/command/ConstructionToggleCommand.cpp \
     src/command/alignment/SetOriginCommand.cpp \
     src/command/alignment/AlignmentAddSpiralCommand.cpp \
     src/command/alignment/Alignment3DAddVProfileCommand.cpp \
@@ -424,6 +425,7 @@ HEADERS += \
     src/cad/sketch/GeometryRelationshipAnalyzer.h \
     src/command/ExtrudeCommand.h \
     src/command/ChamferCommand.h \
+    src/command/ConstructionToggleCommand.h \
     src/command/GripMoveCommand.h \
     src/command/SketchEditCommand.h \
     src/command/SketchSelectionPicker.h \

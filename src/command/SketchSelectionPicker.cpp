@@ -29,6 +29,14 @@ bool isFixedReferenceUuid(const QString& uuid)
            uuid.startsWith("sketch_yaxis:") ||
            uuid.startsWith("sketch_origin:");
 }
+
+/// 供窗選/穿越窗選/籬選整合使用：取得目前的 CadView（找不到回傳 nullptr）。
+view::CadView* activeCadView()
+{
+    auto* app   = core::Application::instance();
+    auto* uiMgr = app ? app->uiManager() : nullptr;
+    return uiMgr ? uiMgr->cadView() : nullptr;
+}
 } // namespace
 
 SketchSelectionPicker::SketchSelectionPicker(QObject* parent)
@@ -38,7 +46,7 @@ SketchSelectionPicker::SketchSelectionPicker(QObject* parent)
 
 SketchSelectionPicker::~SketchSelectionPicker()
 {
-    if (m_active) unsubscribeAll();
+    if (m_active) cleanup();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -55,17 +63,12 @@ void SketchSelectionPicker::begin(cad::Sketch* sketch, Mode mode, const QString&
     m_pending.clear();
     m_active     = true;
 
-    if (mode == Mode::CrossingWindow) {
-        // 見標頭檔說明：Phase 0 尚未確認/補齊 CadView 的窗選矩形機制，
-        // 這裡先安全地拒絕，避免呼叫不存在的 API。待 Phase 3 補齊後再啟用。
-        qWarning() << "[SketchSelectionPicker] CrossingWindow 模式尚未實作"
-                      "（見 Phase 3），本次選取直接取消。";
-        m_active = false;
-        Q_EMIT cancelled();
-        return;
-    }
-
     subscribeAll();
+
+    if (mode == Mode::PickMultiple) {
+        if (auto* cadView = activeCadView())
+            cadView->setCommandBoxSelectEligible(true);
+    }
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) {
@@ -96,6 +99,13 @@ void SketchSelectionPicker::subscribeAll()
 
     bus->subscribe(core::Events::COMMAND_CANCELLED, this,
                    [this](const QVariant& data) { onCancelled(data); });
+
+    // 窗選/穿越窗選/籬選/多邊形選取完成後的結果（見標頭檔說明）。
+    // PickSingle 模式下不會啟用 commandBoxSelectEligible，實務上不會收到
+    // 這個事件；仍然訂閱以保持程式碼路徑單純，onBoxSelected() 內部會依
+    // m_mode 自行判斷是否忽略。
+    bus->subscribe(core::Events::SKETCH_GEOM_SELECTED, this,
+                   [this](const QVariant& data) { onBoxSelected(data); });
 }
 
 void SketchSelectionPicker::unsubscribeAll()
@@ -103,9 +113,10 @@ void SketchSelectionPicker::unsubscribeAll()
     auto* bus = core::Application::instance()->eventBus();
     if (!bus) return;
 
-    bus->unsubscribe(core::Events::GEOM_PICKED,       this);
-    bus->unsubscribe(core::Events::STRING_INPUT,      this);
-    bus->unsubscribe(core::Events::COMMAND_CANCELLED, this);
+    bus->unsubscribe(core::Events::GEOM_PICKED,        this);
+    bus->unsubscribe(core::Events::STRING_INPUT,       this);
+    bus->unsubscribe(core::Events::COMMAND_CANCELLED,  this);
+    bus->unsubscribe(core::Events::SKETCH_GEOM_SELECTED, this);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -176,6 +187,37 @@ void SketchSelectionPicker::onCancelled(const QVariant& /*data*/)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// onBoxSelected — CadView 窗選/穿越窗選/籬選/多邊形選取完成
+// （Events::SKETCH_GEOM_SELECTED，見標頭檔「窗選／穿越窗選／籬選」說明）
+// ─────────────────────────────────────────────────────────────────────────
+
+void SketchSelectionPicker::onBoxSelected(const QVariant& data)
+{
+    if (!m_active || m_mode != Mode::PickMultiple) return;
+
+    const QVariantMap map   = data.toMap();
+    const QStringList uuids = map.value("uuids").toStringList();
+
+    // uuids 是框選完成當下 AIS context 內「完整」的選取結果（CadView 一律
+    // 以 additive 模式套用窗選，見 setCommandBoxSelectEligible() 說明），
+    // 直接以此覆蓋 m_pending，並過濾掉固定參考幾何（軸線/原點的虛擬 UUID，
+    // 若剛好落在框選範圍內也可能出現在這個清單中）。
+    m_pending.clear();
+    for (const QString& uuid : uuids) {
+        if (uuid.isEmpty() || isFixedReferenceUuid(uuid)) continue;
+        m_pending.append(uuid);
+    }
+
+    // CadView::finishBoxSelect()/finishBoxSelectPolygon() 結束時會呼叫
+    // CommandLineManager::resetInputWait()，本選取器仍在等待使用者按 Enter
+    // 確認（或繼續點選/框選更多物件），需要重新設定等待輸入狀態，否則
+    // 命令列會卡在「未等待任何輸入」，使用者打字/按 Enter 不會有反應。
+    updatePrompt();
+    auto* cmdMgr = core::CommandLineManager::instance();
+    if (cmdMgr) cmdMgr->waitForInput(core::InputType::String);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // setHighlight — 比照 EraseCommand::setHighlight()，僅處理一般幾何
 // （不處理尺寸線/約束符號，見標頭檔說明）
 // ─────────────────────────────────────────────────────────────────────────
@@ -190,17 +232,34 @@ void SketchSelectionPicker::setHighlight(const QString& uuid, bool on)
     auto context = cadView->context();
     if (context.IsNull()) return;
 
-    const QList<QString>& uuids = m_sketch->aisShapeUuids();
-    QList<Handle(AIS_InteractiveObject)> shapes = m_sketch->aisShapes();
-    for (int i = 0; i < uuids.size() && i < shapes.size(); ++i) {
-        if (uuids[i] != uuid) continue;
-        const Handle(AIS_InteractiveObject)& obj = shapes[i];
-        if (obj.IsNull()) return;
-        const bool isSelected = context->IsSelected(obj);
-        if (on != isSelected)
-            context->AddOrRemoveSelected(obj, Standard_True);
+    auto tryHighlight = [&](const QList<QString>& uuids,
+                             const QList<Handle(AIS_InteractiveObject)>& shapes) -> bool {
+        for (int i = 0; i < uuids.size() && i < shapes.size(); ++i) {
+            if (uuids[i] != uuid) continue;
+            const Handle(AIS_InteractiveObject)& obj = shapes[i];
+            if (obj.IsNull()) return true;
+            const bool isSelected = context->IsSelected(obj);
+            if (on != isSelected)
+                context->AddOrRemoveSelected(obj, Standard_True);
+            return true;
+        }
+        return false;
+    };
+
+    if (tryHighlight(m_sketch->aisShapeUuids(), m_sketch->aisShapes()))
         return;
-    }
+
+    // ⚠️ 修正：建構線／弧／圓（Construction/Centerline）除了不參與輪廓外，
+    // 其他功能都要與一般幾何相同——包含在 MOVE/COPY/ROTATE/MIRROR/STRETCH
+    // 等互動選取過程中，被點選時要能顯示相同的選取高亮。原本只查
+    // aisShapeUuids()/aisShapes()（不含建構幾何），導致點選建構幾何時
+    // 完全沒有高亮回饋。
+    const QList<Handle(AIS_Shape)> ctorShapes = m_sketch->constructionShapes();
+    QList<Handle(AIS_InteractiveObject)> ctorShapesAsIO;
+    ctorShapesAsIO.reserve(ctorShapes.size());
+    for (const auto& s : ctorShapes)
+        ctorShapesAsIO.append(s);
+    tryHighlight(m_sketch->constructionShapeUuids(), ctorShapesAsIO);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -231,6 +290,13 @@ void SketchSelectionPicker::cleanup()
     if (!m_active) return;
     unsubscribeAll();
     m_active = false;
+
+    // 對稱關閉 begin() 在 PickMultiple 模式下開啟的窗選/穿越窗選/籬選
+    // 資格宣告，避免殘留影響後續其他不支援框選的 GetGeom 用途（見
+    // CadView::setCommandBoxSelectEligible() 標頭檔說明）。PickSingle
+    // 模式下 begin() 未曾開啟過，這裡呼叫 false 是安全的 no-op。
+    if (auto* cadView = activeCadView())
+        cadView->setCommandBoxSelectEligible(false);
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) cmdMgr->clearPrompt();

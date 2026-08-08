@@ -21,10 +21,27 @@ struct GeomVarLayout {
     int startOffset = -1;  ///< Start handle 對應的 vars index（SketchPoint.x）
     int endOffset   = -1;  ///< End   handle 對應的 vars index（SketchPoint.x）
 
+    /// Arc 專用：求解前（pack 當下）的原始簽名掃角 t1_orig - t0_orig（弧度）。
+    /// 純粹作為分支判斷用的參考常數，不是求解變數——用來讓
+    /// FixedArcLengthEquation 判斷這是優弧（>π）還是劣弧，並讓
+    /// unpackVariables() 用「角度差」而非「絕對角度」重建 t0/t1，避免
+    /// t0/t1 直接進入 Newton 求解變數（見下方 Arc 版面說明的修正註解）。
+    double refSweep = 0.0;
+
     // 語意 accessor（依 GeomHandle 取 index）
     // Line:    offset+0=x1, +1=y1, +2=x2, +3=y2（或共用 SketchPoint DOF）
     // Circle:  offset+0=cx, +1=cy, +2=r
-    // Arc:     offset+0=cx, +1=cy, +2=r, +3=startAngle, +4=endAngle
+    // Arc:     offset+0=cx, +1=cy, +2=r（Start/End 一律透過 indexFor(Start/End)
+    //          取得，指向共用的 SketchPoint DOF，或找不到對應點時的局部
+    //          fallback 變數；t0/t1 兩個角度「不」在求解變數之列——早期版本
+    //          把 t0/t1 也當成獨立求解變數並用 cx+r·cos(t) 這類三角函數方
+    //          程式與 Start/End 綁定，會讓「弧度」與「座標/長度」這種量級
+    //          差異懸殊的量混在同一個最小平方系統裡求解，Moore-Penrose 偽
+    //          逆在殘差極小甚至為零時仍可能因為系統病態（ill-conditioned）
+    //          而選出一個數值上很小、換算成座標卻很大的 Δt，造成「弧長沒
+    //          改，起終點/圓心卻大幅跳動」的現象。改為只用 cx,cy,r 三個
+    //          自然座標量作為 Arc 自身的獨立變數，t0/t1 只在求解「結束後」
+    //          於 unpackVariables() 用角度差的方式重建，徹底避免這個問題。
     // Ellipse: offset+0=cx, +1=cy, +2=majorR, +3=minorR, +4=angle
     int indexFor(GeomHandle h) const;
 };
@@ -267,7 +284,9 @@ public:
     void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
 };
 
-/// F(x) = r * |endAngle - startAngle| - value = 0  (弧長，refs[0]=弧)
+/// F(x) = r * sweep(Start,Center,End) - value = 0  (弧長，refs[0]=弧)
+/// sweep 由 Start/End 相對圓心的夾角（cross/dot）決定，搭配
+/// GeomVarLayout::refSweep 判斷優弧/劣弧分支（見該欄位註解）。
 class FixedArcLengthEquation : public ConstraintEquation {
 public:
     using ConstraintEquation::ConstraintEquation;
@@ -383,6 +402,24 @@ private:
 
     // QR 分解（自實作，不引入 Eigen 依賴）
     // 解最小二乘 J·Δx = -F
+    //
+    // ── 修正：對過小的奇異值做平滑阻尼（regularize），避免病態系統把極小
+    // 殘差放大成很大的修正量 ───────────────────────────────────────────────
+    // 內部實作用 Eigen::BDCSVD 的奇異值分解解最小平方問題。Eigen 預設的
+    // 奇異值門檻只有 max(rows,cols)*epsilon（約 1e-13～1e-14 這個量級），
+    // 對「幾何上真的接近奇異」但不是「數值上剛好等於 0」的系統（例如封閉
+    // 輪廓：線段-圓弧-線段-圓弧…首尾相接的鏈狀 loop，其約束方程式之間天
+    // 生就存在幾乎線性相依的方向）幾乎不會發揮作用——一旦某個方向的奇異
+    // 值很小但非 0（ill-conditioned 而非真奇異），偽逆會用 1/σ 放大該方向
+    // 的修正量，殘差稍微不是 0 就會被放大成很大的位移，牽動整個鏈（甚至
+    // 完全無關的其他幾何）一起跳動。
+    //
+    // 這裡改用 Levenberg-Marquardt 風格的平滑阻尼（Tikhonov regularization：
+    // σ/(σ²+λ) 取代 1/σ），而不是「非 0 即 1」的硬性截斷門檻（曾經試過，
+    // 副作用是連正常、良態的小修正方向也可能被整個歸零，導致原本正確的
+    // 圓角弧在求解後反而跟丟）。良態方向（σ 遠大於 √λ）幾乎不受影響
+    // （σ/(σ²+λ)≈1/σ），只有真正接近奇異（σ→0）的方向修正量會平滑地趨近
+    // 0，而不是被 1/σ 硬放大，兩種極端情況都不會出現。
     static bool solveLinearLS(const QVector<QVector<double>>& J,
                               const QVector<double>& F,
                               QVector<double>& dx);

@@ -57,7 +57,8 @@ EraseCommand::EraseCommand()
 QString EraseCommand::getUsage() const
 {
     return "Usage: ERASE — select geometry first then run ERASE, "
-           "or run ERASE then click geometry in the viewport and press Enter.";
+           "or run ERASE then click geometry in the viewport "
+           "(window/crossing/fence supported) and press Enter or right-click.";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,8 +103,12 @@ CommandResult EraseCommand::execute(const CommandContext& ctx)
 
     auto* uiMgr   = app->uiManager();
     auto* cadView = uiMgr ? uiMgr->cadView() : nullptr;
-    if (cadView)
+    if (cadView) {
         cadView->setMode(view::InteractionMode::GetGeom);
+        // 開啟窗選/穿越窗選/籬選/多邊形選取資格，見標頭檔說明與
+        // CadView::setCommandBoxSelectEligible()。cleanup() 會對稱關閉。
+        cadView->setCommandBoxSelectEligible(true);
+    }
 
     setWaitingForInput();   // ★ 必須設為 Running，命令才會持續存活等待使用者互動
 
@@ -111,7 +116,7 @@ CommandResult EraseCommand::execute(const CommandContext& ctx)
 
     if (cmdMgr) {
         cmdMgr->showPrompt(
-            "[ERASE] Click objects to erase (click again to deselect), then press Enter:");
+            "[ERASE] Click objects to erase (click again to deselect), then press Enter or right-click:");
         cmdMgr->waitForInput(core::InputType::String);
     }
 
@@ -135,6 +140,9 @@ void EraseCommand::subscribeAll()
 
     bus->subscribe(core::Events::COMMAND_CANCELLED, this,
                    [this](const QVariant& data) { onCancelled(data); });
+
+    bus->subscribe(core::Events::SKETCH_GEOM_SELECTED, this,
+                   [this](const QVariant& data) { onBoxSelected(data); });
 }
 
 void EraseCommand::unsubscribeAll()
@@ -145,6 +153,7 @@ void EraseCommand::unsubscribeAll()
     bus->unsubscribe(core::Events::GEOM_PICKED,      this);
     bus->unsubscribe(core::Events::STRING_INPUT,     this);
     bus->unsubscribe(core::Events::COMMAND_CANCELLED, this);
+    bus->unsubscribe(core::Events::SKETCH_GEOM_SELECTED, this);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +234,34 @@ void EraseCommand::onCancelled(const QVariant& /*data*/)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// onBoxSelected — CadView 窗選/穿越窗選/籬選/多邊形選取完成
+// （Events::SKETCH_GEOM_SELECTED，見標頭檔說明）
+// ─────────────────────────────────────────────────────────────────────────────
+
+void EraseCommand::onBoxSelected(const QVariant& data)
+{
+    const QVariantMap map   = data.toMap();
+    const QStringList uuids = map.value("uuids").toStringList();
+
+    // uuids 是框選完成當下 AIS context 內「完整」的選取結果（CadView 一律
+    // 以 additive 模式套用窗選，見 execute() 對
+    // setCommandBoxSelectEligible() 的說明），直接覆蓋 m_pending 即可，
+    // 並過濾掉固定參考幾何。
+    m_pending.clear();
+    for (const QString& uuid : uuids) {
+        if (uuid.isEmpty() || isFixedReferenceUuid(uuid)) continue;
+        m_pending.append(uuid);
+    }
+
+    updatePendingPrompt();
+
+    // CadView 結束窗選時會呼叫 resetInputWait()，需要重新設定等待輸入，
+    // 否則命令列會卡住，使用者按 Enter/繼續點選都不會有反應。
+    auto* cmdMgr = core::CommandLineManager::instance();
+    if (cmdMgr) cmdMgr->waitForInput(core::InputType::String);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // setHighlight — 用 AIS_InteractiveContext 將待刪幾何標示為已選取
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -253,6 +290,19 @@ void EraseCommand::setHighlight(const QString& uuid, bool on)
     for (int i = 0; i < uuids.size() && i < shapes.size(); ++i) {
         if (uuids[i] == uuid) {
             toggle(shapes[i]);
+            return;
+        }
+    }
+
+    // 1b) ⚠️ 修正：建構線／弧／圓除了不參與輪廓外，其他功能都要與一般幾何
+    // 相同——包含 ERASE 選取時的高亮回饋。建構幾何是獨立於 aisShapes()／
+    // aisShapeUuids() 的另一組 parallel array（見 Sketch::constructionShapes()
+    // 說明），原本這裡完全沒有查詢，導致點選建構幾何準備刪除時沒有高亮。
+    const QList<QString>& ctorUuids = sk->constructionShapeUuids();
+    const QList<Handle(AIS_Shape)> ctorShapes = sk->constructionShapes();
+    for (int i = 0; i < ctorUuids.size() && i < ctorShapes.size(); ++i) {
+        if (ctorUuids[i] == uuid) {
+            toggle(ctorShapes[i]);
             return;
         }
     }
@@ -301,6 +351,7 @@ void EraseCommand::cleanup()
     auto* cadView = uiMgr ? uiMgr->cadView() : nullptr;
     if (cadView) {
         cadView->clearSketchGeomSelection();
+        cadView->setCommandBoxSelectEligible(false);
         cadView->setMode(view::InteractionMode::Sketching);
     }
 

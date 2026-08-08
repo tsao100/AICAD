@@ -65,6 +65,9 @@ Q_SIGNALS:
     void requestAddConstructionLine();
     void requestAddCenterline();
     void requestAddConstructionCircle();
+    /// ⚠️ 新增：切換選取的幾何在「建構／一般」間來回切換（對應 CONSTRUCTION
+    /// 命令，別名 CT）。見 ConstructionToggleCommand.h 檔頭說明。
+    void requestToggleConstruction();
 
     // ── 約束 ────────────────────────────────────────────────────
     void requestConstraint(cad::ConstraintType type);
@@ -144,6 +147,7 @@ private:  // 選點進行中，防止尺寸按鈕重複觸發
     QToolButton* m_btnConstrLine    = nullptr;
     QToolButton* m_btnCenterline    = nullptr;
     QToolButton* m_btnConstrCircle  = nullptr;
+    QToolButton* m_btnToggleConstruction = nullptr;  ///< 選取的幾何 建構⇄一般 來回切換
 
     // 約束按鈕（幾何型）
     QToolButton* m_btnCoincident    = nullptr;

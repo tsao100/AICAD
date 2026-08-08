@@ -350,6 +350,17 @@ public:
     QList<TopoDS_Wire> wires() const;
     QList<Handle(AIS_InteractiveObject)> aisShapes() const;
     const QList<QString>& aisShapeUuids() const;
+
+    /// ⚠️ 修正：建構幾何（Construction/Centerline）的可選取性。
+    /// 供 CadView 建立 aisToGeomUuid／aisToFeatureId 反查表使用，讓建構
+    /// 線/弧/圓能像一般幾何一樣被點選、參與 TRIM/EXTEND/FILLET/CHAMFER/
+    /// MIRROR/ROTATE/MOVE/COPY/STRETCH/ERASE/GDIM 等所有命令（唯一的差異
+    /// 只在於 buildWires()／SketchLoopFinder 不把它們納入輪廓／迴圈偵測）。
+    /// 與 aisShapes()／aisShapeUuids() 是各自獨立的一組 parallel array，
+    /// 不會混在一起，理由見 rebuildShapesOnly() 內的說明註解（建構幾何
+    /// 目前沒有穩定的逐一 shape identity，每次都整批 erase+redisplay）。
+    QList<Handle(AIS_Shape)> constructionShapes() const { return m_constructionShapes; }
+    const QList<QString>& constructionShapeUuids() const { return m_constructionShapeUuids; }
     QList<Handle(AIS_InteractiveObject)> displayInContext(const Handle(AIS_InteractiveContext)& context);
     void eraseFromContext(const Handle(AIS_InteractiveContext)& context);
     TopoDS_Wire mainWire() const;
@@ -528,6 +539,7 @@ private:
     QList<SketchConstraint> m_constraints;
     QList<SketchAnnotation> m_annotations;  ///< GDIM v2 Phase 1
     QList<Handle(AIS_Shape)>  m_constructionShapes;
+    QList<QString>            m_constructionShapeUuids;    ///< parallel to m_constructionShapes（見 constructionShapes() 說明）
     QHash<QString, quint64>   m_constructionFingerprints;  ///< parallel cache for m_constructionShapes
     ConstraintSolver        m_solver;
     Handle(AIS_InteractiveContext) m_aisContext;

@@ -4,6 +4,7 @@
  */
 
 #include "Sketch.h"
+#include <cmath>
 #include "Document.h"
 #include "PlaneManager.h"
 #include "sketch/SketchLoopFinder.h"
@@ -43,6 +44,35 @@
 
 namespace aicad {
 namespace cad {
+
+namespace {
+/// 一般草圖幾何（線／圓／弧／橢圓／折線／雲形線等 AIS_Shape 邊線）的選取
+/// 容差（螢幕像素），供 AIS_InteractiveContext::SetSelectionSensitivity()
+/// 使用。原本這些幾何從未明確設定過，落回 OCCT 內建預設值（實測大約只有
+/// 1～2 像素等級），在一般螢幕/高 DPI 下線幾乎要「精準點在線上」才選得到，
+/// 這正是「線的 threshold 太小、選取不易」的根因。已知的參考幾何（X/Y 軸、
+/// 原點，見 CadView.cpp）之前就已經個別設成 4.0/8.0，這裡把一般可編輯的
+/// 草圖幾何也一併明確設定，數值刻意略高於參考軸線（4.0）——因為使用者
+/// 實際要頻繁點選、編輯的是這些幾何，理應比背景參考線更好點。
+constexpr double kGeomSelectionSensitivityPx = 6.0;
+
+/// SketchPoint（端點/頂點）的選取容差（像素）。點本身沒有面積，比線更難
+/// 精準點中，容差維持比線更寬鬆，比照既有原點的 8.0。
+constexpr double kPointSelectionSensitivityPx = 8.0;
+
+/// 依 AIS 物件實際型別（一般幾何 AIS_Shape vs. SketchPointAIS）套用對應的
+/// 選取容差；selectionMode 固定為 0（AIS_Shape 的「整體形狀」/SketchPointAIS
+/// 唯一啟用的模式，見呼叫端既有的 Activate(obj, 0, ...) 慣例）。
+void applyGeomSelectionSensitivity(const Handle(AIS_InteractiveContext)& ctx,
+                                    const Handle(AIS_InteractiveObject)& obj)
+{
+    if (ctx.IsNull() || obj.IsNull()) return;
+    const double px = Handle(SketchPointAIS)::DownCast(obj).IsNull()
+                           ? kGeomSelectionSensitivityPx
+                           : kPointSelectionSensitivityPx;
+    ctx->SetSelectionSensitivity(obj, 0, px);
+}
+} // namespace
 
 Sketch::Sketch(Document* parent)
     : Feature(parent)
@@ -395,6 +425,7 @@ bool Sketch::rebuild() {
         m_aisShapes.clear();
         m_aisShapeUuids.clear();
         m_constructionShapes.clear();
+        m_constructionShapeUuids.clear();
 
         if (m_geometries.isEmpty()) {
             setShape(TopoDS_Shape());
@@ -593,6 +624,8 @@ bool Sketch::rebuild() {
                     // ── 建構線樣式 ────────────────────────────────
                     applyConstructionStyle(aisShape, geom->role);  // ← 新增
                     m_constructionShapes.append(aisShape);
+                    m_constructionShapeUuids.append(geom->uuid);  // ← 修正：需要 UUID 才能被
+                                                                    //   CadView 反查表登記、進而可選取
                     // 不加入 m_wires（不參與輪廓）
                 } else {
                     // ── 正常幾何樣式 ──────────────────────────────
@@ -708,12 +741,14 @@ bool Sketch::rebuildShapesOnly()
                 m_aisContext->Display(m_aisShapes[i], Standard_False);
                 if (Handle(SketchPointAIS)::DownCast(m_aisShapes[i]))
                     m_aisContext->Activate(m_aisShapes[i], 0, Standard_False);
+                applyGeomSelectionSensitivity(m_aisContext, m_aisShapes[i]);
             }
         } else {
             // Brand-new geometry — just display it.
             m_aisContext->Display(m_aisShapes[i], Standard_False);
             if (Handle(SketchPointAIS)::DownCast(m_aisShapes[i]))
                 m_aisContext->Activate(m_aisShapes[i], 0, Standard_False);
+            applyGeomSelectionSensitivity(m_aisContext, m_aisShapes[i]);
         }
     }
 
@@ -759,7 +794,13 @@ bool Sketch::rebuildShapesOnly()
         if (!s.IsNull()) {
             anyChanged = true;
             m_aisContext->Display(s, Standard_False);
-            m_aisContext->Deactivate(s);
+            // ⚠️ 修正：建構線／弧／圓除了不參與輪廓外，其他功能都必須與一般
+            // 幾何相同——包含可被滑鼠選取，才能參與 TRIM/EXTEND/FILLET/
+            // CHAMFER/MIRROR/ROTATE/MOVE/COPY/STRETCH/ERASE/GDIM 等命令。
+            // 這裡原本會呼叫 context->Deactivate(s) 讓建構線「顯示但不可
+            // 選」，是本次要修正的錯誤行為，故移除該呼叫——比照下面一般
+            // 幾何（m_aisShapes 內的 AIS_Shape）的做法，Display() 之後不
+            // 額外呼叫 Deactivate，即維持 AIS_Shape 預設可選取狀態。
         }
     }
 
@@ -1160,7 +1201,92 @@ bool Sketch::fromJson(const QJsonObject& json) {
                 if (geomJson.contains("startPt") &&
                     geomJson.contains("midPt")   &&
                     geomJson.contains("endPt")) {
-                    addArcGeom(readPt("startPt"), readPt("midPt"), readPt("endPt"),
+                    // ── 修正：Arc 起終點與 SketchPoint 座標不一致（load 後即
+                    // 存在，而非求解才造成） ────────────────────────────────
+                    // Arc 存檔時（見 toJson）是直接從 a->curve 取端點座標寫入
+                    // startPt/midPt/endPt；但同一個 Arc 的 startUuid/endUuid
+                    // 對應的 SketchPoint，是各自以自己的 px/py 獨立存檔、獨立
+                    // 載入的（"geometries" 陣列裡的 Point 條目一定排在 Arc 之
+                    // 前，此時已載入完成）。這兩者理論上應該完全一致，但只要
+                    // 存檔當下 a->curve 與該 SketchPoint 曾經有過任何不同步
+                    // （例如舊版本 bug、或某次編輯只 movePoint() 更新了點卻還
+                    // 沒來得及跑 solveConstraints() 重建 curve 就存檔），這個
+                    // 不一致就會被原封不動寫進檔案、下次載入時原封不動重現，
+                    // 且此時 startPt/midPt/endPt 對應的位置可能相差甚遠（不只
+                    // 是浮點誤差，實測發現過整個弧被「繞著圓心轉了幾十度」的
+                    // 落差），要等到之後任何一次 solveConstraints() 執行，才
+                    // 會把 curve「拉回」去跟 SketchPoint 對齊，使用者就會看到
+                    // 圓弧突然跳動、跟被圓角的線斷開。
+                    //
+                    // 修法：載入時，若 startUuid/endUuid/centerUuid 都已經對應
+                    // 到「現在」載入好的 SketchPoint（這才是連接關係的唯一真相
+                    // 來源，跟 Line 的 start/end 完全比照），就直接用這些
+                    // SketchPoint 目前的座標取代 startPt/endPt 來重建 curve，
+                    // 而不是用可能過時的、Arc 自己另外快取的 startPt/endPt。
+                    //
+                    // 但 GC_MakeArcOfCircle 需要「三個彼此一致」的點才能正確
+                    // 決定圓弧要走哪一段弧（優弧/劣弧、順時針/逆時針），若只
+                    // 換掉 startPt/endPt、留著過時的 midPt，三點可能不再落在
+                    // 同一段弧上，輕則重建出方向錯誤的弧，重則 GC_MakeArcOf-
+                    // Circle 直接建構失敗。這裡改用「訊號化總掃角」重建 midPt：
+                    // 從存檔當下的 startPt→midPt→endPt 算出一個逆時針為正的訊
+                    // 號化總掃角（此角度只跟三點的相對關係有關，即使三點被整
+                    // 體繞圓心轉了任意角度也不會變，正好符合這種「同一個圓、
+                    // 整組同步跑掉」的錯誤模式），再套用到修正後的起點角度
+                    // 上，算出跟修正後終點吻合、方向與優劣弧都正確的新中點。
+                    QVector2D startPt = readPt("startPt");
+                    QVector2D endPt   = readPt("endPt");
+                    QVector2D midPt   = readPt("midPt");
+
+                    SketchPoint* spStart  = savedStartUuid.isEmpty()  ? nullptr : point(savedStartUuid);
+                    SketchPoint* spEnd    = savedEndUuid.isEmpty()    ? nullptr : point(savedEndUuid);
+                    SketchPoint* spCenter = savedCenterUuid.isEmpty() ? nullptr : point(savedCenterUuid);
+
+                    if (spStart && spEnd && spCenter &&
+                        geomJson.contains("startPt") && geomJson.contains("midPt") &&
+                        geomJson.contains("endPt")) {
+                        const QVector2D center      = spCenter->pos;
+                        const QVector2D staleStart  = startPt;   // 存檔當下的 curve 端點（可能過時）
+                        const QVector2D staleMid    = midPt;
+                        const QVector2D staleEnd    = endPt;
+                        const QVector2D newStart    = spStart->pos;   // SketchPoint 目前（權威）座標
+                        const QVector2D newEnd      = spEnd->pos;
+
+                        auto angleDeg = [](const QVector2D& c, const QVector2D& p) -> double {
+                            return qRadiansToDegrees(
+                                std::atan2(double(p.y() - c.y()), double(p.x() - c.x())));
+                        };
+                        auto norm360 = [](double a) -> double {
+                            while (a < 0.0)    a += 360.0;
+                            while (a >= 360.0) a -= 360.0;
+                            return a;
+                        };
+
+                        const double staleStartDeg = angleDeg(center, staleStart);
+                        const double dMidCCW = norm360(angleDeg(center, staleMid) - staleStartDeg);
+                        const double dEndCCW = norm360(angleDeg(center, staleEnd) - staleStartDeg);
+                        // 逆時針為正的訊號化總掃角：mid 若落在 start→end 的逆
+                        // 時針短邊之間，掃角就是 dEndCCW（劣弧或優弧皆可能，
+                        // 由 dEndCCW 本身大小決定）；否則代表實際是走另一個方
+                        // 向（順時針），掃角以負值表示。
+                        const double sweepDeg = (dMidCCW > 0.0 && dMidCCW < dEndCCW)
+                                                ? dEndCCW
+                                                : -(360.0 - dEndCCW);
+
+                        const double r = double((newStart - center).length());
+                        if (r > 1e-9) {
+                            const double newStartDeg = angleDeg(center, newStart);
+                            const double newMidRad = qDegreesToRadians(newStartDeg + sweepDeg * 0.5);
+                            startPt = newStart;
+                            endPt   = newEnd;
+                            midPt   = QVector2D(float(center.x() + r * std::cos(newMidRad)),
+                                                 float(center.y() + r * std::sin(newMidRad)));
+                        }
+                        // r 過小（起點與圓心幾乎重合）代表資料本身已退化，這種
+                        // 情況維持使用原始存檔值，避免除以近似 0 的半徑放大誤差。
+                    }
+
+                    addArcGeom(startPt, midPt, endPt,
                                savedStartUuid, savedEndUuid, savedCenterUuid);
                 } else if (points.size() >= 3) {
                     // legacy fallback
@@ -1428,8 +1554,31 @@ SolveResult Sketch::solveConstraints() {
         QVector3D n = m_plane->normal();
         normal = gp_Dir(n.x(), n.y(), n.z());
     }
-    // 統一從 normalGeometries() 取得幾何列表（含 SketchPoint）
-    auto geoms = normalGeometries();
+    // ⚠️ 修正：這是「物件間的約束（例如平行）套用到建構線之後完全沒有反應」
+    // 的根本原因。原本這裡用 normalGeometries()（會把 role != Normal 的
+    // 建構線/中心線整批排除）取得要丟給 solver 的幾何列表，導致：
+    //   - packVariables() 建立的 layout（uuid → 變數位置）裡完全沒有建構
+    //     幾何的條目
+    //   - 任何參考到建構幾何 UUID 的約束方程式（ParallelEquation／
+    //     PerpendicularEquation／TangentEquation…，見
+    //     ConstraintSolver::buildEquations()）在 layout 裡查無資料，
+    //     等於是對著不存在的變數求解——約束雖然成功加進 m_constraints
+    //     （addConstraint() 的存在性檢查是查 m_geometries，本來就找得到），
+    //     但 solve() 實際上完全沒有東西可以動，看起來就是「套用了但毫無
+    //     反應」。
+    //   - 這同時也是本次「建構線／弧／圓除了不參與輪廓外，其他功能都要
+    //     與一般幾何相同」需求裡，唯一還沒補上的一塊：normalGeometries()
+    //     只應該用在「輪廓/迴圈偵測」（SketchLoopFinder／buildWires()）
+    //     以及需要跟 aisShapes()／aisToGeomIndex 保持索引對齊的 Grip
+    //     系統（SketchGripProvider，其 gi 索引本來就是配合 m_aisShapes
+    //     排除建構幾何後的順序），不應該用在「幾何約束求解」這種所有
+    //     幾何都該一視同仁參與的場合——syncGeometryFromPoints() 等其他
+    //     地方本來就是統一操作 m_geometries（見該函式），這裡改成一致。
+    //
+    // 改為 m_geometries（含建構/中心線），與 solveWithStore()（原本就是
+    // 用 m_geometries，兩個 solve 入口原本行為不一致也是一種隱藏的 bug）
+    // 保持一致。
+    auto geoms = m_geometries;
     auto result = m_solver.solve(geoms, m_constraints, normal);
     Q_EMIT constraintSolved(result);
     if (result.status != SolveStatus::SolverError) {
@@ -1501,7 +1650,11 @@ SolveResult Sketch::solveWithStore(const aicad::core::ParameterStore* store) {
 }
 
 int Sketch::degreesOfFreedom() const {
-    return ConstraintSolver::computeDOF(normalGeometries(), m_constraints);
+    // ⚠️ 修正：同 solveConstraints() 的說明——DOF 計算也必須含建構/中心線，
+    // 否則使用者看到的「DOF: X → Y」報告會低估實際自由度（建構幾何的
+    // DOF 完全沒算進去），且與 solve() 內部（現在已改用 m_geometries）
+    // 算出來的 dof 對不上。
+    return ConstraintSolver::computeDOF(m_geometries, m_constraints);
 }
 
 // ── 便捷 API ──────────────────────────────────────────────────────────────
@@ -1879,13 +2032,14 @@ QList<Handle(AIS_InteractiveObject)> Sketch::displayInContext(
         if (Handle(SketchPointAIS)::DownCast(obj)) {
             context->Activate(obj, 0, Standard_False);
         }
+        applyGeomSelectionSensitivity(context, obj);
     }
 
-    // 建構線：顯示但不可選
+    // 建構線：顯示且可選（與一般幾何一致；不參與輪廓的差異只在 buildWires()
+    // 與 SketchLoopFinder，與是否可被滑鼠選取無關——不再呼叫 Deactivate()）。
     for (const Handle(AIS_Shape)& s : m_constructionShapes) {
         if (!s.IsNull()) {
             context->Display(s, Standard_False);
-            context->Deactivate(s);
         }
     }
 

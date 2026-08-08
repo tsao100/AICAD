@@ -113,10 +113,23 @@ QSet<QString> collectReferencedPointUuids(cad::Sketch* sketch,
  *
  * 選取範圍內部共用的 SketchPoint（例如兩條相鄰線段的共同端點）只會被
  * 搬動一次，不會重複套用變換。
+ *
+ * @param solveAfter 完成搬動後是否呼叫 Sketch::solveConstraints()。預設
+ *        true（既有行為不變）。MOVE 的即時預覽（見 MoveCommand /
+ *        SketchTransformCommandBase）在滑鼠移動的每一幀都會呼叫本函式套
+ *        用「當次增量位移」，若每幀都完整跑一次約束求解器，在複雜草圖
+ *        上會造成明顯延遲；因此預覽階段改傳 false，只搬動幾何本身（供
+ *        即時視覺回饋），等使用者按下第二點確認時才以 solveAfter=true
+ *        的一般路徑（commit()）正式求解一次——與既有 Grip 拖曳
+ *        （SketchGripProvider::onDrag 只搬點、onGripDragEnd 才
+ *        solveConstraints()）採用相同的「拖曳中輕量、放開時才求解」分工。
+ *        rebuildRequested() 無論 solveAfter 為何都照樣送出，確保拖曳中
+ *        畫面仍會即時重繪。
  */
 void applyToSelection(cad::Sketch* sketch,
                       const QStringList& geomUuids,
-                      const Transform2D& xf);
+                      const Transform2D& xf,
+                      bool solveAfter = true);
 
 /**
  * @brief 複製 geomUuids 對應的幾何（連同其專屬 SketchPoint），套用 xf
@@ -125,8 +138,23 @@ void applyToSelection(cad::Sketch* sketch,
  * 選取範圍內部共用的端點（例如矩形相鄰兩邊共用的角點）複製後仍然共用
  * 同一個新端點，不會在角落裂開——內部以 old→new 點 UUID 對照表確保。
  *
- * 新複製出來的幾何不會複製原本掛在來源幾何上的 SketchConstraint／
- * SketchAnnotation（詳見實作計畫 §3.2 的設計理由）。
+ * 選取範圍「內部」的約束（SketchConstraint）也會一併複製到新幾何上——
+ * 只要一筆約束引用的所有幾何都在這次複製範圍內，就會複製出一份對應的
+ * 新約束並改綁新幾何；只要有任一 ref 指向複製範圍外的既有幾何，整筆
+ * 約束就會被跳過（不會讓複製品去綁定一個沒被複製的物件）。GDIM 標註
+ * 在 m_constraints 中對應的隱含約束（SketchConstraint::implicitOf 非空）
+ * 一律不複製，因為那是標註自己維護的衍生資料。
+ *
+ * 絕對座標／絕對角度型的尺寸約束（FixedX/FixedY/CoordinateDim/
+ * FixedAngleDim）複製時會以新幾何變換後的實際位置/角度重新取值，而不是
+ * 沿用舊值，否則求解器會把複製品拉回舊的絕對位置/角度，抵銷掉這次複製
+ * 的位移。其餘尺寸約束（距離/半徑/長度/弧長…）在純平移下數值不變，直接
+ * 沿用（目前 COPY 唯一會用到的 xf 就是 translation()；若未來有指令改用
+ * cloneAndTransform() 搭配旋轉/鏡射複製，這部分需要另外檢視）。
+ *
+ * 新複製出來的幾何不會複製原本掛在來源幾何上的 SketchAnnotation
+ * （GDIM 標註）；是否要連同標註一起複製是獨立的設計問題，留待後續視
+ * 需要再擴充。
  *
  * @return 新建立的頂層幾何 UUID 清單（若複製對象本身是獨立 Point，
  *         回傳的即是新 Point 的 UUID）。找不到的來源 UUID 會被略過。

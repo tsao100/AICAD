@@ -20,13 +20,14 @@ MoveCommand::MoveCommand()
 QString MoveCommand::getUsage() const
 {
     return "Usage: MOVE — select geometry first then run MOVE, "
-           "or run MOVE then click objects and press Enter, "
+           "or run MOVE then click objects (window/crossing/fence supported) "
+           "and press Enter or right-click, "
            "then specify base point and second point.";
 }
 
 QString MoveCommand::selectPrompt() const
 {
-    return "[MOVE] Select objects, then press Enter:";
+    return "[MOVE] Select objects, then press Enter or right-click:";
 }
 
 QString MoveCommand::basePointPrompt() const

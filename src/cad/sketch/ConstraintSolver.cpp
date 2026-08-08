@@ -2,6 +2,7 @@
 #include "../Sketch.h"
 #include <QtMath>
 #include <QDebug>
+#include <cmath>
 
 #include <Geom_Circle.hxx>
 #include <Geom_TrimmedCurve.hxx>
@@ -16,7 +17,8 @@ namespace aicad::cad {
 int GeomVarLayout::indexFor(GeomHandle h) const {
     // Line layout:    [x1, y1, x2, y2]（或共用 SketchPoint DOF）
     // Circle layout:  [cx, cy, r]  OR  shared-center: offset→r only, startOffset→cx
-    // Arc layout:     [cx, cy, r, startAngle, endAngle]
+    // Arc layout:     [cx, cy, r]（Start/End 一律透過 startOffset/endOffset 取得；
+    //                 不再有獨立的 t0/t1 角度變數，見 GeomVarLayout::refSweep 註解）
     // Ellipse layout: [cx, cy, majorR, minorR, angle]
 
     // ── shared-center Circle（dof==1）：offset 指向 radius，startOffset 指向 cx ──
@@ -34,8 +36,12 @@ int GeomVarLayout::indexFor(GeomHandle h) const {
     case GeomHandle::RadiusValue:
         // shared-center Circle：offset 直接就是 radius index（不是 offset+2）
         return sharedCenter ? offset : offset + 2;
-    case GeomHandle::ArcStartAngle:return offset + 3;
-    case GeomHandle::ArcEndAngle:  return offset + 4;
+    case GeomHandle::ArcStartAngle:
+    case GeomHandle::ArcEndAngle:
+        // Arc 已不再把 t0/t1 當成獨立求解變數（見 refSweep 註解），這兩個
+        // handle 目前沒有任何呼叫端使用；回傳 -1 以免誤用到 offset+3/+4
+        // （那已經是 Start/End fallback 的局部座標，或直接越界）。
+        return -1;
     case GeomHandle::MajorRadius:  return offset + 2;
     case GeomHandle::MinorRadius:  return offset + 3;
     default:                       return offset;
@@ -597,28 +603,65 @@ void FixedVertDistEquation::jacobian(const QVector<double>&, int r0,
     J[r0][i1+1] =  1.0;
 }
 
-// ── FixedArcLengthEquation：F = r * |t1 - t0| - value ────────────────────
-// Arc layout: offset+0=cx, +1=cy, +2=r, +3=t0, +4=t1
+// ── FixedArcLengthEquation：F = r * sweep(Start,Center,End) - value ──────
+// Arc layout（修正後）：offset+0=cx, +1=cy, +2=r；t0/t1「不」在求解變數之
+// 列（見 GeomVarLayout::refSweep 註解）。弧長改由 Start/End 相對圓心的夾
+// 角（cross/dot，取代 t1-t0）計算，避免角度獨立變數造成的病態問題；優弧
+// （掃角 >π）或劣弧則由求解前快取的 refSweep 判斷分支，確保疊代過程中分
+// 支選擇維持一致，不會忽大忽小亂跳。
 void FixedArcLengthEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
-    if (it == layout().end()) { out[0] = 0; return; }
-    double r  = v[it->offset+2];
-    double t0 = v[it->offset+3];
-    double t1 = v[it->offset+4];
-    out[0] = r * std::abs(t1 - t0) - constraint().value;
+    if (it == layout().end() || it->offset < 0) { out[0] = 0.0; return; }
+    const double cx = v[it->offset+0], cy = v[it->offset+1], r = v[it->offset+2];
+    const int sOff = it->indexFor(GeomHandle::Start);
+    const int eOff = it->indexFor(GeomHandle::End);
+    if (sOff < 0 || eOff < 0) { out[0] = 0.0; return; }
+    const double ux = v[sOff] - cx, uy = v[sOff+1] - cy;
+    const double vx = v[eOff] - cx, vy = v[eOff+1] - cy;
+    const double cross = ux*vy - uy*vx;
+    const double dot   = ux*vx + uy*vy;
+    const double minorAngle = std::abs(std::atan2(cross, dot));   // [0, π]
+    const bool   reflex     = std::abs(it->refSweep) > M_PI;
+    const double sweep      = reflex ? (2.0*M_PI - minorAngle) : minorAngle;
+    out[0] = r * sweep - constraint().value;
 }
 void FixedArcLengthEquation::jacobian(const QVector<double>& v, int r0,
                                       QVector<QVector<double>>& J) const {
     auto it = layout().find(constraint().refs[0].geomUuid);
-    if (it == layout().end()) return;
-    double r  = v[it->offset+2];
-    double t0 = v[it->offset+3];
-    double t1 = v[it->offset+4];
-    double span = t1 - t0;
-    double sign = (span >= 0) ? 1.0 : -1.0;
-    J[r0][it->offset+2] = std::abs(span);      // ∂F/∂r
-    J[r0][it->offset+3] = -r * sign;            // ∂F/∂t0
-    J[r0][it->offset+4] =  r * sign;            // ∂F/∂t1
+    if (it == layout().end() || it->offset < 0) return;
+    const double cx = v[it->offset+0], cy = v[it->offset+1], r = v[it->offset+2];
+    const int sOff = it->indexFor(GeomHandle::Start);
+    const int eOff = it->indexFor(GeomHandle::End);
+    if (sOff < 0 || eOff < 0) return;
+    const double ux = v[sOff] - cx, uy = v[sOff+1] - cy;
+    const double vx = v[eOff] - cx, vy = v[eOff+1] - cy;
+    const double cross = ux*vy - uy*vx;
+    const double dot   = ux*vx + uy*vy;
+    const double denom = cross*cross + dot*dot;
+    if (denom < 1e-20) return;   // 退化（端點與圓心重合），避免除以 0
+
+    const double signedAngle = std::atan2(cross, dot);
+    const double signS  = (signedAngle >= 0.0) ? 1.0 : -1.0;
+    const bool   reflex = std::abs(it->refSweep) > M_PI;
+    const double k      = reflex ? -r : r;      // ∂F/∂minorAngle
+    const double sweep  = reflex ? (2.0*M_PI - std::abs(signedAngle)) : std::abs(signedAngle);
+
+    const double dAng_dCross =  dot   / denom;  // ∂(atan2 signedAngle)/∂cross
+    const double dAng_dDot   = -cross / denom;  // ∂(atan2 signedAngle)/∂dot
+
+    // cross = ux*vy - uy*vx, dot = ux*vx + uy*vy
+    const double dF_dux = k * signS * (dAng_dCross * vy + dAng_dDot * vx);
+    const double dF_duy = k * signS * (dAng_dCross * (-vx) + dAng_dDot * vy);
+    const double dF_dvx = k * signS * (dAng_dCross * (-uy) + dAng_dDot * ux);
+    const double dF_dvy = k * signS * (dAng_dCross * ux + dAng_dDot * uy);
+
+    J[r0][it->offset+2] = sweep;               // ∂F/∂r
+    J[r0][sOff]         = dF_dux;               // u = Start - Center
+    J[r0][sOff+1]       = dF_duy;
+    J[r0][eOff]         = dF_dvx;               // v = End - Center
+    J[r0][eOff+1]       = dF_dvy;
+    J[r0][it->offset+0] = -(dF_dux + dF_dvx);   // ∂F/∂cx（cx 同時出現在 u,v 中）
+    J[r0][it->offset+1] = -(dF_duy + dF_dvy);   // ∂F/∂cy
 }
 
 // ── FixedAngleDimEquation：兩線夾角 ─────────────────────────────────────
@@ -797,21 +840,61 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
             break;
         }
         case SketchGeometryType::Arc: {
+            // ── 修正歷程 ───────────────────────────────────────────────
+            // 第一輪修正：讓 Arc 的 Start/End 共用 startUuid/endUuid 對應
+            // 的 SketchPoint DOF（解決「圓角弧未連接被圓角線」問題）。
+            // 第二輪修正（本輪）：第一輪當時把 t0/t1 也當成獨立求解變數，
+            // 用 cx+r·cos(t) 這類三角函數方程式把它們與共用的 Start/End
+            // 點綁在一起——這會讓「弧度」(O(1)) 與「座標/長度」(常是幾十
+            // ～數百 mm) 這種量級差異懸殊的量混進同一個最小平方系統，
+            // Moore-Penrose 偽逆在系統病態（ill-conditioned，這裡的 Arc
+            // 版面天生是 3(cx,cy,r)+2(Start)+2(End)-4(隱含方程式)=5 淨自
+            // 由度、但用了 9 個未知數去表達，屬於高度冗餘的參數化）時，
+            // 即使殘差極小（例如弧長值原封不動）也可能解出一個數值上很
+            // 小、換算成座標卻很大的 Δt，造成「弧長沒改，起終點/圓心卻
+            // 大幅跳動」。改用單純的「點到圓心距離＝半徑」方程式（見下方
+            // PointOnCircleEquation）取代三角函數版本，t0/t1 完全不進入
+            // 求解變數（只在 unpackVariables() 求解結束後用角度差的方式
+            // 一次性重建，不受此問題影響），從根本上消除這個病態來源。
             const auto* a = static_cast<const SketchArc*>(g);
+            double cx = 0.0, cy = 0.0, r = 1.0, t0 = 0.0, t1 = M_PI;
+            gp_Pnt startPt(1.0, 0.0, 0.0), endPt(-1.0, 0.0, 0.0);
             if (!a->curve.IsNull()) {
                 auto baseCircle = Handle(Geom_Circle)::DownCast(a->curve->BasisCurve());
                 if (!baseCircle.IsNull()) {
                     gp_Pnt c = baseCircle->Location();
-                    double r = baseCircle->Radius();
-                    double t0 = a->curve->FirstParameter();
-                    double t1 = a->curve->LastParameter();
-                    vars << c.X() << c.Y() << r << t0 << t1;
-                    vl.dof = 5;
-                    break;
+                    cx = c.X(); cy = c.Y();
+                    r  = baseCircle->Radius();
+                    t0 = a->curve->FirstParameter();
+                    t1 = a->curve->LastParameter();
+                    startPt = a->curve->Value(t0);
+                    endPt   = a->curve->Value(t1);
                 }
             }
-            vars << 0.0 << 0.0 << 1.0 << 0.0 << M_PI;
-            vl.dof = 5;
+            vars << cx << cy << r;
+            vl.dof      = 3;
+            vl.refSweep = t1 - t0;   // 僅作分支參考，不進 vars
+
+            auto itS = layout.find(a->startUuid);
+            if (itS != layout.end()) {
+                vl.startOffset = itS->offset;          // 共用 startUuid 的 SketchPoint DOF
+            } else {
+                // Fallback：找不到獨立 SketchPoint（理論上不應發生，
+                // Sketch::addArcGeom 一定會建立/重用），退化為 Arc 自己
+                // 額外配置 2 個局部 DOF，避免落回 offset+0（誤成 Center）。
+                vl.startOffset = vars.size();
+                vars << startPt.X() << startPt.Y();
+                vl.dof += 2;
+            }
+
+            auto itE = layout.find(a->endUuid);
+            if (itE != layout.end()) {
+                vl.endOffset = itE->offset;             // 共用 endUuid 的 SketchPoint DOF
+            } else {
+                vl.endOffset = vars.size();
+                vars << endPt.X() << endPt.Y();
+                vl.dof += 2;
+            }
             break;
         }
         case SketchGeometryType::Ellipse: {
@@ -872,24 +955,78 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
         case SketchGeometryType::Arc: {
             auto* a = static_cast<SketchArc*>(g);
             if (off < 0) break;
-            double cx=vars[off],cy=vars[off+1],r=vars[off+2];
-            double t0=vars[off+3], t1=vars[off+4];
+            double cx = vars[off], cy = vars[off+1], r = vars[off+2];
+
+            const int sOff = vl.indexFor(GeomHandle::Start);
+            const int eOff = vl.indexFor(GeomHandle::End);
+
+            // ── 修正：不再對 t0/t1 做「絕對角度」重建 ────────────────────
+            // t0/t1 已不是求解變數（見 GeomVarLayout::refSweep 註解），這裡
+            // 改用「角度差」的方式，把求解前（此時 a->curve 仍是求解前的
+            // 幾何，尚未被下面覆寫）量到的 t0_orig/t1_orig，平移求解前後
+            // 起終點相對圓心角度的變化量，重建新的 t0/t1：
+            //   t0_new = t0_orig + (新起點角度 - 舊起點角度)
+            //   t1_new = t1_orig + (新終點角度 - 舊終點角度)
+            // 這個位移量只依賴「角度差」，任何 gp_Ax2 內部座標系與世界座
+            // 標系之間未知的固定夾角，在相減時會自動抵消，不需要假設兩者
+            // 對齊；也避免了直接對絕對角度做 atan2 重建時，其分支（±π）
+            // 選擇與原本弧的優弧/劣弧不一致的問題。
+            double t0 = 0.0, t1 = M_PI;
+            bool haveOrig = false;
+            if (!a->curve.IsNull()) {
+                auto baseCircle = Handle(Geom_Circle)::DownCast(a->curve->BasisCurve());
+                if (!baseCircle.IsNull()) {
+                    const double t0_orig = a->curve->FirstParameter();
+                    const double t1_orig = a->curve->LastParameter();
+                    const gp_Pnt oldCenter = baseCircle->Location();
+                    const gp_Pnt oldStart  = a->curve->Value(t0_orig);
+                    const gp_Pnt oldEnd    = a->curve->Value(t1_orig);
+                    const double oldStartAngle = std::atan2(oldStart.Y() - oldCenter.Y(),
+                                                             oldStart.X() - oldCenter.X());
+                    const double oldEndAngle   = std::atan2(oldEnd.Y()   - oldCenter.Y(),
+                                                             oldEnd.X()   - oldCenter.X());
+
+                    auto wrap = [](double ang) {
+                        while (ang >  M_PI) ang -= 2.0 * M_PI;
+                        while (ang <= -M_PI) ang += 2.0 * M_PI;
+                        return ang;
+                    };
+
+                    if (sOff >= 0) {
+                        const double newStartAngle = std::atan2(vars[sOff+1] - cy, vars[sOff] - cx);
+                        t0 = t0_orig + wrap(newStartAngle - oldStartAngle);
+                    } else {
+                        t0 = t0_orig;
+                    }
+                    if (eOff >= 0) {
+                        const double newEndAngle = std::atan2(vars[eOff+1] - cy, vars[eOff] - cx);
+                        t1 = t1_orig + wrap(newEndAngle - oldEndAngle);
+                    } else {
+                        t1 = t1_orig;
+                    }
+                    haveOrig = true;
+                }
+            }
+            if (!haveOrig) {
+                // 極少數情況（curve 為 null，理論上不應發生）：退化為預設
+                // 半圓，至少維持幾何有效。
+                t0 = 0.0; t1 = M_PI;
+            }
+            if (t1 <= t0) t1 += 2.0 * M_PI;   // Geom_Circle 週期參數維持 CCW 遞增慣例
+
             gp_Ax2 ax2(gp_Pnt(cx, cy, 0), planeNormal);
             Handle(Geom_Circle) circ = new Geom_Circle(ax2, r);
             a->curve = new Geom_TrimmedCurve(circ, t0, t1);
 
-            // ── issue #12 修正 ───────────────────────────────────────
-            // Arc 在求解器裡是獨立的 5 個 DOF（cx, cy, r, t0, t1)，
-            // 「不」與 startUuid/endUuid/centerUuid 這三個獨立存在的
-            // SketchPoint 共用 DOF（見上方 collectVariables 內的註解：
-            // 「arc 目前不共用 SketchPoint」）。但這三個 SketchPoint 才是
-            // 其他幾何（例如相連的 Line）用 Coincident 約束「銜接」到這個
-            // 弧的對象、也是 grip／約束符號讀取端點位置的來源。兩邊各自
-            // 求解、彼此沒有方程式互相牽制，於是加入半徑約束、或加入會
-            // 觸發重新求解的新線條後，弧的 curve 移到了新位置，但這三個
-            // SketchPoint 仍停在舊值 —— 這正是「弧的起終點位置會跑掉」的
-            // 根因。這裡以求解後、絕對正確的 curve 端點/圓心為準，強制寫回
-            // 這三個 SketchPoint，讓它們與 curve 保持一致。
+            // ── issue #12 修正（後續已在 packVariables 補上根本修正）─────
+            // Start/End 現在已透過 vl.startOffset/endOffset 與 startUuid/
+            // endUuid 的 SketchPoint 共用 DOF，並由 PointOnCircleEquation
+            // 在求解過程中與 cx/cy/r 綁在一起，理論上收斂後兩者應已一致；
+            // 這裡仍保留以 curve 端點/圓心強制寫回 start/end/centerUuid 三
+            // 個 SketchPoint 的動作，作為最後一道保險（涵蓋找不到獨立
+            // SketchPoint 的 fallback 情形、以及 centerUuid 本來就不參與
+            // 求解、只用於顯示/抓取的情形），確保 curve 與這三個點在數值
+            // 上完全一致，不會有殘留誤差。
             auto syncPoint = [&](const QString& uuid, const gp_Pnt& worldPt) {
                 if (uuid.isEmpty()) return;
                 for (SketchGeometry* other : geoms) {
@@ -1015,6 +1152,68 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
     return eqs;
 }
 
+// ── Arc「點在圓上」隱含方程式（內部隱含方程式，不對應任何 SketchConstraint）──
+// 目的：Arc 求解時只保留 cx, cy, r 三個獨立 DOF（不含角度），但 Start/End
+// 這兩個 GeomHandle（見上方 packVariables 的修正）會指向共用的 SketchPoint
+// DOF（例如 FILLET 指令把圓角弧 startUuid/endUuid 直接設成被圓角線段端點
+// 的 SketchPoint）。若沒有方程式把兩者綁在一起，cx/cy/r 與該共用點會各自
+// 被其他約束牽動、彼此沒有牽制，弧的曲線最終還是可能跑到跟共用端點不一致
+// 的地方。這裡針對每個 Arc 各自加入兩條「起點在圓上」/「終點在圓上」的
+// 方程式：
+//   F = |Point - Center|² - r² = 0
+// 只用距離平方（無三角函數、無額外角度變數），單位與座標/半徑一致，數值
+// 條件良好；早期版本改用 cx+r·cos(t) 搭配獨立角度變數 t 的寫法，雖然自由
+// 度數學上等價，卻讓「弧度」與「座標/長度」這種量級差異懸殊的量混進同一
+// 個最小平方系統，導致 Moore-Penrose 偽逆在系統病態時把極小的殘差解讀成
+// 一個看似很小、換算成座標卻很大的角度修正量，造成「弧長沒改，起終點/圓
+// 心卻大幅跳動」的問題，這裡以更簡單且良態的距離方程式徹底避免。
+class PointOnCircleEquation : public ConstraintEquation {
+public:
+    PointOnCircleEquation(const QString& arcUuid, bool isStart,
+                          const QHash<QString, GeomVarLayout>* layout)
+        : ConstraintEquation(dummyConstraint(), layout)
+        , m_arcUuid(arcUuid), m_isStart(isStart) {}
+
+    int equationCount() const override { return 1; }
+
+    void evaluate(const QVector<double>& v, QVector<double>& out) const override {
+        auto it = layout().find(m_arcUuid);
+        if (it == layout().end() || it->offset < 0) { out[0] = 0.0; return; }
+        const int off = it->offset;
+        const double cx = v[off + 0], cy = v[off + 1], r = v[off + 2];
+        const int pOff  = m_isStart ? it->indexFor(GeomHandle::Start)
+                                     : it->indexFor(GeomHandle::End);
+        if (pOff < 0) { out[0] = 0.0; return; }
+        const double dx = v[pOff] - cx, dy = v[pOff + 1] - cy;
+        out[0] = dx * dx + dy * dy - r * r;
+    }
+
+    void jacobian(const QVector<double>& v, int row0,
+                  QVector<QVector<double>>& J) const override {
+        auto it = layout().find(m_arcUuid);
+        if (it == layout().end() || it->offset < 0) return;
+        const int off = it->offset;
+        const double cx = v[off + 0], cy = v[off + 1], r = v[off + 2];
+        const int pOff  = m_isStart ? it->indexFor(GeomHandle::Start)
+                                     : it->indexFor(GeomHandle::End);
+        if (pOff < 0) return;
+        const double dx = v[pOff] - cx, dy = v[pOff + 1] - cy;
+        J[row0][pOff]     = 2.0 * dx;
+        J[row0][pOff + 1] = 2.0 * dy;
+        J[row0][off + 0]  = -2.0 * dx;
+        J[row0][off + 1]  = -2.0 * dy;
+        J[row0][off + 2]  = -2.0 * r;
+    }
+
+private:
+    QString m_arcUuid;
+    bool    m_isStart;
+    static const SketchConstraint& dummyConstraint() {
+        static SketchConstraint c;   // 純內部使用，不參與 UI/存檔
+        return c;
+    }
+};
+
 // ── QR 最小二乘求解（Householder） ─────────────────────────────────────────
 bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
                                      const QVector<double>& F,
@@ -1033,15 +1232,46 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
             A(i, j) = J[i][j];
     }
 
-    // Eigen::BDCSVD: Eigen < 3.4 uses runtime flags; Eigen >= 3.4 / 5.x prefers
-    // the class template parameter form to avoid the C4996 deprecation warning.
+    // ── 修正：以 Levenberg-Marquardt 風格的平滑阻尼取代硬性 SVD 截斷門檻──
+    // 先前試過直接呼叫 svd.setThreshold(1e-6) 把「幾乎奇異」的方向整個歸
+    // 零（貢獻設為 0），這是「非 0 即 1」的硬性判斷：只要某個奇異值恰好
+    // 落在門檻附近，就會被整條方向「一刀切掉」，即使那個方向其實還帶著
+    // 一小部分是真正需要的修正量（例如圓角弧的 Start/End 需要跟著被裁切
+    // 的線段端點微調），造成原本求解正確的圓角弧反而在求解後跟丟、對不
+    // 上被圓角的線。
+    //
+    // 這裡改用平滑阻尼（Tikhonov regularization）：把 1/σ 換成
+    // σ/(σ²+λ)。良態方向（σ 遠大於 √λ）幾乎不受影響，因為
+    // σ/(σ²+λ) ≈ 1/σ；只有真正接近奇異（σ→0）的方向，修正量才會平滑地
+    // 趨近 0（而不是被 1/σ 硬放大，也不是被門檻整個歸零），兩種極端情況
+    // 都能避免。λ 取「最大奇異值的一個極小相對比例」的平方，只在數量級
+    // 差距懸殊（封閉迴路那種近似線性相依）時才有感，一般良態系統幾乎測
+    // 不出差異。
+    static constexpr double kRegRelativeSigma = 1e-6;   // 阻尼生效的相對奇異值尺度
+
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0) //EIGEN_VERSION_AT_LEAST(3,4,0)
-    Eigen::VectorXd x =
-        Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV>(A).solve(b);
+    Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(A);
 #else
-    Eigen::VectorXd x =
-        Eigen::BDCSVD<Eigen::MatrixXd>(A, Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
+    Eigen::BDCSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
 #endif
+    const Eigen::VectorXd& sv = svd.singularValues();
+    const int k = static_cast<int>(sv.size());
+    if (k == 0) return false;
+
+    const double sigmaMax = sv(0);   // BDCSVD 回傳的奇異值已由大到小排序
+    if (sigmaMax <= 0.0) {
+        dx.fill(0.0, n);
+        return true;   // J 全 0：沒有任何方向可修正
+    }
+    const double lambda = (kRegRelativeSigma * sigmaMax) * (kRegRelativeSigma * sigmaMax);
+
+    const Eigen::VectorXd UtB = svd.matrixU().transpose() * b;
+    Eigen::VectorXd filtered(k);
+    for (int i = 0; i < k; ++i) {
+        const double s = sv(i);
+        filtered(i) = (s * UtB(i)) / (s * s + lambda);
+    }
+    const Eigen::VectorXd x = svd.matrixV() * filtered;
 
     dx.resize(n);
     for (int j = 0; j < n; ++j) dx[j] = x(j);
@@ -1106,6 +1336,17 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
 
     auto eqs = buildEquations(constraints, layout, vars);
 
+    // 為每個 Arc 加入「起點/終點在圓上」隱含方程式（見 PointOnCircleEquation
+    // 註解）：讓弧自身的 cx/cy/r 與（可能和相鄰線段共用的）Start/End 點座
+    // 標在同一次疊代中彼此牽制，修正弧起終點座標/角度不一致、圓角弧未連
+    // 接被圓角線段的問題；t0/t1 完全不參與求解，避免角度／座標混合單位
+    // 造成的數值不穩定。
+    for (const SketchGeometry* g : geoms) {
+        if (g->type != SketchGeometryType::Arc) continue;
+        eqs.append(new PointOnCircleEquation(g->uuid, true,  &layout));
+        eqs.append(new PointOnCircleEquation(g->uuid, false, &layout));
+    }
+
     int dof = computeDOF(geoms, constraints);
     result.dof = dof;
 
@@ -1154,6 +1395,13 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
 int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
                                  const QList<SketchConstraint>& constraints)
 {
+    // 先收集所有存在的 SketchPoint UUID，供下面判斷 Arc 的 startUuid/endUuid
+    // 是否確實指向一個獨立的 SketchPoint（理論上 Sketch::addArcGeom 一定會
+    // 建立/重用，但仍以「有無實際存在」為準，避免假設過度）。
+    QSet<QString> pointUuids;
+    for (const SketchGeometry* g : geoms)
+        if (g->type == SketchGeometryType::Point) pointUuids.insert(g->uuid);
+
     // 收集所有被 SketchLine/Arc/Circle 引用的 SketchPoint UUID
     // 這些 SketchPoint 的 DOF 已被曲線「共用」，不再重複計算
     QSet<QString> sharedPointUuids;
@@ -1165,6 +1413,13 @@ int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
         } else if (g->type == SketchGeometryType::Circle) {
             const auto* c = static_cast<const SketchCircle*>(g);
             if (!c->centerUuid.isEmpty()) sharedPointUuids.insert(c->centerUuid);
+        } else if (g->type == SketchGeometryType::Arc) {
+            // 修正：Arc 的 Start/End 現在（見 packVariables）會共用
+            // startUuid/endUuid 對應的 SketchPoint DOF，此處比照 Line/Circle
+            // 把它們標記為已共用，避免下方 Point 分支重複計數。
+            const auto* a = static_cast<const SketchArc*>(g);
+            if (pointUuids.contains(a->startUuid)) sharedPointUuids.insert(a->startUuid);
+            if (pointUuids.contains(a->endUuid))   sharedPointUuids.insert(a->endUuid);
         }
     }
 
@@ -1173,7 +1428,21 @@ int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
         switch (g->type) {
         case SketchGeometryType::Line:    totalDOF += 4; break; // 端點 DOF 由共用 SketchPoint 計
         case SketchGeometryType::Circle:  totalDOF += 1; break; // 只有 radius（圓心由 SketchPoint 計）
-        case SketchGeometryType::Arc:     totalDOF += 5; break; // arc 目前不共用 SketchPoint
+        case SketchGeometryType::Arc: {
+            // Arc 固有 5 個「幾何」DOF（等效於 cx, cy, r, 起終角），求解器
+            // 內部改用 cx,cy,r（3 個真正的求解變數）+ 共用/獨立的 Start,End
+            // 點（各 2 個 DOF）搭配 PointOnCircleEquation（各 1 條方程式）
+            // 表達，數學上仍等效 5 淨自由度。若 Start/End 有對應且實際存在
+            // 的 SketchPoint，該點的 2 DOF 已於上面的 Point 分支計入，故此
+            // 處各扣 2，避免雙重計算；找不到對應點時（fallback）維持原本
+            // 5 DOF 的估計。
+            const auto* a = static_cast<const SketchArc*>(g);
+            int arcDof = 5;
+            if (pointUuids.contains(a->startUuid)) arcDof -= 2;
+            if (pointUuids.contains(a->endUuid))   arcDof -= 2;
+            totalDOF += qMax(arcDof, 1);   // 圓心已知時，過兩定點的弧至少保留 1 個自由度（半徑/凸度）
+            break;
+        }
         case SketchGeometryType::Ellipse: totalDOF += 5; break;
         case SketchGeometryType::Point: {
             // 若此 SketchPoint 已被曲線共用，其 DOF 已含在曲線的計算中

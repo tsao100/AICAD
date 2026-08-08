@@ -20,9 +20,17 @@ namespace command {
  * 同一個新端點，不會在角落裂開（見 SketchGeomTransformUtil::
  * cloneAndTransform() 的實作說明）。
  *
- * 新複製出來的幾何不會複製原本掛在來源幾何上的 SketchConstraint／
- * SketchAnnotation（見實作計畫 §3.2 的設計理由：複製出來的幾何預設是
- * 自由的，是否重新標註/約束由使用者自行決定）。
+ * 選取範圍「內部」的約束（兩端都在複製範圍內）會一併複製到新幾何上；
+ * 只要有一端指向複製範圍外的既有幾何，該約束就不會被複製。GDIM 標註
+ * （尺寸線）目前不會一併複製（見 cloneAndTransform() 說明）。
+ *
+ * ✅ 在「指定第二點」等待期間即時預覽複製結果：進入該階段時會先以零
+ * 位移呼叫 cloneAndTransform() 建立一份疊在原物件正上方的「預覽用
+ * 複製品」（連同前述的約束複製規則），之後每一幀只把這份複製品跟著
+ * 游標做輕量搬移（不重新求解，見 SketchTransformCommandBase 的說明）。
+ * 原選取範圍全程不受影響。確認或取消時，這份預覽複製品都會被整個刪除
+ * ——確認時由 commit() 重新呼叫一次 cloneAndTransform() 建立正式的最終
+ * 複製，取消時則單純作廢，兩種情況下都不會留下重複或殘留的幾何。
  *
  * MVP 範圍：目前僅支援「單次複製」（一個基準點 + 一個第二點 → 一份
  * 複製）。AutoCAD 式「多重複製」（同一基準點連續點擊產生多份拷貝）留待
@@ -41,6 +49,11 @@ protected:
 
     void commit(cad::Sketch* sketch, const QStringList& selection,
                const cad::transform::Transform2D& xf) override;
+
+    bool livePreviewEnabled() const override { return true; }
+
+    QStringList armLivePreviewTargets(cad::Sketch* sketch) override;
+    void teardownLivePreviewTargets(cad::Sketch* sketch, const QStringList& targets) override;
 };
 
 } // namespace command

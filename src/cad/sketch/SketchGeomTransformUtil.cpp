@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QtMath>
 #include <QDebug>
+#include <QUuid>
 #include <cmath>
 
 #include <GC_MakeArcOfCircle.hxx>
@@ -321,7 +322,8 @@ QSet<QString> collectReferencedPointUuids(Sketch* sketch, const QStringList& geo
     return result;
 }
 
-void applyToSelection(Sketch* sketch, const QStringList& geomUuids, const Transform2D& xf)
+void applyToSelection(Sketch* sketch, const QStringList& geomUuids, const Transform2D& xf,
+                      bool solveAfter)
 {
     if (!sketch) return;
 
@@ -373,7 +375,9 @@ void applyToSelection(Sketch* sketch, const QStringList& geomUuids, const Transf
     if (anyTouched) {
         // 與 SketchGripProvider::onGripDragEnd() 相同的收尾方式：
         // 先讓約束求解器有機會依新基準位置重新收斂，再請求重建。
-        sketch->solveConstraints();
+        // solveAfter=false（拖曳預覽中間幀）時略過求解，只重建畫面。
+        if (solveAfter)
+            sketch->solveConstraints();
         Q_EMIT sketch->rebuildRequested();
     }
 }
@@ -386,6 +390,15 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
     // old SketchPoint uuid → new SketchPoint uuid，確保選取範圍內部共用的
     // 端點複製後仍然共用同一個新端點（不會在角落裂開）。
     QHash<QString, QString> ptMap;
+
+    // old 頂層幾何 uuid → new 頂層幾何 uuid。與 ptMap 是同一個 uuid
+    // 空間的兩個視角：獨立 SketchPoint 的 uuid 同時也是它自己的頂層幾何
+    // uuid，兩個 map 在該情況下會有相同的一筆對應（見下方 Point case）。
+    // 用途：SketchConstraint::refs 內的 GeomRef::geomUuid 一律指向「擁有
+    // 該子元素的頂層幾何」（例如 Horizontal(lineUuid) 的 geomUuid 是整條
+    // 線的 uuid，不是某個端點），複製約束時要靠這份表把舊幾何 uuid
+    // 換成新複製出來的幾何 uuid。
+    QHash<QString, QString> geomMap;
 
     auto mapPoint = [&](const QString& oldUuid) -> QString {
         if (oldUuid.isEmpty()) return QString();
@@ -406,7 +419,10 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
         case SketchGeometryType::Point: {
             auto* pt = static_cast<SketchPoint*>(g);
             const QString nu = mapPoint(pt->uuid);
-            if (!nu.isEmpty()) result.append(nu);
+            if (!nu.isEmpty()) {
+                result.append(nu);
+                geomMap.insert(uuid, nu);
+            }
             break;
         }
         case SketchGeometryType::Line: {
@@ -416,6 +432,7 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
             const QString newUuid = sketch->addLineGeom(
                 xf.apply(line->start), xf.apply(line->end), ns, ne, line->role);
             result.append(newUuid);
+            geomMap.insert(uuid, newUuid);
             break;
         }
         case SketchGeometryType::Circle: {
@@ -425,6 +442,7 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
                 sketch->addCircleGeom(xf.apply(circ->center), circ->radius, nc);
             if (auto* ng = sketch->findGeometry(newUuid)) ng->role = circ->role;
             result.append(newUuid);
+            geomMap.insert(uuid, newUuid);
             break;
         }
         case SketchGeometryType::Arc: {
@@ -445,6 +463,7 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
                 xf.apply(start), xf.apply(mid), xf.apply(end), ns, ne, nc);
             if (auto* ng = sketch->findGeometry(newUuid)) ng->role = arc->role;
             result.append(newUuid);
+            geomMap.insert(uuid, newUuid);
             break;
         }
         case SketchGeometryType::Ellipse: {
@@ -455,6 +474,7 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
                 xf.applyAngle(ell->angle), nc);
             if (auto* ng = sketch->findGeometry(newUuid)) ng->role = ell->role;
             result.append(newUuid);
+            geomMap.insert(uuid, newUuid);
             break;
         }
         case SketchGeometryType::Polyline: {
@@ -470,6 +490,7 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
                 const QString newUuid = sketch->addPolylineGeom(newPts, pl->closed, newVerts);
                 if (auto* ng = sketch->findGeometry(newUuid)) ng->role = pl->role;
                 result.append(newUuid);
+                geomMap.insert(uuid, newUuid);
             } else if (auto* poly = dynamic_cast<SketchPolygon*>(g)) {
                 QVector<QVector2D> newPts;
                 newPts.reserve(poly->points.size());
@@ -478,6 +499,7 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
                 const QString newUuid = sketch->addPolylineGeom(newPts, poly->closed);
                 if (auto* ng = sketch->findGeometry(newUuid)) ng->role = poly->role;
                 result.append(newUuid);
+                geomMap.insert(uuid, newUuid);
             }
             break;
         }
@@ -494,8 +516,80 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
             const QString newUuid = sketch->addSplineGeom(newPts, newCtrl);
             if (auto* ng = sketch->findGeometry(newUuid)) ng->role = sp->role;
             result.append(newUuid);
+            geomMap.insert(uuid, newUuid);
             break;
         }
+        }
+    }
+
+    // ── 約束一併複製 ─────────────────────────────────────────────────
+    //
+    // 只複製「使用者/求解器可見」的一般約束（c.implicitOf.isEmpty()）。
+    // GDIM 標註（SketchAnnotation）在 m_constraints 中對應的「隱含約束」
+    // 一律跳過不複製——那是標註自己透過 Sketch::addImplicitConstraint()
+    // 維護的衍生資料，本身沒有獨立意義；要不要連同標註一起複製是另一個
+    // 獨立的設計問題（目前 COPY 維持既有行為，不複製 SketchAnnotation，
+    // 見檔頭 cloneAndTransform() 說明），此處不處理。
+    //
+    // 只有當一筆約束引用的所有幾何都在這次複製範圍內（refs 的 geomUuid
+    // 都能在 geomMap 找到對應的新幾何）才複製；只要有任何一個 ref 指向
+    // 複製範圍「外」的幾何，就整筆略過——複製出來的新約束不應該去綁定
+    // 一個沒有被複製的既有物件。
+    //
+    // 絕對座標／絕對角度型的尺寸約束（FixedX/FixedY/CoordinateDim/
+    // FixedAngleDim）不能直接沿用原本的 value：那是舊幾何在變換前的絕對
+    // 座標/角度，若原封不動搬到新複製出來、已經套用過 xf 的幾何上，會讓
+    // 求解器試圖把複製品拉回「舊的絕對位置/角度」，等於抵銷掉這次複製的
+    // 位移——必須改以新幾何變換後的實際位置/角度重新取值。其餘尺寸約束
+    // （距離、半徑、長度、弧長…）在「純平移」下數值不變，直接沿用即可；
+    // 這也是 COPY 目前唯一會用到的 xf 種類（Transform2D::translation()），
+    // 若未來有指令改以 cloneAndTransform() 搭配旋轉/鏡射複製，才需要一併
+    // 檢視這些相對尺寸約束是否也要重新推導（超出本次修改範圍，先不處理）。
+    if (!result.isEmpty()) {
+        const QList<SketchConstraint> srcConstraints = sketch->constraints();  // 先拷貝一份快照，
+                                                                                 // 避免邊迭代邊
+                                                                                 // addConstraint()
+                                                                                 // 修改到同一個容器。
+        for (const SketchConstraint& c : srcConstraints) {
+            if (!c.implicitOf.isEmpty()) continue;  // GDIM 隱含約束不複製
+
+            QList<GeomRef> newRefs;
+            newRefs.reserve(c.refs.size());
+            bool fullyCovered = true;
+            for (const GeomRef& r : c.refs) {
+                auto it = geomMap.constFind(r.geomUuid);
+                if (it == geomMap.constEnd()) { fullyCovered = false; break; }
+                newRefs.append(GeomRef(it.value(), r.handle));
+            }
+            if (!fullyCovered) continue;
+
+            SketchConstraint nc = c;
+            nc.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            nc.implicitOf.clear();
+            nc.refs = newRefs;
+
+            switch (nc.type) {
+            case ConstraintType::FixedX:
+                if (!nc.refs.isEmpty()) nc.value = nc.refs[0].resolvePosition(sketch).x();
+                break;
+            case ConstraintType::FixedY:
+                if (!nc.refs.isEmpty()) nc.value = nc.refs[0].resolvePosition(sketch).y();
+                break;
+            case ConstraintType::CoordinateDim:
+                if (!nc.refs.isEmpty()) {
+                    const QVector2D p = nc.refs[0].resolvePosition(sketch);
+                    nc.value  = p.x();
+                    nc.value2 = p.y();
+                }
+                break;
+            case ConstraintType::FixedAngleDim:
+                nc.value = xf.applyAngle(c.value);
+                break;
+            default:
+                break;  // 其餘尺寸值在純平移下不變，沿用 c 的原值即可
+            }
+
+            sketch->addConstraint(nc);
         }
     }
 

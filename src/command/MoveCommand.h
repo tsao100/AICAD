@@ -36,6 +36,10 @@ protected:
 
     void commit(cad::Sketch* sketch, const QStringList& selection,
                const cad::transform::Transform2D& xf) override;
+
+    // ✅ 在「指定第二點」等待期間即時預覽被選取幾何搬移後的樣子
+    //    （見 SketchTransformCommandBase 的說明）。
+    bool livePreviewEnabled() const override { return true; }
 };
 
 } // namespace command

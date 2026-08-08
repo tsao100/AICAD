@@ -71,6 +71,63 @@ static void normalizeSecondRef(const cad::GeomRef& first, cad::GeomRef& second,
         second = GeomRef(second.geomUuid, GeomHandle::WholeGeom);
 }
 
+/// ⚠️ 修正：草圖平面參考幾何（X 軸／Y 軸／原點）需能參與 GDIM 約束
+/// （例如「與 X 軸的夾角」「與原點的距離」）。
+///
+/// 問題根因：CadView 在 GetGeom/GDIM 模式下對這三個參考物件的拾取／hover
+/// 走的是 OCCT DetectedInteractive 的 fallback 分支（見 CadView::
+/// handlePointInput() / mouseMoveEvent()），送進 GEOM_PICKED / GEOM_HOVER
+/// 事件的 geomUuid 是 CadView 顯示層用的「虛擬 UUID」——"sketch_xaxis:<id>"
+/// ／"sketch_yaxis:<id>"／"sketch_origin:<id>"（見 CadView::showSketchAxes()
+/// 的 aisToGeomUuid 登記），而不是 Sketch 內真正的幾何/點 UUID。
+/// GeneralDimClassifier::isPointLike()／inferSingle()／inferPair() 全部
+/// 透過 Sketch::point()／Sketch::findGeometry() 以「真實 UUID」查找幾何，
+/// 對這種虛擬 UUID 一律查無資料、回傳 nullopt——結果是使用者點擊 X 軸／
+/// Y 軸／原點時 GDIM 完全沒有反應（無法標註角度、距離）。
+///
+/// 修正方式：比照 ConstraintCommands.cpp::resolveAxisUuid()／
+/// SketchPanel.cpp 既有作法，在虛擬 UUID 進入 GeneralDimCommand 的
+/// 分類／鎖定流程之前，先用 Sketch::xAxisGeomUuid()／yAxisGeomUuid()／
+/// originPointUuid()（lazy-init，需要時才建立對應的 construction 幾何並
+/// 以 Fixed 約束固定）換成真正的 UUID。換成真實 UUID 後，X/Y 軸本質上
+/// 就是一條（Fixed）SketchLine、原點是一個（Fixed）SketchPoint，後續
+/// isPointLike/inferSingle/inferPair 完全不需要額外規則即可正確處理
+/// 「點＋軸線→垂距」「軸線＋軸線／軸線＋一般線→夾角」「點＋原點→水平/
+/// 垂直/對齊距離」等所有既有分類邏輯。
+///
+/// ⚠️ 草圖是 2D 平面：只有 X 軸／Y 軸／原點這三個參考幾何在草圖檢視中
+/// 可被拾取（見 CadView::showSketchAxes()，僅建立 X/Y 軸與原點三個 AIS
+/// 物件），沒有可供 GDIM 選取的「草圖 Z 軸」——Z 軸（草圖平面法向量）
+/// 不在草圖的 2D 自由度／約束系統範圍內，因此本函式與 GDIM 都不處理
+/// Z 軸。
+static QString resolveAxisRefUuid(const cad::Sketch* sketch, const QString& uuid)
+{
+    if (!sketch || uuid.isEmpty()) return uuid;
+    // Sketch::xAxisGeomUuid() 等為非 const（lazy-init 時會修改 Sketch 內部
+    // 狀態），這裡的 sketch 指標在呼叫端一律來自 activeSketch()（非 const），
+    // const_cast 僅為了讓本函式簽章能同時服務 const/非 const 呼叫情境。
+    auto* sk = const_cast<cad::Sketch*>(sketch);
+    const QString skId = sk->id();
+    if (uuid == "sketch_xaxis:"  + skId) return sk->xAxisGeomUuid();
+    if (uuid == "sketch_yaxis:"  + skId) return sk->yAxisGeomUuid();
+    if (uuid == "sketch_origin:" + skId) return sk->originPointUuid();
+    return uuid;
+}
+
+/// 純粹供命令列訊息顯示用：判斷「轉換前」的原始 UUID 是否為 X 軸／Y 軸／
+/// 原點的虛擬 UUID，是的話回傳對應中文標籤；否則回傳空字串。必須在呼叫
+/// resolveAxisRefUuid() 換成真實 UUID 之前，用原始字串比對——換過之後就
+/// 只是一條普通的 construction line／point，無法再分辨它原本是哪個軸。
+static QString axisRefLabel(const cad::Sketch* sketch, const QString& rawUuid)
+{
+    if (!sketch || rawUuid.isEmpty()) return {};
+    const QString skId = sketch->id();
+    if (rawUuid == "sketch_xaxis:"  + skId) return QStringLiteral("X 軸");
+    if (rawUuid == "sketch_yaxis:"  + skId) return QStringLiteral("Y 軸");
+    if (rawUuid == "sketch_origin:" + skId) return QStringLiteral("原點");
+    return {};
+}
+
 QString GeneralDimCommand::constraintTypeName() const {
     switch (m_type) {
     case ConstraintType::FixedLength:    return "FixedLength";
@@ -271,6 +328,30 @@ void GeneralDimCommand::subscribePreview() {
                 QVariantMap m = v.toMap();
                 m_dimOffsetX = m.value("offsetX").toDouble();
                 m_dimOffsetY = m.value("offsetY").toDouble();
+
+                // ── 點＋點（含線的兩端點）：WaitDimPlace 階段持續依「滑鼠與兩點
+                // 中點」的相對方位在 水平/垂直/對齊 間即時重新分類 ──────────────
+                // m_dimAnchor2D 在 transitionToWaitDimPlace() 已設為 refMidpoint2D()
+                // （點＋點時即兩點中點），offset 即 mousePtAbs - mid，直接重用
+                // GeneralDimClassifier::inferPair() 保持與 Anchored 階段 hover
+                // 預覽同一套分類邏輯，避免重複實作 classifyZone。
+                if (m_isPointPairHVA && m_refs.size() >= 2) {
+                    Sketch* sk = activeSketch();
+                    if (sk) {
+                        QVector2D mousePtAbs(
+                            static_cast<float>(m_dimAnchor2D.x() + m_dimOffsetX),
+                            static_cast<float>(m_dimAnchor2D.y() + m_dimOffsetY));
+                        auto pairInf = GeneralDimClassifier::inferPair(
+                            m_refs[0], m_refs[1], sk, mousePtAbs);
+                        if (pairInf) {
+                            auto pairCt = annotationKindToConstraintType(pairInf->kind);
+                            if (pairCt) {
+                                m_type     = *pairCt;
+                                m_distMode = pairInf->distMode;
+                            }
+                        }
+                    }
+                }
 
                 // ── 夾角型別：依滑鼠落在角平分線的哪一側，動態切換 夾角／補角 ──
                 // （無選單版第 B 組第 16 項：「移動決定角度標註弧的半徑與象限」）
@@ -477,6 +558,12 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
 
     Sketch* sk = activeSketch();
 
+    // X 軸／Y 軸／原點：CadView 送來的是顯示層虛擬 UUID，需先換成 Sketch
+    // 內真實幾何/點 UUID，才能被下面的 isPointLike/inferSingle/inferPair
+    // 正確辨識（見 resolveAxisRefUuid() 說明）。
+    if (sk && !hoverUuid.isEmpty())
+        hoverUuid = resolveAxisRefUuid(sk, hoverUuid);
+
     if (m_state == State::Idle) {
         if (hoverUuid.isEmpty() || !sk) { clearDimPreview(); return; }
         GeomRef hoverRef(hoverUuid, static_cast<GeomHandle>(hoverHandle));
@@ -569,6 +656,14 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
     auto* cmdMgr = core::CommandLineManager::instance();
     Sketch* sk   = activeSketch();
 
+    // X 軸／Y 軸／原點：同 onGeomHover()，先把顯示層虛擬 UUID 換成 Sketch
+    // 內真實幾何/點 UUID（見 resolveAxisRefUuid() 說明），起點鎖定與第二次
+    // 點擊配對才能正確辨識、參與約束。標籤（axisLabel）必須在轉換前先取，
+    // 供下面的訊息顯示用。
+    const QString axisLabel = (sk && !uuid.isEmpty()) ? axisRefLabel(sk, uuid) : QString();
+    if (sk && !uuid.isEmpty())
+        uuid = resolveAxisRefUuid(sk, uuid);
+
     if (m_state == State::Idle) {
         // 起點必須選到 SketchPoint 或幾何元素，不允許點選空白處
         if (uuid.isEmpty()) {
@@ -585,7 +680,9 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
             bool  isPt = (!geom && sk->point(uuid));
 
             QString geomDesc;
-            if (isPt) {
+            if (!axisLabel.isEmpty()) {
+                geomDesc = axisLabel;
+            } else if (isPt) {
                 geomDesc = "點";
             } else if (geom) {
                 switch (geom->type) {
@@ -696,6 +793,14 @@ void GeneralDimCommand::lockPairGeom(const cad::GeomRef& anchor, const cad::Geom
     m_useSupplementAngle = inf->useSupplementAngle;
     m_wasSingleGeomFlow = false;
 
+    // 點＋點（含同一條線的兩端點）配對：pairedRefs 為空、distMode 為
+    // PointToPoint 是這個分支唯一的特徵（其餘配對型別皆會明確指定
+    // pairedRefs，見 GeneralDimClassifier::inferPair()）。標記後，
+    // WaitDimPlace 階段會持續依滑鼠位置重新分類 水平/垂直/對齊，而不是
+    // 在這裡就把型別凍結。
+    m_isPointPairHVA = inf->pairedRefs.isEmpty()
+                        && inf->distMode == cad::DistanceMode::PointToPoint;
+
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr)
         cmdMgr->printMessage(QString("  類型: %1").arg(constraintTypeName()));
@@ -723,6 +828,7 @@ void GeneralDimCommand::lockSingleGeom(const cad::GeomRef& anchor, const QVector
     m_distMode = inf->distMode;
     m_useSupplementAngle = false;
     m_wasSingleGeomFlow = true;
+    m_isPointPairHVA = false;  // 單幾何流程不需要 WaitDimPlace 期間的 H/V/Align 重分類
 
     // 單幾何：這次點擊「同時完成定型與定位」——不進 WaitDimPlace，
     // 直接以起點與這次點擊的滑鼠位置算出 offset，直接進 WaitValue。
@@ -805,6 +911,27 @@ void GeneralDimCommand::onDimConfirmed(const QVariant& payload)
     QVariantMap map = payload.toMap();
     m_dimOffsetX = map.value("offsetX").toDouble();
     m_dimOffsetY = map.value("offsetY").toDouble();
+
+    // 點＋點（含線的兩端點）：確保「確定」當下這一刻的滑鼠位置也套用一次
+    // H/V/Align 重分類——理論上前一個 DIM_LINE_PREVIEW 事件已經處理過幾乎
+    // 相同的位置，但點擊瞬間可能沒有先觸發 PREVIEW（例如滑鼠沒有移動、
+    // 直接點擊），這裡再做一次確保「顯示的預覽」與「實際鎖定的型別」一致。
+    if (m_isPointPairHVA && m_refs.size() >= 2) {
+        Sketch* sk = activeSketch();
+        if (sk) {
+            QVector2D mousePtAbs(
+                static_cast<float>(m_dimAnchor2D.x() + m_dimOffsetX),
+                static_cast<float>(m_dimAnchor2D.y() + m_dimOffsetY));
+            auto pairInf = GeneralDimClassifier::inferPair(m_refs[0], m_refs[1], sk, mousePtAbs);
+            if (pairInf) {
+                auto pairCt = annotationKindToConstraintType(pairInf->kind);
+                if (pairCt) {
+                    m_type     = *pairCt;
+                    m_distMode = pairInf->distMode;
+                }
+            }
+        }
+    }
 
     transitionToWaitValue();
 }
@@ -929,6 +1056,7 @@ void GeneralDimCommand::backToAnchoredFromDimPlace()
     m_state = State::Anchored;
     m_dimOffsetX = 0.0; m_dimOffsetY = 0.0;
     m_useSupplementAngle = false;
+    m_isPointPairHVA = false;
     m_stickyPairedRef.reset();  // 取消目前的配對鎖定，強制重新 hover 選第二幾何
 
     auto* app     = core::Application::instance();
@@ -1138,6 +1266,7 @@ void GeneralDimCommand::cleanup()
     m_anchorRef      = cad::GeomRef{};
     m_useSupplementAngle = false;
     m_wasSingleGeomFlow  = false;
+    m_isPointPairHVA     = false;
     m_pendingValue   = 0.0;
     m_pendingExpr.clear();
     m_dimOffsetX     = 0.0;

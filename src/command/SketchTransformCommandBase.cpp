@@ -11,6 +11,7 @@
 #include "../cad/Sketch.h"
 #include "../ui/UIManager.h"
 #include "../view/CadView.h"
+#include "../view/RubberBand.h"
 
 #include <QMetaObject>
 #include <QPointF>
@@ -188,6 +189,10 @@ void SketchTransformCommandBase::onPointAcquired(const QVariant& payload)
         if (Sketch* sk = activeSketch())
             rb::armLinePreview(sk, m_basePoint);
 
+        // livePreviewEnabled() 的子類別（MOVE／COPY）額外啟動「拖曳目標」
+        // 的即時搬移預覽，見 armLivePreview() 說明。
+        armLivePreview();
+
         auto* cmdMgr = core::CommandLineManager::instance();
         if (cmdMgr) cmdMgr->showPrompt(secondPointPrompt());
         return;
@@ -197,6 +202,12 @@ void SketchTransformCommandBase::onPointAcquired(const QVariant& payload)
         Sketch* sk = activeSketch();
         const QVector2D delta = pt - m_basePoint;
         const auto xf = cad::transform::Transform2D::translation(delta);
+
+        // 確認前先把即時預覽期間「輕量套用」在真實幾何上的位移還原，
+        // 讓 commit() 走的仍是與沒有預覽時完全相同的單次完整變換
+        // （from 原始位置 → 最終點），避免重複疊加位移或求解結果與
+        // 預覽期間的中間態不一致。
+        revertLivePreview();
 
         if (sk && !m_selection.isEmpty())
             commit(sk, m_selection, xf);
@@ -213,11 +224,97 @@ void SketchTransformCommandBase::onCancelled(const QVariant&)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// cleanup
+// 即時搬移預覽（livePreviewEnabled() == true，目前為 MoveCommand／
+// CopyCommand 使用）
 // ─────────────────────────────────────────────────────────────────────────
+//
+// 分工比照既有 Grip 拖曳（SketchGripProvider）：拖曳中的每一幀只做「輕量」
+// 搬移（直接改幾何座標、不跑約束求解器），放開/確認時才跑一次完整求解。
+// 這裡用「增量位移」實作：armLivePreview() 進場時 m_liveDelta 歸零、透過
+// armLivePreviewTargets() 取得這次要被即時拖曳預覽的目標幾何 uuid 清單
+// （MOVE 是原選取範圍本身；COPY 是另外現場複製出來、疊在原物件正上方的
+// 「預覽用複製品」——見標頭檔內兩者對 armLivePreviewTargets() 的說明）。
+// 之後每次 RubberBand::updated()（= 每次滑鼠移動）都算出「這一幀相對於
+// 基準點的總位移」與「上一幀已套用的總位移」之差，只套用這個差值，並
+// 更新 m_liveDelta；revertLivePreview() 則先套用 -m_liveDelta 把目標幾何
+// 完全還原回進場前的原始位置，再呼叫 teardownLivePreviewTargets() 讓子
+// 類別視需要清理（MOVE 不需要；COPY 會把預覽用複製品整個刪掉）。
+// commit() 前一定會先呼叫 revertLivePreview()，確保正式送出的變換／複製
+// 仍是「原始位置 → 最終點」的單一完整動作，行為與沒有預覽時完全一致。
+
+void SketchTransformCommandBase::armLivePreview()
+{
+    if (!livePreviewEnabled()) return;
+
+    m_liveDelta = QVector2D();
+    m_livePreviewTargets.clear();
+
+    Sketch* sk = activeSketch();
+    if (!sk) return;
+    m_livePreviewTargets = armLivePreviewTargets(sk);
+    if (m_livePreviewTargets.isEmpty()) return;
+
+    auto* uiMgr   = core::Application::instance()->uiManager();
+    auto* cadView = uiMgr ? uiMgr->cadView() : nullptr;
+    view::RubberBand* band = cadView ? cadView->rubberBand() : nullptr;
+    if (!band) return;
+
+    m_livePreviewConn = QObject::connect(
+        band, &view::RubberBand::updated, this,
+        [this, band] {
+            if (!band->hasCurrentPoint()) return;
+            const QPointF cp = band->currentPoint();
+            updateLivePreviewTo(QVector2D(float(cp.x()), float(cp.y())));
+        });
+}
+
+void SketchTransformCommandBase::updateLivePreviewTo(const QVector2D& cursorPt)
+{
+    Sketch* sk = activeSketch();
+    if (!sk || m_livePreviewTargets.isEmpty()) return;
+
+    const QVector2D newDelta    = cursorPt - m_basePoint;
+    const QVector2D incremental = newDelta - m_liveDelta;
+    if (incremental.x() == 0.0f && incremental.y() == 0.0f) return;
+
+    cad::transform::applyToSelection(sk, m_livePreviewTargets,
+        cad::transform::Transform2D::translation(incremental),
+        /*solveAfter=*/false);
+    m_liveDelta = newDelta;
+}
+
+void SketchTransformCommandBase::revertLivePreview()
+{
+    QObject::disconnect(m_livePreviewConn);
+    m_livePreviewConn = QMetaObject::Connection();
+
+    Sketch* sk = activeSketch();
+
+    if (sk && !m_livePreviewTargets.isEmpty()) {
+        if (m_liveDelta.x() != 0.0f || m_liveDelta.y() != 0.0f) {
+            cad::transform::applyToSelection(sk, m_livePreviewTargets,
+                cad::transform::Transform2D::translation(-m_liveDelta),
+                /*solveAfter=*/false);
+        }
+        teardownLivePreviewTargets(sk, m_livePreviewTargets);
+    }
+    m_liveDelta = QVector2D();
+    m_livePreviewTargets.clear();
+}
 
 void SketchTransformCommandBase::cleanup()
 {
+    // ─────────────────────────────────────────────────────────────────
+    // cleanup
+    // ─────────────────────────────────────────────────────────────────
+    // 防呆：正常路徑（確認/commit）在呼叫這裡之前就已經 revertLivePreview()
+    // 過（m_liveDelta 早已歸零，這裡是 no-op）。取消路徑
+    // （onCancelled/onSelectionCancelled）則直接經由 cleanup() 呼叫到這裡，
+    // 確保「取消 MOVE」一定會把預覽期間搬動過的幾何還原，不留下未求解、
+    // 只是視覺上被搬移過的殘留狀態（也避免 UIManager 的快照比對把這個
+    // 已取消的操作誤記成一筆 undo）。
+    revertLivePreview();
+
     unsubscribeAll();
     rb::disarm();
 

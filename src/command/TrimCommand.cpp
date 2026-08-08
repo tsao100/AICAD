@@ -36,9 +36,9 @@ TrimCommand::TrimCommand()
 
 QString TrimCommand::getUsage() const
 {
-    return "Usage: TRIM — select cutting edges (Enter = use all objects), "
-           "then click objects to trim (click the segment to remove); "
-           "press Enter or Esc to finish.";
+    return "Usage: TRIM — select cutting edges (window/crossing/fence supported; "
+           "Enter or right-click = use all objects), then click objects to trim "
+           "(click the segment to remove); press Enter, right-click, or Esc to finish.";
 }
 
 cad::Sketch* TrimCommand::activeSketch() const
@@ -106,7 +106,7 @@ void TrimCommand::beginSelectCuttingStage(cad::Sketch* sketch)
             this, &TrimCommand::onSelectionCancelled);
 
     m_picker->begin(sketch, SketchSelectionPicker::Mode::PickMultiple,
-                    "[TRIM] Select cutting edges, or press Enter to use all objects:");
+                    "[TRIM] Select cutting edges, or press Enter/right-click to use all objects:");
 }
 
 void TrimCommand::onSelectionConfirmed(const QStringList& uuids)
@@ -153,7 +153,7 @@ void TrimCommand::beginPickSegmentStage(cad::Sketch* sketch)
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) {
-        cmdMgr->showPrompt("[TRIM] Select object to trim, or press Enter to finish:");
+        cmdMgr->showPrompt("[TRIM] Select object to trim, or press Enter/right-click to finish:");
         cmdMgr->waitForInput(core::InputType::String);
     }
 }

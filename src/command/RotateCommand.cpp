@@ -40,7 +40,8 @@ RotateCommand::RotateCommand()
 QString RotateCommand::getUsage() const
 {
     return "Usage: ROTATE — select geometry first then run ROTATE, "
-           "or run ROTATE then click objects and press Enter, "
+           "or run ROTATE then click objects (window/crossing/fence supported) "
+           "and press Enter or right-click, "
            "then specify base point and rotation angle in degrees "
            "(counter-clockwise positive).";
 }
@@ -105,7 +106,7 @@ void RotateCommand::beginSelection(cad::Sketch* sketch)
             this, &RotateCommand::onSelectionCancelled);
 
     m_picker->begin(sketch, SketchSelectionPicker::Mode::PickMultiple,
-                    "[ROTATE] Select objects, then press Enter:");
+                    "[ROTATE] Select objects, then press Enter or right-click:");
 }
 
 void RotateCommand::onSelectionConfirmed(const QStringList& uuids)

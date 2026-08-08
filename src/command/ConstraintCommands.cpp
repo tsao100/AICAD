@@ -20,6 +20,7 @@
 #include "ExtendCommand.h"
 #include "FilletCommand.h"
 #include "ChamferCommand.h"
+#include "ConstructionToggleCommand.h"
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
 #include "../cad/Sketch.h"
@@ -1091,6 +1092,14 @@ void registerConstraintCommands(core::Application* app)
 
     cmdMgr->registerCommand("CHAMFER", QStringList{"CHA"},
         []() -> Command* { return new ChamferCommand(); });
+
+    // ⚠️ 新增：CONSTRUCTION — 選取的線／弧／圓等在「建構／一般」間來回
+    // 切換（見 ConstructionToggleCommand.h 檔頭說明）。別名 CT 尚未在
+    // CommandAlias 內建立（不像 M/CO/RO/MI/TR/EX/F/CHA 早已預先存在），
+    // 比照 STRETCH 的作法在這裡額外註冊。
+    cmdMgr->registerCommand("CONSTRUCTION", QStringList{"CT"},
+        []() -> Command* { return new ConstructionToggleCommand(); });
+    aliasMgr->registerAlias("CT", "CONSTRUCTION", "Toggle construction geometry", true);
 
     qDebug() << "[ConstraintCommands] Registered" << 33
              << "constraint/editing commands and aliases.";

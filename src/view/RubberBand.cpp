@@ -277,6 +277,10 @@ bool RubberBand::hasCurrentPoint() const {
     return d->hasCurrentPoint;
 }
 
+QPointF RubberBand::currentPoint() const {
+    return d->currentPoint;
+}
+
 void RubberBand::updateLine() {
     if (d->points.isEmpty() || !d->hasCurrentPoint) {
         return;

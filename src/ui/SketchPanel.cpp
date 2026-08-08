@@ -87,10 +87,17 @@ void SketchPanel::setupConstructionGroup(QWidget*, QVBoxLayout* layout)
     m_btnConstrLine   = makeToolBtn(tr("建構線"),   tr("加入建構線（虛線，不進入輪廓）"), grp);
     m_btnCenterline   = makeToolBtn(tr("中心線"),   tr("加入中心線（點划線，用作旋轉軸/對稱軸）"), grp);
     m_btnConstrCircle = makeToolBtn(tr("建構圓"),   tr("加入建構圓（僅供參考）"), grp);
+    // ⚠️ 新增：既有三個按鈕只能「畫出新的」建構幾何，沒有辦法把畫面上已經
+    // 存在的一般幾何轉成建構幾何，或反向轉回——這裡補上來回切換的入口。
+    // 先選取一或多個幾何再按此鈕、或直接按此鈕再到視圖中點選，皆可
+    // （見 ConstructionToggleCommand）。
+    m_btnToggleConstruction = makeToolBtn(tr("建構⇄一般"),
+        tr("將選取的線/弧/圓等在「建構」與「一般」之間來回切換"), grp);
 
     grid->addWidget(m_btnConstrLine,   0, 0);
     grid->addWidget(m_btnCenterline,   0, 1);
     grid->addWidget(m_btnConstrCircle, 1, 0);
+    grid->addWidget(m_btnToggleConstruction, 1, 1);
 
     connect(m_btnConstrLine,   &QToolButton::clicked, this,
             &SketchPanel::requestAddConstructionLine);
@@ -98,6 +105,8 @@ void SketchPanel::setupConstructionGroup(QWidget*, QVBoxLayout* layout)
             &SketchPanel::requestAddCenterline);
     connect(m_btnConstrCircle, &QToolButton::clicked, this,
             &SketchPanel::requestAddConstructionCircle);
+    connect(m_btnToggleConstruction, &QToolButton::clicked, this,
+            &SketchPanel::requestToggleConstruction);
 
     layout->addWidget(grp);
 }

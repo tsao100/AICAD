@@ -176,6 +176,24 @@ public:
     /// 供 GripEventFilter 判斷是否應暫時避開 grip 命中檢測，避免卡住流程。
     bool isBoxSelectArmed() const;
 
+    /// 供互動命令（SketchSelectionPicker::PickMultiple／EraseCommand 模式 B
+    /// 等「選取物件，Enter 確認」階段）宣告：目前是否允許在 GetGeom 模式下
+    /// 點擊空白處啟動窗選／穿越窗選／籬選／多邊形選取。
+    ///
+    /// 背景：mousePressEvent() 原本只有在「沒有作用中命令」（!hasCmd，例如
+    /// 選取物件後再輸入 MOVE 的『模式 A』預選）的情境下，點擊空白處才會呼叫
+    /// beginBoxSelectCandidate() 啟動窗選；命令執行中（hasCmd==true）等待
+    /// GEOM_PICKED 的「選取物件」階段，點擊空白處一律直接落入 handlePointInput()
+    /// 送出空 UUID，窗選/籬選機制完全無法啟動。本旗標讓命令的選取子階段開始
+    /// 前主動宣告「現在允許窗選」，mousePressEvent() 才會在 hasCmd==true 時
+    /// 也走 beginBoxSelectCandidate() 路徑（sketchMode 固定為 true，additive
+    /// 固定為 true——命令執行中的多選階段比照既有單擊 GEOM_PICKED 累加/切換
+    /// 語意，不需要按 Shift 才能疊加）。呼叫端必須在選取子階段結束
+    /// （confirmed/cancelled/cleanup）時呼叫 setCommandBoxSelectEligible(false)
+    /// 關閉，避免残留影響其他不支援框選的 GetGeom 用途（例如 TRIM 逐段點選
+    /// 迴圈、FILLET/CHAMFER 逐一點選單一物件）。
+    void setCommandBoxSelectEligible(bool eligible);
+
     /// F8 正交鎖定（Ortho Lock）目前是否開啟。Sketch 與 Alignment edit 共用
     /// 同一個旗標：草圖橡皮筋取點、Grip 拖曳（含水平線形 IP 拖曳）皆會套用。
     bool isOrthoLocked() const;
@@ -680,6 +698,19 @@ private:
      * @brief 處理點輸入
      */
     void handlePointInput(const QPoint& screenPos);
+
+    /**
+     * @brief GetGeom 模式下，滑鼠右鍵結束選取（等同於送出空字串的 Enter）。
+     *
+     * 從 mousePressEvent() 與 mouseReleaseEvent() 兩處呼叫（見兩者呼叫點的
+     * 註解）：主要邏輯掛在 mousePressEvent()，mouseReleaseEvent() 那份是保
+     * 險用的重複呼叫——若命令列的等待輸入狀態已經在 press 階段被消費過，
+     * isWaitingForInput() 這裡會是 false，本函式會安全地直接回傳 false，
+     * 不會重複觸發 executeCommand("")。
+     *
+     * @return true 表示已處理（呼叫端應 event->accept() 並 return）。
+     */
+    bool tryEndGetGeomSelectionViaRightClick(QMouseEvent* event);
 
     /**
      * @brief 處理物件選擇

@@ -36,9 +36,9 @@ ExtendCommand::ExtendCommand()
 
 QString ExtendCommand::getUsage() const
 {
-    return "Usage: EXTEND — select boundary edges (Enter = use all objects), "
-           "then click objects to extend (click near the end to extend); "
-           "press Enter or Esc to finish.";
+    return "Usage: EXTEND — select boundary edges (window/crossing/fence supported; "
+           "Enter or right-click = use all objects), then click objects to extend "
+           "(click near the end to extend); press Enter, right-click, or Esc to finish.";
 }
 
 cad::Sketch* ExtendCommand::activeSketch() const
@@ -104,7 +104,7 @@ void ExtendCommand::beginSelectBoundaryStage(cad::Sketch* sketch)
             this, &ExtendCommand::onSelectionCancelled);
 
     m_picker->begin(sketch, SketchSelectionPicker::Mode::PickMultiple,
-                    "[EXTEND] Select boundary edges, or press Enter to use all objects:");
+                    "[EXTEND] Select boundary edges, or press Enter/right-click to use all objects:");
 }
 
 void ExtendCommand::onSelectionConfirmed(const QStringList& uuids)
@@ -149,7 +149,7 @@ void ExtendCommand::beginPickSegmentStage(cad::Sketch* sketch)
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) {
-        cmdMgr->showPrompt("[EXTEND] Select object to extend, or press Enter to finish:");
+        cmdMgr->showPrompt("[EXTEND] Select object to extend, or press Enter/right-click to finish:");
         cmdMgr->waitForInput(core::InputType::String);
     }
 }

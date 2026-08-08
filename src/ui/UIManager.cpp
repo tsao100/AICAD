@@ -2735,6 +2735,18 @@ void UIManager::setupSketchPanel()
                 bus->publish("command.start-construction-circle", QVariant{});
             });
 
+    // ⚠️ 新增：CONSTRUCTION 切換（見 ConstructionToggleCommand.h 檔頭說明）。
+    // 沿用既有的 COMMAND_EXECUTE_REQUEST 通用機制——UIManager 會自動把目前
+    // CadView 的選取塞進 ctx.args（見本檔案 COMMAND_EXECUTE_REQUEST 訂閱處），
+    // 所以這裡不需要像上面三個「畫新建構幾何」的按鈕那樣另外處理選取或
+    // 呼叫互動式繪圖流程，直接請 CommandManager 執行 CONSTRUCTION 即可：
+    // 有選取 → 模式 A 直接切換；沒有選取 → 命令自己進入模式 B 互動選取。
+    connect(d->sketchPanel, &SketchPanel::requestToggleConstruction,
+            this, [] {
+                auto* bus = core::Application::instance()->eventBus();
+                bus->publish(core::Events::COMMAND_EXECUTE_REQUEST, QVariant("CONSTRUCTION"));
+            });
+
     // ── 約束信號 ─────────────────────────────────────────────────
     connect(d->sketchPanel, &SketchPanel::requestConstraint,
             this, [this](cad::ConstraintType type) {
