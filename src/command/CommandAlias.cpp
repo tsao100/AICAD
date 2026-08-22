@@ -77,6 +77,7 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("SCSCHAIN", "SCSCHAIN",        "Add S0-C0-S1-C1-...-Sn compound chain (N>=2 arcs)", true);
     registerAlias("AS",  "ALIGNMENTADDSPIRAL",   "Insert Clothoid between Fixed Tangent and Arc (LC/CA)", true);
     registerAlias("TCL", "TRACK",                "New Track Centerline",                         true);
+    registerAlias("TX",  "TRACKEXTRACT",         "Extract a track segment into a new centerline", true);
     registerAlias("SO",  "SETORIGIN",            "Set TM2 coordinate origin (Easting, Northing)", true);
 
     // ── Step 15：縱斷面命令 ──────────────────────────────────────────────────

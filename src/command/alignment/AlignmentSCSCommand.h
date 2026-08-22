@@ -38,6 +38,19 @@
  *  T1=PARABOLA  / T1=P    → Parabola（三次拋物線）
  *  T1=CUBICJPN  / T1=JPN  → CubicJPN（日本 JIS）
  *  T1=CUBICECI  / T1=ECI  → CubicECI（CECI）
+ *  T1=SINUSOIDAL / T1=SIN → Sinusoidal
+ *  T1=COSINE     / T1=COS → Cosine
+ *  T1=BLOSS      / T1=BL  → Bloss
+ *  T1=LEMNISCATE / T1=LEM → Lemniscate
+ *  T1=WIENERBOGEN/ T1=WB  → WienerBogen
+ *  T1=RADIOID    / T1=RAD → Radioid
+ *  T1=LOGARITHMIC/ T1=LOG → Logarithmic
+ *  T1=HYPERBOLIC / T1=HYP → Hyperbolic
+ *  T1=POLYNOMIAL / T1=POLY→ Polynomial
+ *  T1=QUINTIC    / T1=QNT → Quintic
+ *  T1=BIQUADRATIC/ T1=BIQ → Biquadratic
+ *  T1=SPLINE     / T1=SPL → Spline
+ *  T1=BLOSSEULERHYBRID / T1=BEH → BlossEulerHybrid
  *  Enter（空輸入）         → 沿用預設（Clothoid）
  *  T2=…                   → 對應出螺旋類型（語法同上）
  *

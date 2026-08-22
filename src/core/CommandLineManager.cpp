@@ -83,6 +83,20 @@ void CommandLineManager::processInput(const QString& input) {
     // 根據期望的輸入類型處理
     auto* bus = Application::instance()->eventBus();
 
+    // ⚠️ 派送事件前先記下目前的「掛號世代」。派送過程中（例如
+    // SketchSelectionPicker 收到自己的 STRING_INPUT，同步 unsubscribe
+    // 自己、emit confirmed() 觸發下一階段命令緊接著同步呼叫
+    // waitForInput() 重新掛號等待下一次輸入——TRIM/EXTEND 選完邊界、
+    // 進入逐次點選階段就是這個情形），下游 handler 完全可能在同一個呼
+    // 叫堆疊內就同步呼叫 waitForInput() 重新掛號。如果派送完直接無條件
+    // 把 m_isWaitingForInput 設回 false，就會把剛剛才重新掛號好的新狀態
+    // 蓋掉——這正是先前「TRIM/EXTEND 選完邊界進入下一階段後，右鍵按不
+    // 掉命令」的根本原因。用世代編號判斷：只有在派送過程中沒有人重新呼
+    // 叫過 waitForInput()，才代表這次輸入是「乾淨處理完、沒人接著要下
+    // 一個輸入」，這時候才清掉等待狀態；否則保留派送過程中設定好的新
+    // 狀態，不要覆蓋。
+    const int generationBeforeDispatch = m_waitGeneration;
+
     switch (m_expectedInputType) {
     case InputType::Point:
         bus->publish(Events::COORDINATE_INPUT, input);
@@ -108,8 +122,10 @@ void CommandLineManager::processInput(const QString& input) {
         break;
     }
 
-    m_isWaitingForInput = false;
-    m_expectedInputType = InputType::None;
+    if (m_waitGeneration == generationBeforeDispatch) {
+        m_isWaitingForInput = false;
+        m_expectedInputType = InputType::None;
+    }
 }
 
 void CommandLineManager::executeScript(const QString& script) {
@@ -223,6 +239,7 @@ void CommandLineManager::printSuccess(const QString& msg) {
 void CommandLineManager::waitForInput(InputType type) {
     m_isWaitingForInput = true;
     m_expectedInputType = type;
+    ++m_waitGeneration;
 
     emit inputRequired(type);
 }

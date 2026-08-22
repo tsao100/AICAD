@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <QHash>
 #include <QDebug>
 #include <cstring>
 #include <cmath>
@@ -243,6 +244,65 @@ bool AldFileIO::writePrj(const QString& prjFilePath,
 }
 
 // ============================================================================
+//  Curve-type ↔ 8-byte ALD field code translation
+//
+//  The legacy RadiusCurveType field is a *fixed 8-byte* ASCII field (see
+//  packField()/kHRecordSize below) — CLOTHOID/HALFSINE/PARABOLA/CUBICJPN/
+//  CUBICECI all happen to be exactly 8 characters, which is not a
+//  coincidence but a constraint of the original VB6 record layout.
+//
+//  Several of the newer curveType names used elsewhere in this codebase
+//  (RailwayAlignmentElement.cpp, AlignmentDocument.cpp, AlignmentDataTable-
+//  Dialog.cpp — see SpiralType in AlignmentDocument.h) exceed 8 characters
+//  (e.g. "SINUSOIDAL", "WIENERBOGEN", "BLOSSEULERHYBRID"). Writing those
+//  directly into the fixed-width field would silently truncate/corrupt them
+//  on export and fail to round-trip on import. This table maps every
+//  over-length canonical name to a distinct ≤8-character ALD-file code
+//  (and back), so the *in-memory* curveType string used by every other
+//  part of the app stays the full canonical name — only the on-disk .ALD
+//  byte layout uses the abbreviation.
+// ============================================================================
+
+static QString canonicalCurveTypeToAldCode(const QString& canonical)
+{
+    static const QHash<QString, QString> kToAld = {
+        { QStringLiteral("SINUSOIDAL"),       QStringLiteral("SINUS")   },
+        { QStringLiteral("LEMNISCATE"),       QStringLiteral("LEMNISC") },
+        { QStringLiteral("WIENERBOGEN"),      QStringLiteral("WIENERB") },
+        { QStringLiteral("LOGARITHMIC"),      QStringLiteral("LOGARIT") },
+        { QStringLiteral("HYPERBOLIC"),       QStringLiteral("HYPERBO") },
+        { QStringLiteral("POLYNOMIAL"),       QStringLiteral("POLYNOM") },
+        { QStringLiteral("BIQUADRATIC"),      QStringLiteral("BIQUAD")  },
+        { QStringLiteral("BLOSSEULERHYBRID"), QStringLiteral("BLOSSEH") },
+        { QStringLiteral("PHQUINTIC"),        QStringLiteral("PHQNTC")  },
+        { QStringLiteral("ELASRADIOID"),      QStringLiteral("ELASRAD") },
+        { QStringLiteral("NORWICHSTURM"),     QStringLiteral("NORWICH") },
+        { QStringLiteral("PSEUELLRADIOID"),   QStringLiteral("PSEUELL") },
+        // COSINE/BLOSS/RADIOID/QUINTIC/SPLINE are already ≤8 chars → identity.
+    };
+    return kToAld.value(canonical, canonical);
+}
+
+static QString aldCodeToCanonicalCurveType(const QString& aldCode)
+{
+    static const QHash<QString, QString> kFromAld = {
+        { QStringLiteral("SINUS"),   QStringLiteral("SINUSOIDAL")       },
+        { QStringLiteral("LEMNISC"), QStringLiteral("LEMNISCATE")       },
+        { QStringLiteral("WIENERB"), QStringLiteral("WIENERBOGEN")      },
+        { QStringLiteral("LOGARIT"), QStringLiteral("LOGARITHMIC")      },
+        { QStringLiteral("HYPERBO"), QStringLiteral("HYPERBOLIC")       },
+        { QStringLiteral("POLYNOM"), QStringLiteral("POLYNOMIAL")       },
+        { QStringLiteral("BIQUAD"),  QStringLiteral("BIQUADRATIC")      },
+        { QStringLiteral("BLOSSEH"), QStringLiteral("BLOSSEULERHYBRID") },
+        { QStringLiteral("PHQNTC"),  QStringLiteral("PHQUINTIC")       },
+        { QStringLiteral("ELASRAD"), QStringLiteral("ELASRADIOID")     },
+        { QStringLiteral("NORWICH"), QStringLiteral("NORWICHSTURM")    },
+        { QStringLiteral("PSEUELL"), QStringLiteral("PSEUELLRADIOID")  },
+    };
+    return kFromAld.value(aldCode, aldCode);
+}
+
+// ============================================================================
 //  readHorizontalALD
 // ============================================================================
 
@@ -301,10 +361,17 @@ QVector<AlignmentPoint> AldFileIO::readHorizontalALD(const QString& filePath,
                 pt.curveType.clear();
             } else {
                 // 緩和曲線類型名稱（CLOTHOID/HALFSINE/PARABOLA/CUBICJPN/CUBICECI/
-                // SPIRAL…）或個別檔案中偶見的資料訛誤字串。對於直線（TT）與圓弧
+                // SPIRAL/SINUS(=Sinusoidal)/COSINE/BLOSS/LEMNISC(=Lemniscate)/
+                // WIENERB(=WienerBogen)/RADIOID/LOGARIT(=Logarithmic)/
+                // HYPERBO(=Hyperbolic)/POLYNOM(=Polynomial)/QUINTIC/
+                // BIQUAD(=Biquadratic)/SPLINE/BLOSSEH(=BlossEulerHybrid)…）或
+                // 個別檔案中偶見的資料訛誤字串。對於直線（TT）與圓弧
                 // （TC/CT）元素此欄位並不影響幾何計算，僅緩和曲線（TS/ST/CS/SC）
-                // 才會實際使用 curveType 判斷子類型。
-                pt.curveType = rct.toUpper();
+                // 才會實際使用 curveType 判斷子類型。8 字元以內的類型直接存放；
+                // 超過 8 字元者以 canonicalCurveTypeToAldCode() 之縮寫代碼存放
+                // （見上方對照表），讀回時以 aldCodeToCanonicalCurveType() 還原
+                // 成完整名稱，維持記憶體中 curveType 字串與其他模組一致。
+                pt.curveType = aldCodeToCanonicalCurveType(rct.toUpper());
                 pt.radius    = 0.0;
             }
         }
@@ -356,10 +423,11 @@ bool AldFileIO::writeHorizontalALD(const QString& filePath,
         data += packNumericField(pt.length, 15, 5);
 
         // RadiusCurveType (8 bytes): 直線 → "STRAIGHT"；緩和曲線 → curveType 文字
-        // （CLOTHOID/HALFSINE/PARABOLA/CUBICJPN/CUBICECI 皆恰為 8 字元）；
+        // （CLOTHOID/HALFSINE/PARABOLA/CUBICJPN/CUBICECI 皆恰為 8 字元；超過
+        // 8 字元的新類型經 canonicalCurveTypeToAldCode() 縮寫，見上方對照表）；
         // 圓弧 → 半徑數字文字。
         if (!pt.curveType.isEmpty())
-            data += packField(pt.curveType, 8);
+            data += packField(canonicalCurveTypeToAldCode(pt.curveType), 8);
         else if (pt.radius != 0.0)
             data += packNumericField(std::abs(pt.radius), 8, 3);
         else

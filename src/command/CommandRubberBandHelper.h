@@ -17,6 +17,7 @@
 #pragma once
 
 #include <QVector2D>
+#include <QVector>
 
 namespace aicad {
 namespace cad { class Sketch; }
@@ -32,6 +33,13 @@ void armLinePreview(cad::Sketch* sketch, const QVector2D& anchor);
 /// 啟動一個跟隨游標的矩形橡皮筋預覽（供 STRETCH 的窗選第一角點→對角點
 /// 階段使用）。
 void armRectPreview(cad::Sketch* sketch, const QVector2D& corner1);
+
+/// 顯示一段「已完整算好座標」的多段線預覽，不跟隨游標自動更新——供
+/// TRIM/EXTEND 的 hover 即時預覽使用（每次 GEOM_HOVER 事件帶來新的
+/// TrimExtendHelper::PreviewSegment 時呼叫一次，直接指定完整座標，不是
+/// 「錨點＋自動追蹤游標」這種模式，因為多段線的每個頂點都是幾何運算
+/// 出來的結果，不是原始游標座標）。points 至少要有 2 個點。
+void showPolylinePreview(cad::Sketch* sketch, const QVector<QVector2D>& points);
 
 /// 停用橡皮筋預覽（命令結束、取消、或階段切換時呼叫；重複呼叫安全）。
 void disarm();

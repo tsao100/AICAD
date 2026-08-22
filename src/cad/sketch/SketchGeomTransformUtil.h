@@ -52,11 +52,14 @@ namespace transform {
  */
 class Transform2D {
 public:
-    enum class Kind { Translate, Rotate, Mirror };
+    enum class Kind { Translate, Rotate, Mirror, Scale };
 
     static Transform2D translation(const QVector2D& delta);
     static Transform2D rotation(const QVector2D& center, double angleRad);
     static Transform2D mirror(const QVector2D& axisP0, const QVector2D& axisP1);
+    /// 以 center 為中心的等比縮放。factor 必須 > 0（呼叫端負責驗證；
+    /// factor <= 0 在 apply() 中會被視同 1.0，不做縮放，避免產生退化幾何）。
+    static Transform2D scale(const QVector2D& center, double factor);
 
     Kind kind() const { return m_kind; }
     bool isReflection() const { return m_kind == Kind::Mirror; }
@@ -73,7 +76,16 @@ public:
     ///     角度欄位無法完整表達真正的鏡像（詳見實作計畫 §3.4）。此處回傳
     ///     的角度是幾何學上長短軸方向鏡射對稱後的近似值，對正圓（majorRadius
     ///     == minorRadius）以及純旋轉/平移沒有這個限制。
+    ///   - Scale：等比縮放不改變方向角。
     double applyAngle(double angleRad) const;
+
+    /// 本次變換對「長度」的等比縮放倍率——Translate/Rotate/Mirror 皆保長度
+    /// （回傳 1.0），只有 Scale 會回傳實際 factor（factor<=0 時視同 1.0）。
+    /// 供 SketchCircle::radius、SketchEllipse::majorRadius/minorRadius 這類
+    /// 「不是由座標點定義、而是獨立純量欄位」的半徑值使用；Line/Arc/
+    /// Polyline/Spline 等純粹由端點座標定義形狀的幾何則不需要，直接靠
+    /// apply() 逐點變換即可自動反映縮放後的正確形狀。
+    double linearScaleFactor() const { return (m_kind == Kind::Scale && m_factor > 0.0) ? m_factor : 1.0; }
 
 private:
     Kind      m_kind = Kind::Translate;
@@ -82,6 +94,7 @@ private:
     double    m_angleRad = 0.0;
     QVector2D m_axisP0, m_axisP1;
     double    m_axisAngle = 0.0;   ///< mirror() 時預先算好的鏡射軸方向角（弧度）
+    double    m_factor = 1.0;      ///< scale() 專用
 };
 
 /**
@@ -186,11 +199,21 @@ QStringList cloneAndTransform(cad::Sketch* sketch,
  *                點選的兩個角點做 min/max 正規化，本函式不判斷窗選/穿越
  *                窗選方向（見 StretchCommand 的呼叫端說明）。
  * @param delta   位移向量。
+ * @param solveAfter 是否在搬動後跑一次完整的 solveConstraints()。
+ *                StretchCommand 的即時預覽（滑鼠移動中）每一幀都要呼叫一
+ *                次本函式，傳 false 只做輕量座標搬動、不重新解約束——比
+ *                照 SketchTransformCommandBase 的 MOVE/COPY 即時預覽分工
+ *                （見該檔案說明）。因為「哪些點落在窗內」是根據呼叫當下
+ *                的座標判斷，預覽端必須在算下一幀前先用相反的 delta 呼叫
+ *                一次本函式復原，才能保證每一幀都是從原始（未搬動）座標
+ *                重新判斷落在窗內的點集合，不會因為上一幀已經搬出窗外而
+ *                在下一幀被誤判為不受影響。正式送出（確認第二點）時才傳
+ *                true（預設值），確保只跑一次完整求解。
  * @return 實際受影響（全部或部分搬動）的頂層幾何 UUID 清單。
  */
 QStringList stretchWithinRect(cad::Sketch* sketch,
                               const QVector2D& rectMin, const QVector2D& rectMax,
-                              const QVector2D& delta);
+                              const QVector2D& delta, bool solveAfter = true);
 
 } // namespace transform
 } // namespace cad

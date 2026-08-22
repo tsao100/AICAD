@@ -713,6 +713,46 @@ private:
     bool tryEndGetGeomSelectionViaRightClick(QMouseEvent* event);
 
     /**
+     * @brief 通用版：只要命令輸入框裡已經有使用者打好、還沒按下 Enter 的
+     *        文字，滑鼠右鍵就等同送出那段文字（等同真的按下 Enter）。
+     *
+     * 與 tryEndGetGeomSelectionViaRightClick() 不同的地方：後者只在
+     * GetGeom 模式下、且只送出「空字串」（結束選取）；本函式不限制
+     * d->mode，且是把「目前打好的文字」原樣送出（例如 TRACKEXTRACT 提示
+     * 等待 A/AUTO 時，打了 A 還沒按 Enter，右鍵應該直接送出 "A"，而不是
+     * 被取消指令邏輯打斷；Sketch edit 中還沒有指令在跑、只是剛打了指令名
+     * 稱如 "LINE" 時，isWaitingForInput() 是 false，但一樣要能用右鍵送
+     * 出，故不檢查這個狀態，只檢查輸入框裡「有沒有文字」）。
+     *
+     * 輸入框裡沒有文字時回傳 false，交給後續既有邏輯（GetGeom 空白 Enter
+     * 結束選取、Yes/No 確認、或取消目前指令）處理，行為不變。
+     *
+     * @return true 表示已處理（呼叫端應 event->accept() 並 return）。
+     */
+    bool tryEndPendingTextInputViaRightClick(QMouseEvent* event);
+
+    /**
+     * @brief 滑鼠右鍵＝「送出目前命令列輸入框內容」（等同按下 Enter）。
+     *
+     * 適用範圍：命令正在等待 InputType::YesNo（目前僅 MIRROR 的「是否
+     * 刪除原物件」階段使用，未來其他 Yes/No 提示的命令可直接沿用）。與
+     * tryEndGetGeomSelectionViaRightClick() 不同的地方：後者只送出固定的
+     * 空字串，本函式改為呼叫 CommandInputEdit::submitCurrentLine()，會
+     * 把使用者「已經打在輸入框但還沒按 Enter」的內容一併送出（例如先打
+     * "y" 再按右鍵，等同打完 "y" 再按 Enter，而不是被忽略掉、只送出空
+     * 字串變成預設的 No）。輸入框為空時 submitCurrentLine() 本身就會送
+     * 出空字串套用預設值，效果與 tryEndGetGeomSelectionViaRightClick()
+     * 一致。
+     *
+     * 同樣從 mousePressEvent() 與 mouseReleaseEvent() 兩處呼叫，道理與
+     * tryEndGetGeomSelectionViaRightClick() 相同（保險用重複呼叫，
+     * isWaitingForInput() 消費過一次後第二次呼叫安全地 no-op）。
+     *
+     * @return true 表示已處理（呼叫端應 event->accept() 並 return）。
+     */
+    bool tryConfirmYesNoViaRightClick(QMouseEvent* event);
+
+    /**
      * @brief 處理物件選擇
      */
     void handleObjectSelection(const QPoint& screenPos);

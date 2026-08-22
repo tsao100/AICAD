@@ -52,6 +52,15 @@ Transform2D Transform2D::mirror(const QVector2D& axisP0, const QVector2D& axisP1
     return t;
 }
 
+Transform2D Transform2D::scale(const QVector2D& center, double factor)
+{
+    Transform2D t;
+    t.m_kind   = Kind::Scale;
+    t.m_center = center;
+    t.m_factor = factor;
+    return t;
+}
+
 QVector2D Transform2D::apply(const QVector2D& p) const
 {
     switch (m_kind) {
@@ -79,6 +88,12 @@ QVector2D Transform2D::apply(const QVector2D& p) const
         const QVector2D foot = m_axisP0 + dir * float(t);
         return foot * 2.0f - p;
     }
+
+    case Kind::Scale: {
+        if (m_factor <= 0.0) return p;  // 防呆：非正 factor 視同不縮放。
+        const QVector2D rel = p - m_center;
+        return m_center + rel * float(m_factor);
+    }
     }
     return p;
 }
@@ -92,6 +107,8 @@ double Transform2D::applyAngle(double angleRad) const
         return angleRad + m_angleRad;
     case Kind::Mirror:
         return 2.0 * m_axisAngle - angleRad;
+    case Kind::Scale:
+        return angleRad;  // 等比縮放不改變方向角。
     }
     return angleRad;
 }
@@ -152,7 +169,10 @@ void transformCircleInPlace(Sketch* sketch, SketchCircle* circ, const Transform2
 {
     if (!circ) return;
     moveOnce(sketch, circ->centerUuid, xf, touched);
-    // 半徑在剛體變換（平移/旋轉）與鏡射下皆不變。
+    // 半徑在剛體變換（平移/旋轉）與鏡射下不變，只有 Scale 會改變半徑；
+    // radius 是獨立純量欄位（不像 Line/Arc 端點那樣由座標點定義），
+    // 不會因為搬動 centerUuid 而自動反映縮放，需另外乘上 linearScaleFactor()。
+    circ->radius *= xf.linearScaleFactor();
 }
 
 /// 依照既有 SketchGripProvider::computeGrips() 對 Arc grip 拖曳的作法：
@@ -220,6 +240,12 @@ void transformEllipseInPlace(Sketch* sketch, SketchEllipse* ell, const Transform
     if (!ell) return;
     ell->center = xf.apply(ell->center);
     ell->angle  = xf.applyAngle(ell->angle);
+
+    // majorRadius/minorRadius 與 SketchCircle::radius 同理，是獨立純量
+    // 欄位，Scale 之外的變換皆不變（linearScaleFactor() 回傳 1.0）。
+    const double f = xf.linearScaleFactor();
+    ell->majorRadius *= f;
+    ell->minorRadius *= f;
 
     if (!ell->centerUuid.isEmpty()) {
         sketch->movePoint(ell->centerUuid, ell->center);
@@ -602,7 +628,7 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
 }
 
 QStringList stretchWithinRect(Sketch* sketch, const QVector2D& rectMin, const QVector2D& rectMax,
-                              const QVector2D& delta)
+                              const QVector2D& delta, bool solveAfter)
 {
     QStringList affected;
     if (!sketch) return affected;
@@ -733,13 +759,20 @@ QStringList stretchWithinRect(Sketch* sketch, const QVector2D& rectMin, const QV
 
     if (!fullyEnclosed.isEmpty()) {
         // applyToSelection() 內部會統一呼叫一次 solveConstraints()／
-        // rebuildRequested()，一併涵蓋上面已經先做的局部 movePoint（因為
-        // 那些都發生在這一步之前，同一次 solve 就能一起收斂）。
-        applyToSelection(sketch, fullyEnclosed, Transform2D::translation(delta));
+        // rebuildRequested()（solveAfter 透傳），一併涵蓋上面已經先做的
+        // 局部 movePoint（因為那些都發生在這一步之前，同一次 solve 就能
+        // 一起收斂）。
+        applyToSelection(sketch, fullyEnclosed, Transform2D::translation(delta), solveAfter);
         for (const QString& u : fullyEnclosed)
             if (!affected.contains(u)) affected.append(u);
     } else if (!touched.isEmpty()) {
-        sketch->solveConstraints();
+        // 與 applyToSelection() 收尾方式一致：solveAfter 只決定要不要重新
+        // 解約束，rebuildRequested() 一律送出（movePoint() 自己雖然也會
+        // emit geometryChanged()，但畫面重繪實際掛的是 rebuildRequested()，
+        // 這裡明確送出、不依賴前者間接觸發，行為才會跟 applyToSelection()
+        // 一致）。
+        if (solveAfter)
+            sketch->solveConstraints();
         Q_EMIT sketch->rebuildRequested();
     }
 

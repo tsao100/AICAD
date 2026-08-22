@@ -232,34 +232,17 @@ void SketchSelectionPicker::setHighlight(const QString& uuid, bool on)
     auto context = cadView->context();
     if (context.IsNull()) return;
 
-    auto tryHighlight = [&](const QList<QString>& uuids,
-                             const QList<Handle(AIS_InteractiveObject)>& shapes) -> bool {
-        for (int i = 0; i < uuids.size() && i < shapes.size(); ++i) {
-            if (uuids[i] != uuid) continue;
-            const Handle(AIS_InteractiveObject)& obj = shapes[i];
-            if (obj.IsNull()) return true;
-            const bool isSelected = context->IsSelected(obj);
-            if (on != isSelected)
-                context->AddOrRemoveSelected(obj, Standard_True);
-            return true;
-        }
-        return false;
-    };
-
-    if (tryHighlight(m_sketch->aisShapeUuids(), m_sketch->aisShapes()))
+    const QList<QString>& uuids = m_sketch->aisShapeUuids();
+    QList<Handle(AIS_InteractiveObject)> shapes = m_sketch->aisShapes();
+    for (int i = 0; i < uuids.size() && i < shapes.size(); ++i) {
+        if (uuids[i] != uuid) continue;
+        const Handle(AIS_InteractiveObject)& obj = shapes[i];
+        if (obj.IsNull()) return;
+        const bool isSelected = context->IsSelected(obj);
+        if (on != isSelected)
+            context->AddOrRemoveSelected(obj, Standard_True);
         return;
-
-    // ⚠️ 修正：建構線／弧／圓（Construction/Centerline）除了不參與輪廓外，
-    // 其他功能都要與一般幾何相同——包含在 MOVE/COPY/ROTATE/MIRROR/STRETCH
-    // 等互動選取過程中，被點選時要能顯示相同的選取高亮。原本只查
-    // aisShapeUuids()/aisShapes()（不含建構幾何），導致點選建構幾何時
-    // 完全沒有高亮回饋。
-    const QList<Handle(AIS_Shape)> ctorShapes = m_sketch->constructionShapes();
-    QList<Handle(AIS_InteractiveObject)> ctorShapesAsIO;
-    ctorShapesAsIO.reserve(ctorShapes.size());
-    for (const auto& s : ctorShapes)
-        ctorShapesAsIO.append(s);
-    tryHighlight(m_sketch->constructionShapeUuids(), ctorShapesAsIO);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

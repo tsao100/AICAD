@@ -10,7 +10,10 @@
  * LC 群組（直線 → Clothoid → 弧）：
  *   1. 使用者點擊選取 Fixed Tangent（入切線）。
  *   2. 使用者點擊選取 Fixed CircularArc（目標弧，位於螺旋之後）。
- *   3. （選用）輸入螺旋線類型 T=CLOTHOID / HALFSINE / PARABOLA / CUBICJPN / CUBICECI。
+ *   3. （選用）輸入螺旋線類型 T=CLOTHOID / HALFSINE / PARABOLA / CUBICJPN / CUBICECI
+ *      （亦支援 SINUSOIDAL / COSINE / BLOSS / LEMNISCATE / WIENERBOGEN /
+ *      RADIOID / LOGARITHMIC / HYPERBOLIC / POLYNOMIAL / QUINTIC /
+ *      BIQUADRATIC / SPLINE / BLOSSEULERHYBRID，見 getUsage()）。
  *   4. Enter 確認 → addLC(tangentIdx, arcIdx, spiralType) → solve() → refresh()。
  *      Solver 以二分法自動求解 Clothoid 長度 Ls；弧的 PC 更新為 SC 點。
  *

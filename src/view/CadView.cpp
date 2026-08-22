@@ -24,6 +24,8 @@
 #include "osnap/OSnapManager.h"
 #include "ui/GripEventFilter.h"
 #include "ui/UIManager.h"
+#include "ui/CommandLineWidget.h"
+#include "ui/CommandInputEdit.h"
 #include "cad/grips/GripManager.h"
 #include "command/CommandManager.h"
 #include "geometry/GeometryBuilder.h"
@@ -1287,13 +1289,20 @@ void CadView::cancelActiveBoxSelect()
 }
 
 void CadView::setMode(InteractionMode mode) {
-    if (d->mode == mode) {
-        return;
-    }
-
-    // 模式切換時，若窗選/穿越窗選正在進行中則取消，避免殘留選取框。
+    // ⚠️ 窗選/穿越窗選正在進行中就取消——這個檢查刻意放在「mode 沒變就
+    // 提早 return」之前執行：像 TRIM/EXTEND 這種「選取剪切邊/邊界邊
+    // （GetGeom）→ 逐次點選要處理的物件（同樣是 GetGeom）」的兩階段流
+    // 程，第二階段呼叫 setMode(GetGeom) 時 d->mode 早已經是 GetGeom，若
+    // 把這段檢查放在提早 return 之後，選取階段若殘留一個尚未收尾的窗選
+    // （d->boxSelectArmed 仍是 true），會一路帶進第二階段、卡住不會被
+    // 清掉——而 tryEndGetGeomSelectionViaRightClick() 的其中一個前提條件
+    // 正是 !d->boxSelectArmed，殘留的窗選旗標會讓右鍵結束命令失效。
     if (d->boxSelectArmed) {
         cancelBoxSelectCandidate();
+    }
+
+    if (d->mode == mode) {
+        return;
     }
 
     // GetGeom 模式：關閉 OSnap，讓 OCCT DetectedInteractive 決定選取幾何
@@ -3143,6 +3152,64 @@ bool CadView::tryEndGetGeomSelectionViaRightClick(QMouseEvent* event)
     return true;
 }
 
+bool CadView::tryEndPendingTextInputViaRightClick(QMouseEvent* event)
+{
+    if (!event || event->button() != Qt::RightButton) return false;
+
+    // 通用版：只要輸入框裡已經有使用者打好、還沒按下 Enter 的文字，滑鼠
+    // 右鍵就等同送出那段文字（等同真的按下 Enter）——不像
+    // tryEndGetGeomSelectionViaRightClick() 只在 GetGeom 模式下、且只送出
+    // 「空字串」（結束選取），這裡不限制 d->mode，也是把「目前打好的文字」
+    // 原樣送出（例如 TRACKEXTRACT 提示等待 A/AUTO 時，打了 A 還沒按
+    // Enter，右鍵應該直接送出 "A"，而不是被下面的「取消指令」邏輯打斷；
+    // Sketch edit 中還沒有指令在跑、只是剛打了指令名稱如 "LINE" 時，
+    // isWaitingForInput() 是 false，但一樣要能用右鍵送出，故不檢查這個
+    // 狀態，只檢查輸入框裡「有沒有文字」——這才是使用者真正在意的條件）。
+    //
+    // 輸入框裡沒有文字時回傳 false，交給後續既有邏輯（GetGeom 空白 Enter
+    // 結束選取、或取消目前指令）處理，行為不變。
+    auto* app   = Application::instance();
+    auto* uiMgr = app ? app->uiManager() : nullptr;
+    auto* cmdLineWidget = uiMgr ? uiMgr->commandLine() : nullptr;
+    auto* inputEdit = cmdLineWidget ? cmdLineWidget->inputEdit() : nullptr;
+    if (!inputEdit) return false;
+
+    const QString typed = inputEdit->text().trimmed();
+    if (typed.isEmpty()) return false;
+
+    inputEdit->clear();
+    cmdLineWidget->submitCommand(typed);
+    return true;
+}
+
+bool CadView::tryConfirmYesNoViaRightClick(QMouseEvent* event)
+{
+    if (!event || event->button() != Qt::RightButton) return false;
+
+    auto* cmdMgr = Application::instance() ? Application::instance()->commandManager() : nullptr;
+    const bool hasCmd = cmdMgr && cmdMgr->hasActiveCommand();
+    auto* clm = core::CommandLineManager::instance();
+    if (!hasCmd || !clm || !clm->isWaitingForInput() ||
+        clm->expectedInputType() != core::InputType::YesNo)
+    {
+        return false;
+    }
+
+    auto* uiMgr = Application::instance()->uiManager();
+    auto* cmdLine = uiMgr ? uiMgr->commandLine() : nullptr;
+    if (!cmdLine || !cmdLine->inputEdit()) {
+        // 極端防呆：命令列 widget 不存在時退回舊行為（送空字串＝預設值）。
+        clm->executeCommand(QString());
+        return true;
+    }
+
+    // 呼叫與「使用者按下 Enter」完全相同的送出邏輯：輸入框有內容（例如
+    // 使用者先打了 "y"）就送出該內容，沒有內容就送出空字串套用預設值
+    // （MIRROR 的提示文字是 [Yes/No] <No>，空字串＝No）。
+    cmdLine->inputEdit()->submitCurrentLine();
+    return true;
+}
+
 void CadView::mousePressEvent(QMouseEvent* event) {
     d->lastMousePos = event->pos();
     d->mousePressed = true;
@@ -3248,7 +3315,17 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     // 同一組判斷在 mouseReleaseEvent() 也會再呼叫一次（見該處），純屬保險：
     // 兩者其中一個實際觸發即可，isWaitingForInput() 在第一次觸發後就會變
     // false，第二次呼叫會安全地no-op，不會重複送出。
+    if (tryEndPendingTextInputViaRightClick(event)) {
+        event->accept();
+        return;
+    }
+
     if (tryEndGetGeomSelectionViaRightClick(event)) {
+        event->accept();
+        return;
+    }
+
+    if (tryConfirmYesNoViaRightClick(event)) {
         event->accept();
         return;
     }
@@ -3737,6 +3814,54 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         }
     }
 
+    // ── GetPoint 模式：hover 偵測（供 MOVE/COPY/ROTATE/MIRROR 等互動編輯
+    //    命令使用；目前主要供 MIRROR 的「hover 到既有線段直接作為鏡射軸」
+    //    與 TRIM/EXTEND 的裁切/延伸結果即時預覽使用）──────────────────
+    // 與上面 GetGeom 模式那個區塊刻意分開、不合併條件：GetGeom 那份還
+    // 一併驅動 GDIM 專用的 dimPreviewMousePt / m_dimOverlay / 幾何式內部
+    // 命中測試，這裡只需要單純的「目前游標下偵測到哪個既有幾何」，混在
+    // 一起容易誤觸 GDIM 疊層在非 GDIM 情境下也更新。
+    if (d->mode == InteractionMode::GetPoint) {
+        auto* bus = core::Application::instance()->eventBus();
+        if (bus) {
+            QVector2D planePt = screenToPlane(event->pos());
+            QString hoverUuid;
+            int     hoverHandle = -1;
+            if (m_snapManager && m_snapManager->isSnapActive()) {
+                auto snap = m_snapManager->currentSnap();
+                if (snap.has_value()) {
+                    hoverUuid   = snap->geomUuid;
+                    hoverHandle = snap->geomHandle;
+                    // ⚠️ 座標也要一併換成吸附點，跟 handlePointInput()
+                    // （實際點擊送出 POINT_ACQUIRED/GEOM_PICKED 時）的解析
+                    // 邏輯保持一致——否則 hover 預覽用的是「游標原始位
+                    // 置」，實際點擊卻用「OSnap 吸附後的位置」，兩者算出
+                    // 來的座標不一樣，預覽結果就可能跟點下去的實際結果對
+                    // 不上（例如 TRIM 中間裁切：游標視覺上在兩個交點正中
+                    // 間，但 OSnap 吸附半徑內剛好有一個交點，實際點擊會
+                    // 被吸附過去，預覽卻還停在「原始游標位置」算出來的
+                    // 結果，兩者不一致）。這正是 GDIM 那邊「hover 預覽顯
+                    // 示半徑，點擊卻吸附到象限點變成直徑」同一類 bug，見
+                    // handlePointInput() 內對應的說明。
+                    if (auto pt2d = m_snapManager->snapPoint2DF())
+                        planePt = QVector2D(float(pt2d->x()), float(pt2d->y()));
+                }
+            }
+            if (hoverUuid.isEmpty() && !d->context.IsNull() && d->context->HasDetected()) {
+                Handle(AIS_InteractiveObject) det = d->context->DetectedInteractive();
+                if (!det.IsNull()) {
+                    hoverUuid   = d->aisToGeomUuid.value(det.get());
+                    hoverHandle = static_cast<int>(cad::GeomHandle::WholeGeom);
+                }
+            }
+            QVariantMap m;
+            m["geomUuid"] = hoverUuid;
+            m["handle"]   = hoverHandle;
+            m["point"]    = QVariant::fromValue(planePt);
+            bus->publish(core::Events::GEOM_HOVER, m);
+        }
+    }
+
     // 右鍵拖曳旋轉
     if (d->mousePressed && d->pressedButton == Qt::RightButton && !d->view.IsNull()) {
         d->view->Rotation(xp, yp);
@@ -3995,7 +4120,11 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
         // （見 tryEndGetGeomSelectionViaRightClick() 說明；正常情況下
         // press 階段就已經處理掉，這裡的呼叫會因為 isWaitingForInput()
         // 已是 false 而安全地 no-op。）
-        if (tryEndGetGeomSelectionViaRightClick(event)) {
+        if (tryEndPendingTextInputViaRightClick(event)) {
+            event->accept();
+        } else if (tryEndGetGeomSelectionViaRightClick(event)) {
+            event->accept();
+        } else if (tryConfirmYesNoViaRightClick(event)) {
             event->accept();
         }
         d->mousePressed = false;
@@ -4251,6 +4380,17 @@ void CadView::wheelEvent(QWheelEvent* event) {
 // ─────────────────────────────────────────────────────────────────────────────
 void CadView::performEscapeCancel() {
     if (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::GetPoint) {
+        // 🐛 修正：舊版這裡只在 d->mode == GetPoint 時才 bus->publish(POINT_CANCELLED)，
+        // Sketching 模式（例如 LineCommand 點取點期間，rubberBandMode="line"、
+        // mode="sketching"）完全沒有送出這個 EventBus 事件，只 emit 了 Qt signal
+        // pointCancelled()——而各指令（如 LineCommand::handleCancelled()）是訂閱
+        // EventBus 的 Events::POINT_CANCELLED，不是這個 Qt signal，導致 InputJig
+        // 顯示中的第一次右鍵／ESC 只把 Jig 關掉、指令本身完全沒被取消／結束，
+        // 需要再操作一次才會真的送到指令。改成 Sketching 與 GetPoint 都送出
+        // 同一個 bus 事件，兩種模式下「按一次」就會確實傳達到指令本身。
+        EventBus* bus = Application::instance()->eventBus();
+        bus->publish(Events::POINT_CANCELLED, QVariant());
+
         Q_EMIT pointCancelled();
         if (d->rubberBand) {
             d->rubberBand->clearPoints();
@@ -4261,12 +4401,6 @@ void CadView::performEscapeCancel() {
             d->inputJig->resetLocks();
         }
         d->jigContext = Private::JigContext::None;
-    }
-    if (d->mode == InteractionMode::GetPoint) {
-        EventBus* bus = Application::instance()->eventBus();
-        bus->publish(Events::POINT_CANCELLED, QVariant());
-
-        Q_EMIT pointCancelled();
     }
     // ESC：grips 開啟時，單次按下即關閉全部 grips（Sketch / HAlign edit 共用同一邏輯）
     turnOffActiveGrips();

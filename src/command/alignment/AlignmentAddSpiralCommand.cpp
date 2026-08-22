@@ -128,6 +128,23 @@ bool AlignmentAddSpiralCommand::parseSpiralType(const QString& text, SpiralType&
     if (key == QLatin1String("PARABOLA") || key == QLatin1String("P"))  { out = SpiralType::Parabola; return true; }
     if (key == QLatin1String("CUBICJPN") || key == QLatin1String("JPN")){ out = SpiralType::CubicJPN; return true; }
     if (key == QLatin1String("CUBICECI") || key == QLatin1String("ECI")){ out = SpiralType::CubicECI; return true; }
+    if (key == QLatin1String("SINUSOIDAL")       || key == QLatin1String("SIN")) { out = SpiralType::Sinusoidal;       return true; }
+    if (key == QLatin1String("COSINE")           || key == QLatin1String("COS")) { out = SpiralType::Cosine;           return true; }
+    if (key == QLatin1String("BLOSS")            || key == QLatin1String("BL"))  { out = SpiralType::Bloss;            return true; }
+    if (key == QLatin1String("LEMNISCATE")       || key == QLatin1String("LEM")) { out = SpiralType::Lemniscate;       return true; }
+    if (key == QLatin1String("WIENERBOGEN")      || key == QLatin1String("WB"))  { out = SpiralType::WienerBogen;      return true; }
+    if (key == QLatin1String("RADIOID")          || key == QLatin1String("RAD")) { out = SpiralType::Radioid;          return true; }
+    if (key == QLatin1String("ELASRADIOID")      || key == QLatin1String("ERAD")) { out = SpiralType::ElasticRadioid;   return true; }
+    if (key == QLatin1String("NORWICHSTURM")     || key == QLatin1String("NWS")) { out = SpiralType::NorwichSturm;     return true; }
+    if (key == QLatin1String("PSEUELLRADIOID")   || key == QLatin1String("PER")) { out = SpiralType::PseudoEllipticRadioid; return true; }
+    if (key == QLatin1String("LOGARITHMIC")      || key == QLatin1String("LOG")) { out = SpiralType::Logarithmic;      return true; }
+    if (key == QLatin1String("HYPERBOLIC")       || key == QLatin1String("HYP")) { out = SpiralType::Hyperbolic;       return true; }
+    if (key == QLatin1String("POLYNOMIAL")       || key == QLatin1String("POLY")){ out = SpiralType::Polynomial;       return true; }
+    if (key == QLatin1String("QUINTIC")          || key == QLatin1String("QNT")) { out = SpiralType::Quintic;          return true; }
+    if (key == QLatin1String("PHQUINTIC")        || key == QLatin1String("PHQ")) { out = SpiralType::PHQuintic;        return true; }
+    if (key == QLatin1String("BIQUADRATIC")      || key == QLatin1String("BIQ")) { out = SpiralType::Biquadratic;      return true; }
+    if (key == QLatin1String("SPLINE")           || key == QLatin1String("SPL")) { out = SpiralType::Spline;           return true; }
+    if (key == QLatin1String("BLOSSEULERHYBRID") || key == QLatin1String("BEH")) { out = SpiralType::BlossEulerHybrid; return true; }
     return false;
 }
 
@@ -138,11 +155,28 @@ bool AlignmentAddSpiralCommand::parseSpiralType(const QString& text, SpiralType&
 QString AlignmentAddSpiralCommand::spiralTypeName(SpiralType t)
 {
     switch (t) {
-    case SpiralType::HalfSine: return QStringLiteral("HalfSine");
-    case SpiralType::Parabola: return QStringLiteral("Parabola");
-    case SpiralType::CubicJPN: return QStringLiteral("CubicJPN");
-    case SpiralType::CubicECI: return QStringLiteral("CubicECI");
-    default:                   return QStringLiteral("Clothoid");
+    case SpiralType::HalfSine:         return QStringLiteral("HalfSine");
+    case SpiralType::Parabola:         return QStringLiteral("Parabola");
+    case SpiralType::CubicJPN:         return QStringLiteral("CubicJPN");
+    case SpiralType::CubicECI:         return QStringLiteral("CubicECI");
+    case SpiralType::Sinusoidal:       return QStringLiteral("Sinusoidal");
+    case SpiralType::Cosine:           return QStringLiteral("Cosine");
+    case SpiralType::Bloss:            return QStringLiteral("Bloss");
+    case SpiralType::Lemniscate:       return QStringLiteral("Lemniscate");
+    case SpiralType::WienerBogen:      return QStringLiteral("WienerBogen");
+    case SpiralType::Radioid:          return QStringLiteral("Radioid");
+    case SpiralType::ElasticRadioid:   return QStringLiteral("ElasticRadioid");
+    case SpiralType::NorwichSturm:     return QStringLiteral("NorwichSturm");
+    case SpiralType::PseudoEllipticRadioid: return QStringLiteral("PseudoEllipticRadioid");
+    case SpiralType::Logarithmic:      return QStringLiteral("Logarithmic");
+    case SpiralType::Hyperbolic:       return QStringLiteral("Hyperbolic");
+    case SpiralType::Polynomial:       return QStringLiteral("Polynomial");
+    case SpiralType::Quintic:          return QStringLiteral("Quintic");
+    case SpiralType::PHQuintic:        return QStringLiteral("PHQuintic");
+    case SpiralType::Biquadratic:      return QStringLiteral("Biquadratic");
+    case SpiralType::Spline:           return QStringLiteral("Spline");
+    case SpiralType::BlossEulerHybrid: return QStringLiteral("BlossEulerHybrid");
+    default:                           return QStringLiteral("Clothoid");
     }
 }
 
@@ -721,7 +755,11 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
         // Proceed to spiral type selection
         outputMessage(
             QString("Spiral type T= [Clothoid(C) / HalfSine(HS) / Parabola(P) / "
-                    "CubicJPN(JPN) / CubicECI(ECI)]  (Enter = Clothoid):"));
+                    "CubicJPN(JPN) / CubicECI(ECI) / Sinusoidal(SIN) / Cosine(COS) / "
+                    "Bloss(BL) / Lemniscate(LEM) / WienerBogen(WB) / Radioid(RAD) / "
+                    "Logarithmic(LOG) / Hyperbolic(HYP) / Polynomial(POLY) / "
+                    "Quintic(QNT) / Biquadratic(BIQ) / Spline(SPL) / "
+                    "BlossEulerHybrid(BEH)]  (Enter = Clothoid):"));
         bus->publish(Events::COMMAND_PROMPT,
                      tr("Spiral type T= (Enter = Clothoid):"));
         m_step = Step::WaitingForType;
@@ -759,9 +797,15 @@ void AlignmentAddSpiralCommand::handleNumberInput(const QString& text)
             } else {
                 outputMessage(
                     QString("Unknown type '%1'. Valid: CLOTHOID(C) HALFSINE(HS) "
-                            "PARABOLA(P) CUBICJPN(JPN) CUBICECI(ECI)").arg(trimmed));
+                            "PARABOLA(P) CUBICJPN(JPN) CUBICECI(ECI) SINUSOIDAL(SIN) "
+                            "COSINE(COS) BLOSS(BL) LEMNISCATE(LEM) WIENERBOGEN(WB) "
+                            "RADIOID(RAD) ELASRADIOID(ERAD) NORWICHSTURM(NWS) "
+                            "PSEUELLRADIOID(PER) LOGARITHMIC(LOG) HYPERBOLIC(HYP) "
+                            "POLYNOMIAL(POLY) QUINTIC(QNT) PHQUINTIC(PHQ) "
+                            "BIQUADRATIC(BIQ) SPLINE(SPL) BLOSSEULERHYBRID(BEH)").arg(trimmed));
                 bus->publish(Events::COMMAND_PROMPT,
-                             tr("T= [C / HS / P / JPN / ECI]  (Enter = Clothoid):"));
+                             tr("T= [C/HS/P/JPN/ECI/SIN/COS/BL/LEM/WB/RAD/ERAD/NWS/PER/"
+                                "LOG/HYP/POLY/QNT/PHQ/BIQ/SPL/BEH]  (Enter = Clothoid):"));
                 CommandLineManager::instance()->waitForInput(core::InputType::Number);
                 return;
             }
@@ -953,11 +997,28 @@ QString AlignmentAddSpiralCommand::getUsage() const
         "      2nd click on Arc     → ACA mode.\n"
         "\n"
         "  Spiral types (T=):\n"
-        "    CLOTHOID (C)   — Euler-Cornu, linear curvature [default]\n"
-        "    HALFSINE (HS)  — Half-sine curvature profile\n"
-        "    PARABOLA (P)   — Cubic parabola\n"
-        "    CUBICJPN (JPN) — Japanese cubic parabola (JIS E 1301)\n"
-        "    CUBICECI (ECI) — CECI cubic parabola\n"
+        "    CLOTHOID (C)          — Euler-Cornu, linear curvature [default]\n"
+        "    HALFSINE (HS)         — Half-sine curvature profile\n"
+        "    PARABOLA (P)          — Cubic parabola\n"
+        "    CUBICJPN (JPN)        — Japanese cubic parabola (JIS E 1301)\n"
+        "    CUBICECI (ECI)        — CECI cubic parabola\n"
+        "    SINUSOIDAL (SIN)      — Sine-ramp curvature profile\n"
+        "    COSINE (COS)          — Raised-cosine curvature ramp\n"
+        "    BLOSS (BL)            — Bloss cubic (smoothstep) curvature ramp\n"
+        "    LEMNISCATE (LEM)      — Lemniscate-style convex curvature ramp\n"
+        "    WIENERBOGEN (WB)      — Wiener Bogen (Vienna curve), septic ramp\n"
+        "    RADIOID (RAD)         — Radioid concave curvature ramp\n"
+        "    ELASRADIOID (ERAD)    — Elastic curve (elastica), kappa(x)=2x/a^2\n"
+        "    NORWICHSTURM (NWS)    — Norwich/Sturm spiral, kappa=1/r\n"
+        "    PSEUELLRADIOID (PER)  — Pseudo-elliptic radioid, y=a*gd^-1(x/a)\n"
+        "    LOGARITHMIC (LOG)     — Logarithmic curvature ramp\n"
+        "    HYPERBOLIC (HYP)      — Hyperbolic-tangent curvature ramp\n"
+        "    POLYNOMIAL (POLY)     — Plain cubic-power curvature ramp\n"
+        "    QUINTIC (QNT)         — Quintic (5th-order) smoothstep ramp\n"
+        "    PHQUINTIC (PHQ)       — Pythagorean-Hodograph quintic spiral (Walton-Meek)\n"
+        "    BIQUADRATIC (BIQ)     — Quartic-power curvature ramp\n"
+        "    SPLINE (SPL)          — Piecewise cubic-Hermite curvature ramp\n"
+        "    BLOSSEULERHYBRID (BEH)— 50/50 Bloss / linear (Euler) blend\n"
         "\n"
         "  At confirm step, enter T=<type> to change the spiral family.\n"
         "  Right-click / ESC to cancel.\n"

@@ -12,6 +12,7 @@
 #include "../cad/sketch/SketchGeomTransformUtil.h"
 #include "../ui/UIManager.h"
 #include "../view/CadView.h"
+#include "../view/RubberBand.h"
 
 #include <QMetaObject>
 #include <QPointF>
@@ -58,6 +59,8 @@ CommandResult StretchCommand::execute(const CommandContext& ctx)
     m_usePreselected = false;
     m_preSelected.clear();
     m_corner1 = m_corner2 = m_basePoint = QVector2D();
+    m_liveDelta = QVector2D();
+    m_liveDeltaApplied = false;
 
     Sketch* sk = activeSketch();
     if (!sk) {
@@ -184,9 +187,10 @@ void StretchCommand::onPointAcquired(const QVariant& payload)
         m_basePoint = pt;
         m_state = State::WaitSecondPoint;
 
-        // 從矩形預覽切換成基準點→游標的線預覽（位移向量）。
+        // 從矩形預覽切換成基準點→游標的線預覽（位移向量）＋即時拉伸預覽。
         if (Sketch* sk = activeSketch())
             rb::armLinePreview(sk, m_basePoint);
+        armLivePreview();
 
         if (cmdMgr) cmdMgr->showPrompt("[STRETCH] Specify second point (displacement target):");
         return;
@@ -194,6 +198,12 @@ void StretchCommand::onPointAcquired(const QVariant& payload)
     case State::WaitSecondPoint: {
         Sketch* sk = activeSketch();
         const QVector2D delta = pt - m_basePoint;
+
+        // 確認前先把即時預覽期間「輕量套用」在真實幾何上的位移還原，讓
+        // 最終送出的位移仍是「原始座標 → 使用者指定的最終位移」單一完整
+        // 動作，避免與預覽期間的累計增量重複疊加（比照 ROTATE 的
+        // revertLivePreview() 用法）。
+        revertLivePreview();
 
         if (sk) {
             if (m_usePreselected) {
@@ -232,6 +242,95 @@ void StretchCommand::onPointAcquired(const QVariant& payload)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// 即時位移預覽（WaitSecondPoint 階段）
+// ─────────────────────────────────────────────────────────────────────────
+
+void StretchCommand::armLivePreview()
+{
+    m_liveDelta = QVector2D();
+    m_liveDeltaApplied = false;
+
+    Sketch* sk = activeSketch();
+    if (!sk) return;
+    if (!m_usePreselected && m_corner1 == m_corner2) return;  // 窗選矩形退化，不應發生但防呆一下
+
+    auto* uiMgr   = core::Application::instance()->uiManager();
+    auto* cadView = uiMgr ? uiMgr->cadView() : nullptr;
+    view::RubberBand* band = cadView ? cadView->rubberBand() : nullptr;
+    if (!band) return;
+
+    m_livePreviewConn = QObject::connect(
+        band, &view::RubberBand::updated, this,
+        [this, band] {
+            if (m_state != State::WaitSecondPoint) return;
+            if (!band->hasCurrentPoint()) return;
+            const QPointF cp = band->currentPoint();
+            updateLivePreviewTo(QVector2D(float(cp.x()), float(cp.y())));
+        });
+}
+
+void StretchCommand::updateLivePreviewTo(const QVector2D& cursorPt)
+{
+    if (m_state != State::WaitSecondPoint) return;
+
+    Sketch* sk = activeSketch();
+    if (!sk) return;
+
+    const QVector2D newDelta = cursorPt - m_basePoint;
+    if (m_liveDeltaApplied && newDelta == m_liveDelta) return;
+
+    if (m_usePreselected) {
+        // 模式 A：固定的既選集合，跟 MOVE 完全一樣——復原上一幀位移、
+        // 套用這一幀位移即可（哪些物件受影響不會因為位移而改變）。
+        if (m_liveDeltaApplied) {
+            cad::transform::applyToSelection(
+                sk, m_preSelected, cad::transform::Transform2D::translation(-m_liveDelta), false);
+        }
+        cad::transform::applyToSelection(
+            sk, m_preSelected, cad::transform::Transform2D::translation(newDelta), false);
+    } else {
+        // 窗選模式：哪些端點落在窗內是根據「呼叫當下的座標」判斷的，
+        // 每一幀都必須先用上一幀位移的反向量復原回原始座標，才能保證
+        // 這一幀重新判斷出來的受影響點集合跟第一幀一致（見
+        // stretchWithinRect() 的 solveAfter 參數說明）。
+        const QVector2D rectMin(qMin(m_corner1.x(), m_corner2.x()),
+                                qMin(m_corner1.y(), m_corner2.y()));
+        const QVector2D rectMax(qMax(m_corner1.x(), m_corner2.x()),
+                                qMax(m_corner1.y(), m_corner2.y()));
+        if (m_liveDeltaApplied)
+            cad::transform::stretchWithinRect(sk, rectMin, rectMax, -m_liveDelta, false);
+        cad::transform::stretchWithinRect(sk, rectMin, rectMax, newDelta, false);
+    }
+
+    m_liveDelta = newDelta;
+    m_liveDeltaApplied = true;
+}
+
+void StretchCommand::revertLivePreview()
+{
+    QObject::disconnect(m_livePreviewConn);
+    m_livePreviewConn = QMetaObject::Connection();
+
+    if (!m_liveDeltaApplied) return;
+
+    Sketch* sk = activeSketch();
+    if (sk) {
+        if (m_usePreselected) {
+            cad::transform::applyToSelection(
+                sk, m_preSelected, cad::transform::Transform2D::translation(-m_liveDelta), false);
+        } else {
+            const QVector2D rectMin(qMin(m_corner1.x(), m_corner2.x()),
+                                    qMin(m_corner1.y(), m_corner2.y()));
+            const QVector2D rectMax(qMax(m_corner1.x(), m_corner2.x()),
+                                    qMax(m_corner1.y(), m_corner2.y()));
+            cad::transform::stretchWithinRect(sk, rectMin, rectMax, -m_liveDelta, false);
+        }
+    }
+    m_liveDelta = QVector2D();
+    m_liveDeltaApplied = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 取消
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -267,6 +366,12 @@ void StretchCommand::unsubscribeAll()
 
 void StretchCommand::cleanup()
 {
+    // 防呆：正常路徑（WaitSecondPoint 分支）在呼叫這裡之前就已經
+    // revertLivePreview() 過（m_liveDeltaApplied 早已是 false，這裡是
+    // no-op）。取消路徑（onCancelled）則直接經由 cleanup() 呼叫到這裡，
+    // 確保「取消 STRETCH」一定會把預覽期間搬動過的幾何還原。
+    revertLivePreview();
+
     unsubscribeAll();
     rb::disarm();
 

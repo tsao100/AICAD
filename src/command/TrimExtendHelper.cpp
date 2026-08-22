@@ -194,6 +194,27 @@ QVector2D pointOnCircle(cad::Sketch* sketch, const Handle(Geom_Circle)& circ, do
     return worldToPlane(sketch, p);
 }
 
+/// 取樣 [fromAngle, toAngle] 這段弧（沿 fromAngle→toAngle 的正向/逆時針
+/// 方向，繞經 2π 邊界時自動處理），供 TRIM/EXTEND 的 hover 預覽疊層畫成
+/// 折線用。純視覺近似，count+1 個取樣點。
+QVector<QVector2D> sampleArcSpan(cad::Sketch* sketch, const Handle(Geom_Circle)& circ,
+                                 double fromAngle, double toAngle, int count = 24)
+{
+    QVector<QVector2D> pts;
+    if (circ.IsNull() || count < 2) return pts;
+
+    double span = toAngle - fromAngle;
+    span = std::fmod(span, 2.0 * M_PI);
+    if (span < 0.0) span += 2.0 * M_PI;
+
+    pts.reserve(count + 1);
+    for (int i = 0; i <= count; ++i) {
+        const double t = double(i) / double(count);
+        pts.append(pointOnCircle(sketch, circ, fromAngle + span * t));
+    }
+    return pts;
+}
+
 double angleOfPoint(cad::Sketch* sketch, const Handle(Geom_Circle)& circ, const QVector2D& planePt)
 {
     if (circ.IsNull()) return 0.0;
@@ -288,24 +309,52 @@ QString findOrCreatePoint(cad::Sketch* sketch, const QVector2D& pos)
 {
     for (SketchPoint* pt : sketch->points()) {
         if ((pt->pos - pos).lengthSquared() < float(kPosEps * kPosEps)) {
+            // ⚠️ 找到既有點就沿用其 UUID，但仍要把座標校正到「這次真正算
+            // 出來的 pos」——否則被沿用的點會停在它原本（在容許誤差內、
+            // 但不精確相等）的舊座標，跟緊接著用這個 uuid 建立的新線段/
+            // 弧的端點座標（addLineGeom()/addArcGeom() 用的是這次算出來
+            // 的 pos，不是點的舊座標）出現真實存在但肉眼難以察覺的落差：
+            // 線／弧渲染出來在新位置是對的，但這個 SketchPoint 的權威座標
+            // （之後 grip 拖曳、GDIM 標註、其他共用此點的幾何）仍然停在
+            // 舊位置沒有跟著更新。用 movePoint() 而不是直接改欄位，確保
+            // 同步邏輯（syncGeometryFromPoints()／geometryChanged 訊號）
+            // 一併跑到，其餘共用此點的幾何也會一起校正。
+            // ⚠️ 用 Origin::Endpoint 而不是 Origin::Intersection——這個點
+            // 現在就是新裁切出來那條線／弧的正式端點，語意上跟其他任何
+            // 一條線的端點完全一樣，應該用同樣的紅色端點標記渲染
+            // （SketchPointAIS::Compute() 對 Origin::Endpoint 特別處理成
+            // 固定大小的紅色實心圓點；Origin::Intersection 則是依約束求
+            // 解狀態變色的小圖示，肉眼不容易注意到，這正是先前回報「裁
+            // 切中間段產生新線段時沒有補新的 sketchpoint」的原因——點其
+            // 實有建立，只是視覺上不明顯，容易被誤以為沒有生成）。
+            if ((pt->pos - pos).lengthSquared() > 1e-12f)
+                sketch->movePoint(pt->uuid, pos);
             return pt->uuid;
         }
     }
-    return sketch->addPoint(pos, SketchPoint::Origin::Intersection);
+    return sketch->addPoint(pos, SketchPoint::Origin::Endpoint);
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────
 // TRIM — 依目標型別分派
 // ─────────────────────────────────────────────────────────────────────────
 
-bool trimLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& targetShape,
-             const QStringList& cuttingUuids, const QVector2D& clickPt)
-{
-    QVector<double> params;
-    for (const QVector2D& pt : collectIntersections(sketch, targetShape, line->uuid, cuttingUuids))
-        params.append(g2d::paramOnLine(pt, targetShape.p1, targetShape.p2));
+struct LineTrimRange { bool valid = false; double lower = 0.0, upper = 1.0; };
 
-    if (params.isEmpty()) return false;
+/// TRIM 對 Line 目標的核心運算：找出 clickPt 所在、要被移除的參數區間
+/// [lower, upper]（t=0 對應 targetShape.p1，t=1 對應 targetShape.p2）。
+/// 純運算，不觸碰 sketch——trimLine()（實際執行）與 previewTrimAt()
+/// （hover 預覽）共用同一份邏輯，確保兩者結果一致。
+LineTrimRange computeLineTrimRange(const GeomShape2D& targetShape,
+                                   const QVector<QVector2D>& intersections,
+                                   const QVector2D& clickPt)
+{
+    LineTrimRange r;
+    QVector<double> params;
+    for (const QVector2D& pt : intersections)
+        params.append(g2d::paramOnLine(pt, targetShape.p1, targetShape.p2));
+    if (params.isEmpty()) return r;
 
     std::sort(params.begin(), params.end());
     const double tClick = g2d::paramOnLine(clickPt, targetShape.p1, targetShape.p2);
@@ -316,43 +365,85 @@ bool trimLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& targetSh
         if (t <= tClick + kParamEps && t > lower) lower = t;
         if (t >= tClick - kParamEps && t < upper) upper = t;
     }
-    if (upper - lower < 1e-6) return false;  // 點擊處剛好落在交點上，沒有可刪除的段落
+    if (upper - lower < 1e-6) return r;  // 點擊處剛好落在交點上，沒有可刪除的段落
 
-    const QVector2D lowerPt = targetShape.p1 + (targetShape.p2 - targetShape.p1) * float(lower);
-    const QVector2D upperPt = targetShape.p1 + (targetShape.p2 - targetShape.p1) * float(upper);
+    r.valid = true;
+    r.lower = lower;
+    r.upper = upper;
+    return r;
+}
 
-    const QString origStartUuid = line->startUuid;
-    const QString origEndUuid   = line->endUuid;
-    const GeomRole origRole     = line->role;
-    const QVector2D origP1      = targetShape.p1;
-    const QVector2D origP2      = targetShape.p2;
+bool trimLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& targetShape,
+             const QStringList& cuttingUuids, const QVector2D& clickPt)
+{
+    const auto intersections = collectIntersections(sketch, targetShape, line->uuid, cuttingUuids);
+    const LineTrimRange range = computeLineTrimRange(targetShape, intersections, clickPt);
+    if (!range.valid) return false;
 
-    sketch->removeGeometry(line->uuid);  // 級聯刪除相關約束/標註（Phase 0 已確認）
+    const QVector2D lowerPt = targetShape.p1 + (targetShape.p2 - targetShape.p1) * float(range.lower);
+    const QVector2D upperPt = targetShape.p1 + (targetShape.p2 - targetShape.p1) * float(range.upper);
 
-    if (lower > 1e-6) {
-        const QString lowerUuid = findOrCreatePoint(sketch, lowerPt);
-        sketch->addLineGeom(origP1, lowerPt, origStartUuid, lowerUuid, origRole);
+    const bool keepsOnlyUpperSide = (range.lower <= 1e-6);        // 只剩 [upper, 1]
+    const bool keepsOnlyLowerSide = (range.upper >= 1.0 - 1e-6);  // 只剩 [0, lower]
+
+    // ⚠️ 只保留一截時，沿用「原本這條線」，直接把沒有保留那一端的端點
+    // movePoint() 到裁切邊界——跟 extendLine() 的做法完全一致（見標頭檔
+    // 「hover 即時預覽」段落與 extendLine() 的實作）。不刪除重建整條線，
+    // 有兩個好處：(1) 這條線身上原有的約束（Horizontal/Vertical/固定長度
+    // …）不會因為 removeGeometry() 的級聯刪除而消失；(2) 端點權威座標
+    // 一定透過 movePoint() 更新，不會有「線渲染在新位置、點還停在舊位置」
+    // 的落差（這正是先前回報的「trim 後 sketchpoint 位置沒更新」的根因；
+    // extend 因為本來就是走 movePoint() 這條路徑，所以沒有這個問題）。
+    if (keepsOnlyUpperSide && !keepsOnlyLowerSide) {
+        sketch->movePoint(line->startUuid, upperPt);
+        sketch->solveConstraints();
+        Q_EMIT sketch->rebuildRequested();
+        return true;
     }
-    if (upper < 1.0 - 1e-6) {
-        const QString upperUuid = findOrCreatePoint(sketch, upperPt);
-        sketch->addLineGeom(upperPt, origP2, upperUuid, origEndUuid, origRole);
+    if (keepsOnlyLowerSide && !keepsOnlyUpperSide) {
+        sketch->movePoint(line->endUuid, lowerPt);
+        sketch->solveConstraints();
+        Q_EMIT sketch->rebuildRequested();
+        return true;
     }
+
+    // 裁切點落在線段中間，兩截都要保留：沒有辦法只靠 movePoint() 解決
+    // （一條線就是只有兩個端點，變兩截勢必要多一條線），但仍然盡量沿用
+    // 原本這條線當作 [0, lower] 那一截（movePoint() 移動 endUuid），只有
+    // [upper, 1] 這一截需要真的新建——原本的遠端位置（origP2）在移動
+    // endUuid 之前先記下來，因為 endUuid 被移走後就不能再代表那個位置了。
+    const QVector2D origP2   = targetShape.p2;
+    const GeomRole  origRole = line->role;
+
+    sketch->movePoint(line->endUuid, lowerPt);
+
+    const QString upperStartUuid = findOrCreatePoint(sketch, upperPt);
+    const QString upperEndUuid   = findOrCreatePoint(sketch, origP2);
+    const QString newUuid =
+        sketch->addLineGeom(upperPt, origP2, upperStartUuid, upperEndUuid, origRole);
+    if (auto* ng = sketch->findGeometry(newUuid)) ng->role = origRole;
 
     sketch->solveConstraints();
     Q_EMIT sketch->rebuildRequested();
     return true;
 }
 
-bool trimCircle(cad::Sketch* sketch, SketchCircle* circ, const GeomShape2D& targetShape,
-                const QStringList& cuttingUuids, const QVector2D& clickPt)
+struct CircleTrimRange { bool valid = false; double lower = 0.0, upper = 0.0; };
+
+/// TRIM 對 Circle 目標的核心運算：找出 clickPt 所在的相鄰交點角度區間
+/// [lower, upper]（會被移除的那一段弧）。純運算，不觸碰 sketch——
+/// trimCircle() 與 previewTrimAt() 共用。
+CircleTrimRange computeCircleTrimRange(cad::Sketch* sketch, const GeomShape2D& targetShape,
+                                       const QVector<QVector2D>& intersections,
+                                       const QVector2D& clickPt)
 {
-    if (targetShape.occCircle.IsNull()) return false;
+    CircleTrimRange r;
+    if (targetShape.occCircle.IsNull()) return r;
 
     QVector<double> angles;
-    for (const QVector2D& pt : collectIntersections(sketch, targetShape, circ->uuid, cuttingUuids))
+    for (const QVector2D& pt : intersections)
         angles.append(g2d::normalizeAngle(angleOfPoint(sketch, targetShape.occCircle, pt)));
-
-    if (angles.size() < 2) return false;  // 圓至少要兩個交點才能裁切成弧
+    if (angles.size() < 2) return r;  // 圓至少要兩個交點才能裁切成弧
 
     std::sort(angles.begin(), angles.end());
     const double clickAngle =
@@ -370,15 +461,28 @@ bool trimCircle(cad::Sketch* sketch, SketchCircle* circ, const GeomShape2D& targ
             break;
         }
     }
-    if (std::abs(upper - lower) < 1e-6) return false;
+    if (std::abs(upper - lower) < 1e-6) return r;
+
+    r.valid = true;
+    r.lower = lower;
+    r.upper = upper;
+    return r;
+}
+
+bool trimCircle(cad::Sketch* sketch, SketchCircle* circ, const GeomShape2D& targetShape,
+                const QStringList& cuttingUuids, const QVector2D& clickPt)
+{
+    const auto intersections = collectIntersections(sketch, targetShape, circ->uuid, cuttingUuids);
+    const CircleTrimRange range = computeCircleTrimRange(sketch, targetShape, intersections, clickPt);
+    if (!range.valid) return false;
 
     // 保留「從 upper 逆時針掃到 lower」的弧（即跳過被點擊的 [lower, upper] 段）。
-    const QVector2D lowerPt = pointOnCircle(sketch, targetShape.occCircle, lower);
-    const QVector2D upperPt = pointOnCircle(sketch, targetShape.occCircle, upper);
+    const QVector2D lowerPt = pointOnCircle(sketch, targetShape.occCircle, range.lower);
+    const QVector2D upperPt = pointOnCircle(sketch, targetShape.occCircle, range.upper);
 
-    double span = lower - upper;
+    double span = range.lower - range.upper;
     if (span < 0.0) span += 2.0 * M_PI;
-    const double midAngle = upper + span / 2.0;
+    const double midAngle = range.upper + span / 2.0;
     const QVector2D midPt = pointOnCircle(sketch, targetShape.occCircle, midAngle);
 
     const QString origCenterUuid = circ->centerUuid;
@@ -398,16 +502,30 @@ bool trimCircle(cad::Sketch* sketch, SketchCircle* circ, const GeomShape2D& targ
     return !newUuid.isEmpty();
 }
 
-bool trimArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape,
-            const QStringList& cuttingUuids, const QVector2D& clickPt)
+struct ArcTrimRange {
+    bool   valid = false;
+    double s0 = 0.0, e0 = 0.0;              ///< 弧自身的起訖角（normalize 過）
+    double lower = 0.0, upper = 0.0;        ///< 要被移除的 [lower, upper] 區間
+    double keepSpanLower = 0.0;             ///< [s0, lower] 的弧長角度（供取中點用）
+    double keepSpanUpper = 0.0;             ///< [upper, e0] 的弧長角度
+    bool   hasLowerPart = false;            ///< 是否保留 [s0, lower] 這一段
+    bool   hasUpperPart = false;            ///< 是否保留 [upper, e0] 這一段
+};
+
+/// TRIM 對 Arc 目標的核心運算：在弧自身的 [s0, e0] 範圍內找出緊鄰
+/// clickPt 的交點/端點邊界 [lower, upper]（要被移除的區間）。純運算，
+/// 不觸碰 sketch——trimArc() 與 previewTrimAt() 共用。
+ArcTrimRange computeArcTrimRange(cad::Sketch* sketch, const GeomShape2D& targetShape,
+                                 const QVector<QVector2D>& intersections,
+                                 const QVector2D& clickPt)
 {
-    if (targetShape.occCircle.IsNull()) return false;
+    ArcTrimRange r;
+    if (targetShape.occCircle.IsNull()) return r;
 
     QVector<double> angles;
-    for (const QVector2D& pt : collectIntersections(sketch, targetShape, arc->uuid, cuttingUuids))
+    for (const QVector2D& pt : intersections)
         angles.append(g2d::normalizeAngle(angleOfPoint(sketch, targetShape.occCircle, pt)));
-
-    if (angles.isEmpty()) return false;
+    if (angles.isEmpty()) return r;
 
     std::sort(angles.begin(), angles.end());
     const double s0 = g2d::normalizeAngle(targetShape.startAngle);
@@ -441,36 +559,92 @@ bool trimArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape
     const bool hasLowerPart = keepSpanLower > 1e-6;
     const bool hasUpperPart = keepSpanUpper > 1e-6;
 
-    if (!hasLowerPart && !hasUpperPart) return false;  // 點擊處剛好在端點上，沒有可刪除段落
+    if (!hasLowerPart && !hasUpperPart) return r;  // 點擊處剛好在端點上，沒有可刪除段落
 
-    const QString origStartUuid  = arc->startUuid;
-    const QString origEndUuid    = arc->endUuid;
-    const QString origCenterUuid = arc->centerUuid;
-    const GeomRole origRole      = arc->role;
+    r.valid = true;
+    r.s0 = s0; r.e0 = e0;
+    r.lower = lower; r.upper = upper;
+    r.keepSpanLower = keepSpanLower;
+    r.keepSpanUpper = keepSpanUpper;
+    r.hasLowerPart = hasLowerPart;
+    r.hasUpperPart = hasUpperPart;
+    return r;
+}
+
+bool trimArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape,
+            const QStringList& cuttingUuids, const QVector2D& clickPt)
+{
+    const auto intersections = collectIntersections(sketch, targetShape, arc->uuid, cuttingUuids);
+    const ArcTrimRange range = computeArcTrimRange(sketch, targetShape, intersections, clickPt);
+    if (!range.valid) return false;
+
     const Handle(Geom_Circle) occCircle = targetShape.occCircle;
 
-    sketch->removeGeometry(arc->uuid);
+    // 沿用「原本這個弧」，把它的張角重建成 [startAngle, endAngle]，並
+    // movePoint() 兩個端點到新位置——跟 extendArc() 的做法完全一致（直接
+    // 改 arc->curve + movePoint()，不刪除重建整個幾何物件）。理由同
+    // trimLine()：保留原有約束、端點權威座標保證跟著 movePoint() 同步
+    // 更新。
+    auto reshapeArc = [&](SketchArc* a, double startAngle, double endAngle) -> bool {
+        const QVector2D startPt = pointOnCircle(sketch, occCircle, startAngle);
+        const QVector2D endPt   = pointOnCircle(sketch, occCircle, endAngle);
+        double span = endAngle - startAngle;
+        span = std::fmod(span, 2.0 * M_PI);
+        if (span < 0.0) span += 2.0 * M_PI;
+        const QVector2D midPt = pointOnCircle(sketch, occCircle, startAngle + span / 2.0);
 
-    if (hasLowerPart) {
-        const QVector2D newStartPt = pointOnCircle(sketch, occCircle, s0);
-        const QVector2D newEndPt   = pointOnCircle(sketch, occCircle, lower);
-        double mid = s0 + keepSpanLower / 2.0;
-        const QVector2D newMidPt = pointOnCircle(sketch, occCircle, mid);
-        const QString endUuid = findOrCreatePoint(sketch, newEndPt);
-        const QString newUuid = sketch->addArcGeom(newStartPt, newMidPt, newEndPt,
-                                                    origStartUuid, endUuid, origCenterUuid);
-        if (auto* ng = sketch->findGeometry(newUuid)) ng->role = origRole;
+        // ⚠️ 直接重建 curve（不經過 Sketch::addArcGeom()），要用世界座標
+        // 的 gp_Pnt，而不是平面座標（見檔頭「v2 修正紀錄」）。
+        GC_MakeArcOfCircle maker(planeToWorld(sketch, startPt),
+                                 planeToWorld(sketch, midPt),
+                                 planeToWorld(sketch, endPt));
+        if (!maker.IsDone()) {
+            qWarning() << "[TrimExtendHelper] Arc 裁切失敗（三點共線或重合），uuid=" << a->uuid;
+            return false;
+        }
+        a->curve = maker.Value();
+        sketch->movePoint(a->startUuid, startPt);
+        sketch->movePoint(a->endUuid, endPt);
+        return true;
+    };
+
+    if (range.hasLowerPart && !range.hasUpperPart) {
+        // 只剩 [s0, lower] 這一截：沿用原本這個弧。
+        if (!reshapeArc(arc, range.s0, range.lower)) return false;
+        sketch->solveConstraints();
+        Q_EMIT sketch->rebuildRequested();
+        return true;
     }
-    if (hasUpperPart) {
-        const QVector2D newStartPt = pointOnCircle(sketch, occCircle, upper);
-        const QVector2D newEndPt   = pointOnCircle(sketch, occCircle, e0);
-        double mid = upper + keepSpanUpper / 2.0;
-        const QVector2D newMidPt = pointOnCircle(sketch, occCircle, mid);
-        const QString startUuid = findOrCreatePoint(sketch, newStartPt);
-        const QString newUuid = sketch->addArcGeom(newStartPt, newMidPt, newEndPt,
-                                                    startUuid, origEndUuid, origCenterUuid);
-        if (auto* ng = sketch->findGeometry(newUuid)) ng->role = origRole;
+    if (range.hasUpperPart && !range.hasLowerPart) {
+        // 只剩 [upper, e0] 這一截：沿用原本這個弧。
+        if (!reshapeArc(arc, range.upper, range.e0)) return false;
+        sketch->solveConstraints();
+        Q_EMIT sketch->rebuildRequested();
+        return true;
     }
+
+    // 裁切點落在弧中間，兩截都要保留：沒有辦法只靠 movePoint() 解決，
+    // 但仍然盡量沿用原本這個弧當作 [s0, lower] 那一截，只有 [upper, e0]
+    // 這一截需要真的新建——原本的遠端位置（endAngle=e0）在重建 curve
+    // 之前先記下來，因為 endUuid 被 reshapeArc() 移走後就不能再代表那個
+    // 位置了。
+    const GeomRole   origRole      = arc->role;
+    const QString    origCenterUuid = arc->centerUuid;
+    const QVector2D  origEndPt     = pointOnCircle(sketch, occCircle, range.e0);
+
+    if (!reshapeArc(arc, range.s0, range.lower)) return false;
+
+    double span2 = range.e0 - range.upper;
+    span2 = std::fmod(span2, 2.0 * M_PI);
+    if (span2 < 0.0) span2 += 2.0 * M_PI;
+    const QVector2D newStartPt = pointOnCircle(sketch, occCircle, range.upper);
+    const QVector2D newMidPt   = pointOnCircle(sketch, occCircle, range.upper + span2 / 2.0);
+
+    const QString startUuid = findOrCreatePoint(sketch, newStartPt);
+    const QString endUuid   = findOrCreatePoint(sketch, origEndPt);
+    const QString newUuid = sketch->addArcGeom(newStartPt, newMidPt, origEndPt,
+                                                startUuid, endUuid, origCenterUuid);
+    if (auto* ng = sketch->findGeometry(newUuid)) ng->role = origRole;
 
     sketch->solveConstraints();
     Q_EMIT sketch->rebuildRequested();
@@ -481,13 +655,21 @@ bool trimArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape
 // EXTEND — 依目標型別分派
 // ─────────────────────────────────────────────────────────────────────────
 
-bool extendLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& targetShape,
-                const QStringList& boundaryUuids, const QVector2D& clickPt)
+struct LineExtendResult { bool valid = false; bool extendStart = false; double bestT = 0.0; };
+
+/// EXTEND 對 Line 目標的核心運算：決定要延伸哪一端（離 clickPt 較近的
+/// 端點）與延伸後的新參數 t（沿 targetShape.p1→p2 方向，可能 <0 或 >1）。
+/// 純運算，不觸碰 sketch——extendLine() 與 previewExtendAt() 共用。
+LineExtendResult computeLineExtend(cad::Sketch* sketch, SketchLine* line,
+                                   const GeomShape2D& targetShape,
+                                   const QStringList& boundaryUuids,
+                                   const QVector2D& clickPt)
 {
+    LineExtendResult r;
+
     const double distToStart = double((clickPt - targetShape.p1).length());
     const double distToEnd   = double((clickPt - targetShape.p2).length());
-    const bool extendStart   = distToStart < distToEnd;
-    const QString movingUuid = extendStart ? line->startUuid : line->endUuid;
+    r.extendStart = distToStart < distToEnd;
 
     QVector<double> candidateParams;
 
@@ -512,37 +694,58 @@ bool extendLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& target
                 candidateParams.append(g2d::paramOnLine(pt, targetShape.p1, targetShape.p2));
         }
     }
-    if (candidateParams.isEmpty()) return false;
+    if (candidateParams.isEmpty()) return r;
 
-    const double tMoving = extendStart ? 0.0 : 1.0;
+    const double tMoving = r.extendStart ? 0.0 : 1.0;
     double bestT = tMoving;
     bool found = false;
     for (double t : candidateParams) {
-        const bool extending = extendStart ? (t < tMoving - kParamEps)
-                                           : (t > tMoving + kParamEps);
+        const bool extending = r.extendStart ? (t < tMoving - kParamEps)
+                                             : (t > tMoving + kParamEps);
         if (!extending) continue;
         if (!found) { bestT = t; found = true; continue; }
-        if (extendStart) { if (t > bestT) bestT = t; }
-        else              { if (t < bestT) bestT = t; }
+        if (r.extendStart) { if (t > bestT) bestT = t; }
+        else                { if (t < bestT) bestT = t; }
     }
-    if (!found) return false;
+    if (!found) return r;
 
-    const QVector2D newPos = targetShape.p1 + (targetShape.p2 - targetShape.p1) * float(bestT);
+    r.valid = true;
+    r.bestT = bestT;
+    return r;
+}
+
+bool extendLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& targetShape,
+                const QStringList& boundaryUuids, const QVector2D& clickPt)
+{
+    const LineExtendResult result = computeLineExtend(sketch, line, targetShape, boundaryUuids, clickPt);
+    if (!result.valid) return false;
+
+    const QString movingUuid = result.extendStart ? line->startUuid : line->endUuid;
+    const QVector2D newPos =
+        targetShape.p1 + (targetShape.p2 - targetShape.p1) * float(result.bestT);
     sketch->movePoint(movingUuid, newPos);
     sketch->solveConstraints();
     Q_EMIT sketch->rebuildRequested();
     return true;
 }
 
-bool extendArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape,
-               const QStringList& boundaryUuids, const QVector2D& clickPt)
+struct ArcExtendResult { bool valid = false; bool extendStartSide = false; double newAngle = 0.0; };
+
+/// EXTEND 對 Arc 目標的核心運算：決定要延伸哪一側（離 clickPt 較近的
+/// 端點）與延伸後的新端點角度。純運算，不觸碰 sketch——extendArc() 與
+/// previewExtendAt() 共用。
+ArcExtendResult computeArcExtend(cad::Sketch* sketch, SketchArc* arc,
+                                 const GeomShape2D& targetShape,
+                                 const QStringList& boundaryUuids,
+                                 const QVector2D& clickPt)
 {
-    if (targetShape.occCircle.IsNull()) return false;
+    ArcExtendResult r;
+    if (targetShape.occCircle.IsNull()) return r;
     const Handle(Geom_Circle)& circ = targetShape.occCircle;
 
     const QVector2D startPt = pointOnCircle(sketch, circ, targetShape.startAngle);
     const QVector2D endPt   = pointOnCircle(sketch, circ, targetShape.endAngle);
-    const bool extendStartSide = (clickPt - startPt).length() < (clickPt - endPt).length();
+    r.extendStartSide = (clickPt - startPt).length() < (clickPt - endPt).length();
 
     GeomShape2D fullCircleShape = targetShape;
     fullCircleShape.kind = GeomShape2D::Kind::Circle;  // 暫時視為完整圓，交點計算時略過 sweep 篩選
@@ -553,10 +756,9 @@ bool extendArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetSha
         SketchGeometry* bg = sketch->findGeometry(boundUuid);
         if (!bg) continue;
 
-        if (auto* ell = dynamic_cast<SketchEllipse*>(bg)) {
+        if (dynamic_cast<SketchEllipse*>(bg)) {
             // Arc 延伸邊界若是橢圓：本 MVP 不支援（橢圓與圓的解析交點需要
             // 解四次方程式，複雜度明顯更高），略過。
-            Q_UNUSED(ell);
             continue;
         }
 
@@ -567,18 +769,18 @@ bool extendArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetSha
                 candidateAngles.append(g2d::normalizeAngle(angleOfPoint(sketch, circ, pt)));
         }
     }
-    if (candidateAngles.isEmpty()) return false;
+    if (candidateAngles.isEmpty()) return r;
 
     const double s0 = g2d::normalizeAngle(targetShape.startAngle);
     const double e0 = g2d::normalizeAngle(targetShape.endAngle);
 
-    double newAngle = extendStartSide ? s0 : e0;
+    double newAngle = r.extendStartSide ? s0 : e0;
     bool found = false;
 
     for (double ang : candidateAngles) {
         if (g2d::angleInSweep(ang, s0, e0)) continue;  // 落在既有弧段內部，不是延伸
 
-        if (extendStartSide) {
+        if (r.extendStartSide) {
             double delta = ang - s0; delta = std::fmod(delta, 2.0*M_PI);
             if (delta > 0.0) delta -= 2.0*M_PI;
             delta = -delta;
@@ -594,10 +796,22 @@ bool extendArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetSha
             if (!found || delta < bestDelta) { newAngle = ang; found = true; }
         }
     }
-    if (!found) return false;
+    if (!found) return r;
 
-    const double newStart = extendStartSide ? newAngle : targetShape.startAngle;
-    const double newEnd   = extendStartSide ? targetShape.endAngle : newAngle;
+    r.valid = true;
+    r.newAngle = newAngle;
+    return r;
+}
+
+bool extendArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape,
+               const QStringList& boundaryUuids, const QVector2D& clickPt)
+{
+    const ArcExtendResult result = computeArcExtend(sketch, arc, targetShape, boundaryUuids, clickPt);
+    if (!result.valid) return false;
+
+    const Handle(Geom_Circle)& circ = targetShape.occCircle;
+    const double newStart = result.extendStartSide ? result.newAngle : targetShape.startAngle;
+    const double newEnd   = result.extendStartSide ? targetShape.endAngle : result.newAngle;
 
     const QVector2D newStartPt = pointOnCircle(sketch, circ, newStart);
     const QVector2D newEndPt   = pointOnCircle(sketch, circ, newEnd);
@@ -669,6 +883,98 @@ bool extendAt(cad::Sketch* sketch, const QString& targetUuid,
         return false;  // 圓沒有端點可延伸
     }
     return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// hover 即時預覽：與 trimAt()/extendAt() 共用同一套 compute*() 核心運算
+// （見上方各 computeLineTrimRange()/computeCircleTrimRange()/
+// computeArcTrimRange()/computeLineExtend()/computeArcExtend()），純讀取
+// 不修改 sketch，只把結果轉成取樣折線供畫面疊層使用。
+// ─────────────────────────────────────────────────────────────────────────
+
+PreviewSegment previewTrimAt(cad::Sketch* sketch, const QString& targetUuid,
+                             const QStringList& cuttingUuids, const QVector2D& hoverPt)
+{
+    PreviewSegment result;
+    if (!sketch) return result;
+
+    SketchGeometry* target = sketch->findGeometry(targetUuid);
+    if (!target) return result;
+
+    auto shape = extractShape(sketch, target);
+    if (!shape) return result;
+
+    const auto intersections = collectIntersections(sketch, *shape, targetUuid, cuttingUuids);
+
+    switch (shape->kind) {
+    case GeomShape2D::Kind::Line: {
+        const LineTrimRange range = computeLineTrimRange(*shape, intersections, hoverPt);
+        if (!range.valid) return result;
+        result.points.append(shape->p1 + (shape->p2 - shape->p1) * float(range.lower));
+        result.points.append(shape->p1 + (shape->p2 - shape->p1) * float(range.upper));
+        result.valid = true;
+        return result;
+    }
+    case GeomShape2D::Kind::Circle: {
+        const CircleTrimRange range = computeCircleTrimRange(sketch, *shape, intersections, hoverPt);
+        if (!range.valid) return result;
+        result.points = sampleArcSpan(sketch, shape->occCircle, range.lower, range.upper);
+        result.valid = !result.points.isEmpty();
+        return result;
+    }
+    case GeomShape2D::Kind::Arc: {
+        const ArcTrimRange range = computeArcTrimRange(sketch, *shape, intersections, hoverPt);
+        if (!range.valid) return result;
+        result.points = sampleArcSpan(sketch, shape->occCircle, range.lower, range.upper);
+        result.valid = !result.points.isEmpty();
+        return result;
+    }
+    }
+    return result;
+}
+
+PreviewSegment previewExtendAt(cad::Sketch* sketch, const QString& targetUuid,
+                               const QStringList& boundaryUuids, const QVector2D& hoverPt)
+{
+    PreviewSegment result;
+    if (!sketch) return result;
+
+    SketchGeometry* target = sketch->findGeometry(targetUuid);
+    if (!target) return result;
+
+    auto shape = extractShape(sketch, target);
+    if (!shape) return result;
+
+    switch (shape->kind) {
+    case GeomShape2D::Kind::Line: {
+        auto* line = static_cast<SketchLine*>(target);
+        const LineExtendResult r = computeLineExtend(sketch, line, *shape, boundaryUuids, hoverPt);
+        if (!r.valid) return result;
+        const QVector2D fromPt = r.extendStart ? shape->p1 : shape->p2;
+        const QVector2D toPt   = shape->p1 + (shape->p2 - shape->p1) * float(r.bestT);
+        result.points = { fromPt, toPt };
+        result.valid = true;
+        return result;
+    }
+    case GeomShape2D::Kind::Arc: {
+        auto* arc = static_cast<SketchArc*>(target);
+        const ArcExtendResult r = computeArcExtend(sketch, arc, *shape, boundaryUuids, hoverPt);
+        if (!r.valid) return result;
+        const double s0 = g2d::normalizeAngle(shape->startAngle);
+        const double e0 = g2d::normalizeAngle(shape->endAngle);
+        // 延伸段＝從新端點回到「原本那一端」的邊界（見 extendArc() 內
+        // newStart/newEnd 的組法：延伸起點側時新弧是 [newAngle, e0]，
+        // 新增的那一段是 [newAngle, s0]；延伸終點側時對稱）。
+        const double fromAngle = r.extendStartSide ? r.newAngle : e0;
+        const double toAngle   = r.extendStartSide ? s0 : r.newAngle;
+        result.points = sampleArcSpan(sketch, shape->occCircle, fromAngle, toAngle);
+        result.valid = !result.points.isEmpty();
+        return result;
+    }
+    case GeomShape2D::Kind::Circle:
+        return result;  // 圓沒有端點可延伸
+    }
+    return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

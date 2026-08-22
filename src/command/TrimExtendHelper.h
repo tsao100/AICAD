@@ -74,6 +74,46 @@ bool extendAt(cad::Sketch* sketch, const QString& targetUuid,
              const QStringList& boundaryUuids, const QVector2D& clickPt);
 
 /**
+ * @brief 一段可以直接拿去畫成橡皮筋多段線預覽的取樣座標（sketch 平面）。
+ *
+ * Arc 型的結果會取樣成多點折線近似（純視覺預覽用途，不是精確的弧形頂點
+ * 資料，不影響 trimAt()/extendAt() 實際執行時的結果——那兩個函式内部走
+ * 的是 OCCT 的 GC_MakeArcOfCircle／addArcGeom()，仍然是精確弧）。
+ */
+struct PreviewSegment {
+    bool               valid = false;
+    QVector<QVector2D> points;   ///< 至少 2 點；points.isEmpty() 等同 valid=false。
+};
+
+/**
+ * @brief TRIM 的滑鼠 hover 即時預覽：計算「如果在 hoverPt 點下去，會被
+ *        刪除的那一段」，純運算、不修改 sketch（供 TrimCommand 在
+ *        GEOM_HOVER 時呼叫，畫成橡皮筋多段線疊層）。
+ *
+ * 與 trimAt() 共用同一套「找出 hoverPt 所在區間」的核心運算（見 .cpp 內
+ * computeLineTrimRange()/computeCircleTrimRange()/computeArcTrimRange()），
+ * 確保預覽結果與實際點擊後的行為完全一致，不會有預覽跟實際結果對不上的
+ * 情形。
+ *
+ * @return valid=false 表示這個 targetUuid/hoverPt 組合點下去不會有效果
+ *         （沒有交點、或目標型別不支援 TRIM），呼叫端應隱藏預覽。
+ */
+PreviewSegment previewTrimAt(cad::Sketch* sketch, const QString& targetUuid,
+                             const QStringList& cuttingUuids, const QVector2D& hoverPt);
+
+/**
+ * @brief EXTEND 的滑鼠 hover 即時預覽：計算「如果在 hoverPt 點下去，會
+ *        新增的延伸線段」（從目前端點到新端點），純運算、不修改 sketch。
+ *
+ * 與 extendAt() 共用同一套核心運算（computeLineExtend()/
+ * computeArcExtend()），理由同上。
+ *
+ * @return valid=false 表示這個 targetUuid/hoverPt 組合點下去不會有效果。
+ */
+PreviewSegment previewExtendAt(cad::Sketch* sketch, const QString& targetUuid,
+                               const QStringList& boundaryUuids, const QVector2D& hoverPt);
+
+/**
  * @brief FILLET：在兩條直線之間插入一個圓角弧。
  *
  * MVP 範圍限制：只支援兩條「直線」（不支援弧參與，也就是說線-弧、

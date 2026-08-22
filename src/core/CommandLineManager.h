@@ -97,6 +97,10 @@ private:
     InputType m_expectedInputType;
 
     bool m_isWaitingForInput;
+    // ⚠️ 每次 waitForInput() 呼叫遞增，供 processInput() 偵測「派送事件
+    // 期間，是否有下游 handler 在同一個呼叫堆疊內同步呼叫了 waitForInput()
+    // 重新掛號」（見 processInput() 尾端的說明）。
+    int m_waitGeneration = 0;
     QString m_activeCommand;
 
     QStringList m_commandHistory;

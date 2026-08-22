@@ -15,6 +15,11 @@
  *
  * 實際的幾何運算（交點、裁切、圓退化為弧）由 TrimExtendHelper 負責，本
  * 命令只負責互動流程與訊息輸出。MVP 範圍限制見 TrimExtendHelper.h。
+ *
+ * hover 即時預覽：PickingSegment 階段訂閱 GEOM_HOVER（GetGeom 模式下
+ * mouseMoveEvent 既有機制），滑鼠 hover 到某個幾何時即時算出「這次點
+ * 下去會被刪除的那一段」並畫成橡皮筋多段線疊層，離開有效目標時收起。
+ * 純視覺預覽，不修改 sketch，見 TrimExtendHelper::previewTrimAt()。
  */
 #pragma once
 
@@ -60,6 +65,15 @@ private:
 
     void finishLoop();
     void cleanup();
+
+    // ── hover 即時預覽（PickingSegment 階段）─────────────────────────
+    // 每次滑鼠移動 hover 到不同幾何時，用 TrimExtendHelper::previewTrimAt()
+    // 算出「這次點下去會被刪除的那一段」，畫成橡皮筋多段線疊層
+    // （rb::showPolylinePreview()）；hover 離開有效目標時收起（rb::disarm()）。
+    // 純視覺預覽，不修改 sketch，也不影響按下滑鼠後的實際 trimAt() 邏輯
+    // （兩者共用同一套核心運算，見 TrimExtendHelper.h 說明）。
+    void subscribeHover();
+    void onHover(const QVariant& payload);
 
     State                   m_state      = State::Idle;
     QStringList              m_cuttingEdges;

@@ -9,6 +9,10 @@
  *
  * 架構與 TrimCommand 完全對稱（共用 TrimExtendHelper 的幾何運算），互動
  * 流程細節見 TrimCommand.h 的說明。Circle 不支援 EXTEND（沒有端點可延伸）。
+ *
+ * hover 即時預覽：與 TrimCommand 完全對稱，見 TrimCommand.h 的說明（改用
+ * TrimExtendHelper::previewExtendAt()，畫的是「延伸後會新增的那一段」而
+ * 非「會被刪除的那一段」）。
  */
 #pragma once
 
@@ -54,6 +58,11 @@ private:
 
     void finishLoop();
     void cleanup();
+
+    // hover 即時預覽（PickingSegment 階段）：見 TrimCommand.h 對應方法
+    // 的說明，架構完全對稱。
+    void subscribeHover();
+    void onHover(const QVariant& payload);
 
     State                   m_state         = State::Idle;
     QStringList              m_boundaryEdges;

@@ -24,6 +24,15 @@
  *
  * Circle／Ellipse／Arc 不支援局部拉伸（見 SketchGeomTransformUtil::
  * stretchWithinRect() 的說明），僅在其定義點全部落在窗內時整體搬動。
+ *
+ * 即時預覽：WaitSecondPoint 階段（等待第二點/位移目標）滑鼠移動時即時
+ * 預覽拉伸結果，比照 SketchTransformCommandBase 的 MOVE 分工——每一幀
+ * 只做輕量搬動（stretchWithinRect()/applyToSelection() 的 solveAfter=
+ * false），不重新解約束；確認第二點時才收斂成一次正式的求解。差異在
+ * 於：MOVE 每幀只需要「復原上一幀位移、套用這一幀位移」，STRETCH（非
+ * 模式 A）額外要求每一幀都從「原始未搬動座標」重新判斷哪些點落在窗
+ * 內，所以復原這一步不能省略，見 stretchWithinRect() 的 solveAfter
+ * 參數說明。
  */
 #pragma once
 
@@ -32,6 +41,7 @@
 #include <QVector2D>
 #include <QStringList>
 #include <QVariant>
+#include <QMetaObject>
 
 namespace aicad {
 namespace cad { class Sketch; }
@@ -64,12 +74,21 @@ private:
 
     void cleanup();
 
+    // ── 即時位移預覽（WaitSecondPoint 階段）────────────────────────────
+    void armLivePreview();
+    void updateLivePreviewTo(const QVector2D& cursorPt);
+    void revertLivePreview();
+
     State       m_state          = State::Idle;
     bool        m_usePreselected = false;
     QStringList m_preSelected;      ///< 模式 A：呼叫時已帶有的選取
     QVector2D   m_corner1;
     QVector2D   m_corner2;
     QVector2D   m_basePoint;
+
+    QMetaObject::Connection m_livePreviewConn;
+    QVector2D                m_liveDelta;          ///< 目前已「輕量套用」在真實幾何上的累計位移
+    bool                     m_liveDeltaApplied = false;
 };
 
 } // namespace command

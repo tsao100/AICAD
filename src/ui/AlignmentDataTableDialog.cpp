@@ -58,7 +58,24 @@ const QStringList kSpiralTypeNames = {
     QObject::tr("HalfSine (半正弦)"),
     QObject::tr("Parabola (三次拋物線)"),
     QObject::tr("CubicJPN (日式三次拋物線)"),
-    QObject::tr("CubicECI (CECI三次拋物線)")
+    QObject::tr("CubicECI (CECI三次拋物線)"),
+    QObject::tr("Sinusoidal (正弦斜坡)"),
+    QObject::tr("Cosine (升餘弦斜坡)"),
+    QObject::tr("Bloss (Bloss 三次曲線)"),
+    QObject::tr("Lemniscate (雙紐線)"),
+    QObject::tr("WienerBogen (維也納曲線)"),
+    QObject::tr("Radioid (凹曲率)"),
+    QObject::tr("ElasticRadioid (彈性曲線)"),
+    QObject::tr("NorwichSturm (Norwich/Sturm螺線)"),
+    QObject::tr("PseudoEllipticRadioid (擬橢圓Radioid)"),
+    QObject::tr("Logarithmic (對數曲率)"),
+    QObject::tr("Hyperbolic (雙曲正切)"),
+    QObject::tr("Polynomial (三次冪)"),
+    QObject::tr("Quintic (五次曲線)"),
+    QObject::tr("PHQuintic (PH五次螺線)"),
+    QObject::tr("Biquadratic (四次冪)"),
+    QObject::tr("Spline (分段三次)"),
+    QObject::tr("BlossEulerHybrid (Bloss/Euler 混合)")
 };
 
 QString curveTypeToDisplay(const QString& ct)
@@ -68,6 +85,23 @@ QString curveTypeToDisplay(const QString& ct)
     if (ct == QLatin1String("PARABOLA")) return QObject::tr("Parabola");
     if (ct == QLatin1String("CUBICJPN")) return QObject::tr("CubicJPN");
     if (ct == QLatin1String("CUBICECI")) return QObject::tr("CubicECI");
+    if (ct == QLatin1String("SINUSOIDAL"))       return QObject::tr("Sinusoidal");
+    if (ct == QLatin1String("COSINE"))           return QObject::tr("Cosine");
+    if (ct == QLatin1String("BLOSS"))            return QObject::tr("Bloss");
+    if (ct == QLatin1String("LEMNISCATE"))       return QObject::tr("Lemniscate");
+    if (ct == QLatin1String("WIENERBOGEN"))      return QObject::tr("WienerBogen");
+    if (ct == QLatin1String("RADIOID"))          return QObject::tr("Radioid");
+    if (ct == QLatin1String("ELASRADIOID"))      return QObject::tr("ElasticRadioid");
+    if (ct == QLatin1String("NORWICHSTURM"))     return QObject::tr("NorwichSturm");
+    if (ct == QLatin1String("PSEUELLRADIOID"))   return QObject::tr("PseudoEllipticRadioid");
+    if (ct == QLatin1String("LOGARITHMIC"))      return QObject::tr("Logarithmic");
+    if (ct == QLatin1String("HYPERBOLIC"))       return QObject::tr("Hyperbolic");
+    if (ct == QLatin1String("POLYNOMIAL"))       return QObject::tr("Polynomial");
+    if (ct == QLatin1String("QUINTIC"))          return QObject::tr("Quintic");
+    if (ct == QLatin1String("PHQUINTIC"))        return QObject::tr("PHQuintic");
+    if (ct == QLatin1String("BIQUADRATIC"))      return QObject::tr("Biquadratic");
+    if (ct == QLatin1String("SPLINE"))           return QObject::tr("Spline");
+    if (ct == QLatin1String("BLOSSEULERHYBRID")) return QObject::tr("BlossEulerHybrid");
     if (ct == QLatin1String("SPIRAL"))   return QObject::tr("Clothoid");
     // 線形起訖點的邊界建構線，其虛擬（檔案資料範圍外）延伸另一側是圓弧
     // （seedFromRawPoints() 規則 2）：AlignmentSolver::solve() 以
@@ -585,11 +619,24 @@ void AlignmentDataTableDialog::populateHorizontalTable()
 
         m_hTable->setItem(row, kColAzimuth, roItem(azimuthToDMS(p.azimuth)));
 
-        // ── length（含）以後：點位間（本點 → 下一點）的線元資訊 ─────────────
-        // 最後一列之後沒有下一點，故不顯示這些欄位。
+        // ── length／曲線類型：點位間（本點 → 下一點）的線元資訊，最後一列
+        //    之後沒有下一點，故這兩欄不適用。輔助欄位（曲線編號…Real2）則
+        //    是「本點自身」的屬性，跟有沒有下一點無關，末列同樣要能編輯
+        //    ——見下方輔助欄位區塊，不受 isLastPoint 影響。
         if (meta.isLastPoint) {
-            for (int c = kFirstBetweenCol; c < kHColCount; ++c)
-                m_hTable->setItem(row, c, naItem());
+            m_hTable->setItem(row, kColLength,         naItem());
+            m_hTable->setItem(row, kColRadiusCurveType, naItem());
+
+            const AlignmentPoint& aux = m_hAux[row];
+            m_hTable->setItem(row, kColCircularCurveNo, editTextItem(aux.circularCurveNo));
+            m_hTable->setItem(row, kColCant,             editItem(aux.cant, 3));
+            m_hTable->setItem(row, kColGaugeWidenning,   editItem(aux.gaugeWidening, 3));
+            m_hTable->setItem(row, kColSpeedLimit,       editItem(aux.speedLimit, 1));
+            m_hTable->setItem(row, kColText1,            editTextItem(aux.text1));
+            m_hTable->setItem(row, kColText2,            editTextItem(aux.text2));
+            m_hTable->setItem(row, kColReal1,            editItem(aux.real1, 5));
+            m_hTable->setItem(row, kColReal2,            editItem(aux.real2, 5));
+
             m_hMeta[row] = meta;
             continue;
         }
@@ -755,9 +802,10 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
     const HRowMeta& meta = m_hMeta[row];
 
     // ── 輔助欄位（CircularCurveNo/Cant/GaugeWidenning/SpeedLimit/Text1/Text2/
-    //    Real1/Real2）：所有非末列皆可編輯，不需要 EditableElement，也不觸發
-    //    幾何 solve()／Undo，直接寫回快取並同步至 TCL。────────────────────────
-    if (!meta.isLastPoint && col >= kColCircularCurveNo && col < kHColCount) {
+    //    Real1/Real2）：所有列（含末列，因為這些是「本點自身」屬性）皆可
+    //    編輯，不需要 EditableElement，也不觸發幾何 solve()／Undo，直接寫回
+    //    快取並同步至 TCL。────────────────────────────────────────────────
+    if (col >= kColCircularCurveNo && col < kHColCount) {
         if (row >= m_hAux.size()) return;
         AlignmentPoint& aux = m_hAux[row];
 
@@ -877,16 +925,36 @@ void AlignmentDataTableDialog::pushAuxToTcl(const QVector<AlignmentPoint>& displ
     if (tclPts.isEmpty() || displayPts.size() > tclPts.size())
         return;  // 尚無對應的 TCL 資料（例如僅在 solver 端編輯過、尚未提交）
 
+    // 里程比對時，同一個 tclPts 項目只能被配對一次：否則當兩列里程重合或
+    // 極接近時（例如零長度弧退化列，見 AlignmentDocument.cpp seedFromRawPoints
+    // 對 TC/CS 開頭弧長為零的討論——TC 與 CS 兩列里程完全相同），沒有 used
+    // 追蹤的話後面的列會找到跟前一列同一個 bestIdx，導致兩列的編輯互搶同一
+    // 個底層資料槽，其中一列的輸入永遠無法真正落地存檔。里程相同/極接近時
+    // 另外用 tsc 碼是否完全相符做決定性的第一優先比對，確保 TC 配到 TC、
+    // CS 配到 CS，而不是誰先掃到誰贏。
+    QVector<bool> used(tclPts.size(), false);
     bool anyChanged = false;
     for (int i = 0; i < displayPts.size(); ++i) {
         const AlignmentPoint& src = displayPts[i];
-        int bestIdx = -1;
-        double bestDelta = 1.0;  // 里程容許誤差 [m]
+        int    bestIdx      = -1;
+        double bestDelta    = 1.0;    // 里程容許誤差 [m]
+        bool   bestTscMatch = false;
         for (int j = 0; j < tclPts.size(); ++j) {
+            if (used[j]) continue;
             const double d = std::abs(tclPts[j].chainage - src.chainage);
-            if (d < bestDelta) { bestDelta = d; bestIdx = j; }
+            if (d > bestDelta) continue;
+            const bool tscMatch = (tclPts[j].tsc == src.tsc);
+            // 決定性比較：tsc 相符優先於不相符；tsc 相符程度相同時才比里程差。
+            if (bestIdx < 0 ||
+                (tscMatch && !bestTscMatch) ||
+                (tscMatch == bestTscMatch && d < bestDelta)) {
+                bestIdx      = j;
+                bestDelta    = d;
+                bestTscMatch = tscMatch;
+            }
         }
         if (bestIdx < 0) continue;
+        used[bestIdx] = true;
 
         AlignmentPoint& dst = tclPts[bestIdx];
         if (dst.circularCurveNo != src.circularCurveNo ||

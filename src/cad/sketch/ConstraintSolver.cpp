@@ -973,6 +973,44 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
             // 選擇與原本弧的優弧/劣弧不一致的問題。
             double t0 = 0.0, t1 = M_PI;
             bool haveOrig = false;
+            // ⚠️ 修正（本輪，實測發現）：上面這段註解的推理本身沒錯——
+            // t0_orig/t1_orig 相對「原始 curve 自己的 ax2 座標系」量測、
+            // newStartAngle/oldStartAngle 這組「世界座標角度差」的確與
+            // ax2 內部座標系的固定夾角無關、相減會抵消。**但前提是**
+            // t0_new/t1_new 之後要套用回「同一個 ax2 座標系」，位移量才
+            // 有意義；下面原本卻是用 `gp_Ax2 ax2(center, planeNormal)`
+            // 這種只給「點＋法向量」的建構子，讓 OCCT 用它自己的規則另外
+            // 選一個全新的 XDirection——這個新選出來的 XDirection 幾乎必
+            // 定跟 GC_MakeArcOfCircle() 當初建 a->curve 時所選的 XDirection
+            // （其慣例是指向起點方向，即 t0_orig≈0）不同相位。實測：3 點
+            // 畫的弧，起點世界角度 -158.3°，而 gp_Ax2(center,(0,0,1)) 選出
+            // 的 XDirection 固定是世界 X 軸（角度 0°）——整整差了 158.3°。
+            // 結果就是「t0_orig-based 的參數值」被套用到一個相位完全不同
+            // 的新座標系裡，重建出的弧起終點角度跟著整個偏移 158.3°，圓心
+            // /半徑不變但完全不通過原本三點——這正是「畫完弧、只要後續任何
+            // 一次 solveConstraints() 被觸發（哪怕與這個弧毫無關係的約束）
+            // 弧就跳掉」的根本原因。
+            //
+            // 修法：新 ax2 的 XDirection 必須沿用「舊 curve 自己的 ax2」，
+            // 而不是讓 OCCT 另外挑一個——這樣 t0_orig/t1_orig 以及疊加在
+            // 其上的角度差位移量，才是在同一個座標系裡有意義的參數值。
+            gp_Dir oldXDir(1, 0, 0);   // fallback：僅在 !haveOrig 的退化情況使用
+            // ⚠️ 修正（本輪，實測發現 CW/CCW 造成的鏡射問題）：
+            // GC_MakeArcOfCircle() 為了讓 curve 參數維持「t 遞增＝逆時針」
+            // 這條 OCCT 鐵律，遇到使用者是「順時針」點三點畫弧時，會把
+            // 底層 Geom_Circle 的法向量取成 `-planeNormal`（而不是草圖平面
+            // 本身的法向量），這樣繞法向量右手定則的逆時針，實際看起來才
+            // 是順時針。上面已經修正成沿用「舊 curve 自己的 XDirection」，
+            // 但法向量仍固定用外面傳進來的 `planeNormal`——對逆時針畫的弧剛
+            // 好同向、沒事；但對順時針畫的弧，法向量正負號不同，等於 Y 軸
+            // 整個鏡射：X 軸上的點（起點, t=0）不受影響、平移量（圓心）也
+            // 不受影響，但不在 X 軸上的點（中點、終點）角度全部變號，重建
+            // 出來的弧就會通過起點與圓心、卻不通過中點與終點——與實測「第
+            // 一點及圓心有保持、第二三點跑掉，且只有順時針才會跑掉」完全
+            // 吻合。修法：法向量也必須沿用「舊 curve 自己的」，跟 XDirection
+            // 一樣，才能保證新舊座標系是同一個（而不只是 X 軸相位對齊，
+            // 手性/Y 軸方向卻鏡射）。
+            gp_Dir oldNormal = planeNormal;   // fallback：僅在 !haveOrig 的退化情況使用
             if (!a->curve.IsNull()) {
                 auto baseCircle = Handle(Geom_Circle)::DownCast(a->curve->BasisCurve());
                 if (!baseCircle.IsNull()) {
@@ -986,6 +1024,18 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
                     const double oldEndAngle   = std::atan2(oldEnd.Y()   - oldCenter.Y(),
                                                              oldEnd.X()   - oldCenter.X());
 
+                    oldXDir   = baseCircle->Position().XDirection();
+                    oldNormal = baseCircle->Position().Direction();
+
+                    // 角度差的正負號，要跟著「t 隨世界角度遞增還是遞減」走：
+                    // 逆時針弧（oldNormal ≈ +Z）t 隨世界角度遞增，符號 +1；
+                    // 順時針弧（oldNormal ≈ -Z）t 隨世界角度遞減，符號要 -1，
+                    // 否則對「真的有位移」的順時針弧，端點會被疊加到錯的
+                    // 方向（本次修正的 CW/CCW 鏡射問題排除後才發現這一層，
+                    // 之前 delta≈0 的個案剛好不影響觀察結果，但這是後續一旦
+                    // 弧真的被約束/拖曳移動時的隱性風險，一併修正）。
+                    const double sign = (oldNormal.Z() >= 0.0) ? 1.0 : -1.0;
+
                     auto wrap = [](double ang) {
                         while (ang >  M_PI) ang -= 2.0 * M_PI;
                         while (ang <= -M_PI) ang += 2.0 * M_PI;
@@ -994,13 +1044,13 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
 
                     if (sOff >= 0) {
                         const double newStartAngle = std::atan2(vars[sOff+1] - cy, vars[sOff] - cx);
-                        t0 = t0_orig + wrap(newStartAngle - oldStartAngle);
+                        t0 = t0_orig + sign * wrap(newStartAngle - oldStartAngle);
                     } else {
                         t0 = t0_orig;
                     }
                     if (eOff >= 0) {
                         const double newEndAngle = std::atan2(vars[eOff+1] - cy, vars[eOff] - cx);
-                        t1 = t1_orig + wrap(newEndAngle - oldEndAngle);
+                        t1 = t1_orig + sign * wrap(newEndAngle - oldEndAngle);
                     } else {
                         t1 = t1_orig;
                     }
@@ -1014,7 +1064,19 @@ void ConstraintSolver::unpackVariables(const QVector<double>& vars,
             }
             if (t1 <= t0) t1 += 2.0 * M_PI;   // Geom_Circle 週期參數維持 CCW 遞增慣例
 
-            gp_Ax2 ax2(gp_Pnt(cx, cy, 0), planeNormal);
+            // 用「舊 curve 自己的 XDirection 和法向量」建新 ax2，確保上面算出
+            // 的 t0/t1，套用到的是同一個相位、同一個手性的座標系（見上方修
+            // 正說明——法向量也必須沿用舊的，否則順時針畫的弧會被鏡射）。
+            // 先投影、單位化一次，避免舊 XDirection 與舊法向量之間累積的
+            // 極小非垂直誤差讓 gp_Ax2 的建構子丟例外（其要求兩者需嚴格垂直）。
+            gp_XYZ xdirXYZ = oldXDir.XYZ();
+            const gp_XYZ nXYZ = oldNormal.XYZ();
+            xdirXYZ -= nXYZ * (xdirXYZ.Dot(nXYZ));   // 投影到與舊法向量垂直的平面
+            // 退化 fallback（幾乎不可能發生，只有 oldXDir 與 oldNormal 幾乎
+            // 平行時）：退回讓 OCCT 自行挑選 XDirection，至少維持幾何有效。
+            gp_Ax2 ax2 = (xdirXYZ.Modulus() < 1e-9)
+                       ? gp_Ax2(gp_Pnt(cx, cy, 0), oldNormal)
+                       : gp_Ax2(gp_Pnt(cx, cy, 0), oldNormal, gp_Dir(xdirXYZ));
             Handle(Geom_Circle) circ = new Geom_Circle(ax2, r);
             a->curve = new Geom_TrimmedCurve(circ, t0, t1);
 

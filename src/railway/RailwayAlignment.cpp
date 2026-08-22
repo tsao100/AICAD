@@ -86,14 +86,33 @@ void mergeAuxiliaryFields(QVector<AlignmentPoint>& newPts,
 {
     if (oldPts.isEmpty()) return;
 
+    // 同一個 oldPts 項目只能被配對一次：若沒有 used 追蹤，當兩個（或以上）
+    // newPts 里程重合或極接近時（例如零長度弧退化列——TC 與 CS 兩點里程
+    // 完全相同，見 AlignmentDocument.cpp seedFromRawPoints 對 TC/CC 開頭
+    // 弧長為零的討論），全部都會找到同一個 bestIdx，其中除了「贏得」該筆
+    // 舊資料的那個之外，其餘點的輔助欄位一律讀不到自己原本的資料（形同
+    // 遺失/顯示錯誤，而不只是存檔問題）。里程相同/極接近時另外用 tsc 碼是
+    // 否完全相符做決定性的第一優先比對，確保 TC 配到 TC、CS 配到 CS。
+    QVector<bool> used(oldPts.size(), false);
     for (AlignmentPoint& dst : newPts) {
-        int    bestIdx   = -1;
-        double bestDelta = toleranceM;
+        int    bestIdx      = -1;
+        double bestDelta    = toleranceM;
+        bool   bestTscMatch = false;
         for (int j = 0; j < oldPts.size(); ++j) {
+            if (used[j]) continue;
             const double d = std::abs(oldPts[j].chainage - dst.chainage);
-            if (d < bestDelta) { bestDelta = d; bestIdx = j; }
+            if (d > bestDelta) continue;
+            const bool tscMatch = (oldPts[j].tsc == dst.tsc);
+            if (bestIdx < 0 ||
+                (tscMatch && !bestTscMatch) ||
+                (tscMatch == bestTscMatch && d < bestDelta)) {
+                bestIdx      = j;
+                bestDelta    = d;
+                bestTscMatch = tscMatch;
+            }
         }
         if (bestIdx < 0) continue;  // 找不到對應舊點（例如新插入的關鍵點）——維持預設值
+        used[bestIdx] = true;
 
         const AlignmentPoint& src = oldPts[bestIdx];
         dst.plat            = src.plat;
@@ -361,6 +380,93 @@ QList<QPointF> HorizontalAlignment::getAllPW(double x, double y) const
 
 // ── Auxiliary ─────────────────────────────────────────────────────────────────
 
+namespace {
+
+/**
+ * @brief Normalised curvature-shape fraction g(t), t∈[0,1], for the
+ *        curvature-ramp transition families (see RailwayAlignmentElement.h/
+ *        .cpp — SinusoidalElement … BlossEulerHybridElement). g(0)=0,
+ *        g(1)=1, matching κ(L) = g(L/Ls)/R exactly as used for rendering
+ *        geometry, so computeRadius() below stays exact (R = exitR/g(t))
+ *        for these families instead of falling back to the linear
+ *        (clothoid-only-exact) approximation used for curve types this
+ *        file doesn't recognise (e.g. PARABOLA/CUBICJPN, an existing
+ *        simplification predating this table — left as-is; CUBICECI is
+ *        handled exactly via its own 4-term arc-length inversion directly
+ *        in spiralR() below, mirroring CubicECIElement::localFrame()).
+ */
+double curvatureRampShapeFraction(const QString& ct, double t)
+{
+    if (ct == QLatin1String("SINUSOIDAL"))
+        return t - std::sin(2.0 * M_PI * t) / (2.0 * M_PI);
+    if (ct == QLatin1String("COSINE"))
+        return 1.0 - std::cos(M_PI * t / 2.0);
+    if (ct == QLatin1String("BLOSS"))
+        return 3.0 * t * t - 2.0 * t * t * t;
+    if (ct == QLatin1String("LEMNISCATE"))
+        return std::tan(M_PI * t / 4.0);
+    if (ct == QLatin1String("WIENERBOGEN")) {
+        const double t2 = t * t, t3 = t2 * t, t4 = t2 * t2;
+        return 35.0 * t4 - 84.0 * t4 * t + 70.0 * t4 * t2 - 20.0 * t3 * t4;
+    }
+    if (ct == QLatin1String("RADIOID"))
+        return 2.0 * t - t * t;
+    if (ct == QLatin1String("LOGARITHMIC")) {
+        static const double kE1 = M_E - 1.0;
+        return std::log(1.0 + t * kE1);
+    }
+    if (ct == QLatin1String("HYPERBOLIC")) {
+        static const double k = 2.5;
+        static const double denom = std::tanh(k);
+        return std::tanh(k * t) / denom;
+    }
+    if (ct == QLatin1String("POLYNOMIAL"))
+        return t * t * t;
+    if (ct == QLatin1String("QUINTIC")) {
+        const double t2 = t * t, t3 = t2 * t;
+        return 6.0 * t3 * t2 - 15.0 * t2 * t2 + 10.0 * t3;
+    }
+    if (ct == QLatin1String("BIQUADRATIC")) {
+        // Helmert's biquadratic parabola: kappa itself is a simple parabola
+        // (quadratic) in arc length (mirrors BiquadraticElement::localFrame()
+        // in RailwayAlignmentElement.cpp — see that file for the derivation).
+        return t * t;
+    }
+    if (ct == QLatin1String("SPLINE")) {
+        // Two-segment cubic-Hermite through (0,0)->(0.5,0.5)->(1,1),
+        // slopes (0,1,0) — mirrors SplineElement::localFrame()'s splineShape().
+        auto hermite = [](double u, double p0, double m0, double p1, double m1) {
+            const double u2 = u * u, u3 = u2 * u;
+            const double h00 =  2.0*u3 - 3.0*u2 + 1.0;
+            const double h10 =  u3 - 2.0*u2 + u;
+            const double h01 = -2.0*u3 + 3.0*u2;
+            const double h11 =  u3 - u2;
+            return h00*p0 + h10*m0 + h01*p1 + h11*m1;
+        };
+        if (t <= 0.5) return hermite(t / 0.5, 0.0, 0.0, 0.5, 0.5);
+        return hermite((t - 0.5) / 0.5, 0.5, 0.5, 1.0, 0.0);
+    }
+    if (ct == QLatin1String("BLOSSEULERHYBRID")) {
+        // "Doucine" — smoothed-trapezoid construction (mirrors
+        // BlossEulerHybridElement::localFrame() in RailwayAlignmentElement.cpp).
+        constexpr double kF = 0.25;
+        const double C = 1.0 / (1.0 - kF);
+        if (t <= kF) {
+            return 0.5 * C * (t - (kF / M_PI) * std::sin(M_PI * t / kF));
+        } else if (t >= 1.0 - kF) {
+            const double u = 1.0 - t;
+            return 1.0 - 0.5 * C * (u - (kF / M_PI) * std::sin(M_PI * u / kF));
+        } else {
+            const double gF = 0.5 * C * kF;
+            return gF + C * (t - kF);
+        }
+    }
+    return t; // HALFSINE handled separately by its caller; SPIRAL/PARABOLA/
+              // CUBICJPN/CUBICECI/unknown: linear fallback (pre-existing).
+}
+
+} // anonymous namespace
+
 int HorizontalAlignment::leftRightSign(int rawIdx) const
 {
     // Sign of cross-track component from azimuth change at rawIdx
@@ -403,8 +509,41 @@ double HorizontalAlignment::computeRadius(int i, double p, bool signed_) const
             if (ct == "HALFSINE")
                 return 1.0 / ((1.0 / (2.0 * exitR))
                               * (1.0 - std::cos(distFromStart / len * M_PI)));
-            // SPIRAL / PARABOLA / default: linear curvature growth
-            return len * std::abs(exitR) / distFromStart;
+            if (ct == "CUBICECI") {
+                // y = x^3/(6*R*Ls); l(x) = x*[1 + x^4/(40R^2Ls^2)
+                //   - x^8/(1152R^4Ls^4) + x^12/(13312R^6Ls^6)] inverted by
+                // fixed-point iteration (mirrors CubicECIElement::localFrame()
+                // exactly). Curvature uses the EXACT y=f(x) formula
+                // kappa(x) = y''(x) / (1+y'(x)^2)^1.5 (not just y''(x) alone,
+                // which is only the small-angle approximation and measurably
+                // disagreed with the actual element's finite-difference
+                // curvature in testing — see chat) with y'(x)=x^2/(2RLs),
+                // y''(x)=x/(RLs).
+                const double R2Ls2 = exitR * exitR * len * len;
+                double x = distFromStart;
+                for (int it = 0; it < 5; ++it) {
+                    const double x4 = x * x * x * x;
+                    const double bracket = 1.0
+                        + x4 / (40.0 * R2Ls2)
+                        - (x4 * x4) / (1152.0 * R2Ls2 * R2Ls2)
+                        + (x4 * x4 * x4) / (13312.0 * R2Ls2 * R2Ls2 * R2Ls2);
+                    x = distFromStart / bracket;
+                }
+                if (x < kTol) return kInf;
+                const double yPrime  = x * x / (2.0 * exitR * len);
+                const double yDouble = x / (exitR * len);
+                const double kappa   = yDouble / std::pow(1.0 + yPrime * yPrime, 1.5);
+                return (std::abs(kappa) < kTol) ? kInf : 1.0 / std::abs(kappa);
+            }
+            if (ct == "SPIRAL" || ct == "PARABOLA" || ct == "CUBICJPN" || ct.isEmpty())
+                // Linear curvature growth (exact for Clothoid; pre-existing
+                // approximation for Parabola/CubicJPN — CubicECI now handled
+                // exactly above).
+                return len * std::abs(exitR) / distFromStart;
+            // 13 curvature-ramp families (SINUSOIDAL…BLOSSEULERHYBRID): exact,
+            // R(dist) = exitR / g(dist/len) — see curvatureRampShapeFraction().
+            const double g = curvatureRampShapeFraction(ct, distFromStart / len);
+            return (std::abs(g) < kTol) ? kInf : std::abs(exitR) / g;
         };
 
         if (nc == "TC") {

@@ -142,6 +142,19 @@ struct SketchArc : public SketchGeometry
         : SketchGeometry(SketchGeometryType::Arc, role)
         , curve(c)
     {
+        // ✅ 修正：與 SketchLine/SketchPolyline 等其他幾何一致，points[] 必須
+        // 在建構時就非空。舊版從不初始化 points，導致 points.isEmpty() 永遠
+        // 為 true、points.size() 永遠為 0：
+        //   - Sketch::syncGeometryFromPoints() 裡 Arc 分支的
+        //     `if (!arc->points.isEmpty())` / `if (arc->points.size() > 2)`
+        //     兩個保護判斷因此永遠不成立，points[] 從未真的被同步更新過。
+        //   - ConstraintPickSession::pick() 用 `g->points.isEmpty()` 篩選可
+        //     被點選的幾何，Arc 因此永遠被跳過、無法用「點選端點/圓心」的
+        //     方式加入約束。
+        // 這裡先塞入 3 個佔位值（[0]=起點 [1]=中點 [2]=終點），實際座標由
+        // Sketch::addArcGeom() 在建構後立即以平面座標填入，之後每次
+        // syncGeometryFromPoints() 也都能正常更新。
+        points = { QVector2D(), QVector2D(), QVector2D() };
     }
 };
 

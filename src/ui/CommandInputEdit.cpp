@@ -52,6 +52,13 @@ void CommandInputEdit::clearPromptOptions() {
     m_promptDoc->clear();
     m_docWidth = 0;
     setTextMargins(0, 0, 0, 0);
+    // 🐛 修正：rebuildDocument()（由 setPromptText()/setPromptOptions() 觸發）
+    // 一律會呼叫 setPlaceholderText({}) 把原生 placeholder 清空，改用
+    // m_promptDoc 疊加繪製提示文字/選項 chips；但命令結束、提示清除時
+    // （例如 LineCommand 結束後呼叫的 CommandLineManager::clearPrompt()）
+    // 只清空了 m_promptDoc，從未把原生 placeholder 復原，導致輸入框從此
+    // 之後一直顯示空白，而不是預設的「輸入指令或 LISP...」。
+    setPlaceholderText(tr("輸入指令或 LISP..."));
     update();
 }
 
@@ -291,11 +298,27 @@ void CommandInputEdit::rebuildDocument() {
     if (!m_promptPrefix.isEmpty())
         html += QString("<span class='prefix'>]: </span>");
 
+    // 🐛 根因修正：此函式結尾原本一律 setPlaceholderText({}) 把原生
+    // placeholder 清空，改用 m_promptDoc 疊加繪製提示文字/選項 chips。
+    // 但 CommandLineManager::clearPrompt()（命令結束、Cancel 等多處都會
+    // 呼叫）是直接 publish 一個「空字串」COMMAND_PROMPT，UIManager 的訂閱
+    // 端會呼叫 setPromptText("")，一樣會走到這裡、一樣把 placeholder 清空
+    // ——完全沒有經過 clearPromptOptions()，所以就算命令完成時另外呼叫了
+    // setPlaceholderText(預設文字) 也會被這裡的空字串再蓋掉一次，最終畫面
+    // 停在全空白，而不是預設的「輸入指令或 LISP...」。
+    // 修正：prefix／prompt text／options 全部都是空的時候（真的沒有東西
+    // 要疊加顯示），改成復原原生 placeholder，而不是清空它。
+    const bool hasAnyPromptContent =
+        !m_promptPrefix.isEmpty() || !m_promptText.isEmpty() || !m_options.isEmpty();
+    if (hasAnyPromptContent)
+        setPlaceholderText({});
+    else
+        setPlaceholderText(tr("輸入指令或 LISP..."));
+
     m_promptDoc->setHtml(html);
     m_promptDoc->setTextWidth(-1);          // 先不限寬，取得自然寬
     m_docWidth = int(m_promptDoc->idealWidth()) + 8;
     updateLeftMargin();
-    setPlaceholderText({});
     update();
     return;
 }

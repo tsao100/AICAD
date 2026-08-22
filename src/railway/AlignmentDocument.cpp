@@ -674,10 +674,27 @@ int HorizontalAlignmentEdit::addCompoundChain(int tangentIdxBefore,
 namespace {
 SpiralType rawCurveTypeToSpiralType(const QString& s)
 {
-    if (s == QLatin1String("HALFSINE")) return SpiralType::HalfSine;
-    if (s == QLatin1String("PARABOLA")) return SpiralType::Parabola;
-    if (s == QLatin1String("CUBICJPN")) return SpiralType::CubicJPN;
-    if (s == QLatin1String("CUBICECI")) return SpiralType::CubicECI;
+    if (s == QLatin1String("HALFSINE"))         return SpiralType::HalfSine;
+    if (s == QLatin1String("PARABOLA"))         return SpiralType::Parabola;
+    if (s == QLatin1String("CUBICJPN"))         return SpiralType::CubicJPN;
+    if (s == QLatin1String("CUBICECI"))         return SpiralType::CubicECI;
+    if (s == QLatin1String("SINUSOIDAL"))       return SpiralType::Sinusoidal;
+    if (s == QLatin1String("COSINE"))           return SpiralType::Cosine;
+    if (s == QLatin1String("BLOSS"))            return SpiralType::Bloss;
+    if (s == QLatin1String("LEMNISCATE"))       return SpiralType::Lemniscate;
+    if (s == QLatin1String("WIENERBOGEN"))      return SpiralType::WienerBogen;
+    if (s == QLatin1String("RADIOID"))          return SpiralType::Radioid;
+    if (s == QLatin1String("ELASRADIOID"))      return SpiralType::ElasticRadioid;
+    if (s == QLatin1String("NORWICHSTURM"))     return SpiralType::NorwichSturm;
+    if (s == QLatin1String("PSEUELLRADIOID"))   return SpiralType::PseudoEllipticRadioid;
+    if (s == QLatin1String("LOGARITHMIC"))      return SpiralType::Logarithmic;
+    if (s == QLatin1String("HYPERBOLIC"))       return SpiralType::Hyperbolic;
+    if (s == QLatin1String("POLYNOMIAL"))       return SpiralType::Polynomial;
+    if (s == QLatin1String("QUINTIC"))          return SpiralType::Quintic;
+    if (s == QLatin1String("PHQUINTIC"))        return SpiralType::PHQuintic;
+    if (s == QLatin1String("BIQUADRATIC"))      return SpiralType::Biquadratic;
+    if (s == QLatin1String("SPLINE"))           return SpiralType::Spline;
+    if (s == QLatin1String("BLOSSEULERHYBRID")) return SpiralType::BlossEulerHybrid;
     return SpiralType::Clothoid;
 }
 
@@ -1323,8 +1340,36 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
                     const AlignmentPoint& cPt = rawPts[buf[cursor].ptIdx];
                     const double R = std::abs(cPt.radius);
                     if (R < 1e-6) { geomOk = false; break; }
-                    spec.arcs[a].radius       = R;
-                    spec.arcs[a].centralAngle = std::abs(cPt.length) / R;  // 真實弧心角（釘死）
+                    spec.arcs[a].radius = R;
+                    // 真實弧心角（釘死）。注意：addCompoundChain() 把
+                    // centralAngle==0 保留給「未釘死、自動平分剩餘轉角」的
+                    // 既有語意（見該函式內對 arc.centralAngle 的註解）。當
+                    // 這段弧在原始 ALD 資料裡就是量測到的零長度弧（length=0，
+                    // 見 AlignmentDataTableDialog 顯示 TC/CC 開頭弧長為零的
+                    // 案例）時，算出來的 centralAngle 會剛好等於這個哨兵值，
+                    // 若原封不動填入，solver 會誤把它當成「未知數、自由分配」
+                    // 而不是「已知、就是趨近 0」，導致這段弧被硬塞進不屬於它
+                    // 的轉角、整條線形跑掉。因此這裡改用一個明確非零的下限
+                    // 釘住，讓下游正確視為「已知」——同時仍保留這段弧在
+                    // curBuffer／CompoundChainSpec 裡的獨立項目，讓資料表能
+                    // 忠實重建出原始的 TC/CS/SC/CT 四列結構，而不是把這一列
+                    // 直接濾掉。
+                    //
+                    // 下限本身依半徑反推（而不是固定角度）：固定角度下限在
+                    // 大半徑時換算回長度會超過資料表 5 位小數的顯示精度，
+                    // 實測 R=10000m 用 1e-9 rad 換算出 0.00001m，會被誤以為
+                    // 是「真的量到 0.00001m」而不是單純的釘死佔位值，在資料
+                    // 表上顯示成非零。改成從「目標顯示長度」反推角度，確保
+                    // 不論半徑多大，換算回來的長度都遠低於顯示精度、四捨五
+                    // 入後恆為 0.00000；另外保留一個絕對角度下限，避免半徑
+                    // 大到不合理（鐵路線形實務不會出現）時角度小到又撞回
+                    // AlignmentSolver.cpp anyPinned 判斷用的 1e-12 哨兵門檻。
+                    constexpr double kMinPinnedArcLength  = 1.0e-7;   // m（遠低於顯示精度）
+                    constexpr double kMinPinnedAngleFloor = 1.0e-11;  // rad（安全高於 1e-12 門檻一個數量級）
+                    const double rawCentralAngle = std::abs(cPt.length) / R;
+                    const double angleFloor = std::max(kMinPinnedArcLength / R, kMinPinnedAngleFloor);
+                    spec.arcs[a].centralAngle =
+                        (rawCentralAngle < angleFloor) ? angleFloor : rawCentralAngle;
                     ++cursor;
                     if (cursor < buf.size() && buf[cursor].elemType == QChar('S')) {
                         const AlignmentPoint& sPt = rawPts[buf[cursor].ptIdx];

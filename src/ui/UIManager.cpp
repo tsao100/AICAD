@@ -1633,6 +1633,59 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                     << "angles:" << startAngle << "->" << endAngle;
                        });
 
+        // ✅ 修正：非互動輸入（"arc x1 y1 x2 y2 x3 y3"）過去只有
+        // ArcCommand::execute() 發布 "command.request-sketch-arc"，但這裡
+        // 從未訂閱過這個事件——結果指令回報「Arc creation requested」成功，
+        // 實際上什麼都沒發生，草圖裡不會多出任何弧線。比照上面
+        // "command.request-sketch-line" 的既有作法補上處理。
+        bus->subscribe("command.request-sketch-arc", this,
+                       [this, bus](const QVariant& data) {
+                           QVariantMap request = data.toMap();
+                           QStringList args = request["args"].toStringList();
+
+                           if (args.size() < 6) {
+                               bus->publish(Events::COMMAND_FAILED, "Need 6 coordinates (x1 y1 x2 y2 x3 y3)");
+                               return;
+                           }
+
+                           Application* app    = Application::instance();
+                           cad::Sketch* sketch = app->activeSketch();
+
+                           if (!sketch) {
+                               bus->publish(Events::COMMAND_FAILED, "No active sketch");
+                               return;
+                           }
+
+                           bool ok = true;
+                           double coords[6];
+                           static const char* names[6] = { "x1", "y1", "x2", "y2", "x3", "y3" };
+                           for (int i = 0; i < 6 && ok; ++i) {
+                               coords[i] = args[i].toDouble(&ok);
+                               if (!ok) {
+                                   bus->publish(Events::COMMAND_FAILED,
+                                                QString("Invalid %1").arg(names[i]));
+                                   return;
+                               }
+                           }
+
+                           QVector2D startPoint(coords[0], coords[1]);
+                           QVector2D midPoint(coords[2], coords[3]);
+                           QVector2D endPoint(coords[4], coords[5]);
+
+                           QString newUuid = sketch->addArcGeom(startPoint, midPoint, endPoint);
+                           if (newUuid.isEmpty()) {
+                               bus->publish(Events::COMMAND_FAILED,
+                                            "Failed to create arc (points may be collinear)");
+                               return;
+                           }
+
+                           bus->publish(Events::FEATURE_UPDATED, sketch->name());
+                           bus->publish(Events::COMMAND_EXECUTED, "Arc created");
+
+                           setStatusMessage("Arc created", 3000);
+                           qDebug() << "[UIManager] Arc created from coordinates";
+                       });
+
 
 
         // ✅ Handle sketch polygon creation requests

@@ -100,6 +100,11 @@ struct AlignmentPoint
     double  length       = 0.0;   ///< Element length [m]
     double  radius       = 0.0;   ///< Signed circular radius (+ right) [m]
     QString curveType;             ///< "SPIRAL"|"HALFSINE"|"PARABOLA"|"CUBICJPN"|"CUBICECI"|"ARC"
+                                    ///< |"SINUSOIDAL"|"COSINE"|"BLOSS"|"LEMNISCATE"|"WIENERBOGEN"
+                                    ///< |"RADIOID"|"LOGARITHMIC"|"HYPERBOLIC"|"POLYNOMIAL"
+                                    ///< |"QUINTIC"|"BIQUADRATIC"|"SPLINE"|"BLOSSEULERHYBRID"
+                                    ///< (see AlignmentDocument.h SpiralType; ALD on-disk storage
+                                    ///< abbreviates names over 8 chars — see AldFileIO.cpp)
     QString circularCurveNo;
     double  cant         = 0.0;   ///< Superelevation [mm]
     double  gaugeWidening= 0.0;   ///< Gauge widening [mm]

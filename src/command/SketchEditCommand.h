@@ -57,6 +57,27 @@ private:
     QPointer<cad::Sketch> m_sketch;
     QJsonObject m_before;
     QJsonObject m_after;
+
+    // ⚠️ Qt Undo Framework 慣例：QUndoStack::push() 在把命令推入堆疊的當下，
+    // 一定會立刻呼叫一次 redo()（這樣「push 完＝已執行」才成立）。但本類別
+    // 的操作在 push() 之前，早就已經透過正常的 Command 路徑（例如
+    // ArcCommand → Sketch::addArc）真的執行過一次了，push() 只是把
+    // before/after 這兩份快照記錄下來、方便之後真正的 undo/redo 而已。
+    //
+    // 如果讓這第一次、由 push() 觸發的 redo() 也真的去跑
+    // Sketch::fromJson(m_after)，等於是「明明已經做完的事，立刻無意義地再
+    // 用 JSON 快照重建一次」——而 fromJson() 的 Arc 分支剛好是全專案最脆弱
+    // 的一段程式碼（靠角度差的正負號分支去猜弧該往哪一邊繞，見
+    // Sketch.cpp fromJson 內 Arc case 的長篇註解），curve 取樣值與
+    // SketchPoint 直接寫入值之間哪怕只有極小的浮點誤差，都可能讓那個分支
+    // 判斷翻面，重建出方向錯誤（繞過去的那一段弧不對）的弧——端點/半徑/
+    // 圓心都對，但不再通過原本點的中間點。
+    //
+    // 修法比照 Qt 官方文件建議的標準做法：用旗標讓「push() 觸發的第一次
+    // redo()」直接跳過（此時 sketch 早已是 after 狀態，不需要也不應該再
+    // 重建），只有之後使用者真正按下 Redo（此時 sketch 已被 undo() 帶回
+    // before 狀態）時，才需要、也才會真的呼叫 fromJson(m_after)。
+    bool m_skipFirstRedo = true;
 };
 
 } // namespace command

@@ -24,6 +24,14 @@ public:
     void setPromptText(const QString& text);
     void clearPromptOptions();
 
+    // 送出目前輸入框內容，等同「按下 Enter」的最終效果（見 .cpp 檔內完整
+    // 說明）。公開給 CadView 的滑鼠右鍵處理呼叫，讓「右鍵＝Enter」這個
+    // 既有慣例（見 CadView::tryEndGetGeomSelectionViaRightClick() 的
+    // 註解）在 InputType::YesNo 等其他等待輸入型別下也能沿用同一份邏輯：
+    // 右鍵時輸入框若已有內容（例如使用者先打了 "y"）會一併送出，而不是
+    // 像過去只能送出空字串（無法送出使用者已打的內容）。
+    void submitCurrentLine();
+
 signals:
     void commandSubmitted(const QString& text);  // Enter 或空白鍵
     void optionChipClicked(const QString& optionKey);
@@ -41,7 +49,6 @@ private:
     void historyUp();
     void historyDown();
     void repeatLastCommand();
-    void submitCurrentLine();      // Enter 與空白鍵（非 Lisp、非等待輸入時）共用的送出邏輯
     void    rebuildDocument();
     QString anchorAtPos(const QPoint& pos) const; // 轉換座標後呼叫 anchorAt
     void    updateLeftMargin();

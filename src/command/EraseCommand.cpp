@@ -294,19 +294,6 @@ void EraseCommand::setHighlight(const QString& uuid, bool on)
         }
     }
 
-    // 1b) ⚠️ 修正：建構線／弧／圓除了不參與輪廓外，其他功能都要與一般幾何
-    // 相同——包含 ERASE 選取時的高亮回饋。建構幾何是獨立於 aisShapes()／
-    // aisShapeUuids() 的另一組 parallel array（見 Sketch::constructionShapes()
-    // 說明），原本這裡完全沒有查詢，導致點選建構幾何準備刪除時沒有高亮。
-    const QList<QString>& ctorUuids = sk->constructionShapeUuids();
-    const QList<Handle(AIS_Shape)> ctorShapes = sk->constructionShapes();
-    for (int i = 0; i < ctorUuids.size() && i < ctorShapes.size(); ++i) {
-        if (ctorUuids[i] == uuid) {
-            toggle(ctorShapes[i]);
-            return;
-        }
-    }
-
     // 2) 找不到對應幾何 → 嘗試當作尺寸約束（AIS_DimensionLine）處理
     auto* panel = uiMgr ? uiMgr->findChild<ui::SketchPanel*>() : nullptr;
     if (panel && panel->overlay()) {

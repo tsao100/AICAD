@@ -232,10 +232,15 @@ CommandResult CommandManager::executeCommand(
     // 靜默遺失。統一轉發到 COMMAND_LOG，讓 UIManager 既有的命令列輸出訂閱
     // （見 connectCommandLineEvents() 對 COMMAND_LOG 的處理）能顯示出來。
     if (auto* bus = core::Application::instance()->eventBus()) {
+        // ⚠️ 不可對 lambda 連線加 Qt::UniqueConnection：Qt 只能比較
+        //    pointer-to-member-function 是否重複，對 lambda/functor 這個
+        //    旗標不會有任何保護效果（見 ConstraintOverlayManager.cpp 同類註記）。
+        //    此處也不需要靠它防重複——cmd 是 info.factory() 剛建立的新物件
+        //    （見上方第 216 行），本來就不會被連接第二次。
         connect(cmd, &Command::messageOutput, this,
                 [bus](const QString& message) {
                     bus->publish(core::Events::COMMAND_LOG, message);
-                }, Qt::UniqueConnection);
+                });
     }
 
     Q_EMIT commandStarted(canonicalName);

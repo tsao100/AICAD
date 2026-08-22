@@ -806,6 +806,23 @@ using railway::HalfSineElement;
 using railway::ParabolaElement;
 using railway::CubicJPNElement;
 using railway::CubicECIElement;
+using railway::SinusoidalElement;
+using railway::CosineElement;
+using railway::BlossElement;
+using railway::LemniscateElement;
+using railway::WienerBogenElement;
+using railway::RadioidElement;
+using railway::ElasticRadioidElement;
+using railway::NorwichSturmElement;
+using railway::PseudoEllipticRadioidElement;
+using railway::LogarithmicElement;
+using railway::HyperbolicElement;
+using railway::PolynomialElement;
+using railway::QuinticElement;
+using railway::PHQuinticElement;
+using railway::BiquadraticElement;
+using railway::SplineElement;
+using railway::BlossEulerHybridElement;
 
 /**
  * @brief Instantiate the TransitionElement subclass for @p type.
@@ -818,12 +835,29 @@ makeTransitionElement(SpiralType type, double Ls, double signedR)
 {
     std::unique_ptr<TransitionElement> elem;
     switch (type) {
-    case SpiralType::HalfSine: elem = std::make_unique<HalfSineElement>(); break;
-    case SpiralType::Parabola: elem = std::make_unique<ParabolaElement>(); break;
-    case SpiralType::CubicJPN: elem = std::make_unique<CubicJPNElement>(); break;
-    case SpiralType::CubicECI: elem = std::make_unique<CubicECIElement>(); break;
+    case SpiralType::HalfSine:         elem = std::make_unique<HalfSineElement>();         break;
+    case SpiralType::Parabola:         elem = std::make_unique<ParabolaElement>();         break;
+    case SpiralType::CubicJPN:         elem = std::make_unique<CubicJPNElement>();         break;
+    case SpiralType::CubicECI:         elem = std::make_unique<CubicECIElement>();         break;
+    case SpiralType::Sinusoidal:       elem = std::make_unique<SinusoidalElement>();       break;
+    case SpiralType::Cosine:           elem = std::make_unique<CosineElement>();           break;
+    case SpiralType::Bloss:            elem = std::make_unique<BlossElement>();            break;
+    case SpiralType::Lemniscate:       elem = std::make_unique<LemniscateElement>();       break;
+    case SpiralType::WienerBogen:      elem = std::make_unique<WienerBogenElement>();      break;
+    case SpiralType::Radioid:          elem = std::make_unique<RadioidElement>();          break;
+    case SpiralType::ElasticRadioid:   elem = std::make_unique<ElasticRadioidElement>();   break;
+    case SpiralType::NorwichSturm:     elem = std::make_unique<NorwichSturmElement>();     break;
+    case SpiralType::PseudoEllipticRadioid: elem = std::make_unique<PseudoEllipticRadioidElement>(); break;
+    case SpiralType::Logarithmic:      elem = std::make_unique<LogarithmicElement>();      break;
+    case SpiralType::Hyperbolic:       elem = std::make_unique<HyperbolicElement>();       break;
+    case SpiralType::Polynomial:       elem = std::make_unique<PolynomialElement>();       break;
+    case SpiralType::Quintic:          elem = std::make_unique<QuinticElement>();          break;
+    case SpiralType::PHQuintic:        elem = std::make_unique<PHQuinticElement>();        break;
+    case SpiralType::Biquadratic:      elem = std::make_unique<BiquadraticElement>();      break;
+    case SpiralType::Spline:           elem = std::make_unique<SplineElement>();           break;
+    case SpiralType::BlossEulerHybrid: elem = std::make_unique<BlossEulerHybridElement>(); break;
     case SpiralType::Clothoid:
-    default:                   elem = std::make_unique<ClothoidElement>();  break;
+    default:                           elem = std::make_unique<ClothoidElement>();  break;
     }
     elem->setLength(Ls);
     elem->setRadius(signedR);

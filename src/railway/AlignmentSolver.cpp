@@ -163,16 +163,71 @@ makeTransitionElement(SpiralType type, double Ls, double signedR)
 {
     std::unique_ptr<TransitionElement> elem;
     switch (type) {
-    case SpiralType::HalfSine: elem = std::make_unique<HalfSineElement>(); break;
-    case SpiralType::Parabola: elem = std::make_unique<ParabolaElement>(); break;
-    case SpiralType::CubicJPN: elem = std::make_unique<CubicJPNElement>(); break;
-    case SpiralType::CubicECI: elem = std::make_unique<CubicECIElement>(); break;
+    case SpiralType::HalfSine:         elem = std::make_unique<HalfSineElement>();         break;
+    case SpiralType::Parabola:         elem = std::make_unique<ParabolaElement>();         break;
+    case SpiralType::CubicJPN:         elem = std::make_unique<CubicJPNElement>();         break;
+    case SpiralType::CubicECI:         elem = std::make_unique<CubicECIElement>();         break;
+    case SpiralType::Sinusoidal:       elem = std::make_unique<SinusoidalElement>();       break;
+    case SpiralType::Cosine:           elem = std::make_unique<CosineElement>();           break;
+    case SpiralType::Bloss:            elem = std::make_unique<BlossElement>();            break;
+    case SpiralType::Lemniscate:       elem = std::make_unique<LemniscateElement>();       break;
+    case SpiralType::WienerBogen:      elem = std::make_unique<WienerBogenElement>();      break;
+    case SpiralType::Radioid:          elem = std::make_unique<RadioidElement>();          break;
+    case SpiralType::ElasticRadioid:   elem = std::make_unique<ElasticRadioidElement>();   break;
+    case SpiralType::NorwichSturm:     elem = std::make_unique<NorwichSturmElement>();     break;
+    case SpiralType::PseudoEllipticRadioid: elem = std::make_unique<PseudoEllipticRadioidElement>(); break;
+    case SpiralType::Logarithmic:      elem = std::make_unique<LogarithmicElement>();      break;
+    case SpiralType::Hyperbolic:       elem = std::make_unique<HyperbolicElement>();       break;
+    case SpiralType::Polynomial:       elem = std::make_unique<PolynomialElement>();       break;
+    case SpiralType::Quintic:          elem = std::make_unique<QuinticElement>();          break;
+    case SpiralType::PHQuintic:        elem = std::make_unique<PHQuinticElement>();        break;
+    case SpiralType::Biquadratic:      elem = std::make_unique<BiquadraticElement>();      break;
+    case SpiralType::Spline:           elem = std::make_unique<SplineElement>();           break;
+    case SpiralType::BlossEulerHybrid: elem = std::make_unique<BlossEulerHybridElement>(); break;
     case SpiralType::Clothoid:
-    default:                   elem = std::make_unique<ClothoidElement>();  break;
+    default:                           elem = std::make_unique<ClothoidElement>();  break;
     }
     elem->setLength(Ls);
     elem->setRadius(signedR);
     return elem;
+}
+
+// ============================================================================
+//  spiralTypeName  (file-local helper)
+//
+//  Map SpiralType → AlignmentPoint::curveType token (uppercase, as written to
+//  ALD/JSON). Centralised here (used to be duplicated as an identical local
+//  lambda in 7 different functions below) so that adding a new SpiralType
+//  only requires touching this one switch instead of every call site.
+// ============================================================================
+
+QString spiralTypeName(SpiralType t)
+{
+    switch (t) {
+    case SpiralType::HalfSine:         return QStringLiteral("HALFSINE");
+    case SpiralType::Parabola:         return QStringLiteral("PARABOLA");
+    case SpiralType::CubicJPN:         return QStringLiteral("CUBICJPN");
+    case SpiralType::CubicECI:         return QStringLiteral("CUBICECI");
+    case SpiralType::Sinusoidal:       return QStringLiteral("SINUSOIDAL");
+    case SpiralType::Cosine:           return QStringLiteral("COSINE");
+    case SpiralType::Bloss:            return QStringLiteral("BLOSS");
+    case SpiralType::Lemniscate:       return QStringLiteral("LEMNISCATE");
+    case SpiralType::WienerBogen:      return QStringLiteral("WIENERBOGEN");
+    case SpiralType::Radioid:          return QStringLiteral("RADIOID");
+    case SpiralType::ElasticRadioid:   return QStringLiteral("ELASRADIOID");
+    case SpiralType::NorwichSturm:     return QStringLiteral("NORWICHSTURM");
+    case SpiralType::PseudoEllipticRadioid: return QStringLiteral("PSEUELLRADIOID");
+    case SpiralType::Logarithmic:      return QStringLiteral("LOGARITHMIC");
+    case SpiralType::Hyperbolic:       return QStringLiteral("HYPERBOLIC");
+    case SpiralType::Polynomial:       return QStringLiteral("POLYNOMIAL");
+    case SpiralType::Quintic:          return QStringLiteral("QUINTIC");
+    case SpiralType::PHQuintic:        return QStringLiteral("PHQUINTIC");
+    case SpiralType::Biquadratic:      return QStringLiteral("BIQUADRATIC");
+    case SpiralType::Spline:           return QStringLiteral("SPLINE");
+    case SpiralType::BlossEulerHybrid: return QStringLiteral("BLOSSEULERHYBRID");
+    case SpiralType::Clothoid:
+    default:                           return QStringLiteral("SPIRAL");
+    }
 }
 
 } // anonymous namespace
@@ -2224,8 +2279,17 @@ SolvedCompoundChain AlignmentSolver::solveCompoundChain(
 
         const bool isLastArc = (k == N - 1);
         if (isLastArc) {
-            // CS(N-1): next segment is the exit spiral (or ST directly if omitted).
-            raw.append({ pos, az, false, resolvedSpiralLengths[N], resolvedArcRadii[N - 1] });
+            if (resolvedSpiralLengths[N] >= 1e-9) {
+                // CS(N-1): next segment is the exit spiral.
+                raw.append({ pos, az, false, resolvedSpiralLengths[N], resolvedArcRadii[N - 1] });
+            }
+            // else：出螺旋省略（長度 0）——圓弧直接接到終點切線，這個位置
+            // 跟下面無條件產生的終點節點（見 raw.append(stRaw...)）幾何上
+            // 完全重合。對稱於前面「入螺旋省略」時的 retag-not-append 處理
+            // （見本函式開頭 "Entry spiral omitted" 註解），這裡刻意不額外
+            // 產生節點，否則資料表尾端會多出一列里程相同、內容重複的資料
+            // （實測：TC(0)-CS-SC-CT 四列的 ALD，若沒有這段會多出一列
+            // 誤標為 "CS" 的重複列，加上原本就有的終點節點，變成六列）。
         } else if (resolvedSpiralLengths[k + 1] >= 1e-9) {
             // CS_k: next segment is interior spiral (k+1).
             raw.append({ pos, az, false, resolvedSpiralLengths[k + 1], resolvedArcRadii[k] });
@@ -3333,16 +3397,6 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         if (e.type == EditableElementType::SpiralIn && compoundData[i].valid) {
             const SolvedCompoundChain& chain = compoundData[i].chain;
 
-            auto spiralTypeName = [](SpiralType t) -> QString {
-                switch (t) {
-                case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
-                case SpiralType::Parabola: return QStringLiteral("PARABOLA");
-                case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
-                case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
-                case SpiralType::Clothoid: // fall-through — default
-                default:                    return QStringLiteral("SPIRAL");
-                }
-            };
 
             const int nodeCount = chain.nodes.size();
             int spiralIdx = 0;   // index into chain.spiralTypes (0..N)
@@ -3350,7 +3404,14 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 const CompoundChainNode& node = chain.nodes[ni];
                 AlignmentPoint np;
                 if (ni == 0) {
-                    np.tsc = QStringLiteral("TS");
+                    // 節點 0 平常是「切線→入螺旋」的 TS 邊界點；但入螺旋省略
+                    // （長度 0）時，solveCompoundChain() 已把它 retag 成
+                    // isArcStart=true（見該函式對 "Entry spiral omitted" 的
+                    // 處理），代表這裡其實是切線直接接圓弧，應標為 TC，讓
+                    // 資料表把它歸進「SC/CC/TC 半徑可編輯」那一支，正確顯示
+                    // ／可編輯半徑（原本寫死 "TS" 會落入唯讀的曲線類型欄，
+                    // 半徑值就顯示不出來）。
+                    np.tsc = node.isArcStart ? QStringLiteral("TC") : QStringLiteral("TS");
                 } else if (node.isArcStart) {
                     np.tsc = QStringLiteral("SC");
                 } else {
@@ -3381,8 +3442,19 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                     const QPointF& endPt = tanEnd[ta];
                     const double   tlen  = QLineF(stPt, endPt).length();
 
+                    // 出螺旋省略時（見 solveCompoundChain() 對稱於「入螺旋
+                    // 省略」的 retag-not-append 處理），這個終點其實是圓弧
+                    // 直接接切線，語意上是 "CT" 而不是 "ST"。判斷方式：倒數
+                    // 第二個節點（緊接在這個終點之前）若 isArcStart==true，
+                    // 代表中間沒有另外產生一個 "CS" 節點——圓弧末端直接落在
+                    // 這個終點上，即出螺旋被省略。
+                    const bool exitSpiralOmitted =
+                        nodeCount >= 2 && chain.nodes[nodeCount - 2].isArcStart;
+
                     AlignmentPoint stTT;
-                    stTT.tsc      = QStringLiteral("ST");
+                    stTT.tsc      = exitSpiralOmitted ? QStringLiteral("CT") : QStringLiteral("ST");
+                    stTT.curveType = exitSpiralOmitted ? QStringLiteral("ARC") : QString();
+                    stTT.radius   = exitSpiralOmitted ? chain.nodes[nodeCount - 2].radius : 0.0;
                     stTT.easting  = stPt.x();
                     stTT.northing = stPt.y();
                     stTT.azimuth  = chain.nodes.last().az;
@@ -3404,16 +3476,6 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
 
             // Map SpiralType enum → AlignmentPoint curveType string
             // SpiralIn element (index i) carries both type1 (entry) and type2 (exit)
-            auto spiralTypeName = [](SpiralType t) -> QString {
-                switch (t) {
-                case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
-                case SpiralType::Parabola: return QStringLiteral("PARABOLA");
-                case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
-                case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
-                case SpiralType::Clothoid: // fall-through — default
-                default:                   return QStringLiteral("SPIRAL");
-                }
-            };
 
             const QString curveTypeIn  = spiralTypeName(e.spiralType1);
             const QString curveTypeOut = spiralTypeName(e.spiralType2);
@@ -3574,15 +3636,6 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             // ── Emit LC spiral keypoint (TS) before the arc CC point ──────────
             if (hasLC) {
                 const SolvedLC& lc = lcData[i-1].lc;
-                auto spiralTypeName = [](SpiralType t) -> QString {
-                    switch (t) {
-                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
-                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
-                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
-                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
-                    default:                   return QStringLiteral("SPIRAL");
-                    }
-                };
                 const QString curveType = spiralTypeName(elems[i-1].spiralType1);
 
                 AlignmentPoint tspt;
@@ -3631,15 +3684,6 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             // connects Arc₁ (trimmed at SC₁) to Arc₂ (trimmed at SC₂).
             if (hasACA_exit) {
                 const SolvedACA& aca = acaData[i+1].aca;
-                auto spiralTypeName = [](SpiralType t) -> QString {
-                    switch (t) {
-                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
-                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
-                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
-                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
-                    default:                   return QStringLiteral("SPIRAL");
-                    }
-                };
                 const QString curveType = spiralTypeName(elems[i+1].spiralType1);
 
                 // CS point = SC₁ (exit of Arc₁ = entry of spiral)
@@ -3677,15 +3721,6 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 const SolvedReverseSpiral& rs = rsData[i+1].rs;
                 const int spiralInIdx  = i + 1;
                 const int spiralOutIdx = rsData[i+1].spiralOutIdx;
-                auto spiralTypeName = [](SpiralType t) -> QString {
-                    switch (t) {
-                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
-                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
-                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
-                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
-                    default:                   return QStringLiteral("SPIRAL");
-                    }
-                };
 
                 // CS point = start of S1 (exit of Arc₁ = entry of S1)
                 AlignmentPoint cspt;
@@ -3731,15 +3766,6 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             // ── Emit CA spiral keypoint (CS then ST) after the arc ────────────
             if (hasCA) {
                 const SolvedCA& ca = caData[i+1].ca;
-                auto spiralTypeName = [](SpiralType t) -> QString {
-                    switch (t) {
-                    case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
-                    case SpiralType::Parabola: return QStringLiteral("PARABOLA");
-                    case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
-                    case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
-                    default:                   return QStringLiteral("SPIRAL");
-                    }
-                };
                 const QString curveType = spiralTypeName(elems[i+1].spiralType2);
 
                 // CS point (arc-end / spiral-start)
@@ -3841,15 +3867,6 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             const double len = e.length;
             if (len < 1e-9) continue;
 
-            auto spiralTypeName = [](SpiralType t) -> QString {
-                switch (t) {
-                case SpiralType::HalfSine: return QStringLiteral("HALFSINE");
-                case SpiralType::Parabola: return QStringLiteral("PARABOLA");
-                case SpiralType::CubicJPN: return QStringLiteral("CUBICJPN");
-                case SpiralType::CubicECI: return QStringLiteral("CUBICECI");
-                default:                   return QStringLiteral("SPIRAL");
-                }
-            };
 
             // tsc 碼：SpiralIn（虛擬圓弧在前，即線形起點）→ "CS"（抵達本點
             // 的是檔案資料範圍外的虛擬圓弧）；SpiralOut（虛擬圓弧在後，即
@@ -3874,6 +3891,17 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         sentinel.tsc      = QStringLiteral("TT");
         sentinel.length   = 0.0;
         sentinel.chainage = chainage;
+
+        // 供下方 sentinel 回溯搜尋使用：把每個複合弧鏈（N>=2 弧）群組的
+        // 「最後一個元素索引」反查回「這個群組的起點（SpiralIn）索引」，
+        // 一次建表，避免在迴圈裡對每個候選 i 都重新掃描一次 compoundData。
+        QVector<int> compoundGroupStartByLastIdx(n, -1);
+        for (int j = 0; j < n; ++j) {
+            if (compoundData[j].valid && compoundData[j].lastIdx >= 0
+                && compoundData[j].lastIdx < n) {
+                compoundGroupStartByLastIdx[compoundData[j].lastIdx] = j;
+            }
+        }
 
         // Walk backward to find the last element with valid geometry
         for (int i = n - 1; i >= 0; --i) {
@@ -3900,6 +3928,42 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                     sentinel.easting  = scs.stPoint.x();
                     sentinel.northing = scs.stPoint.y();
                     sentinel.azimuth  = scs.azST;
+                }
+                break;
+            } else if (elems[i].type == EditableElementType::SpiralOut
+                       && compoundGroupStartByLastIdx[i] >= 0) {
+                // ── 複合弧鏈（N>=2 弧，見 addCompoundChain()）的出螺旋收尾 ──
+                // 原本這裡完全沒有對應分支：上面的 SCS 分支要求
+                // scsData[i-2].valid，但複合弧鏈是走 compoundData，不會命中；
+                // 於是掃到這裡的 elems[i] 會被當成「不符合任何已知類型」，
+                // 迴圈繼續往前找，最終落到最前面的邊界建構線 Tangent 被
+                // continue 跳過，整個迴圈掃完都沒有 break，sentinel 的座標
+                // 就維持預設建構值 (0,0)，資料表尾端因此多出一列座標全 0、
+                // 內容無意義的殘影 "TT"（實測：TC(0)-CS-SC-CT 這類含複合
+                // 弧鏈的 ALD，匯入後尾端會多出這一列）。
+                //
+                // 修法比照上面 SCS 分支：往前找出這個出螺旋所屬複合弧鏈
+                // 群組的起點（SpiralIn），用該群組自己的 tangentIdxAfter
+                // 判斷退出點是否為真正切線。
+                const int groupStart = compoundGroupStartByLastIdx[i];
+                const int ta = elems[groupStart].tangentIdxAfter;
+                if (ta >= 0 && ta < n
+                    && elems[ta].type == EditableElementType::Tangent
+                    && !isBoundaryConstruction[ta]) {
+                    sentinel.easting  = tanEnd[ta].x();
+                    sentinel.northing = tanEnd[ta].y();
+                    sentinel.azimuth  = azimuthOf(tanStart[ta], tanEnd[ta]);
+                } else {
+                    // 邊界建構線（或找不到退出切線）：複合弧鏈區塊自己已經
+                    // inline 發出正確的收尾關鍵點（"ST"，或省略出螺旋時本次
+                    // 一併修正的 "CT"），座標就是這條鏈的最後一個節點。這裡
+                    // 的 sentinel 錨在同一個座標、tsc[1] 同樣是 'T'，會被
+                    // AlignmentDataTableDialog 既有的「相鄰兩列同為切線端點
+                    // 且座標重合則合併」判斷自然去掉，不會留下多餘列。
+                    const SolvedCompoundChain& chain = compoundData[groupStart].chain;
+                    sentinel.easting  = chain.nodes.last().pt.x();
+                    sentinel.northing = chain.nodes.last().pt.y();
+                    sentinel.azimuth  = chain.nodes.last().az;
                 }
                 break;
             } else if (elems[i].type == EditableElementType::Tangent) {

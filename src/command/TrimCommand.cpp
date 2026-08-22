@@ -4,6 +4,7 @@
  */
 #include "TrimCommand.h"
 #include "TrimExtendHelper.h"
+#include "CommandRubberBandHelper.h"
 
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
@@ -145,11 +146,18 @@ void TrimCommand::beginPickSegmentStage(cad::Sketch* sketch)
 
     auto* uiMgr   = core::Application::instance()->uiManager();
     auto* cadView = uiMgr ? uiMgr->cadView() : nullptr;
-    if (cadView) cadView->setMode(view::InteractionMode::GetGeom);
+    if (cadView) {
+        cadView->setMode(view::InteractionMode::GetGeom);
+        // 防呆：選取剪切邊階段若殘留一個尚未收尾的窗選（isBoxSelectArmed()
+        // 仍是 true），這裡多保險一次明確清掉——見 CadView::setMode() 內
+        // 對應的說明，兩者處理的是同一個問題，這裡是額外一層防呆。
+        cadView->cancelActiveBoxSelect();
+    }
 
     subscribeGeomPicked();
     subscribeConfirm();
     subscribeCancelled();
+    subscribeHover();
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) {
@@ -191,6 +199,41 @@ void TrimCommand::subscribeCancelled()
         });
 }
 
+void TrimCommand::subscribeHover()
+{
+    auto* bus = core::Application::instance()->eventBus();
+    if (!bus) return;
+    bus->subscribe(core::Events::GEOM_HOVER, this,
+        [this](const QVariant& v) {
+            QMetaObject::invokeMethod(this, [this, v] { onHover(v); },
+                                      Qt::QueuedConnection);
+        });
+}
+
+
+void TrimCommand::onHover(const QVariant& payload)
+{
+    if (m_state != State::PickingSegment) return;
+
+    const QVariantMap map = payload.toMap();
+    const QString uuid = map.value("geomUuid").toString();
+
+    Sketch* sk = activeSketch();
+    if (!sk || uuid.isEmpty() || isFixedReferenceUuid(uuid)) {
+        rb::disarm();
+        return;
+    }
+
+    const QPointF ptF = map.value("point").value<QPointF>();
+    const QVector2D hoverPt(float(ptF.x()), float(ptF.y()));
+
+    const auto seg = trimext::previewTrimAt(sk, uuid, m_cuttingEdges, hoverPt);
+    if (seg.valid)
+        rb::showPolylinePreview(sk, seg.points);
+    else
+        rb::disarm();
+}
+
 void TrimCommand::onGeomPicked(const QVariant& payload)
 {
     if (m_state != State::PickingSegment) return;
@@ -209,6 +252,11 @@ void TrimCommand::onGeomPicked(const QVariant& payload)
 
     Sketch* sk = activeSketch();
     if (!sk) return;
+
+    // 點擊前的 hover 預覽是根據點擊前的幾何狀態算的，點擊後幾何已經
+    // 被裁切（或裁切失敗但游標還沒移動），畫面上殘留的預覽線可能對到
+    // 已經不存在或已改變的位置，先收起來，等下一次滑鼠移動再重新算。
+    rb::disarm();
 
     const bool ok = trimext::trimAt(sk, uuid, m_cuttingEdges, clickPt);
     if (ok) {
@@ -256,6 +304,7 @@ void TrimCommand::unsubscribeAll()
     auto* bus = core::Application::instance()->eventBus();
     if (!bus) return;
     bus->unsubscribe(core::Events::GEOM_PICKED,       this);
+    bus->unsubscribe(core::Events::GEOM_HOVER,        this);
     bus->unsubscribe(core::Events::STRING_INPUT,      this);
     bus->unsubscribe(core::Events::COMMAND_CANCELLED, this);
 }
@@ -263,6 +312,7 @@ void TrimCommand::unsubscribeAll()
 void TrimCommand::cleanup()
 {
     unsubscribeAll();
+    rb::disarm();
 
     if (m_picker) {
         m_picker->abortSilently();

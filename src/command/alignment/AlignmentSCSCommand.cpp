@@ -105,6 +105,57 @@ bool AlignmentSCSCommand::parseSpiralType(const QString& text, SpiralType& out)
     if (key == QLatin1String("CUBICECI") || key == QLatin1String("ECI")) {
         out = SpiralType::CubicECI; return true;
     }
+    if (key == QLatin1String("SINUSOIDAL") || key == QLatin1String("SIN")) {
+        out = SpiralType::Sinusoidal; return true;
+    }
+    if (key == QLatin1String("COSINE") || key == QLatin1String("COS")) {
+        out = SpiralType::Cosine; return true;
+    }
+    if (key == QLatin1String("BLOSS") || key == QLatin1String("BL")) {
+        out = SpiralType::Bloss; return true;
+    }
+    if (key == QLatin1String("LEMNISCATE") || key == QLatin1String("LEM")) {
+        out = SpiralType::Lemniscate; return true;
+    }
+    if (key == QLatin1String("WIENERBOGEN") || key == QLatin1String("WB")) {
+        out = SpiralType::WienerBogen; return true;
+    }
+    if (key == QLatin1String("RADIOID") || key == QLatin1String("RAD")) {
+        out = SpiralType::Radioid; return true;
+    }
+    if (key == QLatin1String("ELASRADIOID") || key == QLatin1String("ERAD")) {
+        out = SpiralType::ElasticRadioid; return true;
+    }
+    if (key == QLatin1String("NORWICHSTURM") || key == QLatin1String("NWS")) {
+        out = SpiralType::NorwichSturm; return true;
+    }
+    if (key == QLatin1String("PSEUELLRADIOID") || key == QLatin1String("PER")) {
+        out = SpiralType::PseudoEllipticRadioid; return true;
+    }
+    if (key == QLatin1String("LOGARITHMIC") || key == QLatin1String("LOG")) {
+        out = SpiralType::Logarithmic; return true;
+    }
+    if (key == QLatin1String("HYPERBOLIC") || key == QLatin1String("HYP")) {
+        out = SpiralType::Hyperbolic; return true;
+    }
+    if (key == QLatin1String("POLYNOMIAL") || key == QLatin1String("POLY")) {
+        out = SpiralType::Polynomial; return true;
+    }
+    if (key == QLatin1String("QUINTIC") || key == QLatin1String("QNT")) {
+        out = SpiralType::Quintic; return true;
+    }
+    if (key == QLatin1String("PHQUINTIC") || key == QLatin1String("PHQ")) {
+        out = SpiralType::PHQuintic; return true;
+    }
+    if (key == QLatin1String("BIQUADRATIC") || key == QLatin1String("BIQ")) {
+        out = SpiralType::Biquadratic; return true;
+    }
+    if (key == QLatin1String("SPLINE") || key == QLatin1String("SPL")) {
+        out = SpiralType::Spline; return true;
+    }
+    if (key == QLatin1String("BLOSSEULERHYBRID") || key == QLatin1String("BEH")) {
+        out = SpiralType::BlossEulerHybrid; return true;
+    }
     return false;   // 無法識別
 }
 
@@ -115,12 +166,29 @@ bool AlignmentSCSCommand::parseSpiralType(const QString& text, SpiralType& out)
 QString AlignmentSCSCommand::spiralTypeName(SpiralType t)
 {
     switch (t) {
-    case SpiralType::HalfSine: return QStringLiteral("HalfSine");
-    case SpiralType::Parabola: return QStringLiteral("Parabola");
-    case SpiralType::CubicJPN: return QStringLiteral("CubicJPN");
-    case SpiralType::CubicECI: return QStringLiteral("CubicECI");
+    case SpiralType::HalfSine:         return QStringLiteral("HalfSine");
+    case SpiralType::Parabola:         return QStringLiteral("Parabola");
+    case SpiralType::CubicJPN:         return QStringLiteral("CubicJPN");
+    case SpiralType::CubicECI:         return QStringLiteral("CubicECI");
+    case SpiralType::Sinusoidal:       return QStringLiteral("Sinusoidal");
+    case SpiralType::Cosine:           return QStringLiteral("Cosine");
+    case SpiralType::Bloss:            return QStringLiteral("Bloss");
+    case SpiralType::Lemniscate:       return QStringLiteral("Lemniscate");
+    case SpiralType::WienerBogen:      return QStringLiteral("WienerBogen");
+    case SpiralType::Radioid:          return QStringLiteral("Radioid");
+    case SpiralType::ElasticRadioid:   return QStringLiteral("ElasticRadioid");
+    case SpiralType::NorwichSturm:     return QStringLiteral("NorwichSturm");
+    case SpiralType::PseudoEllipticRadioid: return QStringLiteral("PseudoEllipticRadioid");
+    case SpiralType::Logarithmic:      return QStringLiteral("Logarithmic");
+    case SpiralType::Hyperbolic:       return QStringLiteral("Hyperbolic");
+    case SpiralType::Polynomial:       return QStringLiteral("Polynomial");
+    case SpiralType::Quintic:          return QStringLiteral("Quintic");
+    case SpiralType::PHQuintic:        return QStringLiteral("PHQuintic");
+    case SpiralType::Biquadratic:      return QStringLiteral("Biquadratic");
+    case SpiralType::Spline:           return QStringLiteral("Spline");
+    case SpiralType::BlossEulerHybrid: return QStringLiteral("BlossEulerHybrid");
     case SpiralType::Clothoid:
-    default:                   return QStringLiteral("Clothoid");
+    default:                           return QStringLiteral("Clothoid");
     }
 }
 
@@ -431,8 +499,8 @@ void AlignmentSCSCommand::handleNumberInput(const QString& text)
             // 進入 WaitingForType1（若 L1 > 0）
             if (m_L1 > 1e-9) {
                 bus->publish(Events::COMMAND_PROMPT,
-                             tr("Entry spiral type T1= [Clothoid(C) / HalfSine(HS) / "
-                                "Parabola(P) / CubicJPN(JPN) / CubicECI(ECI)] "
+                             tr("Entry spiral type T1= [C/HS/P/JPN/ECI/SIN/COS/BL/"
+                                "LEM/WB/RAD/LOG/HYP/POLY/QNT/PHQ/BIQ/SPL/BEH] "
                                 "(Enter = Clothoid):"));
                 m_step = Step::WaitingForType1;
             } else {
@@ -453,8 +521,8 @@ void AlignmentSCSCommand::handleNumberInput(const QString& text)
             outputMessage(QString("L1 = %1 m.  Choose entry spiral type (T1=):")
                               .arg(m_L1, 0, 'f', 3));
             bus->publish(Events::COMMAND_PROMPT,
-                         tr("T1= Clothoid(C) / HalfSine(HS) / Parabola(P) / "
-                            "CubicJPN(JPN) / CubicECI(ECI)  [Enter = Clothoid]:"));
+                         tr("T1= [C/HS/P/JPN/ECI/SIN/COS/BL/LEM/WB/RAD/LOG/HYP/"
+                            "POLY/QNT/PHQ/BIQ/SPL/BEH]  [Enter = Clothoid]:"));
             m_step = Step::WaitingForType1;
         } else {
             // L1 = 0：跳過類型，直接詢問 L2
@@ -527,8 +595,8 @@ void AlignmentSCSCommand::handleNumberInput(const QString& text)
             outputMessage(QString("L2 = %1 m.  Choose exit spiral type (T2=):")
                               .arg(m_L2, 0, 'f', 3));
             bus->publish(Events::COMMAND_PROMPT,
-                         tr("T2= Clothoid(C) / HalfSine(HS) / Parabola(P) / "
-                            "CubicJPN(JPN) / CubicECI(ECI)  [Enter = Clothoid]:"));
+                         tr("T2= [C/HS/P/JPN/ECI/SIN/COS/BL/LEM/WB/RAD/LOG/HYP/"
+                            "POLY/QNT/PHQ/BIQ/SPL/BEH]  [Enter = Clothoid]:"));
             m_step = Step::WaitingForType2;
         } else {
             // L2 = 0：跳過類型，進入確認

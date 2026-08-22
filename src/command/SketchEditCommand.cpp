@@ -76,6 +76,18 @@ void SketchEditCommand::undo()
 void SketchEditCommand::redo()
 {
     if (!m_sketch) return;
+
+    // 第一次 redo() 是 QUndoStack::push() 自動觸發的，此時對應的操作早就
+    // 已經透過正常的 Command 路徑真的執行過了（sketch 已經是 m_after 狀態），
+    // 不需要、也不應該再用 fromJson() 重建一次——見標頭檔 m_skipFirstRedo
+    // 的完整說明。之後使用者真正按 Redo 時（sketch 已被 undo() 帶回
+    // m_before），這個旗標已經是 false，才會真的執行下面的 fromJson()。
+    if (m_skipFirstRedo) {
+        m_skipFirstRedo = false;
+        qDebug() << "[SketchEditCommand] redo (initial push, skipped):" << text();
+        return;
+    }
+
     qDebug() << "[SketchEditCommand] redo:" << text();
     m_sketch->fromJson(m_after);
     notifySketchUpdated(m_sketch);

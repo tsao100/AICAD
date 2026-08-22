@@ -46,6 +46,23 @@ void armRectPreview(cad::Sketch* sketch, const QVector2D& corner1)
     band->addPoint(QPointF(corner1.x(), corner1.y()));
 }
 
+void showPolylinePreview(cad::Sketch* sketch, const QVector<QVector2D>& points)
+{
+    view::RubberBand* band = getRubberBand();
+    if (!band || !sketch || points.size() < 2) return;
+
+    band->setPlane(sketch->plane());
+    band->setMode(view::RubberBandMode::Polyline);
+    band->clearPoints();
+    // RubberBand::updatePolyline() 固定把 currentPoint 當最後一段的終點
+    // （見 RubberBand.cpp），其餘點依序用 addPoint()——這裡沒有「跟隨
+    // 游標的下一點」，所以直接把最後一個算好的座標當 currentPoint。
+    for (int i = 0; i + 1 < points.size(); ++i)
+        band->addPoint(QPointF(points[i].x(), points[i].y()));
+    band->setCurrentPoint(QPointF(points.last().x(), points.last().y()));
+    band->update();
+}
+
 void disarm()
 {
     view::RubberBand* band = getRubberBand();

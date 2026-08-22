@@ -15,6 +15,7 @@
 #include "CopyCommand.h"
 #include "RotateCommand.h"
 #include "MirrorCommand.h"
+#include "ScaleCommand.h"
 #include "StretchCommand.h"
 #include "TrimCommand.h"
 #include "ExtendCommand.h"
@@ -1072,6 +1073,11 @@ void registerConstraintCommands(core::Application* app)
 
     cmdMgr->registerCommand("MIRROR", QStringList{"MI"},
         []() -> Command* { return new MirrorCommand(); });
+
+    // 別名 SC 已在 CommandAlias 內預先建立（isSystem=true，與 M/CO/RO/MI
+    // 同批，但實際指令一直沒有實作），這裡補上 SCALE 本身。
+    cmdMgr->registerCommand("SCALE", QStringList{"SC"},
+        []() -> Command* { return new ScaleCommand(); });
 
     // STRETCH：別名 S 尚未在 CommandAlias 內建立（不像 M/CO/RO/MI 早已預先
     // 存在），這裡需要額外註冊。

@@ -285,6 +285,9 @@ SOURCES += \
     src/command/alignment/AlignmentSCSChainCommand.cpp \
     src/command/alignment/TrackCenterLineCommands.cpp \
     src/command/alignment/ImportAlignmentCommand.cpp \
+    src/command/alignment/ImportAldCommand.cpp \
+    src/command/alignment/TrackExtractCommand.cpp \
+    src/command/ScaleCommand.cpp \
     src/command/alignment/ExportAlignmentCommand.cpp \
     src/command/alignment/ProfileArrayCommand.cpp \
     src/command/alignment/VAlignFloatVCurveCommand.cpp \
@@ -453,6 +456,9 @@ HEADERS += \
     src/command/alignment/ProfileViewCommand.h \
     src/command/alignment/TrackCenterLineCommands.h \
     src/command/alignment/ImportAlignmentCommand.h \
+    src/command/alignment/ImportAldCommand.h \
+    src/command/alignment/TrackExtractCommand.h \
+    src/command/ScaleCommand.h \
     src/command/alignment/ExportAlignmentCommand.h \
     src/command/alignment/ProfileArrayCommand.h \
     src/command/alignment/VAlignCheckGradeCommand.h \

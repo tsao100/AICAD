@@ -257,6 +257,12 @@ QString Sketch::addArcGeom(const QVector2D& startPoint,
         Handle(Geom_TrimmedCurve) arc = arcMaker.Value();
         auto* arcGeom = new SketchArc(arc);
 
+        // ✅ 修正：points[] 現在會在建構時就被初始化為 3 個佔位元素（見
+        // SketchArc 建構子註解），這裡立即填入實際的平面座標，讓
+        // ConstraintPickSession 等依賴 points[] 判斷「是否可點選」的邏輯，
+        // 以及 syncGeometryFromPoints() 之後的同步都能拿到正確資料。
+        arcGeom->points = { startPoint, midPoint, endPoint };
+
         // ✅ Phase 0B：建立或重用起點/終點/圓心 SketchPoint
         arcGeom->startUuid  = reuseStartUuid.isEmpty()
             ? addPoint(startPoint, SketchPoint::Origin::Endpoint)
@@ -2386,13 +2392,28 @@ void Sketch::syncGeometryFromPoints()
             }
         } else if (auto* arc = dynamic_cast<SketchArc*>(g)) {
             // ✅ GAP 1 Fix: Arc 的 SketchPoint 同步回 arc->points[]
-            // Arc 以 OCCT curve 為主，points[] 只作顯示用
-            // [0]=起點 [1]=中點 [2]=終點 (若存在)
-            if (auto* ps = point(arc->startUuid)) {
-                if (!arc->points.isEmpty()) arc->points[0] = ps->pos;
-            }
-            if (auto* pe = point(arc->endUuid)) {
-                if (arc->points.size() > 2) arc->points[2] = pe->pos;
+            // Arc 以 OCCT curve 為主，points[] 只作顯示/點選輔助用途
+            // [0]=起點 [1]=中點 [2]=終點
+            // （points[] 現在保證由 SketchArc 建構子初始化為 3 個元素，
+            // 不再需要 isEmpty()/size()>2 這種只在「曾經被填過」時才成立
+            // 的舊保護判斷——那兩個判斷過去因為 points 永遠是空的而永遠
+            // 不成立，等於這段同步從未真的執行過。）
+            if (arc->points.size() >= 3) {
+                if (auto* ps = point(arc->startUuid))
+                    arc->points[0] = ps->pos;
+                if (auto* pe = point(arc->endUuid))
+                    arc->points[2] = pe->pos;
+                // 中點沒有獨立追蹤的 SketchPoint/UUID，改從目前的 curve
+                // 幾何即時重新取樣，維持與 curve 一致（curve 才是 Arc 的
+                // 權威幾何來源，points[] 只是給不方便直接處理 OCCT curve
+                // 的下游模組用的快取）。
+                if (!arc->curve.IsNull()) {
+                    const double t0 = arc->curve->FirstParameter();
+                    const double t1 = arc->curve->LastParameter();
+                    const gp_Pnt midWorld = arc->curve->Value(0.5 * (t0 + t1));
+                    arc->points[1] = m_plane->toPlane(
+                        QVector3D(midWorld.X(), midWorld.Y(), midWorld.Z()));
+                }
             }
         } else if (auto* pline = dynamic_cast<SketchPolyline*>(g)) {
             // Phase 0B：同步 Polyline 各頂點座標

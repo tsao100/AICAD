@@ -37,11 +37,30 @@ enum class EditableElementType {
 //  SpiralType  — 螺旋線過渡曲線類型
 //
 //  對應 RailwayAlignmentElement.h 中的 ElementType 過渡曲線子集：
-//    Clothoid  → ClothoidElement  (Euler / Cornu — 曲率線性遞增，預設)
-//    HalfSine  → HalfSineElement  (半正弦，曲率依升餘弦分佈)
-//    Parabola  → ParabolaElement  (三次拋物線，路軌常用近似)
-//    CubicJPN  → CubicJPNElement  (日本 JIS E 1301 三次拋物線)
-//    CubicECI  → CubicECIElement  (CECI 三次拋物線)
+//    Clothoid    → ClothoidElement    (Euler / Cornu — 曲率線性遞增，預設)
+//    HalfSine    → HalfSineElement    (半正弦，曲率依升餘弦分佈)
+//    Parabola    → ParabolaElement    (三次拋物線，路軌常用近似)
+//    CubicJPN    → CubicJPNElement    (日本 JIS E 1301 三次拋物線)
+//    CubicECI    → CubicECIElement    (CECI 三次拋物線)
+//
+//  以下 13 種為「曲率斜坡」(curvature-ramp) 族，皆共用
+//  RailwayAlignmentElement.cpp 中同一個數值積分器
+//  (integrateCurvatureRamp())，各自僅提供正規化曲率斜坡函式
+//  g(t)，t=L/Ls∈[0,1]，g(0)=0、g(1)=1；細節見對應 XxxElement
+//  的類別註解 (RailwayAlignmentElement.h)：
+//    Sinusoidal       → SinusoidalElement       (正弦斜坡)
+//    Cosine           → CosineElement           (升餘弦斜坡)
+//    Bloss            → BlossElement            (Bloss 三次曲線)
+//    Lemniscate       → LemniscateElement       (雙紐線風格，凸曲率斜坡)
+//    WienerBogen      → WienerBogenElement      (Wiener Bogen／維也納曲線，七次曲率斜坡)
+//    Radioid          → RadioidElement          (凹曲率斜坡)
+//    Logarithmic      → LogarithmicElement      (對數曲率斜坡)
+//    Hyperbolic       → HyperbolicElement       (雙曲正切曲率斜坡)
+//    Polynomial       → PolynomialElement       (三次冪曲率斜坡)
+//    Quintic          → QuinticElement          (五次曲率斜坡)
+//    Biquadratic      → BiquadraticElement      (四次冪曲率斜坡)
+//    Spline           → SplineElement           (分段三次 Hermite 曲率斜坡)
+//    BlossEulerHybrid → BlossEulerHybridElement (Bloss／線性 Euler 各半混合)
 // ============================================================================
 
 enum class SpiralType {
@@ -49,7 +68,24 @@ enum class SpiralType {
     HalfSine,      ///< Half-sine（半正弦）
     Parabola,      ///< Cubic parabola（三次拋物線）
     CubicJPN,      ///< Japanese cubic parabola（JIS E 1301）
-    CubicECI       ///< CECI cubic parabola
+    CubicECI,      ///< CECI cubic parabola
+    Sinusoidal,        ///< Sine-ramp curvature profile
+    Cosine,            ///< Raised-cosine curvature ramp
+    Bloss,             ///< Bloss cubic (smoothstep) curvature ramp
+    Lemniscate,        ///< Lemniscate-style convex curvature ramp
+    WienerBogen,       ///< Wiener Bogen (Vienna curve) septic curvature ramp
+    Radioid,           ///< Radioid concave curvature ramp
+    ElasticRadioid,        ///< Elastic curve (elastica): kappa(x)=2x/a^2
+    NorwichSturm,          ///< Norwich/Sturm spiral: kappa=1/r
+    PseudoEllipticRadioid, ///< Pseudo-elliptic radioid: y=a*gd^-1(x/a)
+    Logarithmic,       ///< Logarithmic curvature ramp
+    Hyperbolic,        ///< Hyperbolic-tangent curvature ramp
+    Polynomial,        ///< Plain cubic-power curvature ramp
+    Quintic,           ///< Quintic (5th-order) smoothstep curvature ramp
+    PHQuintic,         ///< Pythagorean-Hodograph quintic spiral (Walton & Meek)
+    Biquadratic,       ///< Quartic-power curvature ramp
+    Spline,            ///< Piecewise cubic-Hermite curvature ramp
+    BlossEulerHybrid   ///< 50/50 blend of Bloss and linear (Euler) ramps
 };
 
 // ============================================================================

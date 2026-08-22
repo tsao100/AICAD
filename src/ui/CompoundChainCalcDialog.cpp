@@ -37,11 +37,28 @@ enum InputColumn { ColLabel = 0, ColSpiralLen = 1, ColArcRadius = 2, ColArcLen =
 QString spiralTypeDisplayName(SpiralType t)
 {
     switch (t) {
-    case SpiralType::HalfSine: return QStringLiteral("HalfSine");
-    case SpiralType::Parabola: return QStringLiteral("Parabola");
-    case SpiralType::CubicJPN: return QStringLiteral("CubicJPN");
-    case SpiralType::CubicECI: return QStringLiteral("CubicECI");
-    default:                   return QStringLiteral("Clothoid");
+    case SpiralType::HalfSine:         return QStringLiteral("HalfSine");
+    case SpiralType::Parabola:         return QStringLiteral("Parabola");
+    case SpiralType::CubicJPN:         return QStringLiteral("CubicJPN");
+    case SpiralType::CubicECI:         return QStringLiteral("CubicECI");
+    case SpiralType::Sinusoidal:       return QStringLiteral("Sinusoidal");
+    case SpiralType::Cosine:           return QStringLiteral("Cosine");
+    case SpiralType::Bloss:            return QStringLiteral("Bloss");
+    case SpiralType::Lemniscate:       return QStringLiteral("Lemniscate");
+    case SpiralType::WienerBogen:      return QStringLiteral("WienerBogen");
+    case SpiralType::Radioid:          return QStringLiteral("Radioid");
+    case SpiralType::ElasticRadioid:   return QStringLiteral("ElasticRadioid");
+    case SpiralType::NorwichSturm:     return QStringLiteral("NorwichSturm");
+    case SpiralType::PseudoEllipticRadioid: return QStringLiteral("PseudoEllipticRadioid");
+    case SpiralType::Logarithmic:      return QStringLiteral("Logarithmic");
+    case SpiralType::Hyperbolic:       return QStringLiteral("Hyperbolic");
+    case SpiralType::Polynomial:       return QStringLiteral("Polynomial");
+    case SpiralType::Quintic:          return QStringLiteral("Quintic");
+    case SpiralType::PHQuintic:        return QStringLiteral("PHQuintic");
+    case SpiralType::Biquadratic:      return QStringLiteral("Biquadratic");
+    case SpiralType::Spline:           return QStringLiteral("Spline");
+    case SpiralType::BlossEulerHybrid: return QStringLiteral("BlossEulerHybrid");
+    default:                           return QStringLiteral("Clothoid");
     }
 }
 }
@@ -83,7 +100,13 @@ void CompoundChainCalcDialog::init()
 
     m_spiralTypeCombo = new QComboBox(this);
     for (SpiralType t : { SpiralType::Clothoid, SpiralType::HalfSine, SpiralType::Parabola,
-                          SpiralType::CubicJPN, SpiralType::CubicECI })
+                          SpiralType::CubicJPN, SpiralType::CubicECI,
+                          SpiralType::Sinusoidal, SpiralType::Cosine, SpiralType::Bloss,
+                          SpiralType::Lemniscate, SpiralType::WienerBogen, SpiralType::Radioid,
+                          SpiralType::ElasticRadioid, SpiralType::NorwichSturm, SpiralType::PseudoEllipticRadioid,
+                          SpiralType::Logarithmic, SpiralType::Hyperbolic, SpiralType::Polynomial,
+                          SpiralType::Quintic, SpiralType::PHQuintic, SpiralType::Biquadratic, SpiralType::Spline,
+                          SpiralType::BlossEulerHybrid })
         m_spiralTypeCombo->addItem(spiralTypeDisplayName(t), static_cast<int>(t));
     form->addRow(tr("Spiral form (all segments):"), m_spiralTypeCombo);
 
