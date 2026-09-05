@@ -2,6 +2,8 @@
 
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
+#include "core/geometry/ProjectOrigin.h"
+#include "ui/AlignmentDataTableDialog.h"   // azimuthToDMS()
 
 #include <QComboBox>
 #include <QSpinBox>
@@ -14,6 +16,7 @@
 #include <QFormLayout>
 #include <QMessageBox>
 #include <QDoubleSpinBox>
+#include <QSettings>
 #include <QtMath>
 
 using aicad::railway::AlignmentDocument;
@@ -29,6 +32,22 @@ namespace ui {
 namespace {
 constexpr int kMinArcs = 2;
 constexpr int kMaxArcs = 12;   ///< 表格 UI 的合理上限，非 solver 限制
+
+// ── QSettings 持久化：比照 VBA GetSetting/SaveSetting 的用法，記錄「上次
+//    執行後的選取及輸入資料」，下次開啟對話框時帶入（見標頭檔 done() 上方
+//    的說明、loadSettings()/saveSettings()）。沿用既有 ImportAlignmentCommand
+//    / BasicCommands 已在用的 "AICAD"/"AICAD" org/app 名稱，同一個 .ini
+//    （或平台對應的設定儲存位置）底下用獨立的 group 隔開，不會互相污染。
+constexpr const char* kSettingsOrg   = "AICAD";
+constexpr const char* kSettingsApp   = "AICAD";
+constexpr const char* kSettingsGroup = "CompoundChainCalcDialog";
+constexpr const char* kKeySpiralType = "spiralType";
+constexpr const char* kKeyArcCount   = "arcCount";
+constexpr const char* kKeyEntryIdx   = "entryTangentIdx";
+constexpr const char* kKeyExitIdx    = "exitTangentIdx";
+constexpr const char* kKeyLens       = "lens";      ///< 各段緩和曲線長度 Lk，N+1 個
+constexpr const char* kKeyRadii      = "radii";     ///< 各段圓弧半徑 Rk，N 個
+constexpr const char* kKeyArcLens    = "arcLens";   ///< 各段圓弧弧長 Dk，N 個（最後一段是 "Auto"，還原時略過）
 
 /** 欄位順序：Segment(標籤) / Lk / Rk / 弧長 Dk（弧長=圓弧弧長，非直徑）。 */
 enum InputColumn { ColLabel = 0, ColSpiralLen = 1, ColArcRadius = 2, ColArcLen = 3 };
@@ -68,6 +87,10 @@ CompoundChainCalcDialog::CompoundChainCalcDialog(AlignmentDocument* doc, QWidget
     , m_doc(doc)
 {
     init();
+    // 未鎖定切線的情況：init() 當下 m_tangentsLocked 還是 false，這裡呼叫
+    // loadSettings() 才能正確還原上次的入/出切線選取（見 loadSettings()
+    // 內的 m_tangentsLocked 判斷、標頭檔 done() 上方的說明）。
+    loadSettings();
 }
 
 CompoundChainCalcDialog::CompoundChainCalcDialog(AlignmentDocument* doc,
@@ -78,6 +101,14 @@ CompoundChainCalcDialog::CompoundChainCalcDialog(AlignmentDocument* doc,
 {
     init();
     lockTangentCombos(presetEntryIdx, presetExitIdx);
+    // ⚠️ 順序很重要：必須在 lockTangentCombos() 之後才呼叫 loadSettings()，
+    // 讓 m_tangentsLocked 在 loadSettings() 內判斷時已經是 true，這樣才會
+    // 正確跳過「還原切線選取」——切線已由呼叫端（AlignmentSCSChainCommand）
+    // 依畫面點選鎖定，不該被上次的記錄覆蓋掉。若順序顛倒，loadSettings()
+    // 執行當下看到的 m_tangentsLocked 會還是預設的 false，就會誤把上次
+    // 記錄的切線 index 寫回下拉選單（即使隨後馬上被 lockTangentCombos()
+    // 蓋掉、視覺上看不出異狀，但仍是邏輯錯誤，一旦重排呼叫順序就會露餡）。
+    loadSettings();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -209,7 +240,49 @@ void CompoundChainCalcDialog::onArcCountChanged(int)
 void CompoundChainCalcDialog::rebuildInputTable()
 {
     const int n = m_arcCountSpin->value();
+
+    // 「—」是 row==n（末端切線，沒有圓弧/緩和曲線）那一列的固定佔位符號，
+    // 不是使用者輸入的資料，不該被寫進快取。
+    static const QString kNotApplicable = QStringLiteral("\u2014");
+
+    // ── 快取目前表格內容（見標頭檔 m_cachedLens 等成員的說明）──────────
+    // 不管這次 N 是變大還是變小，重建表格前都先把「目前還存在的列」依
+    // 列索引寫回快取——快取本身只增不減，縮小 N 時，即將被砍掉的那些列
+    // 的值不會真的消失，而是留在快取裡；N 之後再放大、同一個列索引重新
+    // 出現時，下面會優先從快取取值，而不是每次都填回 0／留白。
+    const int oldRowCount = m_inputTable->rowCount();
+    if (m_cachedLens.size() < oldRowCount)
+        m_cachedLens.resize(oldRowCount);
+    if (m_cachedRadii.size() < oldRowCount)
+        m_cachedRadii.resize(oldRowCount);
+    if (m_cachedArcLens.size() < oldRowCount)
+        m_cachedArcLens.resize(oldRowCount);
+    for (int row = 0; row < oldRowCount; ++row) {
+        if (auto* item = m_inputTable->item(row, ColSpiralLen)) {
+            const QString t = item->text();
+            if (!t.isEmpty() && t != kNotApplicable) m_cachedLens[row] = t;
+        }
+        if (auto* item = m_inputTable->item(row, ColArcRadius)) {
+            const QString t = item->text();
+            if (!t.isEmpty() && t != kNotApplicable) m_cachedRadii[row] = t;
+        }
+        if (auto* item = m_inputTable->item(row, ColArcLen)) {
+            const QString t = item->text();
+            // "Auto" 是鎖定列的顯示文字，不是使用者輸入值，不寫入快取
+            // ——否則這一列如果之後又變回「非自動」列，會被誤填成字面
+            // 上的 "Auto" 字串。
+            if (!t.isEmpty() && t != kNotApplicable && t != tr("Auto"))
+                m_cachedArcLens[row] = t;
+        }
+    }
+
     m_inputTable->setRowCount(n + 1);
+    if (m_cachedLens.size() < n + 1)
+        m_cachedLens.resize(n + 1);
+    if (m_cachedRadii.size() < n)
+        m_cachedRadii.resize(n);
+    if (m_cachedArcLens.size() < n)
+        m_cachedArcLens.resize(n);
 
     // 最後一段圓弧（arc index n-1，對應 row n-1）弧長由 solver 自動算出，
     // 使用者不需輸入（見標頭檔說明）。
@@ -222,27 +295,37 @@ void CompoundChainCalcDialog::rebuildInputTable()
         m_inputTable->setItem(row, ColLabel, new QTableWidgetItem(label));
         m_inputTable->item(row, ColLabel)->setFlags(Qt::ItemIsEnabled);
 
-        auto* lenItem = new QTableWidgetItem(QStringLiteral("0"));
+        const QString lenText = !m_cachedLens[row].isEmpty() ? m_cachedLens[row]
+                                                               : QStringLiteral("0");
+        auto* lenItem = new QTableWidgetItem(lenText);
         m_inputTable->setItem(row, ColSpiralLen, lenItem);
 
         if (row < n) {
-            auto* radItem = new QTableWidgetItem(QStringLiteral("500"));
+            const QString radText = !m_cachedRadii[row].isEmpty() ? m_cachedRadii[row]
+                                                                    : QStringLiteral("0");
+            auto* radItem = new QTableWidgetItem(radText);
             m_inputTable->setItem(row, ColArcRadius, radItem);
 
             if (row == autoArcRow) {
+                // 這一列此刻是「自動算出」的那一段，不管快取裡同一列
+                // 索引原本存的是不是輸入值（可能是因為 N 變小、原本可
+                // 編輯的一列現在移到了自動列的位置），都強制顯示 Auto、
+                // 鎖定不可編輯——快取本身不受影響（上面的擷取邏輯本來
+                // 就不會把 "Auto" 這個顯示文字寫進快取），N 之後放大、
+                // 這一列不再是自動列時，原本的數值仍然找得回來。
                 auto* autoItem = new QTableWidgetItem(tr("Auto"));
                 autoItem->setFlags(Qt::ItemIsEnabled);
                 m_inputTable->setItem(row, ColArcLen, autoItem);
             } else {
-                auto* lenArcItem = new QTableWidgetItem(QStringLiteral(""));
+                auto* lenArcItem = new QTableWidgetItem(m_cachedArcLens[row]);
                 m_inputTable->setItem(row, ColArcLen, lenArcItem);
             }
         } else {
-            auto* naItem = new QTableWidgetItem(QStringLiteral("—"));
+            auto* naItem = new QTableWidgetItem(kNotApplicable);
             naItem->setFlags(Qt::ItemIsEnabled);
             m_inputTable->setItem(row, ColArcRadius, naItem);
 
-            auto* naItem2 = new QTableWidgetItem(QStringLiteral("—"));
+            auto* naItem2 = new QTableWidgetItem(kNotApplicable);
             naItem2->setFlags(Qt::ItemIsEnabled);
             m_inputTable->setItem(row, ColArcLen, naItem2);
         }
@@ -320,6 +403,14 @@ void CompoundChainCalcDialog::onCalculate()
         m_statusLabel->setText(tr("No AlignmentDocument."));
         return;
     }
+
+    // 確保 ProjectOrigin 已設定（若尚未設定，套用預設 TM2 origin），這樣
+    // 下方組節點座標時 toGlobal() 才能得到合理量級的 TM2 座標，而不會因
+    // origin 未設定而退化成恆等轉換、把 Local 座標直接當 TM2 顯示（見
+    // ProjectOrigin.h、AlignmentDataTableDialog::populateHorizontalTable()
+    // 同樣的作法）。
+    core::geometry::ProjectOrigin::ensureDefault();
+
     if (m_entryTangentCombo->currentIndex() < 0 || m_exitTangentCombo->currentIndex() < 0) {
         m_statusLabel->setText(tr("Please select both entry and exit tangents."));
         return;
@@ -360,6 +451,15 @@ void CompoundChainCalcDialog::onCalculate()
     }
 
     // ── 顯示節點序列 ─────────────────────────────────────────────────────
+    // node.pt 是 Local（CAD 內部）座標，不是 TM2——TM2 大數值只該出現在
+    // 顯示文字這個邊界（見 ProjectOrigin.h 架構原則），必須透過
+    // ProjectOrigin::toGlobal() 加上 projectOrigin 換回真正的 TM2
+    // Easting/Northing 才能顯示；上面 onCalculate() 開頭已呼叫
+    // ensureDefault() 確保 origin 一定有合理值可用。方位角一律用
+    // azimuthToDMS()（定義在 AlignmentDataTableDialog.cpp、宣告於其
+    // 標頭檔）格式化成 ddd°mm'ss.sss"，跟線形資料表對齊，不要各自
+    // 手動組字串（原本這裡是自己拼 "度.dddd°"，跟系統其他地方的方位角
+    // 顯示格式不一致）。
     m_resultTable->setRowCount(chain.nodes.size());
     for (int i = 0; i < chain.nodes.size(); ++i) {
         const auto& node = chain.nodes[i];
@@ -367,10 +467,12 @@ void CompoundChainCalcDialog::onCalculate()
             : (i == chain.nodes.size() - 1) ? tr("ST")
             : (node.isArcStart ? tr("SC%1").arg(i) : tr("CS%1").arg(i));
 
+        const QPointF tm2 = core::geometry::ProjectOrigin::instance().toGlobal(node.pt);
+
         m_resultTable->setItem(i, 0, new QTableWidgetItem(ptLabel));
-        m_resultTable->setItem(i, 1, new QTableWidgetItem(QString::number(node.pt.x(), 'f', 4)));
-        m_resultTable->setItem(i, 2, new QTableWidgetItem(QString::number(node.pt.y(), 'f', 4)));
-        m_resultTable->setItem(i, 3, new QTableWidgetItem(QString::number(qRadiansToDegrees(node.az), 'f', 4) + QStringLiteral("\xC2\xB0")));
+        m_resultTable->setItem(i, 1, new QTableWidgetItem(QString::number(tm2.x(), 'f', 4)));
+        m_resultTable->setItem(i, 2, new QTableWidgetItem(QString::number(tm2.y(), 'f', 4)));
+        m_resultTable->setItem(i, 3, new QTableWidgetItem(azimuthToDMS(node.az)));
         m_resultTable->setItem(i, 4, new QTableWidgetItem(QString::number(node.segLength, 'f', 3)));
         m_resultTable->setItem(i, 5, new QTableWidgetItem(QString::number(node.radius, 'f', 3)));
     }
@@ -428,6 +530,128 @@ void CompoundChainCalcDialog::onApply()
     m_doc->horizontal()->solve();
     Q_EMIT chainApplied();
     accept();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  done / loadSettings / saveSettings — 持久化「上次執行後的選取及輸入
+//  資料」，比照 VBA GetSetting/SaveSetting 的用法（見標頭檔說明）。
+// ────────────────────────────────────────────────────────────────────────────
+
+void CompoundChainCalcDialog::done(int result)
+{
+    // accept()（按「套用」成功）、reject()（按取消／Esc／右上角 X）最終都
+    // 會流經 QDialog::done()，在這裡存一次設定即可涵蓋所有關閉對話框的
+    // 途徑——不論這次有沒有成功套用，都值得記住使用者這次輸入的內容，
+    // 下次開啟時可以接著改，而不是每次都要重新輸入一遍。
+    saveSettings();
+    QDialog::done(result);
+}
+
+void CompoundChainCalcDialog::loadSettings()
+{
+    QSettings settings(kSettingsOrg, kSettingsApp);
+    settings.beginGroup(QLatin1String(kSettingsGroup));
+
+    if (settings.contains(QLatin1String(kKeySpiralType))) {
+        const int t = settings.value(QLatin1String(kKeySpiralType)).toInt();
+        const int pos = m_spiralTypeCombo->findData(t);
+        if (pos >= 0) m_spiralTypeCombo->setCurrentIndex(pos);
+    }
+
+    if (settings.contains(QLatin1String(kKeyArcCount))) {
+        const int n = settings.value(QLatin1String(kKeyArcCount)).toInt();
+        // setValue() 若真的改變了數值會同步觸發 onArcCountChanged() →
+        // rebuildInputTable()，下面才能安全地依還原後的 N 逐列寫回輸入
+        // 表格；若剛好跟目前值（spinbox 預設 kMinArcs）相同則不會觸發，
+        // 但這種情況下 init() 最後呼叫的 rebuildInputTable() 本來就已經
+        // 用同樣的 N 建好表格，效果一樣。
+        if (n >= m_arcCountSpin->minimum() && n <= m_arcCountSpin->maximum())
+            m_arcCountSpin->setValue(n);
+    }
+
+    // 入/出切線：只有在下拉選單「本來就可以自由選擇」時才還原——鎖定的
+    // 情況下（由 AlignmentSCSChainCommand 建構）切線已由呼叫端依畫面點選
+    // 決定，見標頭檔 done() 上方與兩個建構子內的說明。
+    if (!m_tangentsLocked) {
+        if (settings.contains(QLatin1String(kKeyEntryIdx))) {
+            const int pos = m_entryTangentCombo->findData(
+                settings.value(QLatin1String(kKeyEntryIdx)).toInt());
+            if (pos >= 0) m_entryTangentCombo->setCurrentIndex(pos);
+        }
+        if (settings.contains(QLatin1String(kKeyExitIdx))) {
+            const int pos = m_exitTangentCombo->findData(
+                settings.value(QLatin1String(kKeyExitIdx)).toInt());
+            if (pos >= 0) m_exitTangentCombo->setCurrentIndex(pos);
+        }
+    }
+
+    // 輸入表格：此時 m_inputTable 已經因為上面 arcCount 的還原而是 N+1 列
+    // （或本來就是同樣的 N），可以安全地逐列寫回。列數若和儲存當下不同
+    // （例如換了文件、上次的 N 超出目前 kMaxArcs 而沒被套用），下面的
+    // `row < list.size()` 邊界檢查會讓多出來的儲存值單純被忽略，不會
+    // 存取越界或寫壞表格。
+    const int n = m_arcCountSpin->value();
+    const int autoArcRow = n - 1;   // 最後一段圓弧：弧長鎖定顯示 Auto，不覆寫
+
+    const QStringList lens    = settings.value(QLatin1String(kKeyLens)).toStringList();
+    const QStringList radii   = settings.value(QLatin1String(kKeyRadii)).toStringList();
+    const QStringList arcLens = settings.value(QLatin1String(kKeyArcLens)).toStringList();
+
+    for (int row = 0; row <= n && row < lens.size(); ++row) {
+        if (auto* item = m_inputTable->item(row, ColSpiralLen))
+            item->setText(lens[row]);
+    }
+    for (int row = 0; row < n && row < radii.size(); ++row) {
+        if (auto* item = m_inputTable->item(row, ColArcRadius))
+            item->setText(radii[row]);
+    }
+    for (int row = 0; row < n && row < arcLens.size(); ++row) {
+        if (row == autoArcRow) continue;   // Auto 列本來就鎖定唯讀，不覆寫
+        if (auto* item = m_inputTable->item(row, ColArcLen))
+            item->setText(arcLens[row]);
+    }
+
+    settings.endGroup();
+}
+
+void CompoundChainCalcDialog::saveSettings() const
+{
+    QSettings settings(kSettingsOrg, kSettingsApp);
+    settings.beginGroup(QLatin1String(kSettingsGroup));
+
+    settings.setValue(QLatin1String(kKeySpiralType), static_cast<int>(selectedSpiralType()));
+
+    const int n = m_arcCountSpin->value();
+    settings.setValue(QLatin1String(kKeyArcCount), n);
+
+    // 鎖定切線的情況不記錄切線選取，理由同 loadSettings()：切線是呼叫端
+    // 依畫面點選決定的，不該被下次開啟時的「上次記錄」覆蓋。
+    if (!m_tangentsLocked) {
+        if (m_entryTangentCombo->currentIndex() >= 0)
+            settings.setValue(QLatin1String(kKeyEntryIdx), m_entryTangentCombo->currentData().toInt());
+        if (m_exitTangentCombo->currentIndex() >= 0)
+            settings.setValue(QLatin1String(kKeyExitIdx), m_exitTangentCombo->currentData().toInt());
+    }
+
+    // 輸入表格：Lk 共 N+1 列；Rk／Dk 共 N 列（Dk 最後一列是鎖定顯示的
+    // "Auto"，原樣存回沒有副作用——loadSettings() 還原時會主動跳過那一
+    // 列，不會把字串 "Auto" 誤寫進儲存格當成使用者輸入值）。
+    QStringList lens, radii, arcLens;
+    for (int row = 0; row <= n; ++row) {
+        auto* lenItem = m_inputTable->item(row, ColSpiralLen);
+        lens << (lenItem ? lenItem->text() : QString());
+        if (row < n) {
+            auto* radItem = m_inputTable->item(row, ColArcRadius);
+            auto* dItem   = m_inputTable->item(row, ColArcLen);
+            radii   << (radItem ? radItem->text() : QString());
+            arcLens << (dItem   ? dItem->text()   : QString());
+        }
+    }
+    settings.setValue(QLatin1String(kKeyLens),    lens);
+    settings.setValue(QLatin1String(kKeyRadii),   radii);
+    settings.setValue(QLatin1String(kKeyArcLens), arcLens);
+
+    settings.endGroup();
 }
 
 } // namespace ui

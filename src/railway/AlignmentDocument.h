@@ -172,6 +172,20 @@ struct EditableElement
     //     供資料表編輯長度時重新反解、或重新開啟檔案後沿用同一策略。
     int    reverseSpiralStrategy = 0;
     double reverseSpiralParam    = 0.0;
+
+    //   isReverseSCSGroup — 此元素屬於 ALIGNMENTREVSCS（RSCS）指令建立的
+    //     6 元素群組（SpiralIn(L1)、CircularArc(R1)、SpiralOut/SpiralIn
+    //     反向對(Lm1/Lm2)、CircularArc(R2)、SpiralOut(L2)），全部 6 個
+    //     元素皆設此旗標為 true，且 tangentIdxBefore/tangentIdxAfter 皆
+    //     指向這個群組「外側」的兩條真正 Tangent（比照 addCompoundChain()
+    //     讓群組內所有元素共用同一組邊界切線 index 的慣例，非 addReverseSpiral()
+    //     的「借用來存放 arc index」慣例）。中間反向對兩個 Spiral 元素同時
+    //     也設 isReverseSpiralGroup=true、reverseSpiralStrategy=EqualLength，
+    //     但 AlignmentSolver::solve() 用來偵測本群組的 Pass（Pass 2g）與
+    //     既有 Pass 2f（isReverseSpiralGroup 專用、要求兩側 Arc 已是 Fixed）
+    //     互不觸發：Pass 2g 先行處理整個 6 元素群組並直接呼叫
+    //     solveReverseSCS()，不會讓 Pass 2f 再次介入中間那對 Spiral。
+    bool isReverseSCSGroup = false;
 };
 
 // ============================================================================
@@ -202,6 +216,38 @@ struct ReverseSpiralSpec {
     ReverseSpiralStrategy strategy = ReverseSpiralStrategy::EqualLength;
     double strategyParam = 0.0;   ///< 依 strategy 意義不同，見上方 enum 註解
     QPointF pickedJunctionHint;   ///< 僅 PickJunction 使用
+};
+
+// ============================================================================
+//  ReverseSCSSpec — addReverseSCS() 的輸入參數
+//
+//  ALIGNMENTREVSCS（alias RSCS）指令：在兩條「真正切線」之間直接插入一組
+//  完整的 SCS + SCS 反向曲線（左彎接右彎或右彎接左彎），結構為：
+//
+//    Tangent(before) → SpiralIn(L1) → CircularArc(R1)
+//                    → [反向對 Lm1／Lm2，EqualLength 自動反解，過零]
+//                    → CircularArc(R2) → SpiralOut(L2) → Tangent(after)
+//
+//  與既有 addReverseSpiral() 的差異：addReverseSpiral() 只建立中間的反向對，
+//  兩側的 CircularArc 必須已經是 Fixed（事先算好座標）。addReverseSCS()
+//  則是「從兩條切線直接生成整組六個元素」，R1/L1/R2/L2 皆為使用者輸入
+//  （比照既有 addSCS() 的 L1/L2 提示），只有中間反向對的 Lm1/Lm2 交給
+//  AlignmentSolver::solveReverseSCS()（內部呼叫既有 solveReverseSpiral()，
+//  strategy 固定 EqualLength）自動反解 —— 兩側整弧的轉向（左彎/右彎）由
+//  兩切線的相對幾何自動判斷，不需使用者額外選擇。
+// ============================================================================
+
+struct ReverseSCSSpec {
+    int    tangentIdxBefore = -1;   ///< 入切線（Tangent）index
+    int    tangentIdxAfter  = -1;   ///< 出切線（Tangent）index
+    double radius1 = 0.0;           ///< 第一段圓弧半徑 R1（絕對值）[m]
+    double length1 = 0.0;           ///< 入螺旋長度 L1（Tangent→Arc1）[m]，0 = 無入螺旋
+    double radius2 = 0.0;           ///< 第二段圓弧半徑 R2（絕對值）[m]
+    double length2 = 0.0;           ///< 出螺旋長度 L2（Arc2→Tangent）[m]，0 = 無出螺旋
+    SpiralType type1  = SpiralType::Clothoid;  ///< 入螺旋（L1）類型
+    SpiralType typeM1 = SpiralType::Clothoid;  ///< 反向對第一段（Arc1 出口）類型
+    SpiralType typeM2 = SpiralType::Clothoid;  ///< 反向對第二段（Arc2 入口）類型
+    SpiralType type2  = SpiralType::Clothoid;  ///< 出螺旋（L2）類型
 };
 
 // Forward declaration (AlignmentDocument is defined later in this file)
@@ -416,6 +462,23 @@ public:
      * @return 新建 SpiralIn 的 index；失敗回傳 -1。
      */
     int addReverseSpiral(const ReverseSpiralSpec& spec);
+
+    /**
+     * @brief 新增 ALIGNMENTREVSCS（別名 RSCS）反向 SCS+SCS 曲線：在兩條
+     *        真正 Tangent 之間直接建立一組 6 元素群組（見 ReverseSCSSpec
+     *        說明），中間反向對交由 AlignmentSolver::solveReverseSCS()
+     *        （固定 EqualLength 策略）自動反解 Lm1/Lm2；R1/L1/R2/L2
+     *        皆為 spec 直接指定的已知量，兩弧轉向（左彎/右彎）由兩切線
+     *        的相對幾何自動判斷。
+     *
+     *  前置條件（不成立時回傳 -1，不修改 m_elems）：
+     *    - spec.tangentIdxBefore、spec.tangentIdxAfter 皆指向 Tangent 元素
+     *      且不相同。
+     *    - spec.radius1、spec.radius2 皆 > 0。
+     *
+     * @return 新建 SpiralIn(L1) 的 index；失敗回傳 -1。
+     */
+    int addReverseSCS(const ReverseSCSSpec& spec);
 
     void movePI(int idx, QPointF newPos);
 

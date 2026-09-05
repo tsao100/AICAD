@@ -1016,6 +1016,24 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                    if (d->cadView) d->cadView->fitAll();
                                });
                            }
+
+                           // ✅ 新增：可選的 grips 顯示覆寫（見對話紀錄 TRACKEXTRACT
+                           // 「Windows 沒有回應」的診斷）。上面 mode=="sketching" 這條
+                           // 路徑（由 ViewManager 的訂閱處理、經 CadView::setMode() →
+                           // modeChanged 觸發）一律會把 grips 打開；但有些指令進入
+                           // sketching 模式只是為了取得 OSnap 點選能力（POINT_ACQUIRED），
+                           // 完全不需要 grip 拖曳編輯本身——尤其線形點數很多時，grips
+                           // 會持續對每次滑鼠移動做 OCCT hit-test，等待使用者輸入期間
+                           // 只要滑鼠停在 3D 視窗上，就可能把主執行緒的訊息佇列灌爆到
+                           // 使用者感覺整個程式「沒有回應」。這裡允許呼叫端額外指定
+                           // gripsEnabled（true/false），在既有的 mode 判斷之後明確覆寫
+                           // 一次，不影響任何沒有指定這個 key 的既有呼叫端（保持向下
+                           // 相容）。
+                           if (map.contains("gripsEnabled")) {
+                               const bool enabled = map["gripsEnabled"].toBool();
+                               if (d->gripFilter)  d->gripFilter->setEnabled(enabled);
+                               if (d->gripManager) d->gripManager->setEnabled(enabled);
+                           }
                        });
 
         // 7. 連接 DocumentManager 信號
@@ -2888,6 +2906,16 @@ void UIManager::setupSketchPanel()
                     if (isLiteralNumber) {
                         c.value     = newValue;
                         c.paramExpr = QString();
+                        // ⚠️ 修正：與 ConstraintCommands::applyDimensionEdit() 同一根因
+                        // ——若這條 constraint 是 GDIM 標註的隱含約束（implicitOf ==
+                        // 標註 uuid，且與 SketchAnnotation 共用 uuid），只改這裡的
+                        // c.value 不會持續生效：Sketch::fromJson()／addAnnotation()
+                        // 重新生成隱含約束時一律讀 SketchAnnotation::value，會把這裡
+                        // 剛改好的值覆蓋回舊值。同步更新對應標註。
+                        if (cad::SketchAnnotation* ann = sketch->findAnnotation(uuid)) {
+                            ann->value     = newValue;
+                            ann->paramExpr = QString();
+                        }
                     } else {
                         // 表達式：向 store 求值
                         auto [ok, v] = sketch->parameterStore()->evaluate(newExpr);
@@ -2906,6 +2934,12 @@ void UIManager::setupSketchPanel()
                         // 若 store 中尚未有此名稱，自動登記（登記原始度數值，維持表達式語意一致）
                         if (!sketch->parameterStore()->has(newExpr))
                             sketch->parameterStore()->setLocal(newExpr, v);
+
+                        // 同步更新對應標註（見上面 isLiteralNumber 分支的說明）
+                        if (cad::SketchAnnotation* ann = sketch->findAnnotation(uuid)) {
+                            ann->paramExpr = newExpr;
+                            ann->value     = c.value;
+                        }
                     }
                     break;
                 }
@@ -4252,6 +4286,15 @@ void UIManager::onCurrentDocumentChanged(cad::Document* doc) {
 cad::ConstraintPickSession* UIManager::constraintPickSession() const
 {
     return d->pickSession;
+}
+
+void UIManager::applyDimExpressionEdit(const QString& constraintUuid, const QString& newExpr)
+{
+    cad::Sketch* sk = currentActiveSketch();
+    if (!sk) return;
+    auto* cmdMgr = core::CommandLineManager::instance();
+    command::applyDimensionEdit(sk, constraintUuid, newExpr, cmdMgr);
+    if (d->cadView) d->cadView->refreshView();
 }
 
 void UIManager::beginGeomConstraintPick(cad::Sketch* sketch,

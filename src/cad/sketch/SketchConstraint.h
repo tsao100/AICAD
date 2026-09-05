@@ -69,6 +69,15 @@ enum class ConstraintType {
     FixedX,             ///< 點的 X 座標 = value
     FixedY,             ///< 點的 Y 座標 = value
     FixedAngleDim,      ///< 線段角度 = value（相對水平）
+    Slope,              ///< 線段斜度 dy/dx = value（無單位比值）。
+                         ///< refs[0] = 線（WholeGeom/Curve 皆可，只取 geomUuid）。
+                         ///< 依「工程慣例」定符號：以該線 Start→End 方向為準，
+                         ///< value = (y_End - y_Start) / (x_End - x_Start)；
+                         ///< 沿 Start→End 方向「上升」為正、「下降」為負
+                         ///< （與既有 VAlignProfileView 坡度 grade 正負號慣例一致）。
+                         ///< 輸入格式支援 "1:40"（比例，1 單位垂直:40 單位水平）
+                         ///< 與 "2.5%"（百分比坡度），兩者換算後存成同一個
+                         ///< 無單位 value（例如 1:40 與 2.5% 皆存為 0.025）。
 
     // ── 鎖定 ───────────────────────────────────
     Fixed,              ///< 整個幾何元素固定（消耗所有 DOF）
@@ -192,6 +201,7 @@ struct SketchConstraint {
     static SketchConstraint makeFixedVertDist  (const GeomRef& a, const GeomRef& b, double d);
     static SketchConstraint makeFixedArcLength (const QString& arcUuid, double len);
     static SketchConstraint makeCoordinateDim  (const GeomRef& point, double x, double y);
+    static SketchConstraint makeSlope          (const QString& lineUuid, double slope);
 
     // DOF 消耗量（用於 under/over 約束檢查）
     int dofConsumed() const;

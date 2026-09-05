@@ -9,8 +9,15 @@
  *  PickEntryTangent    — 點擊選取入切線；高亮顯示
  *       ↓ POINT_ACQUIRED
  *  PickExitTangent     — 點擊選取出切線；高亮顯示
- *       ↓ POINT_ACQUIRED
- *  WaitingForRadius    — 提示 "R=<數字>"  或純數字；更新 RubberBand::SCS
+ *       ↓ POINT_ACQUIRED — 兩條切線都選定後，立即以 Modal 開啟
+ *         SCSCalcDialog（見 openCalcDialog()），入/出切線下拉選單已預先
+ *         鎖定為 m_idx1/m_idx2；使用者在對話框內輸入 R／L1／T1／L2／T2，
+ *         按「試算」核對節點座標、「套用」寫入線形。對話框「套用」成功
+ *         （QDialog::Accepted）時，本指令直接以 Success 結束（addSCS()/
+ *         solve() 已由對話框完成）。
+ *       ↓ 對話框被取消（QDialog::Rejected，例如按「取消」或直接關閉）
+ *  WaitingForRadius    — 退回原本的純文字循序輸入模式；提示 "R=<數字>"
+ *       或純數字；更新 RubberBand::SCS
  *       ↓ NUMBER_INPUT（解析 R=600 或 600）
  *  WaitingForL1        — 提示 "L1=<數字>" 或純數字（0 = 無入螺旋）
  *       ↓ NUMBER_INPUT（解析 L1=150 或 150 或 L=150）
@@ -57,6 +64,7 @@
  * @see AlignmentCommandBase
  * @see HorizontalAlignmentEdit::addSCS(int,int,double,double,double,SpiralType,SpiralType)
  * @see AlignmentFloatCurveCommand::nearestTangentIndex()（複用）
+ * @see aicad::ui::SCSCalcDialog
  */
 
 #include "command/alignment/AlignmentCommandBase.h"
@@ -65,6 +73,8 @@
 #include "railway/AlignmentDocument.h"   // SpiralType
 #include <QPointF>
 #include <QVector2D>
+
+class QWidget;
 
 namespace aicad {
 namespace command {
@@ -102,6 +112,15 @@ private:
     void cleanup() override;
     void goToConfirm();   ///< 進入 WaitingForConfirm 並發出確認提示
 
+    /**
+     * @brief 兩條切線都選定後呼叫：Modal 開啟 SCSCalcDialog（入/出切線
+     *        已鎖定為 m_idx1/m_idx2）。使用者按「套用」成功
+     *        （QDialog::Accepted）→ 本指令直接結束（Success）；取消/關閉
+     *        （QDialog::Rejected）→ 退回文字循序輸入模式（Step::
+     *        WaitingForRadius）。
+     */
+    void openCalcDialog();
+
     /** 高亮或清除指定切線元素（idx=-1 清除全部）。 */
     void highlightTangent(int elemIdx);
 
@@ -128,6 +147,7 @@ private:
 
     // ── 狀態 ─────────────────────────────────────────────────────────────────
     railway::AlignmentDocument* m_alignDoc    = nullptr;
+    QWidget*                    m_parentWidget = nullptr;  ///< SCSCalcDialog 的父視窗（來自 CommandContext::cadView）
     Step                        m_step        = Step::PickEntryTangent;
     bool                        m_isFinishing = false;
 

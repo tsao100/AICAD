@@ -1,6 +1,7 @@
 #include "GeneralDimCommand.h"
 #include "cad/sketch/AnnotationStandardsChecker.h"
 #include "ConstraintCommands.h"  // reportSolveResult
+#include "../ui/DimExpressionDialog.h"
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
 #include "../core/EventBus.h"
@@ -9,7 +10,9 @@
 #include "../ui/UIManager.h"
 #include "../view/CadView.h"
 #include <QMetaObject>
+#include <algorithm>
 #include <cmath>
+#include <optional>
 #include <Geom_Circle.hxx>
 
 namespace aicad::command {
@@ -36,6 +39,37 @@ bool GeneralDimCommand::canCancel() const {
 
 cad::Sketch* GeneralDimCommand::activeSketch() const {
     return core::Application::instance()->activeSketch();
+}
+
+namespace {
+// 角度標註（FixedAngleDim/FixedAngle）專用：算出兩條線（無限延伸）的交點
+// （apex）。跟 DimPreviewOverlay::paintDimPreview()／
+// AIS_DimensionLine::drawAngleDim() 用的是同一套公式，三處算出來的 apex
+// 必須一致，拖曳預覽、確認當下的 offset 基準、最終顯示才會是同一個點。
+std::optional<QVector2D> angleApex2D(const cad::Sketch* sk, const QList<cad::GeomRef>& refs) {
+    if (!sk || refs.size() < 2) return std::nullopt;
+    auto* geomA = sk->findGeometry(refs[0].geomUuid);
+    auto* geomB = sk->findGeometry(refs[1].geomUuid);
+    auto* lnA = dynamic_cast<const cad::SketchLine*>(geomA);
+    auto* lnB = dynamic_cast<const cad::SketchLine*>(geomB);
+    if (!lnA || !lnB) return std::nullopt;
+
+    QVector2D dirA = lnA->end - lnA->start;
+    QVector2D dirB = lnB->end - lnB->start;
+    float lenA = dirA.length();
+    float lenB = dirB.length();
+    if (lenA <= 1e-6f || lenB <= 1e-6f) return std::nullopt;
+    dirA /= lenA;
+    dirB /= lenB;
+
+    float cross = dirA.x() * dirB.y() - dirA.y() * dirB.x();
+    if (std::abs(cross) < 1e-6f)
+        return (lnA->start + lnA->end) * 0.5f;   // 平行：退化為線 A 中點
+
+    QVector2D ab = lnB->start - lnA->start;
+    float t = (ab.x() * dirB.y() - ab.y() * dirB.x()) / cross;
+    return lnA->start + dirA * t;
+}
 }
 
 // 點 P 到直線 (A,B) 的垂距
@@ -276,6 +310,24 @@ double GeneralDimCommand::measureCurrentValue2() const {
 QVector2D GeneralDimCommand::refMidpoint2D() const {
     Sketch* sk = activeSketch();
     if (!sk || m_refs.isEmpty()) return {};
+
+    // 角度標註（FixedAngleDim/FixedAngle）：offset 的基準點必須是兩線的
+    // 交點（apex），不能沿用下面「refs 位置平均」這個對其他型別合理、對
+    // 角度標註卻沒有意義的定義——GeomRef::resolvedPointUuid() 對 Line 只
+    // 處理 Start/End，WholeGeom 沒對應到，resolvePosition() 會退回
+    // geom->points[0]（線段的「起點」），兩線起點的平均通常離兩線真正的
+    // 交點很遠。這個基準點會被 CadView::beginPlaceDimLine() 用來換算
+    // offsetX/Y（= 滑鼠 - 這個基準點），offsetX/Y 之後又在
+    // AIS_DimensionLine::drawAngleDim() 裡被直接當成「滑鼠相對 apex 的
+    // 偏移」使用（算角弧半徑、以及判斷角弧該落在哪一側）——基準點跟 apex
+    // 對不上，這兩者就全部跟著算錯，這正是「完成的尺寸線位置不是臨近滑鼠
+    // 點下的位置」的根本原因之一。
+    if (m_type == cad::ConstraintType::FixedAngleDim ||
+        m_type == cad::ConstraintType::FixedAngle) {
+        if (auto apex = angleApex2D(sk, m_refs))
+            return *apex;
+    }
+
     QVector2D sum;
     for (const auto& r : m_refs)
         sum += r.resolvePosition(sk);
@@ -330,33 +382,56 @@ void GeneralDimCommand::subscribePreview() {
                 m_dimOffsetY = m.value("offsetY").toDouble();
 
                 // ── 點＋點（含線的兩端點）：WaitDimPlace 階段持續依「滑鼠與兩點
-                // 中點」的相對方位在 水平/垂直/對齊 間即時重新分類 ──────────────
+                // 中點」的相對方位在 水平/垂直/對齊(或線長) 間即時重新分類 ──────
                 // m_dimAnchor2D 在 transitionToWaitDimPlace() 已設為 refMidpoint2D()
                 // （點＋點時即兩點中點），offset 即 mousePtAbs - mid，直接重用
                 // GeneralDimClassifier::inferPair() 保持與 Anchored 階段 hover
                 // 預覽同一套分類邏輯，避免重複實作 classifyZone。
-                if (m_isPointPairHVA && m_refs.size() >= 2) {
+                // ⚠️ 修正：改用 m_hvaRefA/m_hvaRefB（貫穿整個 WaitDimPlace 期間
+                // 固定不變）而非 m_refs[0]/m_refs[1]／`m_refs.size() >= 2`
+                // 門檻——m_refs 本身會隨分類結果改變元素數（線長只有 1 個
+                // WholeGeom ref），拿它當下一輪分類輸入會在分類成線長後，
+                // 下次滑鼠移動時 m_refs[1] 存取越界。同時，每次重新分類後
+                // 也要一併更新 m_refs 本身（不能只改 m_type），否則型別與
+                // 實際套用的 refs 對不上。
+                if (m_isPointPairHVA) {
                     Sketch* sk = activeSketch();
                     if (sk) {
                         QVector2D mousePtAbs(
                             static_cast<float>(m_dimAnchor2D.x() + m_dimOffsetX),
                             static_cast<float>(m_dimAnchor2D.y() + m_dimOffsetY));
                         auto pairInf = GeneralDimClassifier::inferPair(
-                            m_refs[0], m_refs[1], sk, mousePtAbs);
+                            m_hvaRefA, m_hvaRefB, sk, mousePtAbs);
                         if (pairInf) {
                             auto pairCt = annotationKindToConstraintType(pairInf->kind);
                             if (pairCt) {
                                 m_type     = *pairCt;
                                 m_distMode = pairInf->distMode;
+                                m_refs     = pairInf->pairedRefs.isEmpty()
+                                    ? QList<GeomRef>{ m_hvaRefA, m_hvaRefB }
+                                    : pairInf->pairedRefs;
                             }
                         }
                     }
                 }
 
-                // ── 夾角型別：依滑鼠落在角平分線的哪一側，動態切換 夾角／補角 ──
+                // ── 夾角型別：依滑鼠落在兩線交叉出的 4 個扇區中的哪一個，
+                // 動態切換 夾角／補角 ──────────────────────────────────────
                 // （無選單版第 B 組第 16 項：「移動決定角度標註弧的半徑與象限」）
                 // 型別本身在點擊第二條線時就已鎖定（見 lockPairGeom），這裡只
                 // 調整 useSupplementAngle，不再像舊版那樣於拖曳中重新判斷型別。
+                //
+                // ⚠️ 舊版用「offset 是否在角平分線同一側」的一條線（垂直於
+                // 平分線）粗略二分整個平面，只能大致分成「偏向夾角」／
+                // 「偏向補角」兩半，分界線跟兩線本身的位置對不齊，靠近
+                // dirA/dirB 邊界時容易分類錯——而且用來畫角弧的
+                // DimPreviewOverlay／AIS_DimensionLine::drawAngleDim 兩處，
+                // 各自改用「精確 4 扇區」判斷滑鼠落在哪個扇區來決定畫哪一段
+                // 弧之後，這裡若還用粗略二分，算出來的 m_useSupplementAngle
+                // （決定標籤顯示的角度數值）就可能跟實際畫出來的扇區對不
+                // 上——即使弧的「位置」已經修好，數值卻可能還是夾角/補角
+                // 標反。改成跟畫弧同一套精確判斷：算出滑鼠落在哪個扇區，
+                // 再看該扇區大小是 ang（夾角本身）還是 π-ang（補角）。
                 if (m_type == cad::ConstraintType::FixedAngleDim && m_refs.size() >= 2) {
                     auto* sk = activeSketch();
                     if (sk) {
@@ -367,17 +442,39 @@ void GeneralDimCommand::subscribePreview() {
                         if (lineA && lineB) {
                             QVector2D dirA = (lineA->end - lineA->start).normalized();
                             QVector2D dirB = (lineB->end - lineB->start).normalized();
-                            QVector2D bisector = dirA + dirB;
-                            if (bisector.lengthSquared() < 1e-8f)
-                                bisector = QVector2D(-dirA.y(), dirA.x());  // 近乎反向：改用法向量
-                            bisector.normalize();
 
                             QVector2D offset(static_cast<float>(m_dimOffsetX),
                                              static_cast<float>(m_dimOffsetY));
                             if (offset.lengthSquared() > 1e-6f) {
-                                bool onBisectorSide =
-                                    QVector2D::dotProduct(offset.normalized(), bisector) >= 0.0f;
-                                m_useSupplementAngle = !onBisectorSide;
+                                double dot   = static_cast<double>(QVector2D::dotProduct(dirA, dirB));
+                                double cross = static_cast<double>(dirA.x() * dirB.y() - dirA.y() * dirB.x());
+                                double ang   = std::atan2(std::abs(cross), dot);  // 0..π，夾角本身
+
+                                auto norm2pi = [](double a) {
+                                    while (a < 0.0)        a += 2.0 * M_PI;
+                                    while (a >= 2.0 * M_PI) a -= 2.0 * M_PI;
+                                    return a;
+                                };
+                                double rays[4] = {
+                                    norm2pi(std::atan2(static_cast<double>(dirA.y()),  static_cast<double>(dirA.x()))),
+                                    norm2pi(std::atan2(static_cast<double>(-dirA.y()), static_cast<double>(-dirA.x()))),
+                                    norm2pi(std::atan2(static_cast<double>(dirB.y()),  static_cast<double>(dirB.x()))),
+                                    norm2pi(std::atan2(static_cast<double>(-dirB.y()), static_cast<double>(-dirB.x())))
+                                };
+                                std::sort(std::begin(rays), std::end(rays));
+
+                                double angM = norm2pi(std::atan2(static_cast<double>(offset.y()),
+                                                                  static_cast<double>(offset.x())));
+                                double sectorSize = (rays[0] + 2.0 * M_PI) - rays[3]; // 預設：繞回第一段
+                                for (int i = 0; i < 3; ++i) {
+                                    if (angM >= rays[i] && angM < rays[i + 1]) {
+                                        sectorSize = rays[i + 1] - rays[i];
+                                        break;
+                                    }
+                                }
+                                // 該扇區大小比較接近 ang 還是 π-ang，決定是否用補角
+                                m_useSupplementAngle =
+                                    std::abs(sectorSize - ang) > std::abs(sectorSize - (M_PI - ang));
                             }
                         }
                     }
@@ -481,6 +578,7 @@ CommandResult GeneralDimCommand::execute(const CommandContext& ctx)
     m_state = State::Idle;
     m_refs.clear();
     m_anchorRef = cad::GeomRef{};
+    m_hasLastHoverRef = false;  // 每次指令重新啟動，清空舊的 hover 配對記憶
 
     // 進入 GetGeom 模式
     auto* ui = app->uiManager();
@@ -565,8 +663,54 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
         hoverUuid = resolveAxisRefUuid(sk, hoverUuid);
 
     if (m_state == State::Idle) {
-        if (hoverUuid.isEmpty() || !sk) { clearDimPreview(); return; }
+        if (hoverUuid.isEmpty() || !sk) { clearDimPreview(); m_hasLastHoverRef = false; return; }
         GeomRef hoverRef(hoverUuid, static_cast<GeomHandle>(hoverHandle));
+
+        // ⚠️ 新增：純 hover（完全不點擊）也能預覽「兩個幾何配對」的型別——
+        // 先 hover 到一條線（或點/圓/弧），再把滑鼠移到「另一個」可配對的
+        // 幾何上（例如另一條不平行的線）時，直接比照已點擊建立 anchor 後
+        // 的 hover 配對邏輯（見下面 Anchored 分支），用 canPair()/inferPair()
+        // 判斷並預覽配對型別（例如兩線夾角、線間距、點到線垂距…），完全
+        // 不需要先點擊任何一個。
+        if (m_hasLastHoverRef) {
+            GeomRef candidate = hoverRef;
+            normalizeSecondRef(m_lastHoverRef, candidate, sk);
+            const bool sameAsLast =
+                (candidate.geomUuid == m_lastHoverRef.geomUuid
+                 && candidate.handle == m_lastHoverRef.handle);
+            if (!sameAsLast && GeneralDimClassifier::canPair(m_lastHoverRef, candidate, sk)) {
+                auto inf = GeneralDimClassifier::inferPair(m_lastHoverRef, candidate, sk, mousePt);
+                if (inf) {
+                    auto ct = annotationKindToConstraintType(inf->kind);
+                    if (ct) {
+                        QList<GeomRef> refs = inf->pairedRefs.isEmpty()
+                            ? QList<GeomRef>{ m_lastHoverRef, candidate } : inf->pairedRefs;
+                        pushPreview(refs, *ct, inf->distMode);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 沒有可配對的「上一個 hover 錨點」，或這次 hover 到的東西無法與它
+        // 配對 → 更新軟性錨點為目前 hover 到的東西，回到單一幾何預覽
+        // （含線→自我配對成 Start/End、預覽 線長/水平/垂直距離，見
+        // lineWholeGeomEndpoints() 說明）。
+        m_lastHoverRef    = hoverRef;
+        m_hasLastHoverRef = true;
+
+        GeomRef startRef, endRef;
+        if (lineWholeGeomEndpoints(hoverRef, sk, startRef, endRef)) {
+            auto inf = GeneralDimClassifier::inferPair(startRef, endRef, sk, mousePt);
+            if (!inf) { clearDimPreview(); return; }
+            auto ct = annotationKindToConstraintType(inf->kind);
+            if (!ct) { clearDimPreview(); return; }
+            QList<GeomRef> refs = inf->pairedRefs.isEmpty()
+                ? QList<GeomRef>{ startRef, endRef } : inf->pairedRefs;
+            pushPreview(refs, *ct, inf->distMode);
+            return;
+        }
+
         auto inf = GeneralDimClassifier::inferSingle(hoverRef, sk, mousePt);
         if (!inf) { clearDimPreview(); return; }
         auto ct = annotationKindToConstraintType(inf->kind);
@@ -614,6 +758,27 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
         }
 
         // 沒有可配對的第二幾何 → 依起點 + 滑鼠位置即時切換單幾何型別預覽
+        // ⚠️ 修正：若起點本身是整條線（WholeGeom，例如使用者第一次點擊就
+        // 點在線段上），同樣要用 lineWholeGeomEndpoints() 組出正確的
+        // Start/End refs 給水平/垂直距離用，不能一律 `{ anchor }`（原因與
+        // onGeomHover() Idle 分支、lockSingleGeom() 相同，見那兩處的修正
+        // 說明）。
+        GeomRef startRef, endRef;
+        if (lineWholeGeomEndpoints(anchor, sk, startRef, endRef)) {
+            auto inf = GeneralDimClassifier::inferPair(startRef, endRef, sk, mousePt);
+            if (inf) {
+                auto ct = annotationKindToConstraintType(inf->kind);
+                if (ct) {
+                    m_type = *ct;
+                    m_distMode = inf->distMode;
+                    QList<GeomRef> refs = inf->pairedRefs.isEmpty()
+                        ? QList<GeomRef>{ startRef, endRef } : inf->pairedRefs;
+                    pushPreview(refs, m_type, m_distMode);
+                }
+            }
+            return;
+        }
+
         auto inf = GeneralDimClassifier::inferSingle(anchor, sk, mousePt);
         if (inf) {
             auto ct = annotationKindToConstraintType(inf->kind);
@@ -719,13 +884,33 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
 
         // 起點鎖定後立刻進入連續判斷階段：依當下滑鼠位置顯示單幾何預覽
         // （無選單版第 0 節：「起點鎖定後，系統立刻進入一個連續判斷階段」）
+        // ⚠️ 修正：若起點本身就是整條線（WholeGeom），同樣要用
+        // lineWholeGeomEndpoints() 組出正確的 Start/End refs（理由與
+        // onGeomHover()／上面 Anchored 分支的修正相同）；否則此處先顯示的
+        // 這一格初始預覽（在下一次滑鼠移動被 onGeomHover() 覆蓋前）會用
+        // 錯誤的單一 WholeGeom ref 顯示水平/垂直距離，可能短暫顯示不出來
+        // 或造成瞬間的錯誤畫面。
         if (sk) {
-            auto inf = GeneralDimClassifier::inferSingle(anchor, sk, mousePt);
-            if (inf) {
-                auto ct = annotationKindToConstraintType(inf->kind);
-                if (ct) {
-                    m_type = *ct; m_distMode = inf->distMode; m_useSupplementAngle = false;
-                    pushPreview(m_refs, m_type, m_distMode);
+            GeomRef startRef, endRef;
+            if (lineWholeGeomEndpoints(anchor, sk, startRef, endRef)) {
+                auto inf = GeneralDimClassifier::inferPair(startRef, endRef, sk, mousePt);
+                if (inf) {
+                    auto ct = annotationKindToConstraintType(inf->kind);
+                    if (ct) {
+                        m_type = *ct; m_distMode = inf->distMode;
+                        QList<GeomRef> refs = inf->pairedRefs.isEmpty()
+                            ? QList<GeomRef>{ startRef, endRef } : inf->pairedRefs;
+                        pushPreview(refs, m_type, m_distMode);
+                    }
+                }
+            } else {
+                auto inf = GeneralDimClassifier::inferSingle(anchor, sk, mousePt);
+                if (inf) {
+                    auto ct = annotationKindToConstraintType(inf->kind);
+                    if (ct) {
+                        m_type = *ct; m_distMode = inf->distMode; m_useSupplementAngle = false;
+                        pushPreview(m_refs, m_type, m_distMode);
+                    }
                 }
             }
         }
@@ -793,13 +978,21 @@ void GeneralDimCommand::lockPairGeom(const cad::GeomRef& anchor, const cad::Geom
     m_useSupplementAngle = inf->useSupplementAngle;
     m_wasSingleGeomFlow = false;
 
-    // 點＋點（含同一條線的兩端點）配對：pairedRefs 為空、distMode 為
-    // PointToPoint 是這個分支唯一的特徵（其餘配對型別皆會明確指定
-    // pairedRefs，見 GeneralDimClassifier::inferPair()）。標記後，
-    // WaitDimPlace 階段會持續依滑鼠位置重新分類 水平/垂直/對齊，而不是
-    // 在這裡就把型別凍結。
-    m_isPointPairHVA = inf->pairedRefs.isEmpty()
-                        && inf->distMode == cad::DistanceMode::PointToPoint;
+    // 點＋點（含同一條線的兩端點）配對：判斷依據是「anchor/second 兩個
+    // ref 本身是否都是點狀（isPointLike）」，而不是這次點擊當下 inferPair()
+    // 剛好回傳的 pairedRefs 是否為空。
+    // ⚠️ 修正：先前用 `inf->pairedRefs.isEmpty()` 判斷，但同一條線的
+    // Start/End 配對在「對角帶」（線長）時，inferPair() 會把 pairedRefs
+    // 設成單一 WholeGeom ref（見該函式 sameLine 特例）——若這次點擊剛好
+    // 落在對角帶，會誤判成「非點對點配對」，導致 m_isPointPairHVA 被鎖
+    // 死為 false，WaitDimPlace 階段之後即使把滑鼠移到明確的上下/左右方向
+    // 也不會重新分類成水平/垂直距離，等於這次新增的「選一線等同選兩點」
+    // 功能只有第一次點擊當下的方位有效、之後就失效。改為直接檢查兩個
+    // ref 本身是否為點狀，與該次分類結果（哪個 zone、pairedRefs 是否為空）
+    // 無關，才能在整個 WaitDimPlace 期間穩定持續重分類。
+    m_isPointPairHVA = GeneralDimClassifier::isPointLike(anchor, sk)
+                     && GeneralDimClassifier::isPointLike(second, sk);
+    if (m_isPointPairHVA) { m_hvaRefA = anchor; m_hvaRefB = second; }
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr)
@@ -808,9 +1001,43 @@ void GeneralDimCommand::lockPairGeom(const cad::GeomRef& anchor, const cad::Geom
     transitionToWaitDimPlace();
 }
 
+bool GeneralDimCommand::lineWholeGeomEndpoints(const cad::GeomRef& r, cad::Sketch* sk,
+                                               cad::GeomRef& outStart, cad::GeomRef& outEnd) const
+{
+    // ⚠️ 修正：先前用 `r.handle != WholeGeom` 判斷「不是整條線」，過於
+    // 嚴格——GEOM_HOVER/GEOM_PICKED 送來的 handle 在大多數情況下確實是
+    // WholeGeom（見 CadView 對 DetectedInteractive 命中的處理），但無法
+    // 保證所有來源都嚴格一致（例如透過 X 軸／Y 軸／原點虛擬 UUID 轉換、
+    // 或未來其他呼叫路徑）。改用與 GeneralDimClassifier::inferSingle()
+    // 完全一致、已驗證過的判斷方式：只要不是 Start／End，就視為「整條
+    // 線」，避免兩處各自用不同的嚴格程度判斷同一件事、其中一處沒跟著
+    // 更新就不同步。
+    if (!sk) return false;
+    if (r.handle == cad::GeomHandle::Start || r.handle == cad::GeomHandle::End) return false;
+    auto* geom = sk->findGeometry(r.geomUuid);
+    if (!geom || geom->type != cad::SketchGeometryType::Line) return false;
+    outStart = cad::GeomRef(r.geomUuid, cad::GeomHandle::Start);
+    outEnd   = cad::GeomRef(r.geomUuid, cad::GeomHandle::End);
+    return true;
+}
+
 void GeneralDimCommand::lockSingleGeom(const cad::GeomRef& anchor, const QVector2D& mousePt)
 {
     Sketch* sk = activeSketch();
+
+    // ⚠️ 新增：整條線（WholeGeom）視為「同時選取其 Start/End 兩個端點」，
+    // 讓使用者可依滑鼠位置在 線長／水平距離／垂直距離 之間選擇——與直接
+    // 點選線段兩端點（點+點流程）完全等價的使用者體驗（本次需求：GDIM
+    // 選一線後，也等同點兩點可由滑鼠位置選中形式）。轉呼叫 lockPairGeom()，
+    // 同時重用其 WaitDimPlace 期間即時重分類的邏輯（見 subscribePreview()
+    // 裡的 m_isPointPairHVA 分支），而不是像其餘單幾何型別那樣「點下去
+    // 同時定型定位」。
+    cad::GeomRef startRef, endRef;
+    if (lineWholeGeomEndpoints(anchor, sk, startRef, endRef)) {
+        lockPairGeom(startRef, endRef, mousePt);
+        return;
+    }
+
     auto inf = GeneralDimClassifier::inferSingle(anchor, sk, mousePt);
     auto* cmdMgr = core::CommandLineManager::instance();
     if (!inf) {
@@ -913,21 +1140,26 @@ void GeneralDimCommand::onDimConfirmed(const QVariant& payload)
     m_dimOffsetY = map.value("offsetY").toDouble();
 
     // 點＋點（含線的兩端點）：確保「確定」當下這一刻的滑鼠位置也套用一次
-    // H/V/Align 重分類——理論上前一個 DIM_LINE_PREVIEW 事件已經處理過幾乎
-    // 相同的位置，但點擊瞬間可能沒有先觸發 PREVIEW（例如滑鼠沒有移動、
-    // 直接點擊），這裡再做一次確保「顯示的預覽」與「實際鎖定的型別」一致。
-    if (m_isPointPairHVA && m_refs.size() >= 2) {
+    // H/V/Align(或線長) 重分類——理論上前一個 DIM_LINE_PREVIEW 事件已經處理
+    // 過幾乎相同的位置，但點擊瞬間可能沒有先觸發 PREVIEW（例如滑鼠沒有
+    // 移動、直接點擊），這裡再做一次確保「顯示的預覽」與「實際鎖定的型別」
+    // 一致。⚠️ 同上：改用 m_hvaRefA/m_hvaRefB，並同步更新 m_refs（理由見
+    // subscribePreview() 內同一段修正說明）。
+    if (m_isPointPairHVA) {
         Sketch* sk = activeSketch();
         if (sk) {
             QVector2D mousePtAbs(
                 static_cast<float>(m_dimAnchor2D.x() + m_dimOffsetX),
                 static_cast<float>(m_dimAnchor2D.y() + m_dimOffsetY));
-            auto pairInf = GeneralDimClassifier::inferPair(m_refs[0], m_refs[1], sk, mousePtAbs);
+            auto pairInf = GeneralDimClassifier::inferPair(m_hvaRefA, m_hvaRefB, sk, mousePtAbs);
             if (pairInf) {
                 auto pairCt = annotationKindToConstraintType(pairInf->kind);
                 if (pairCt) {
                     m_type     = *pairCt;
                     m_distMode = pairInf->distMode;
+                    m_refs     = pairInf->pairedRefs.isEmpty()
+                        ? QList<GeomRef>{ m_hvaRefA, m_hvaRefB }
+                        : pairInf->pairedRefs;
                 }
             }
         }
@@ -999,8 +1231,12 @@ void GeneralDimCommand::transitionToWaitValue()
     m_state = State::WaitValue;
 
     auto* app     = core::Application::instance();
-    auto* ui      = app ? app->uiManager() : nullptr;
-    auto* cadView = ui  ? ui->cadView()    : nullptr;
+    // ⚠️ 這裡刻意用 uiMg（而非常見的 ui）當變數名：aicad::ui 同時是
+    // namespace 名稱，下面會用到 ui::DimExpressionDialog，若局部變數也叫
+    // ui 會把 namespace 遮蔽掉（先前已經在別處因為這個原因修過一次，這裡
+    // 一併注意避免重蹈覆轍）。
+    auto* uiMg    = app ? app->uiManager() : nullptr;
+    auto* cadView = uiMg ? uiMg->cadView() : nullptr;
     if (cadView)
         cadView->setMode(view::InteractionMode::Sketching);
 
@@ -1010,18 +1246,92 @@ void GeneralDimCommand::transitionToWaitValue()
         return;
     }
 
+    // ⚠️ 修正（需求：取消 GDIM 命令列等待輸入數值/運算式，直接顯示編輯框）：
+    // 先前這裡會 showPrompt() + waitForInput(String) + subscribeStringInput()，
+    // 讓使用者在「命令列」打字輸入數值；現在改成直接彈出
+    // DimExpressionDialog（非模態，支援「插入參考」點選畫面上其他尺寸標註
+    // 取得其參數名稱），數值/運算式的解析邏輯與原本 onStringInput() 完全
+    // 相同，只是輸入來源換成對話框（見 onValueDialogAccepted()）。
+    //
+    // 這裡順便直接算出「若採用預設值會得到的自動命名參數」（autoName），
+    // 顯示在對話框標題——原本 commitDimension() 尾端另外彈出的
+    // DimExpressionDialog（用來讓使用者事後補上引用其他尺寸的運算式）
+    // 已經沒有必要：現在使用者一開始就能在這個對話框裡直接輸入/插入引用，
+    // 不需要建立後再跳第二個對話框（已同步移除該處程式碼，見
+    // commitDimension() 的說明）。
+    cad::Sketch* sk = activeSketch();
+    if (!sk) { cleanup(); return; }
+
     const bool isAngleType = (m_type == ConstraintType::FixedAngleDim ||
                               m_type == ConstraintType::FixedAngle);
-    // 角度類型：m_measuredValue 內部為弧度，提示文字改顯示「度」讓使用者輸入直覺一致
+    // 角度類型：m_measuredValue 內部為弧度，對話框預設值改顯示「度」讓使用者輸入直覺一致
     double defVal = isAngleType ? (m_measuredValue * 180.0 / M_PI) : m_measuredValue;
-    QString defStr = QString::number(defVal, 'f', 2) + (isAngleType ? QStringLiteral("°") : QString());
+    QString defStr = QString::number(defVal, 'f', 3);
+
+    QString prefix   = command::autoParamPrefix(m_type);
+    QString autoName = prefix.isEmpty() ? QString() : command::nextAutoParamName(sk, prefix);
+
+    // constraintUuid 傳空字串：此時約束尚未建立，DimExpressionDialog 只用
+    // 這個值來排除「自己」（避免插入參考時選到自己），建立前本來就不會有
+    // 這個問題，空字串不會誤配到任何既有約束的 uuid，安全。
+    auto* dlg = new aicad::ui::DimExpressionDialog(sk, QString(), autoName, defStr, cadView);
+    QObject::connect(dlg, &aicad::ui::DimExpressionDialog::expressionAccepted,
+        this, [this](const QString&, const QString& expr) {
+            onValueDialogAccepted(expr);
+        });
+    QObject::connect(dlg, &QDialog::rejected, this, [this]() {
+        onValueDialogRejected();
+    });
+    dlg->show();
+
     auto* cmdMgr = core::CommandLineManager::instance();
-    if (cmdMgr) {
-        cmdMgr->showPrompt(
-            QString("GDIM 輸入數值（Enter = %1）").arg(defStr));
-        cmdMgr->waitForInput(core::InputType::String);
+    if (cmdMgr)
+        cmdMgr->showPrompt(tr("GDIM：請在彈出的編輯框輸入數值或運算式（Enter/確定 = %1）")
+                               .arg(defStr));
+}
+
+void GeneralDimCommand::onValueDialogAccepted(const QString& expr)
+{
+    if (m_state != State::WaitValue) return;  // 防呆：對話框已經是上一輪殘留的，忽略
+
+    auto* cmdMgr = core::CommandLineManager::instance();
+    QString input = expr.trimmed();
+
+    if (input.isEmpty()) {
+        m_pendingValue = m_measuredValue;
+        m_pendingIsRawUserInput = false;   // 沿用量測值（角度已是弧度），不再轉換
+    } else {
+        bool isNum;
+        double v = input.toDouble(&isNum);
+        if (isNum) {
+            m_pendingValue = v;
+            m_pendingExpr.clear();
+            m_pendingIsRawUserInput = true;
+        } else {
+            cad::Sketch* sk = activeSketch();
+            if (!sk) { cleanup(); return; }
+            auto [ok, ev] = sk->parameterStore()->evaluate(input);
+            if (!ok) {
+                if (cmdMgr) cmdMgr->printError(
+                    QString("Unknown expression: '%1'").arg(input));
+                // 輸入無效：重新彈出對話框讓使用者修正，而不是整個 GDIM 取消。
+                transitionToWaitValue();
+                return;
+            }
+            m_pendingValue = ev;
+            m_pendingExpr  = input;
+            m_pendingIsRawUserInput = true;
+        }
     }
-    subscribeStringInput();
+    commitDimension();
+}
+
+void GeneralDimCommand::onValueDialogRejected()
+{
+    if (m_state != State::WaitValue) return;
+    // 對話框按取消：比照原本 Esc 在 WaitValue 階段的既有行為（單幾何流程
+    // 退回 Anchored、雙幾何流程退回 WaitDimPlace），沿用 onCancelled()。
+    onCancelled(QVariant());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1034,6 +1344,7 @@ void GeneralDimCommand::backToIdle()
     m_refs.clear();
     m_anchorRef = cad::GeomRef{};
     m_stickyPairedRef.reset();
+    m_hasLastHoverRef = false;  // 清空 Idle 純 hover 配對用的軟性錨點記憶
     m_state = State::Idle;
     clearDimPreview();
 
@@ -1155,6 +1466,44 @@ void GeneralDimCommand::commitDimension()
     c.driving        = m_driving;
     c.distMode       = m_distMode;
 
+    // ⚠️ 新增：尺寸約束自動命名參數（d1, d2, a1, a2…）。driving 的尺寸
+    // 約束自動在 ParameterStore 註冊一個穩定名稱，讓其他尺寸約束的表達式
+    // 可以直接引用它（既有的 EDITCON／applyDimensionEdit() 本來就支援
+    // ParameterStore 表達式，這裡只是讓每個尺寸自動有一個好記的名稱可用，
+    // 不用去翻 UUID）。使用者原本輸入的內容（純數字或表達式）改存成這個
+    // 自動名稱「自己的」定義，約束本身的 paramExpr 換成這個名稱——之後
+    // 編輯這條約束時（見 applyDimensionEdit() 對應的修正），會更新「這個
+    // 名稱自己的定義」而不是把 paramExpr 換掉，讓名稱維持穩定、其他約束
+    // 對它的引用才不會失效。CoordinateDim 有兩個數值，autoParamPrefix()
+    // 回傳空字串，不會進到這裡，維持原行為。
+    // autoName 提升到函式範圍：commit 完成後要用它彈出 DimExpressionDialog
+    // （見函式尾端），並顯示在對話框標題「d3 =」。
+    QString autoName;
+    if (m_driving) {
+        const QString prefix = command::autoParamPrefix(m_type);
+        if (!prefix.isEmpty()) {
+            if (auto* store = sk->parameterStore()) {
+                autoName = command::nextAutoParamName(sk, prefix);
+                if (!autoName.isEmpty()) {
+                    // 註冊值一律用「使用者看到/輸入的單位」：角度是度（跟
+                    // 手動輸入 paramExpr 時的慣例一致），其餘型別跟
+                    // c.value 同單位。m_pendingValue 在「使用者直接輸入
+                    // 數字」時就是度/原始單位；但若使用者按 Enter 採用
+                    // 量測值（m_pendingIsRawUserInput == false）且是角度
+                    // 類型，m_pendingValue 此時等於量測到的弧度，需要換算。
+                    double rawValue = m_pendingValue;
+                    if (isAngleType && !m_pendingIsRawUserInput)
+                        rawValue = m_pendingValue * 180.0 / M_PI;
+
+                    QString originalExpr = c.paramExpr.isEmpty()
+                        ? QString::number(rawValue) : c.paramExpr;
+                    store->setLocal(autoName, originalExpr);
+                    c.paramExpr = autoName;
+                }
+            }
+        }
+    }
+
     // ★ H/V 情境：offset 是相對 anchor（起點）的偏移，
     //   但 drawHorizontalDim/drawVerticalDim 期望的是相對 abMid 的偏移。
     //   absMouse = anchor + offset，需要轉換：offsetFromMid = absMouse - abMid
@@ -1251,6 +1600,13 @@ void GeneralDimCommand::commitDimension()
         reportSolveResult(result, cmdMgr);
     }
 
+    // ⚠️ 移除：先前這裡在約束建立後自動彈出 DimExpressionDialog，讓使用者
+    // 事後補上引用其他尺寸的運算式。現在改成 transitionToWaitValue() 一開始
+    // 就直接彈出同一個對話框取值（取代命令列輸入，見該函式說明），使用者
+    // 一開始就能輸入/插入引用，不需要建立後再跳出第二個對話框——否則每次
+    // GDIM 都會連續看到兩個對話框，體驗反而更差。autoName 仍保留（上面用來
+    // 把它設進 c.paramExpr／ann.paramExpr），只是不再用來彈窗。
+
     cleanup();
 }
 
@@ -1282,6 +1638,17 @@ void GeneralDimCommand::cleanup()
         cadView->setMode(view::InteractionMode::Sketching);
         cadView->setGdimWholeGeomHitTestEnabled(false);
     }
+
+    // ⚠️ setMode(Sketching) 會觸發 UIManager 對 CadView::modeChanged 的連線，
+    // 該連線在「離開 GetGeom」時會把所有 SketchPointAIS Deactivate()（見
+    // UIManager 建構子內 modeChanged 連線的說明）。這與「SketchPoint 永遠
+    // 顯示＋可選取」的設計原則牴觸——commitDimension() 成功時雖然
+    // solveConstraints() 已經觸發過一次 reshowSketchEditOverlays()，但
+    // 上面這行 setMode() 在其後執行，會把剛還原的狀態又蓋掉；取消流程
+    // （未呼叫 solveConstraints()）更是完全沒有任何一次 reshow。因此這裡
+    // 明確再呼叫一次，確保無論命令是「完成」或「取消」結束，SketchPoint
+    // 都維持顯示＋可選取，不會被隱藏。
+    if (ui) ui->reshowSketchEditOverlays(activeSketch());
 
     auto* cmdMgr = core::CommandLineManager::instance();
     if (cmdMgr) cmdMgr->clearPrompt();

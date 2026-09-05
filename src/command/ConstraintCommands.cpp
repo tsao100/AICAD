@@ -21,14 +21,20 @@
 #include "ExtendCommand.h"
 #include "FilletCommand.h"
 #include "ChamferCommand.h"
+#include "OffsetCommand.h"
 #include "ConstructionToggleCommand.h"
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
+#include "../core/EventBus.h"
 #include "../cad/Sketch.h"
 #include "../cad/ConstraintPickSession.h"
 #include "../ui/UIManager.h"
 #include "../ui/SketchPanel.h"
+#include "../view/CadView.h"
 #include <QDebug>
+#include <QMetaObject>
+#include <QRegularExpression>
+#include <algorithm>
 #include <cmath>
 
 namespace aicad {
@@ -99,6 +105,60 @@ static Sketch* requireActiveSketch(core::Application* app,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 尺寸約束自動命名參數（d1, d2, a1, a2…）
+// ─────────────────────────────────────────────────────────────────────────────
+
+QString autoParamPrefix(ConstraintType type)
+{
+    switch (type) {
+    case ConstraintType::FixedDistance:
+    case ConstraintType::FixedLength:
+    case ConstraintType::FixedHorizDist:
+    case ConstraintType::FixedVertDist:
+    case ConstraintType::FixedArcLength:
+        return QStringLiteral("d");
+    case ConstraintType::FixedAngleDim:
+    case ConstraintType::FixedAngle:
+        return QStringLiteral("a");
+    case ConstraintType::FixedRadius:
+        return QStringLiteral("r");
+    case ConstraintType::FixedDiameter:
+        return QStringLiteral("dia");
+    case ConstraintType::Slope:
+        return QStringLiteral("s");
+    default:
+        // CoordinateDim（兩個值）與其餘型別暫不支援自動命名。
+        return QString();
+    }
+}
+
+QString nextAutoParamName(Sketch* sk, const QString& prefix)
+{
+    if (!sk || prefix.isEmpty()) return QString();
+    auto* store = sk->parameterStore();
+    if (!store) return QString();
+
+    static const QRegularExpression suffixRe("^(\\d+)$");
+    int maxN = 0;
+    for (const QString& n : store->names()) {
+        if (!n.startsWith(prefix)) continue;
+        auto m = suffixRe.match(n.mid(prefix.size()));
+        if (m.hasMatch()) maxN = std::max(maxN, m.captured(1).toInt());
+    }
+    return prefix + QString::number(maxN + 1);
+}
+
+bool isOwnAutoParamName(Sketch* sk, const QString& expr)
+{
+    if (!sk || expr.isEmpty()) return false;
+    auto* store = sk->parameterStore();
+    if (!store || !store->hasLocal(expr)) return false;
+
+    static const QRegularExpression nameRe("^(dia|d|a|r|s)\\d+$");
+    return nameRe.match(expr).hasMatch();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // applyDimensionEdit — EDITCON 指令與尺寸線雙擊行內編輯共用的核心邏輯
 // （邏輯與 EditConCommand::execute() 的直接 UUID 分支一致，抽出供兩處呼叫）
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,6 +215,19 @@ bool applyDimensionEdit(Sketch* sk,
             con->value  = x;
             con->value2 = y;
             con->paramExpr.clear();
+            // ⚠️ 修正：GDIM 建立的尺寸，其驅動約束是 SketchAnnotation 的
+            // 「隱含約束」（uuid 與標註相同，見 Sketch::addImplicitConstraint）。
+            // 這裡只改了 SketchConstraint::value，但 Sketch::fromJson()／
+            // addAnnotation() 在任何重新生成隱含約束的時機（存檔重載、
+            // 標註被重新 add）都會用 SketchAnnotation::value 覆蓋回隱含約束，
+            // 讓這裡剛改好的值悄悄被還原——這正是「GDIM 距離約束編輯後
+            // 不會持續生效／物件距離不隨約束值調整」的根因之一。
+            // 同步更新對應的 SketchAnnotation，兩邊資料保持一致。
+            if (SketchAnnotation* ann = sk->findAnnotation(constraintUuid)) {
+                ann->value  = x;
+                ann->value2 = y;
+                ann->paramExpr.clear();
+            }
             SolveResult result = sk->solveConstraints();
             if (cmdMgr) {
                 cmdMgr->printSuccess(
@@ -167,6 +240,16 @@ bool applyDimensionEdit(Sketch* sk,
 
     bool isNumber;
     double newValue = newExpr.toDouble(&isNumber);
+    if (!isNumber) {
+        // Slope 類型：優先嘗試 "N:M" 比例／"P%" 百分比格式（與 SlopeCommand
+        // 建立時的輸入語法一致），失敗才落回一般數字/ParameterStore 表達式。
+        if (con->type == ConstraintType::Slope) {
+            if (auto ratio = SlopeCommand::parseRatioOrPercent(newExpr)) {
+                newValue = *ratio;
+                isNumber = true;
+            }
+        }
+    }
     if (!isNumber) {
         auto* store = sk->parameterStore();
         if (store) {
@@ -185,6 +268,26 @@ bool applyDimensionEdit(Sketch* sk,
 
     con->paramExpr = isNumber ? QString() : newExpr;
     con->value     = isAngleType ? (newValue * M_PI / 180.0) : newValue;
+
+    // ⚠️ 新增：若這條約束目前的 paramExpr 本身就是它自己的自動命名參數
+    // （例如 "d3"，建立時由 GeneralDimCommand::commitDimension() 自動註冊，
+    // 見該處說明），編輯時應該更新「d3 自己在 ParameterStore 裡的定義」，
+    // 而不是像上面那樣直接把 con->paramExpr 換成使用者這次輸入的內容——
+    // 否則會讓這條約束「脫離」原本的自動命名，其他約束表達式裡引用 "d3"
+    // 的地方就會找不到、或不會再跟著這條約束變動。
+    const QString ownAutoName = oldExpr;  // oldExpr 即編輯前的 con->paramExpr（若非空）
+    if (isOwnAutoParamName(sk, ownAutoName)) {
+        sk->parameterStore()->setLocal(ownAutoName, isNumber ? QString::number(newValue) : newExpr);
+        con->paramExpr = ownAutoName;  // 名稱維持不變
+    }
+
+    // ⚠️ 修正（同上 CoordinateDim 分支）：同步更新對應的 SketchAnnotation
+    // （若存在），避免存檔重載或標註重新 add 時，隱含約束的值被
+    // SketchAnnotation 的舊值覆蓋回去，導致編輯「看似有效、實則沒有持續」。
+    if (SketchAnnotation* ann = sk->findAnnotation(constraintUuid)) {
+        ann->value     = con->value;
+        ann->paramExpr = con->paramExpr;
+    }
 
     SolveResult result = sk->solveConstraints();
     if (cmdMgr) {
@@ -518,6 +621,303 @@ CommandResult DimConstraintCommand::execute(const CommandContext& ctx)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SLOPE — 線段斜度約束
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool    SlopeCommand::s_hasLastSlope   = false;
+double  SlopeCommand::s_lastSlopeValue = 0.0;
+QString SlopeCommand::s_lastSlopeText;
+
+SlopeCommand::SlopeCommand()
+    : Command("SLOPE",
+               "Line slope constraint (SLOPE 1:40 | SLOPE 2.5%): "
+               "select a line, or type S to re-enter the slope value") {}
+
+std::optional<double> SlopeCommand::parseRatioOrPercent(const QString& text)
+{
+    const QString s = text.trimmed();
+
+    // "P%" 或 "-P%"：百分比坡度，例如 "2.5%"、"-2.5%"
+    if (s.endsWith('%')) {
+        QString numPart = s.left(s.length() - 1).trimmed();
+        bool ok = false;
+        double pct = numPart.toDouble(&ok);
+        if (!ok) return std::nullopt;
+        return pct / 100.0;
+    }
+
+    // "N:M"：比例格式，例如 "1:40"、"1:-40"、"-1:40"
+    int colonIdx = s.indexOf(':');
+    if (colonIdx > 0 && colonIdx < s.length() - 1) {
+        QString numStr = s.left(colonIdx).trimmed();
+        QString denStr = s.mid(colonIdx + 1).trimmed();
+        bool okN = false, okD = false;
+        double num = numStr.toDouble(&okN);
+        double den = denStr.toDouble(&okD);
+        if (!okN || !okD || qFuzzyIsNull(den)) return std::nullopt;
+        return num / den;
+    }
+
+    return std::nullopt;
+}
+
+CommandResult SlopeCommand::execute(const CommandContext& ctx)
+{
+    auto* app    = core::Application::instance();
+    auto* cmdMgr = core::CommandLineManager::instance();
+    Sketch* sk   = requireActiveSketch(app, cmdMgr);
+    if (!sk) return CommandResult::Failure("No active sketch.");
+
+    auto* ui = app->uiManager();
+    if (!ui) return CommandResult::Failure("UIManager not available.");
+
+    m_sketch = sk;
+
+    // ── 模式 A：呼叫時已帶值參數（如 LISP/巨集，或未來 UUID 一次到位的呼叫）──
+    // 沿用舊行為：直接解析並開始選線，不進入本次新增的互動狀態機。
+    if (!ctx.args.isEmpty()) {
+        QString expr = ctx.args[0];
+        bool isDriving = !ctx.args.contains("-measured");
+
+        double value = 0.0;
+        QString paramExpr;
+
+        if (auto ratio = parseRatioOrPercent(expr)) {
+            value = *ratio;
+            cmdMgr->printMessage(
+                QString("  Slope '%1' = %2 (dy/dx)").arg(expr).arg(value, 0, 'f', 6));
+        } else {
+            bool isNumber = false;
+            value = expr.toDouble(&isNumber);
+            if (!isNumber) {
+                auto* store = sk->parameterStore();
+                if (store) {
+                    auto [ok, evaluated] = store->evaluate(expr);
+                    if (!ok) {
+                        cmdMgr->printError(
+                            QString("Invalid slope value: '%1' "
+                                    "(expected \"N:M\", \"P%%\", a number, or a known expression)")
+                                .arg(expr));
+                        return CommandResult::Failure(
+                            QString("Unknown expression: '%1'").arg(expr));
+                    }
+                    value = evaluated;
+                    paramExpr = expr;
+                } else {
+                    cmdMgr->printError(
+                        QString("Invalid slope value: '%1' "
+                                "(expected \"N:M\", \"P%%\", or a number)").arg(expr));
+                    return CommandResult::Failure(QString("Invalid slope value: '%1'").arg(expr));
+                }
+            }
+        }
+
+        s_hasLastSlope   = true;
+        s_lastSlopeValue = value;
+        s_lastSlopeText  = expr;
+
+        auto* session = ui->constraintPickSession();
+        if (!session) return CommandResult::Failure("ConstraintPickSession not available.");
+        session->begin(sk, cad::ConstraintType::Slope, value, paramExpr, isDriving);
+        cmdMgr->showPrompt(session->promptText());
+        return CommandResult::Success();
+    }
+
+    // ── 模式 B：互動（Task：延續上次輸入值） ────────────────────────────────
+    setWaitingForInput();  // 保持命令物件存活，直到 finishCommand() 呼叫 complete()
+
+    if (s_hasLastSlope) {
+        // 已有上次記憶值 → 直接進選線模式，允許輸入 "S" 中途改值
+        beginPickStage(s_lastSlopeValue);
+    } else {
+        // 第一次使用，沒有上次記憶值 → 照舊先問值
+        beginValueEntryStage();
+    }
+    return CommandResult::Success("Waiting for slope input...");
+}
+
+void SlopeCommand::cancel()
+{
+    unsubscribeAll();
+    if (auto* ui = core::Application::instance()->uiManager()) {
+        if (auto* session = ui->constraintPickSession(); session && session->isActive())
+            session->cancel();
+    }
+    finishCommand(CommandResult::Failure("SLOPE cancelled."));
+}
+
+void SlopeCommand::unsubscribeAll()
+{
+    auto* bus = core::Application::instance()->eventBus();
+    if (!bus) return;
+    if (m_subscribedValueEntry) { bus->unsubscribe(core::Events::STRING_INPUT, this); m_subscribedValueEntry = false; }
+    if (m_subscribedPickStage)  { bus->unsubscribe(core::Events::STRING_INPUT, this); m_subscribedPickStage  = false; }
+    if (m_connectedSessionEnded) {
+        if (auto* ui = core::Application::instance()->uiManager()) {
+            if (auto* session = ui->constraintPickSession())
+                disconnect(session, &cad::ConstraintPickSession::sessionEnded,
+                          this, &SlopeCommand::onSessionEnded);
+        }
+        m_connectedSessionEnded = false;
+    }
+}
+
+void SlopeCommand::finishCommand(const CommandResult& result)
+{
+    unsubscribeAll();
+    complete(result);
+}
+
+// ── 階段一：輸入斜度值 ───────────────────────────────────────────────────────
+void SlopeCommand::beginValueEntryStage()
+{
+    auto* cmdMgr = core::CommandLineManager::instance();
+    auto* bus    = core::Application::instance()->eventBus();
+    if (!cmdMgr || !bus) { finishCommand(CommandResult::Failure("No CommandLineManager/EventBus.")); return; }
+
+    bus->subscribe(core::Events::STRING_INPUT, this,
+        [this](const QVariant& v) {
+            QMetaObject::invokeMethod(this, [this, v] { onValueEntryInput(v); },
+                                      Qt::QueuedConnection);
+        });
+    m_subscribedValueEntry = true;
+
+    cmdMgr->showPrompt(
+        "Enter slope value — ratio \"1:40\" (rise:run) or percent \"2.5%\" "
+        "(negative for downhill, e.g. \"1:-40\" or \"-2.5%\"):");
+    cmdMgr->waitForInput(core::InputType::String);
+}
+
+void SlopeCommand::onValueEntryInput(const QVariant& v)
+{
+    auto* bus = core::Application::instance()->eventBus();
+    if (bus && m_subscribedValueEntry) { bus->unsubscribe(core::Events::STRING_INPUT, this); m_subscribedValueEntry = false; }
+
+    auto* cmdMgr = core::CommandLineManager::instance();
+    QString expr = v.toString().trimmed();
+
+    if (!m_sketch) { finishCommand(CommandResult::Failure("Sketch no longer active.")); return; }
+    if (expr.isEmpty()) {
+        if (cmdMgr) cmdMgr->printMessage("SLOPE cancelled (no value entered).");
+        finishCommand(CommandResult::Failure("SLOPE cancelled."));
+        return;
+    }
+
+    double value = 0.0;
+    if (auto ratio = parseRatioOrPercent(expr)) {
+        value = *ratio;
+        if (cmdMgr) cmdMgr->printMessage(
+            QString("  Slope '%1' = %2 (dy/dx)").arg(expr).arg(value, 0, 'f', 6));
+    } else {
+        bool isNumber = false;
+        value = expr.toDouble(&isNumber);
+        if (!isNumber) {
+            auto* store = m_sketch->parameterStore();
+            std::pair<bool, double> evalResult{false, 0.0};
+            if (store) evalResult = store->evaluate(expr);
+            if (!store || !evalResult.first) {
+                if (cmdMgr) cmdMgr->printError(
+                    QString("Invalid slope value: '%1' "
+                            "(expected \"N:M\", \"P%%\", a number, or a known expression)")
+                        .arg(expr));
+                // 讓使用者可以重新輸入，而不是直接整個命令失敗結束
+                beginValueEntryStage();
+                return;
+            }
+            value = evalResult.second;
+        }
+    }
+
+    s_hasLastSlope   = true;
+    s_lastSlopeValue = value;
+    s_lastSlopeText  = expr;
+
+    beginPickStage(value);
+}
+
+// ── 階段二：選線（同時允許輸入 "S" 回到階段一重新輸入） ─────────────────────
+void SlopeCommand::beginPickStage(double value)
+{
+    auto* app    = core::Application::instance();
+    auto* cmdMgr = core::CommandLineManager::instance();
+    auto* ui     = app ? app->uiManager() : nullptr;
+    auto* bus    = app ? app->eventBus()  : nullptr;
+    if (!ui || !cmdMgr || !bus || !m_sketch) {
+        finishCommand(CommandResult::Failure("UIManager/EventBus/Sketch not available."));
+        return;
+    }
+
+    auto* session = ui->constraintPickSession();
+    if (!session) { finishCommand(CommandResult::Failure("ConstraintPickSession not available.")); return; }
+
+    session->begin(m_sketch, cad::ConstraintType::Slope, value, QString(), true);
+
+    if (auto* cadView = ui->cadView()) {
+        cadView->setMode(view::InteractionMode::GetGeom);
+        cadView->setConstraintPickActive(true);
+    }
+
+    if (!m_connectedSessionEnded) {
+        connect(session, &cad::ConstraintPickSession::sessionEnded,
+                this, &SlopeCommand::onSessionEnded, Qt::UniqueConnection);
+        m_connectedSessionEnded = true;
+    }
+
+    bus->subscribe(core::Events::STRING_INPUT, this,
+        [this](const QVariant& v) {
+            QMetaObject::invokeMethod(this, [this, v] { onPickStageInput(v); },
+                                      Qt::QueuedConnection);
+        });
+    m_subscribedPickStage = true;
+
+    const QString display = s_lastSlopeText.isEmpty()
+        ? QString::number(value * 100.0, 'f', 3) + "%"
+        : s_lastSlopeText;
+    cmdMgr->showPrompt(
+        QString("[SLOPE] 選取線段套用斜度 %1（沿用上次輸入）；"
+                "輸入 S 後 Enter 可重新輸入斜度：").arg(display));
+    cmdMgr->waitForInput(core::InputType::String);
+}
+
+void SlopeCommand::onPickStageInput(const QVariant& v)
+{
+    auto* bus = core::Application::instance()->eventBus();
+    QString text = v.toString().trimmed();
+
+    if (text.compare("S", Qt::CaseInsensitive) == 0) {
+        // 中途改值：先取消目前 pick session（會觸發 sessionEnded，
+        // 但用 m_transitioningToValueEntry 旗標避免被誤判為命令結束）。
+        if (bus && m_subscribedPickStage) { bus->unsubscribe(core::Events::STRING_INPUT, this); m_subscribedPickStage = false; }
+
+        m_transitioningToValueEntry = true;
+        if (auto* ui = core::Application::instance()->uiManager()) {
+            if (auto* session = ui->constraintPickSession(); session && session->isActive())
+                session->cancel();
+        }
+        m_transitioningToValueEntry = false;
+
+        beginValueEntryStage();
+        return;
+    }
+
+    // 其餘輸入（含空白 Enter）：忽略，繼續維持選線等待狀態。
+    auto* cmdMgr = core::CommandLineManager::instance();
+    if (cmdMgr) cmdMgr->waitForInput(core::InputType::String);
+}
+
+void SlopeCommand::onSessionEnded()
+{
+    if (m_transitioningToValueEntry) return;  // 中途改值造成的取消，不視為命令結束
+
+    auto* bus = core::Application::instance()->eventBus();
+    if (bus && m_subscribedPickStage) { bus->unsubscribe(core::Events::STRING_INPUT, this); m_subscribedPickStage = false; }
+
+    // 實際套用約束已由 SketchPanel::onConstraintReadyFromSession（集中連線）處理，
+    // 這裡只需結束命令本身的生命週期。
+    finishCommand(CommandResult::Success("SLOPE done."));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 管理命令（Phase 4）
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -710,6 +1110,7 @@ CommandResult ListConCommand::execute(const CommandContext& /*ctx*/)
         case ConstraintType::FixedVertDist: return "VertDist";
         case ConstraintType::FixedArcLength:return "ArcLength";
         case ConstraintType::CoordinateDim: return "CoordDim";
+        case ConstraintType::Slope:         return "Slope";
         default: return QString::number(static_cast<int>(t));
         }
     };
@@ -1005,6 +1406,9 @@ void registerConstraintCommands(core::Application* app)
                    ConstraintType::FixedY,
                    "Fix Y coordinate of a point"); });
 
+    cmdMgr->registerCommand("SLOPE",         {"SLP"},
+        []() { return new SlopeCommand(); });
+
     // ── 管理命令 ─────────────────────────────────────────────────────────────
     cmdMgr->registerCommand("DELCON",        {"DCO"},
         []() { return new DelConCommand(); });
@@ -1107,7 +1511,12 @@ void registerConstraintCommands(core::Application* app)
         []() -> Command* { return new ConstructionToggleCommand(); });
     aliasMgr->registerAlias("CT", "CONSTRUCTION", "Toggle construction geometry", true);
 
-    qDebug() << "[ConstraintCommands] Registered" << 33
+    // 別名 O 已在 CommandAlias 內建立（isSystem=true，跟 M/CO/RO/MI/TR/EX/
+    // F/CHA 同批），這裡不重複註冊。
+    cmdMgr->registerCommand("OFFSET", QStringList{"O"},
+        []() -> Command* { return new OffsetCommand(); });
+
+    qDebug() << "[ConstraintCommands] Registered" << 35
              << "constraint/editing commands and aliases.";
 }
 

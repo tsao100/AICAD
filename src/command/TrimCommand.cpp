@@ -140,7 +140,7 @@ void TrimCommand::onSelectionCancelled()
 // 逐次點選要裁切的物件
 // ─────────────────────────────────────────────────────────────────────────
 
-void TrimCommand::beginPickSegmentStage(cad::Sketch* sketch)
+void TrimCommand::beginPickSegmentStage(cad::Sketch* /*sketch*/)
 {
     m_state = State::PickingSegment;
 
@@ -224,8 +224,19 @@ void TrimCommand::onHover(const QVariant& payload)
         return;
     }
 
-    const QPointF ptF = map.value("point").value<QPointF>();
-    const QVector2D hoverPt(float(ptF.x()), float(ptF.y()));
+    // ⚠️ 型別陷阱：GEOM_HOVER 的 "point" 欄位是 CadView::mouseMoveEvent()
+    // 的 GetGeom 分支用 QVariant::fromValue(QVector2D) 包出來的（見
+    // CadView.cpp 該處 planePt 宣告型別），跟 GEOM_PICKED 的 "point"
+    // （handlePointInput() 送出的是 QPointF，見該處註解）型別不同——兩個
+    // 事件雖然欄位名稱一樣叫 "point"，實際存放的 QVariant 底層型別不同。
+    // 原本這裡誤用 .value<QPointF>() 讀取，Qt 沒有登記 QVector2D↔QPointF
+    // 的轉換器，型別不符時會靜默回傳預設值 QPointF(0,0)，導致 hoverPt
+    // 恆為 (0,0)（sketch 原點），完全不會隨滑鼠移動——這正是先前回報
+    // 「hover 預覽不正確：中間段不會顯示、這一側有時卻顯示成另一側」的
+    // 根本原因（trimAt() 走的是 GEOM_PICKED 的 QPointF，型別對得上，
+    // 所以實際點擊結果一直是正確的；只有這裡的 hover 預覽讀錯型別）。
+    // 改用 .value<QVector2D>() 讀取，與 CadView 實際送出的型別一致。
+    const QVector2D hoverPt = map.value("point").value<QVector2D>();
 
     const auto seg = trimext::previewTrimAt(sk, uuid, m_cuttingEdges, hoverPt);
     if (seg.valid)

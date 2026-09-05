@@ -30,8 +30,15 @@
  *   PickFirst        — 點擊第一個元素（LC: 切線；CA: 弧）
  *      ↓ POINT_ACQUIRED
  *   PickSecond       — 點擊第二個元素（LC: 弧；CA: 切線）
- *      ↓ POINT_ACQUIRED
- *   WaitingForType   — 輸入螺旋類型（Enter = Clothoid）
+ *      ↓ POINT_ACQUIRED — 兩個元素都選定、群組方向（LC/CA/ACA）已自動偵測
+ *        完成後，立即以 Modal 開啟 AddSpiralCalcDialog（見
+ *        openCalcDialog()），已選定的元素 index 直接帶入對話框；使用者在
+ *        對話框內選擇螺旋線類型，按「試算」核對 Ls／關鍵點座標、
+ *        「套用」寫入線形。對話框「套用」成功（QDialog::Accepted）時，
+ *        本指令直接以 Success 結束（addLC()/addCA()/addACA() + solve()
+ *        已由對話框完成）。
+ *      ↓ 對話框被取消（QDialog::Rejected，例如按「取消」或直接關閉）
+ *   WaitingForType   — 退回原本的純文字循序輸入模式：輸入螺旋類型（Enter = Clothoid）
  *      ↓ NUMBER_INPUT（或空 Enter）
  *   WaitingForConfirm — 顯示求解預覽；Enter 確認
  *      ↓ NUMBER_INPUT ""  or POINT_ACQUIRED
@@ -42,6 +49,8 @@
  * @see AlignmentSolver::solveLC(), AlignmentSolver::solveCA()
  * @see HorizontalAlignmentEdit::addLC(), addCA()
  * @see AlignmentSCSCommand（結構參考）
+ * @see aicad::ui::AddSpiralCalcDialog（計算對話框；架構參考
+ *      aicad::ui::CompoundChainCalcDialog／AlignmentSCSChainCommand）
  */
 
 #include "command/alignment/AlignmentCommandBase.h"
@@ -52,6 +61,8 @@
 
 #include <QPointF>
 #include <QVector2D>
+
+class QWidget;
 
 namespace aicad {
 namespace command {
@@ -92,6 +103,15 @@ private:
     void commitSpiral();
     void cleanup() override;
     void goToConfirm();
+
+    /**
+     * @brief 兩個元素都選定、群組方向（LC/CA/ACA）已自動偵測完成後呼叫：
+     *        Modal 開啟 AddSpiralCalcDialog（已選定的元素 index 直接帶入）。
+     *        使用者按「套用」成功（QDialog::Accepted）→ 本指令直接結束
+     *        （Success）；取消/關閉（QDialog::Rejected）→ 退回原本的純
+     *        文字循序輸入模式（Step::WaitingForType）。
+     */
+    void openCalcDialog();
 
     // ── 元素選取工具 ──────────────────────────────────────────────────────────
 
@@ -141,6 +161,7 @@ private:
 
     // ── 狀態 ─────────────────────────────────────────────────────────────────
     railway::AlignmentDocument* m_alignDoc    = nullptr;
+    QWidget*                    m_parentWidget = nullptr;  ///< AddSpiralCalcDialog 的父視窗（來自 CommandContext::cadView）
     Step                        m_step        = Step::PickFirst;
     GroupMode                   m_mode        = GroupMode::Unknown;
     bool                        m_isFinishing = false;

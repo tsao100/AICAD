@@ -20,6 +20,7 @@
 #include <gp_Pnt2d.hxx>
 #include <gp_Vec2d.hxx>
 #include <QDebug>
+#include <algorithm>
 #include <cmath>
 
 IMPLEMENT_STANDARD_RTTIEXT(aicad::cad::AIS_DimensionLine, AIS_InteractiveObject)
@@ -110,6 +111,13 @@ QString AIS_DimensionLine::labelText() const {
 
     QString base;
     switch (m_constraint.type) {
+    case ConstraintType::Slope:
+        // 顯示為百分比坡度，正負號明示上升/下降（沿線 Start→End 方向），
+        // 與 VAlignProfileView 既有坡度 (grade) 標示慣例一致（%1%2%）。
+        base = QString("%1%2%")
+                   .arg(v >= 0 ? "+" : "")
+                   .arg(v * 100.0, 0, 'f', 3);
+        break;
     case ConstraintType::FixedDiameter:
         base = QString("Ø%1").arg(v, 0, 'f', 2);
         break;
@@ -238,6 +246,10 @@ void AIS_DimensionLine::Compute(
     case ConstraintType::FixedAngle:
         drawAngleDim(prs);         break;
     case ConstraintType::FixedLength:
+        drawLengthDimension(prs);  break;
+    case ConstraintType::Slope:
+        // 復用「線長」的尺寸線幾何繪製（沿線段畫尺寸線＋引線），
+        // 只是 labelText() 顯示的文字換成百分比坡度而非長度。
         drawLengthDimension(prs);  break;
     case ConstraintType::FixedDiameter:
         drawDiameterDimension(prs); break;
@@ -819,11 +831,51 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
     // 確保標籤方向和角弧在同側
     if (std::abs(angB - angA) > M_PI) midAng += M_PI;
 
-    // 角弧（離散折線逼近）
-    double a0 = angA, a1 = angB;
-    // 讓 a1 > a0
-    while (a1 < a0) a1 += 2 * M_PI;
-    if (a1 - a0 > M_PI) { double tmp = a0; a0 = a1 - 2*M_PI; a1 = tmp + 2*M_PI; std::swap(a0,a1); a0 -= 2*M_PI; a1 -= 2*M_PI; while(a1<a0) a1+=2*M_PI; }
+    // 角弧（離散折線逼近）：a0/a1 要落在「使用者確定當下滑鼠所在的那個
+    // 扇區」——兩條「線」（不是射線）在 apex 交叉，實際上把平面分成 4 個
+    // 扇區（±dirA 與 ±dirB 兩兩相鄰圍成），對角的兩個扇區角度相同、相鄰
+    // 的兩個扇區互為補角，畫哪一個沒有唯一答案。
+    // ⚠️ 舊版這裡的作法：不管滑鼠在哪，永遠只挑 angA→angB 之間「較小」的
+    // 那一段（而且那段「取較小」的 swap 邏輯本身還是恆等變換、形同沒執行
+    // 過——兩線以順時針方向選取時就會直接畫到大肚/反射角那一段）。即使把
+    // 那段「取較小」的邏輯修好，畫出來的仍然只會是固定的 +dirA/+dirB
+    // 那一個扇區，不會跟著使用者點擊的位置換到相鄰扇區去——這正是「完成
+    // 的尺寸線位置不是臨近滑鼠點下的位置」在這次回報後仍然存在的原因。
+    // 改成：算出 4 條射線角度（dirA、-dirA、dirB、-dirB）、排序，再用
+    // m_dimOffsetX/Y（確定當下滑鼠相對 apex 的偏移——見
+    // GeneralDimCommand::refMidpoint2D() 已改成角度標註時回傳 apex 本身，
+    // 讓這個 offset 真正是「相對 apex」而不是「相對兩線起點平均」）找滑鼠
+    // 方向落在哪兩條相鄰射線之間，那一段就是要畫的扇區。相鄰兩射線間的
+    // 扇區必然 ≤180°，不需要再另外判斷「較大/較小」。
+    auto norm2pi = [](double a) {
+        while (a < 0.0)        a += 2.0 * M_PI;
+        while (a >= 2.0 * M_PI) a -= 2.0 * M_PI;
+        return a;
+    };
+    double rays[4] = {
+        norm2pi(std::atan2( dA.Y(),  dA.X())),
+        norm2pi(std::atan2(-dA.Y(), -dA.X())),
+        norm2pi(std::atan2( dB.Y(),  dB.X())),
+        norm2pi(std::atan2(-dB.Y(), -dB.X()))
+    };
+    std::sort(std::begin(rays), std::end(rays));
+
+    double a0, a1;
+    if (m_dimOffsetX == 0.0 && m_dimOffsetY == 0.0) {
+        // 沒有 offset 可用（例如舊資料／預設值）：退回兩線直接夾角
+        // （angA/angB 較小的那一段）當預設值。
+        a0 = rays[0]; a1 = rays[1];
+    } else {
+        double angM = norm2pi(std::atan2(m_dimOffsetY, m_dimOffsetX));
+        a0 = rays[3] - 2.0 * M_PI;   // 預設：落在「繞回第一段」的扇區
+        a1 = rays[0];
+        for (int i = 0; i < 3; ++i) {
+            if (angM >= rays[i] && angM < rays[i + 1]) {
+                a0 = rays[i]; a1 = rays[i + 1];
+                break;
+            }
+        }
+    }
 
     Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
 

@@ -56,8 +56,11 @@
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
 #include "railway/AlignmentDocument.h"
+#include "ui/SCSCalcDialog.h"
+#include "view/CadView.h"   // CadView : public QWidget — 供 openCalcDialog() 取用 parent
 
 #include <QDebug>
+#include <QDialog>
 #include <QtMath>
 #include <cmath>
 
@@ -198,7 +201,8 @@ QString AlignmentSCSCommand::spiralTypeName(SpiralType t)
 
 CommandResult AlignmentSCSCommand::execute(const CommandContext& context)
 {
-    m_alignDoc = context.alignmentDoc;
+    m_alignDoc     = context.alignmentDoc;
+    m_parentWidget = static_cast<QWidget*>(context.cadView);   // CadView : public QWidget
     if (!m_alignDoc) {
         return CommandResult::Failure(
             "No AlignmentDocument — open or create an alignment first.");
@@ -318,10 +322,8 @@ void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
         }
         m_idx2 = idx;
         highlightTangent(m_idx2);
-        outputMessage(QString("Exit tangent #%1 selected.  Enter R=<radius>:").arg(idx));
-        bus->publish(Events::COMMAND_PROMPT, tr("R=<radius> (e.g. R=600):"));
-        m_step = Step::WaitingForRadius;
-        CommandLineManager::instance()->waitForInput(core::InputType::Number);
+        outputMessage(QString("Exit tangent #%1 selected.  Opening SCS dialog...").arg(idx));
+        openCalcDialog();
         break;
     }
 
@@ -335,6 +337,38 @@ void AlignmentSCSCommand::handlePointAcquired(const QPointF& point)
     default:
         break;
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  openCalcDialog
+// ────────────────────────────────────────────────────────────────────────────
+
+void AlignmentSCSCommand::openCalcDialog()
+{
+    EventBus* bus = Application::instance()->eventBus();
+
+    auto* dlg = new ui::SCSCalcDialog(m_alignDoc, m_idx1, m_idx2, m_parentWidget);
+    const int result = dlg->exec();   // Modal — 阻塞直到使用者按「套用」或取消/關閉
+    delete dlg;
+
+    if (m_isFinishing) return;   // 對話框開啟期間指令被外部取消（極少見，保險檢查）
+
+    if (result == QDialog::Accepted) {
+        // 對話框「套用」已完成 addSCS() + solve()，這裡只需結束指令。
+        outputMessage(
+            QString("SCS added via dialog (tangents %1\xE2\x86\x92%2).")
+                .arg(m_idx1).arg(m_idx2));
+        m_isFinishing = true;
+        Q_EMIT finished(CommandResult::Success("AlignmentSCS completed via dialog"));
+        return;
+    }
+
+    // 取消/關閉對話框 → 退回文字循序輸入模式。
+    outputMessage("Dialog cancelled.  Falling back to text input — enter R=<radius>"
+                  " (or ESC / right-click to cancel the command entirely):");
+    bus->publish(Events::COMMAND_PROMPT, tr("R=<radius> (e.g. R=600):"));
+    m_step = Step::WaitingForRadius;
+    CommandLineManager::instance()->waitForInput(core::InputType::Number);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -765,6 +799,7 @@ void AlignmentSCSCommand::cleanup()
     m_type1       = SpiralType::Clothoid;
     m_type2       = SpiralType::Clothoid;
     m_alignDoc    = nullptr;
+    m_parentWidget = nullptr;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -835,6 +870,9 @@ QString AlignmentSCSCommand::getUsage() const
         "Usage: SCS\n"
         "  1. Click near the ENTRY tangent line.\n"
         "  2. Click near the EXIT tangent line.\n"
+        "     -> Opens a dialog (R / L1 / T1 / L2 / T2) for trial calculation\n"
+        "        and Apply. Cancel/close the dialog to fall back to the text\n"
+        "        prompts below.\n"
         "  3. Enter radius:            R=600  (or just 600)\n"
         "  4. Enter entry spiral len:  L1=150 (or 0 for no entry spiral)\n"
         "  5. Enter entry spiral type: T1=CLOTHOID (default, Enter to skip)\n"

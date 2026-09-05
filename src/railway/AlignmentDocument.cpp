@@ -830,7 +830,14 @@ bool HorizontalAlignmentEdit::seedFromRawPoints(const QVector<AlignmentPoint>& r
         const QChar elemType = cur.tsc[1];
 
         if (elemType == QChar('T')) {
-            if (lastAnchorIdx >= 0 && curBuffer.isEmpty() && anchors[lastAnchorIdx].isRealTangent) {
+            // tsc=="TT" 本身就是一個明確量測到的直線上的點（PI／樁號標記，
+            // 例如結構物起訖樁號），即使前後都是直線（中間沒有曲線群組）
+            // 也不可視為單純的延伸而併掉——它必須保留成自己的 Anchor，
+            // 否則該樁號座標會從輸出的元素鏈中整個消失，之後也無法還原。
+            // 只有非 TT 的 T 型收尾點（ST／CT，代表「離開曲線、進入直線」
+            // 的邊界點，理論上不會與另一個 T 型點直接相鄰）才適用合併捷徑。
+            const bool isTT = (cur.tsc == QLatin1String("TT"));
+            if (!isTT && lastAnchorIdx >= 0 && curBuffer.isEmpty() && anchors[lastAnchorIdx].isRealTangent) {
                 // 與上一個真正 Tangent 直接相連（中間沒有曲線群組）：視為
                 // 同一段直線的延伸，只更新其備援終點，不新增 Anchor。
                 anchors[lastAnchorIdx].ownEnd = ptXY(rawPts[i + 1]);
@@ -2345,6 +2352,22 @@ int HorizontalAlignmentEdit::addACA(int arc1Idx, int arc2Idx,
         qWarning() << "[HorizontalAlignmentEdit] addACA: arc2 must be Fixed (arc2Idx=" << arc2Idx << ")";
         return -1;
     }
+    if (arc1Idx >= arc2Idx) {
+        // Element index order IS chainage order for a sequential PI-chain,
+        // so arc1Idx must precede arc2Idx along the alignment — the
+        // insertion arithmetic just below (insertPos = arc1Idx + 1) and the
+        // Pass2e ACA-detection logic in AlignmentSolver.cpp both assume
+        // this. A caller handing these in reversed (or equal) order would
+        // otherwise silently produce a broken/misplaced SpiralIn element
+        // instead of a clear rejection — see
+        // AlignmentAddSpiralCommand::handlePointAcquired()'s PickSecond
+        // handler, which auto-corrects click order before calling here;
+        // this check is the defensive backstop for any other caller.
+        qWarning() << "[HorizontalAlignmentEdit] addACA: arc1Idx must be < arc2Idx"
+                      " (chainage order) — got arc1Idx=" << arc1Idx
+                   << "arc2Idx=" << arc2Idx;
+        return -1;
+    }
     if (std::abs(m_elems[arc1Idx].radius) < 1e-9 ||
         std::abs(m_elems[arc2Idx].radius) < 1e-9) {
         qWarning() << "[HorizontalAlignmentEdit] addACA: arc radius ≈ 0";
@@ -2518,6 +2541,127 @@ int HorizontalAlignmentEdit::addReverseSpiral(const ReverseSpiralSpec& spec)
                                             "Add Reverse Spiral (S1><S2)");
     }
     return spiralInIdx;
+}
+
+// ============================================================================
+//  addReverseSCS  ─ Tangent(before) → SpiralIn(L1) → CircularArc(R1) →
+//                    [反向對 Lm1／Lm2，EqualLength] → CircularArc(R2) →
+//                    SpiralOut(L2) → Tangent(after)
+//
+//  R1/L1/R2/L2 皆為 spec 直接指定的已知量（比照既有 addSCS() 的慣例）；
+//  只有中間反向對的 Lm1/Lm2 交給 AlignmentSolver::solveReverseSCS()
+//  （solve() Pass 2g，內部固定呼叫既有 solveReverseSpiral(EqualLength)）
+//  自動反解。與 addSCS() 不同的是，本函式一次建立 6 個元素而非 3 個，且
+//  全部 6 個元素的 tangentIdxBefore/After 都指向「群組外側」的兩條真正
+//  Tangent（比照 addCompoundChain() 的慣例），交由 Pass 2g 統一辨識整組。
+// ============================================================================
+
+int HorizontalAlignmentEdit::addReverseSCS(const ReverseSCSSpec& spec)
+{
+    int tangentIdxBefore = spec.tangentIdxBefore;
+    int tangentIdxAfter  = spec.tangentIdxAfter;
+
+    if (tangentIdxBefore < 0 || tangentIdxBefore >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addReverseSCS: tangentIdxBefore out of range:" << tangentIdxBefore;
+        return -1;
+    }
+    if (tangentIdxAfter < 0 || tangentIdxAfter >= m_elems.size()) {
+        qWarning() << "[HorizontalAlignmentEdit] addReverseSCS: tangentIdxAfter out of range:" << tangentIdxAfter;
+        return -1;
+    }
+    if (tangentIdxBefore == tangentIdxAfter) {
+        qWarning() << "[HorizontalAlignmentEdit] addReverseSCS: before/after tangent must differ";
+        return -1;
+    }
+    if (m_elems[tangentIdxBefore].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addReverseSCS: element at tangentIdxBefore is not a Tangent";
+        return -1;
+    }
+    if (m_elems[tangentIdxAfter].type != EditableElementType::Tangent) {
+        qWarning() << "[HorizontalAlignmentEdit] addReverseSCS: element at tangentIdxAfter is not a Tangent";
+        return -1;
+    }
+    if (std::abs(spec.radius1) < 1e-9 || std::abs(spec.radius2) < 1e-9) {
+        qWarning() << "[HorizontalAlignmentEdit] addReverseSCS: radius1/radius2 ≈ 0";
+        return -1;
+    }
+
+    const QJsonObject before = parentDocument() ? parentDocument()->toJson() : QJsonObject();
+
+    // 比照 addSCS()：若這對切線之間已存在其他 Floating 群組，先移除，
+    // 避免疊床架屋。
+    const int removed = removeFloatingBetween(tangentIdxBefore, tangentIdxAfter);
+    if (removed > 0) tangentIdxAfter -= removed;
+
+    auto makeCommon = [&](EditableElement& e) {
+        e.mode              = ConstraintMode::Floating;
+        e.tangentIdxBefore  = tangentIdxBefore;
+        e.tangentIdxAfter   = tangentIdxAfter;
+        e.isReverseSCSGroup = true;
+    };
+
+    // ── 入螺旋 S1（Tangent(before) → Arc1，已知長度 L1）───────────────────
+    EditableElement spiralIn1;
+    spiralIn1.type        = EditableElementType::SpiralIn;
+    spiralIn1.radius      = std::abs(spec.radius1);
+    spiralIn1.length      = std::abs(spec.length1);
+    spiralIn1.spiralType1 = spec.type1;
+    spiralIn1.spiralType2 = spec.type1;
+    makeCommon(spiralIn1);
+
+    // ── 圓弧 1（R1，轉向由 solveReverseSCS() 依兩切線相對幾何自動判斷）──
+    EditableElement arc1;
+    arc1.type   = EditableElementType::CircularArc;
+    arc1.radius = std::abs(spec.radius1);
+    makeCommon(arc1);
+
+    // ── 反向對第一段 Lm1（接 arc1 出口，曲率 1/R1 → 0；比照 addReverseSpiral()
+    //    的欄位覆用慣例掛在 SpiralOut 上，長度未知交 Pass 2g 反解）──────
+    EditableElement spiralMid1;
+    spiralMid1.type                  = EditableElementType::SpiralOut;
+    spiralMid1.radius                = std::abs(spec.radius1);
+    spiralMid1.length                = 0.0;
+    spiralMid1.spiralType1           = spec.typeM1;
+    spiralMid1.spiralType2           = spec.typeM1;
+    spiralMid1.isReverseSpiralGroup  = true;
+    spiralMid1.reverseSpiralStrategy = static_cast<int>(ReverseSpiralStrategy::EqualLength);
+    makeCommon(spiralMid1);
+
+    // ── 反向對第二段 Lm2（接 arc2 入口，曲率 0 → 1/R2；長度未知）────────
+    EditableElement spiralMid2;
+    spiralMid2.type                 = EditableElementType::SpiralIn;
+    spiralMid2.radius               = std::abs(spec.radius2);
+    spiralMid2.length               = 0.0;
+    spiralMid2.spiralType1          = spec.typeM2;
+    spiralMid2.spiralType2          = spec.typeM2;
+    spiralMid2.isReverseSpiralGroup = true;
+    makeCommon(spiralMid2);
+
+    // ── 圓弧 2（R2，轉向與 arc1 相反）───────────────────────────────────
+    EditableElement arc2;
+    arc2.type   = EditableElementType::CircularArc;
+    arc2.radius = std::abs(spec.radius2);
+    makeCommon(arc2);
+
+    // ── 出螺旋 S2（Arc2 → Tangent(after)，已知長度 L2）─────────────────
+    EditableElement spiralOut2;
+    spiralOut2.type        = EditableElementType::SpiralOut;
+    spiralOut2.radius      = std::abs(spec.radius2);
+    spiralOut2.length      = std::abs(spec.length2);
+    spiralOut2.spiralType1 = spec.type2;
+    spiralOut2.spiralType2 = spec.type2;
+    makeCommon(spiralOut2);
+
+    const int firstIdx = insertElementsOrdered(
+        tangentIdxBefore + 1,
+        { spiralIn1, arc1, spiralMid1, spiralMid2, arc2, spiralOut2 });
+
+    if (parentDocument()) {
+        command::AlignmentEditCommand::push(parentDocument(),
+                                            before, parentDocument()->toJson(),
+                                            "Add Reverse SCS (RSCS)");
+    }
+    return firstIdx;
 }
 
 } // namespace railway

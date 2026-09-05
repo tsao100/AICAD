@@ -23,6 +23,8 @@ int ConstraintPickSession::requiredPointCount(ConstraintType type) const {
         return 1;   // 選一個點
     case ConstraintType::FixedAngleDim:
         return 2;   // 選兩條線上的點（取線方向）
+    case ConstraintType::Slope:
+        return 1;   // 選一條線（斜度）
 
     // ── 幾何約束：單一幾何 ────────────────────────────────────────
     case ConstraintType::Horizontal:
@@ -118,6 +120,8 @@ QString ConstraintPickSession::promptText() const {
     case ConstraintType::FixedAngleDim:
         if (picked == 0) return tr("選取第一條線上的點…");
         return tr("選取第二條線上的點…");
+    case ConstraintType::Slope:
+        return tr("選取線段（斜度）…");
 
     // ── 幾何約束：依類型給出明確提示 ────────────────────────────
     case ConstraintType::Horizontal:

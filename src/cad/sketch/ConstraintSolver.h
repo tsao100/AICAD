@@ -314,6 +314,21 @@ public:
     void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
 };
 
+/// Slope：單一線段斜度約束（refs[0] = 線，取 geomUuid，Start/End 由
+/// GeomVarLayout::indexFor() 解析，不受 refs[0].handle 是 Curve 或
+/// WholeGeom 影響）。
+/// F(x) = (y2 - y1) - value * (x2 - x1) = 0
+/// 用線性（非 atan2/sqrt）形式表達，避免除以零（垂直線）與角度不連續問題，
+/// 且天然保留方向性正負號 —— value 的正負由線的 Start→End 方向決定
+/// （工程慣例：沿 Start→End 方向上升為正、下降為負）。
+class SlopeEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 1; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
+};
+
 // Fixed = 用多條 FixedX/Y 方程式固定整個幾何
 class FixedEquation : public ConstraintEquation {
 public:

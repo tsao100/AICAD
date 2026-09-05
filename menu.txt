@@ -143,6 +143,7 @@ command|alignmentfixcurve||0
 command|alignmentfloatcurve||0
 command|alignmentscs||0
 command|scschain||0
+command|alignmentrevscs||0
 command|alignmentaddspiral||0
 command|alignment3daddvprofile||0
 command|profilearray||0
@@ -165,6 +166,7 @@ menu|Railway|alignmentfixcurve|Fixed Curve||
 menu|Railway|alignmentfloatcurve|Float Curve||
 menu|Railway|alignmentscs|SCS Curve||
 menu|Railway|scschain|SCS chain Curve||
+menu|Railway|alignmentrevscs|Reverse SCS+SCS Curve (RSCS)||
 menu|Railway|separator|||
 menu|Railway|setorigin|Set TM2 Origin…||
 menu|Railway|separator|||

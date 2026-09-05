@@ -233,21 +233,100 @@ void ConcentricEquation::jacobian(const QVector<double>&, int r0,
 }
 
 // ── FixedDistance：F = [dist(a,b) - value] ──────────────────────────────
-void FixedDistanceEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
-    int ia = varIdx(constraint().refs[0]), ib = varIdx(constraint().refs[1]);
-    if (ia<0||ib<0){out[0]=0;return;}
-    double dx=v[ia]-v[ib], dy=v[ia+1]-v[ib+1];
-    out[0] = qSqrt(dx*dx+dy*dy) - constraint().value;
+//
+// ⚠️ 修正：舊版無論 constraint().distMode 為何，一律呼叫
+// varIdx(refs[0])/varIdx(refs[1]) 把兩個 refs 當成「點」直接取座標算距離。
+// 這對 PointToPoint（兩點/兩端點/兩圓心）沒問題，但對：
+//   - PointToLine（點到線垂距，GeneralDimClassifier::inferPair() 正規化為
+//     refs=[點, 線]，線的 handle 是 WholeGeom）
+//   - LineToLine（兩平行線間距，refs=[線A, 線B]，皆為 WholeGeom）
+// 這兩種情況，refs 裡的「線」根本不是一個點——GeomVarLayout::indexFor()
+// 對 WholeGeom 的 default 分支只會回傳該線變數區塊的起始 offset（也就是
+// 線的 Start 端點），於是實際求解的其實是「點到線 Start 端點的距離」或
+// 「線A Start 端點到線B Start 端點的距離」，跟 GDIM 當初量測/顯示用的垂
+// 直距離公式完全對不上——這正是「GDIM 距離約束不會依約束值調整物件間
+// 距離」的根本原因：約束確實有在求解，只是解的是錯誤的幾何量。
+//
+// 修正為依 distMode 分三種情況求「真正對應」的距離量。
+namespace {
+    // 點 (px,py) 到直線 (lx1,ly1)-(lx2,ly2) 的垂直距離（無號→之後取絕對值）
+    inline double perpDistance(double px, double py,
+                                double lx1, double ly1, double lx2, double ly2,
+                                double& outLen) {
+        double dx = lx2-lx1, dy = ly2-ly1;
+        outLen = qSqrt(dx*dx+dy*dy);
+        if (outLen < 1e-10) return 0.0;
+        // cross(p-l1, dir) / |dir|：正負代表點在線的哪一側
+        return ((px-lx1)*dy - (py-ly1)*dx) / outLen;
+    }
 }
+
+void FixedDistanceEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    const auto& c = constraint();
+    switch (c.distMode) {
+    case DistanceMode::PointToLine: {
+        int ip = varIdx(c.refs[0]);                              // 點
+        auto itL = layout().find(c.refs[1].geomUuid);             // 線（WholeGeom）
+        if (ip < 0 || itL == layout().end()) { out[0] = 0; return; }
+        int isx = itL->indexFor(GeomHandle::Start);
+        int iex = itL->indexFor(GeomHandle::End);
+        double len;
+        double signedDist = perpDistance(v[ip], v[ip+1],
+                                          v[isx], v[isx+1], v[iex], v[iex+1], len);
+        if (len < 1e-10) { out[0] = 0; return; }
+        out[0] = std::abs(signedDist) - c.value;
+        break;
+    }
+    case DistanceMode::LineToLine: {
+        auto itA = layout().find(c.refs[0].geomUuid);
+        auto itB = layout().find(c.refs[1].geomUuid);
+        if (itA == layout().end() || itB == layout().end()) { out[0] = 0; return; }
+        int aSx = itA->indexFor(GeomHandle::Start), aEx = itA->indexFor(GeomHandle::End);
+        int bSx = itB->indexFor(GeomHandle::Start);
+        double len;
+        // 用線 B 的起點量測到「線 A（視為無限長直線）」的垂距，即為兩平
+        // 行線間距（與 GeneralDimCommand 量測 LineToLine 用的公式一致）。
+        double signedDist = perpDistance(v[bSx], v[bSx+1],
+                                          v[aSx], v[aSx+1], v[aEx], v[aEx+1], len);
+        if (len < 1e-10) { out[0] = 0; return; }
+        out[0] = std::abs(signedDist) - c.value;
+        break;
+    }
+    case DistanceMode::PointToPoint:
+    default: {
+        int ia = varIdx(c.refs[0]), ib = varIdx(c.refs[1]);
+        if (ia < 0 || ib < 0) { out[0] = 0; return; }
+        double dx = v[ia]-v[ib], dy = v[ia+1]-v[ib+1];
+        out[0] = qSqrt(dx*dx+dy*dy) - c.value;
+        break;
+    }
+    }
+}
+
 void FixedDistanceEquation::jacobian(const QVector<double>& v, int r0,
                                      QVector<QVector<double>>& J) const {
-    int ia = varIdx(constraint().refs[0]), ib = varIdx(constraint().refs[1]);
-    if (ia<0||ib<0) return;
-    double dx=v[ia]-v[ib], dy=v[ia+1]-v[ib+1];
-    double dist=qSqrt(dx*dx+dy*dy);
-    if (dist<1e-10) return;
-    J[r0][ia]  =  dx/dist; J[r0][ia+1] =  dy/dist;
-    J[r0][ib]  = -dx/dist; J[r0][ib+1] = -dy/dist;
+    const auto& c = constraint();
+    if (c.distMode == DistanceMode::PointToPoint) {
+        // 解析雅可比（與原本行為一致，數值最穩定）
+        int ia = varIdx(c.refs[0]), ib = varIdx(c.refs[1]);
+        if (ia < 0 || ib < 0) return;
+        double dx = v[ia]-v[ib], dy = v[ia+1]-v[ib+1];
+        double dist = qSqrt(dx*dx+dy*dy);
+        if (dist < 1e-10) return;
+        J[r0][ia]  =  dx/dist; J[r0][ia+1] =  dy/dist;
+        J[r0][ib]  = -dx/dist; J[r0][ib+1] = -dy/dist;
+        return;
+    }
+    // PointToLine / LineToLine：涉及線的 Start/End 兩個端點，關係較複雜，
+    // 用數值雅可比（中央差分），與 EqualLengthEquation 的做法一致。
+    const double h = 1e-7;
+    QVector<double> Fp(1), Fm(1), vp = v, vm = v;
+    for (int i = 0; i < v.size(); ++i) {
+        vp[i] = v[i]+h; vm[i] = v[i]-h;
+        evaluate(vp, Fp); evaluate(vm, Fm);
+        J[r0][i] = (Fp[0]-Fm[0]) / (2*h);
+        vp[i] = v[i]; vm[i] = v[i];
+    }
 }
 
 // ── EqualLength：F = [len_a - len_b] ────────────────────────────────────
@@ -773,6 +852,31 @@ void CoordinateDimEquation::jacobian(const QVector<double>&, int r0,
     J[r0+1][ix+1] = 1.0;   // ∂F2/∂py
 }
 
+// ── SlopeEquation：F = (y2-y1) - value*(x2-x1) ───────────────────────────
+// refs[0] = 線（geomUuid），Start/End 透過 indexFor() 解析。
+// 用線性形式表達 dy/dx = value，天然帶有方向性正負號：
+// value 為正 ⟺ 沿 Start→End 方向上升；為負 ⟺ 沿 Start→End 方向下降。
+void SlopeEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) { out[0] = 0; return; }
+    int x1i = it->indexFor(GeomHandle::Start), y1i = x1i + 1;
+    int x2i = it->indexFor(GeomHandle::End),   y2i = x2i + 1;
+    double dx = v[x2i] - v[x1i], dy = v[y2i] - v[y1i];
+    out[0] = dy - constraint().value * dx;
+}
+void SlopeEquation::jacobian(const QVector<double>&, int r0,
+                             QVector<QVector<double>>& J) const {
+    auto it = layout().find(constraint().refs[0].geomUuid);
+    if (it == layout().end()) return;
+    int x1i = it->indexFor(GeomHandle::Start), y1i = x1i + 1;
+    int x2i = it->indexFor(GeomHandle::End),   y2i = x2i + 1;
+    const double m = constraint().value;
+    J[r0][x1i] =  m;   // ∂F/∂x1
+    J[r0][y1i] = -1.0; // ∂F/∂y1
+    J[r0][x2i] = -m;   // ∂F/∂x2
+    J[r0][y2i] =  1.0; // ∂F/∂y2
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // ConstraintSolver
 // ════════════════════════════════════════════════════════════════════════════
@@ -1171,6 +1275,8 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
             eq = new FixedArcLengthEquation(c, &layout); break;
         case ConstraintType::CoordinateDim:
             eq = new CoordinateDimEquation(c, &layout); break;
+        case ConstraintType::Slope:
+            eq = new SlopeEquation(c, &layout); break;
         case ConstraintType::FixedAngleDim:
         case ConstraintType::FixedAngle:
             eq = new FixedAngleDimEquation(c, &layout); break;

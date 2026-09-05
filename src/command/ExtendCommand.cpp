@@ -136,7 +136,7 @@ void ExtendCommand::onSelectionCancelled()
 // 逐次點選要延伸的物件
 // ─────────────────────────────────────────────────────────────────────────
 
-void ExtendCommand::beginPickSegmentStage(cad::Sketch* sketch)
+void ExtendCommand::beginPickSegmentStage(cad::Sketch* /*sketch*/)
 {
     m_state = State::PickingSegment;
 
@@ -219,8 +219,16 @@ void ExtendCommand::onHover(const QVariant& payload)
         return;
     }
 
-    const QPointF ptF = map.value("point").value<QPointF>();
-    const QVector2D hoverPt(float(ptF.x()), float(ptF.y()));
+    // ⚠️ 型別陷阱：GEOM_HOVER 的 "point" 欄位是 CadView::mouseMoveEvent()
+    // 的 GetGeom 分支用 QVariant::fromValue(QVector2D) 包出來的，跟
+    // GEOM_PICKED 的 "point"（handlePointInput() 送出的是 QPointF）型別
+    // 不同——兩個事件欄位同名但底層型別不同。原本這裡誤用
+    // .value<QPointF>() 讀取，Qt 沒有登記 QVector2D↔QPointF 的轉換器，
+    // 型別不符時會靜默回傳預設值 QPointF(0,0)，導致 hoverPt 恆為 (0,0)
+    // （sketch 原點），完全不會隨滑鼠移動（同 TrimCommand::onHover() 修過
+    // 的同一個根因，見該處說明）。改用 .value<QVector2D>() 讀取，與
+    // CadView 實際送出的型別一致。
+    const QVector2D hoverPt = map.value("point").value<QVector2D>();
 
     const auto seg = trimext::previewExtendAt(sk, uuid, m_boundaryEdges, hoverPt);
     if (seg.valid)

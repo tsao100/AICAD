@@ -172,6 +172,7 @@ private:  // 選點進行中，防止尺寸按鈕重複觸發
     QToolButton* m_btnPointOnCurve  = nullptr;
     QToolButton* m_btnCollinear     = nullptr;
     QToolButton* m_btnSymmetric     = nullptr;
+    QToolButton* m_btnSlope         = nullptr;
 
     // 約束清單
     QTreeWidget* m_constraintTree   = nullptr;

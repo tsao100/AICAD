@@ -161,6 +161,7 @@ bool SketchConstraint::isDimensional() const {
     case ConstraintType::FixedVertDist:
     case ConstraintType::FixedArcLength:
     case ConstraintType::CoordinateDim:
+    case ConstraintType::Slope:
         return true;
     default:
         return false;
@@ -204,6 +205,7 @@ int SketchConstraint::dofConsumed() const {
     case ConstraintType::FixedVertDist:   return 1;
     case ConstraintType::FixedArcLength:  return 1;
     case ConstraintType::CoordinateDim:   return 2;
+    case ConstraintType::Slope:           return 1;  // 消耗線的方向 DOF（同 Horizontal/Vertical/FixedAngleDim）
     default: return 0;
     }
 }
@@ -289,6 +291,11 @@ SketchConstraint SketchConstraint::makeCoordinateDim(const GeomRef& point, doubl
     SketchConstraint c; c.type = ConstraintType::CoordinateDim;
     c.value = x; c.value2 = y;
     c.refs = {point}; return c;
+}
+
+SketchConstraint SketchConstraint::makeSlope(const QString& lineUuid, double slope) {
+    SketchConstraint c; c.type = ConstraintType::Slope; c.value = slope;
+    c.refs = { GeomRef(lineUuid, GeomHandle::Curve) }; return c;
 }
 
 } // namespace aicad::cad

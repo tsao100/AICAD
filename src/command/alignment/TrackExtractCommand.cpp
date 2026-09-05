@@ -12,8 +12,14 @@
 #include "cad/Document.h"
 #include "railway/AlignmentDocument.h"
 #include "ui/UIManager.h"
+#include "ui/TrackNameSequenceDialog.h"
+#include "view/CadView.h"   // CadView : public QWidget — 供 TrackNameSequenceDialog 取用 parent
 
 #include <QDebug>
+#include <QDialog>
+#include <QGuiApplication>
+#include <QCoreApplication>
+#include <QSignalBlocker>
 #include <algorithm>
 #include <limits>
 
@@ -155,8 +161,11 @@ CommandResult TrackExtractCommand::execute(const CommandContext& context)
         return CommandResult::Failure("No active TrackCenterLine.");
     }
 
-    m_alignDoc  = alignDoc;
-    m_uiManager = context.uiManager;
+    m_alignDoc     = alignDoc;
+    m_uiManager    = context.uiManager;
+    m_parentWidget = static_cast<QWidget*>(context.cadView);   // CadView : public QWidget
+
+    m_useNameSequence = false;   // 每次 execute() 重新開始，避免沿用上一輪殘留設定
 
     if (!m_tcl->horizontal() || m_tcl->horizontal()->count() < 3) {
         // 至少需要 3 個關鍵點：頭段（切點以前，>=2 點）與新線
@@ -189,6 +198,18 @@ CommandResult TrackExtractCommand::execute(const CommandContext& context)
     viewSetup["mode"]           = "sketching";
     viewSetup["rubberBandMode"] = "none";
     bus->publish("command.request-view-setup", viewSetup);
+
+    // TRACKEXTRACT 只需要「點一下取得座標」的 OSnap 點選能力
+    // （POINT_ACQUIRED），不需要 grip 拖曳編輯，所以在切到 sketching 模式
+    // 之後，另外多發一次 {"gripsEnabled": false} 的請求把 grips 關掉（見
+    // UIManager.cpp 對 command.request-view-setup 新增的 gripsEnabled
+    // 覆寫邏輯）。用獨立的第二次 publish() 確保無論兩個訂閱者
+    // （ViewManager／UIManager）的執行順序為何，grips 最終一定會被關掉。
+    {
+        QVariantMap noGrips;
+        noGrips["gripsEnabled"] = false;
+        bus->publish("command.request-view-setup", noGrips);
+    }
 
     bus->subscribe(Events::POINT_ACQUIRED, this,
         [this](const QVariant& data) {
@@ -307,6 +328,36 @@ void TrackExtractCommand::handleStringInput(const QString& text)
         return; // 保持等待狀態
     }
 
+    // 輸入 A／AUTO 後：接下來全自動切分全部內部 TT，不會再有互動點選
+    // （不需要 POINT_ACQUIRED），execute() 一開始為了「讓使用者在畫面上
+    // 點選 TT 切點」而開啟的 sketching 疊加層也就不再需要了，切回 idle
+    // 模式順便關掉 InputJig 等疊加層（grips 在 execute() 一開始就已經被
+    // 明確關掉，見該處說明）。
+    {
+        QVariantMap idleSetup;
+        idleSetup["mode"] = "idle";
+        Application::instance()->eventBus()->publish("command.request-view-setup", idleSetup);
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    }
+
+    // 輸入 A／AUTO 後先彈出命名規則對話框（見 TrackExtractCommand.h 檔頭
+    // 「Auto 模式命名規則」說明），讓使用者設定字首／開始序號／字尾／
+    // 遞增遞減，套用到全部切分結果段（含原線保留的頭段）。取消對話框視為
+    // 取消整個 TX 指令，不執行任何切分。
+    ui::TrackNameSequenceDialog nameDlg(m_parentWidget);
+    const int dlgResult = nameDlg.exec();
+    if (dlgResult != QDialog::Accepted) {
+        outputMessage("TRACKEXTRACT cancelled (naming dialog dismissed).");
+        m_isFinishing = true;
+        Q_EMIT finished(CommandResult::Success("TRACKEXTRACT cancelled"));
+        return;
+    }
+    m_useNameSequence  = true;
+    m_nameSeqPrefix    = nameDlg.prefix();
+    m_nameSeqStart     = nameDlg.startSeq();
+    m_nameSeqSuffix    = nameDlg.suffix();
+    m_nameSeqIncrement = nameDlg.isIncrement();
+
     const bool ok = performAutoSplitAll();
 
     m_isFinishing = true;
@@ -344,7 +395,8 @@ void TrackExtractCommand::reseedAlignmentEdit(
 }
 
 railway::TrackCenterLine* TrackExtractCommand::splitTclAt(
-    railway::TrackCenterLine* tcl, railway::AlignmentDocument* tclAlignDoc, int cutIdx)
+    railway::TrackCenterLine* tcl, railway::AlignmentDocument* tclAlignDoc, int cutIdx,
+    const QString& newTclName)
 {
     if (!tcl || !m_doc || !tcl->horizontal()) return nullptr;
 
@@ -375,8 +427,9 @@ railway::TrackCenterLine* TrackExtractCommand::splitTclAt(
     reseedAlignmentEdit(tclAlignDoc, headPts, headVPts);
 
     // ── 新建：切點之後（含）全部合併為一條新 TrackCenterLine ───────────────
-    // 名稱留空，交給 Document::addTrackCenterLine() 依既有規則自動命名。
-    railway::TrackCenterLine* newTcl = m_doc->addTrackCenterLine(QString());
+    // newTclName 為空時交給 Document::addTrackCenterLine() 依既有規則自動
+    // 命名（單點互動切分／未啟用 Auto 命名規則時走此路徑）。
+    railway::TrackCenterLine* newTcl = m_doc->addTrackCenterLine(newTclName);
     if (newTcl) {
         newTcl->loadHorizontal(newPts);
         if (newVPts.size() >= 2) newTcl->loadVertical(newVPts);
@@ -426,26 +479,78 @@ bool TrackExtractCommand::performAutoSplitAll()
     railway::AlignmentDocument* currentAlign = m_alignDoc;
     int segmentCount = 1;
 
-    // 每一輪都在「目前這段」剩餘的 rawPoints() 裡找里程最小（即第一個）的
-    // 內部 TT 切一刀；切下去的後半段變成新的 current，繼續找下一個內部 TT，
-    // 直到某一段已經沒有內部 TT 為止——等同於依里程由少往多，在所有內部
-    // TT 處逐一切分。
-    while (current && current->horizontal()) {
-        const QVector<railway::AlignmentPoint> pts = current->horizontal()->rawPoints();
-        int cutIdx = -1;
-        for (int i = 1; i < pts.size() - 1; ++i) {
-            if (pts[i].tsc == "TT") { cutIdx = i; break; }
-        }
-        if (cutIdx < 0) break; // 這段已無內部 TT，結束
-
-        railway::TrackCenterLine* newTcl = splitTclAt(current, currentAlign, cutIdx);
-        if (!newTcl) break;
-
-        ++segmentCount;
-        current      = newTcl;
-        currentAlign = m_uiManager ? m_uiManager->ensureTclAlignmentDocument(newTcl->id())
-                                    : nullptr;
+    // 命名規則（見 TrackNameSequenceDialog）：套用到全部結果段，含原線保留
+    // 的頭段本身——所以在切分迴圈開始之前就先把 m_tcl（頭段）重新命名為
+    // 序列中的第一個名稱，之後每切一刀，新段依序取下一個名稱。
+    int nameStepIdx = 0;
+    if (m_useNameSequence && current) {
+        current->setName(ui::TrackNameSequenceDialog::formatName(
+            m_nameSeqPrefix, m_nameSeqStart, m_nameSeqSuffix,
+            m_nameSeqIncrement, nameStepIdx));
+        ++nameStepIdx;
     }
+
+    // ── 效能／回應性 ─────────────────────────────────────────────────────
+    // 原本每切一刀，Document::addTrackCenterLine() 都會立刻 emit
+    // trackCenterLinesChanged()／treeStructureChanged()，分別觸發
+    // FeatureBrowser 整個特徵樹「清空重建」與
+    // UIManager::refreshAlignmentOSnapSources()「掃描全部 TCL 重建 OSnap
+    // 來源」——這兩個重建單獨呼叫一次很快，但內部 TT 較多、逐一切成十幾段
+    // 時，在同一個事件迴圈疊代裡連續觸發十幾次，總耗時累加起來容易造成
+    // 明顯延遲。
+    //
+    // 修法兩部分：
+    //   1. 迴圈期間用 QSignalBlocker 暫時封鎖 m_doc 的訊號，避免每次
+    //      addTrackCenterLine() 都觸發一次全樹重建／全域 OSnap 重掃；
+    //      迴圈結束後再手動補發一次，讓這兩個重建只做「這一次」。
+    //      （findTrackCenterLine()／ensureTclAlignmentDocument() 都是直接
+    //      查 m_doc 內部的 TCL 清單，不依賴訊號送達，封鎖訊號不影響迴圈
+    //      內後續切分邏輯的正確性。）
+    //   2. 每切一刀後主動呼叫 processEvents()，讓事件迴圈仍有機會抽出
+    //      訊息（處理輸入、重繪視窗），避免作業系統誤判整個程式沒有回應。
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    {
+        QSignalBlocker docBlocker(m_doc);
+
+        // 每一輪都在「目前這段」剩餘的 rawPoints() 裡找里程最小（即第一個）
+        // 的內部 TT 切一刀；切下去的後半段變成新的 current，繼續找下一個
+        // 內部 TT，直到某一段已經沒有內部 TT 為止——等同於依里程由少往多，
+        // 在所有內部 TT 處逐一切分。
+        while (current && current->horizontal()) {
+            const QVector<railway::AlignmentPoint> pts = current->horizontal()->rawPoints();
+            int cutIdx = -1;
+            for (int i = 1; i < pts.size() - 1; ++i) {
+                if (pts[i].tsc == "TT") { cutIdx = i; break; }
+            }
+            if (cutIdx < 0) break; // 這段已無內部 TT，結束
+
+            const QString newName = m_useNameSequence
+                ? ui::TrackNameSequenceDialog::formatName(m_nameSeqPrefix, m_nameSeqStart,
+                                                       m_nameSeqSuffix, m_nameSeqIncrement,
+                                                       nameStepIdx)
+                : QString();
+            railway::TrackCenterLine* newTcl = splitTclAt(current, currentAlign, cutIdx, newName);
+            if (!newTcl) break;
+
+            if (m_useNameSequence) ++nameStepIdx;
+            ++segmentCount;
+            current      = newTcl;
+            currentAlign = m_uiManager ? m_uiManager->ensureTclAlignmentDocument(newTcl->id())
+                                        : nullptr;
+
+            // 讓事件迴圈有機會抽出訊息，避免長串切分時系統誤判程式沒有回應。
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        }
+    } // QSignalBlocker 解除封鎖（離開作用域時自動還原）
+
+    // 迴圈期間所有 trackCenterLinesChanged()/treeStructureChanged() 都被
+    // 封鎖住了，這裡補發一次，讓 FeatureBrowser／OSnap 來源／3D 視圖依最終
+    // 結果只重建一次，而不是每切一刀都重建一次。
+    if (segmentCount > 1) {
+        Q_EMIT m_doc->trackCenterLinesChanged();
+        Q_EMIT m_doc->treeStructureChanged();
+    }
+    QGuiApplication::restoreOverrideCursor();
 
     auto* cmdMgr = CommandLineManager::instance();
     if (cmdMgr) {

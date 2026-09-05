@@ -39,6 +39,16 @@ class TrackCenterLine;
 
 namespace ui {
 
+/**
+ * @brief 方位角（弧度，順時針由北）→ ddd°mm'ss.sss" 格式，不足位補零。
+ *        例：方位角 123.7524° → "123°45'08.640\""。
+ *
+ * 定義在 AlignmentDataTableDialog.cpp，供所有需要顯示方位角的對話框
+ * （AlignmentDataTableDialog 本身、CompoundChainCalcDialog…）共用同一份
+ * 格式化邏輯。
+ */
+QString azimuthToDMS(double rad);
+
 class AlignmentDataTableDialog : public QDialog
 {
     Q_OBJECT

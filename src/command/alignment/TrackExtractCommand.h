@@ -34,6 +34,13 @@
  *   - Auto 模式：從目前線形開始，反覆找「里程最小的內部 TT」切一刀、把後半段
  *     搬到新線，再對這條新線重複同樣的動作，直到某一段已經沒有內部 TT 為止；
  *     等同於依里程順序在所有內部 TT 處逐一切分成 N+1 段。
+ *   - Auto 模式命名規則：輸入 A／AUTO 後，先跳出 TrackNameSequenceDialog
+ *     （見該檔案說明）讓使用者設定「字首（1 碼）＋序號（2 碼，補零）＋
+ *     字尾（1 碼）」的命名規則（例如 "B01U"），以及序號逐段遞增或遞減。
+ *     取消對話框則整個 TX 指令視為取消，不執行任何切分。命名套用到全部
+ *     N+1 段結果（依里程由小到大，含原線保留的頭段本身），而非只命名新
+ *     切出來的那幾段——因為這個慣例底下，整條原始線形本來就代表一系列
+ *     連號的實體軌道區段。
  */
 #pragma once
 
@@ -42,6 +49,7 @@
 #include "railway/RailwayAlignment.h"
 
 #include <QPointF>
+#include <QString>
 #include <QVector>
 
 namespace aicad {
@@ -81,6 +89,8 @@ private:
     /**
      * @brief Auto 模式：依里程由少往多，在目前線形（及每次切分後產生的新線）
      *        找到的第一個內部 TT 逐段切分，直到不再有內部 TT 為止。
+     *        若 m_useNameSequence 為 true，切分過程中會依 m_nameSeq* 設定
+     *        的規則依序為每一段（含原線保留的頭段）命名（見標頭檔說明）。
      */
     bool performAutoSplitAll();
 
@@ -92,11 +102,15 @@ private:
      *        performExtractSplit()（單點）與 performAutoSplitAll()（逐段）
      *        共用，避免兩份幾乎一樣的切分邏輯各自維護一次。
      *
+     * @param newTclName 新建立的 TrackCenterLine 名稱；空字串時交給
+     *                    Document::addTrackCenterLine() 依既有規則自動命名
+     *                    （單點互動切分／未啟用命名規則的 Auto 皆用此預設）。
      * @return 新建立的 TrackCenterLine；輸入不合法或建立失敗時回傳 nullptr。
      */
     railway::TrackCenterLine* splitTclAt(railway::TrackCenterLine* tcl,
                                           railway::AlignmentDocument* tclAlignDoc,
-                                          int cutIdx);
+                                          int cutIdx,
+                                          const QString& newTclName = QString());
 
     /**
      * @brief 清空並重建 alignDoc 的 EditableElement／VIP 編輯鏈，使其與傳入的
@@ -112,8 +126,16 @@ private:
     cad::Document*               m_doc       = nullptr;
     railway::AlignmentDocument* m_alignDoc  = nullptr;  ///< 原線目前編輯中的 AlignmentDocument
     ui::UIManager*               m_uiManager = nullptr;
+    QWidget*                     m_parentWidget = nullptr;  ///< TrackNameSequenceDialog 的父視窗（來自 CommandContext::cadView）
 
     bool m_isFinishing = false;
+
+    // ── Auto 模式命名規則（由 TrackNameSequenceDialog 設定，見標頭檔說明） ──
+    bool    m_useNameSequence   = false;
+    QString m_nameSeqPrefix;
+    int     m_nameSeqStart      = 1;
+    QString m_nameSeqSuffix;
+    bool    m_nameSeqIncrement  = true;
 };
 
 } // namespace command

@@ -154,6 +154,18 @@ public:
     cad::ConstraintPickSession* constraintPickSession() const;
 
     /**
+     * @brief 套用 DimExpressionDialog（尺寸約束自動命名參數的運算式編輯框，
+     *        見 GeneralDimCommand::commitDimension() 尾端的自動彈出邏輯）
+     *        使用者按下「確定」後的新運算式。
+     *
+     * 內部直接轉呼叫 command::applyDimensionEdit()（EDITCON／雙擊尺寸線
+     * 編輯共用的同一份核心邏輯），確保三個進入點（EDITCON 指令、雙擊尺寸線
+     * 行內編輯、這裡的 DimExpressionDialog）行為完全一致，不再各自維護
+     * 一份平行邏輯。currentActiveSketch() 若為 nullptr 則不做任何事。
+     */
+    void applyDimExpressionEdit(const QString& constraintUuid, const QString& newExpr);
+
+    /**
      * @brief 啟動幾何約束互動選取模式
      *
      * 供 GeomConstraintCommand 呼叫：
@@ -260,6 +272,24 @@ public slots:
     void showInstanceInParameterPanel(cad::SketchInstance* instance);
 
     
+public:
+    /**
+     * @brief 重新顯示「Sketch 編輯期間、但不屬於 Feature::m_aisShapes、因此
+     *        不會被 CadView::displayAllFeatures() 自動還原」的所有 AIS 物件：
+     *        草圖平面 X/Y 軸與原點、束制符號／尺寸標註（ConstraintOverlayManager
+     *        overlay）、以及 SketchPointAIS（草圖點）。
+     *
+     *        除了透過 CadView::featuresRedisplayed() 訊號自動觸發外，任何
+     *        會呼叫 CadView::setMode() 離開 GetGeom（因而觸發下方
+     *        modeChanged 連線把 SketchPointAIS Deactivate）的命令，
+     *        在 cleanup 時都應該明確再呼叫一次本函式，確保 SketchPoint
+     *        依「永遠顯示＋可選取」的設計原則還原（見 GeneralDimCommand::
+     *        cleanup() 的呼叫處）。
+     *
+     * @param sketch 若為 nullptr，改用 m_currentActiveSketch。
+     */
+    void reshowSketchEditOverlays(cad::Sketch* sketch = nullptr);
+
 private:
 
     void initializeReferenceGeometry();
@@ -297,26 +327,6 @@ private:
      *        主動呼叫一次，確保不依賴使用者是否恰好走過那幾個特定入口。
      */
     void refreshAlignmentOSnapSources();
-
-    /**
-     * @brief 重新顯示「Sketch 編輯期間、但不屬於 Feature::m_aisShapes、因此
-     *        不會被 CadView::displayAllFeatures() 自動還原」的所有 AIS 物件：
-     *        草圖平面 X/Y 軸與原點、束制符號／尺寸標註（ConstraintOverlayManager
-     *        overlay）、以及 SketchPointAIS（草圖點；見
-     *        CadView::setGdimWholeGeomHitTestEnabled() 旁註解與
-     *        CadView::featuresRedisplayed() 訊號說明）。
-     *
-     *        displayAllFeatures() 每次都會先 RemoveAll() 整個 OCCT context，
-     *        上述物件因此會被整批清掉；本函式統一在收到
-     *        CadView::featuresRedisplayed() 訊號、或進入 Sketch 編輯
-     *        （SKETCH_ENTERED）時呼叫，確保它們「永遠顯示」，不會因為任何
-     *        觸發 displayAllFeatures() 的操作（例如 GDIM 命令完成後的
-     *        solveConstraints() → shapeChanged() → featureShapeUpdated()）
-     *        而消失。只在目前正在編輯某個 Sketch 時才動作。
-     *
-     * @param sketch 若為 nullptr，改用 m_currentActiveSketch。
-     */
-    void reshowSketchEditOverlays(cad::Sketch* sketch = nullptr);
 
     osnap::OSnapToolbar* m_snapToolbar = nullptr;
     cad::Sketch* m_currentActiveSketch = nullptr;

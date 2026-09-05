@@ -3,6 +3,7 @@
 #include "cad/sketch/SketchConstraint.h"
 
 #include <QDebug>
+#include <algorithm>
 #include <cmath>
 
 #include <Graphic3d_ArrayOfPolylines.hxx>
@@ -192,6 +193,13 @@ void DimPreviewOverlay::rebuild()
     // 讓下方繪製區塊能畫出真正的同心弧，而不是把 dA/dB 當成直線兩端點
     // （見下方 FixedArcLength 分支與繪製區塊的說明）。
     bool      isArcLengthPreview = false;
+    // 角度（FixedAngleDim/FixedAngle）預覽專用：與 isArcLengthPreview 共用
+    // 下方同一套「畫同心弧」繪製區塊——角弧的圓心就是兩線交點（apex），
+    // 半徑是拖曳中的 arcDimR，這樣預覽跟確認後的最終顯示
+    // （AIS_DimensionLine::drawAngleDim）才會是同一種弧線畫法，而不是像先前
+    // 那樣退化成一條直的 dA→dB 弦線（使用者回報「預覽的尺寸線應該採用
+    // 弧線」正是指這個）。
+    bool      isAngleArcPreview = false;
     QVector2D arcCenter;
     double    arcR = 0.0, arcDimR = 0.0, arcAngStart = 0.0, arcAngEnd = 0.0;
 
@@ -401,12 +409,62 @@ void DimPreviewOverlay::rebuild()
                     }
 
                     // 角弧半徑：由滑鼠到 apex 的距離即時決定（拖曳調整大小）
-                    float arcR = std::max(15.f, (m_mouse - apex).length());
+                    arcDimR   = std::max(15.0, static_cast<double>((m_mouse - apex).length()));
+                    arcCenter = apex;
+
+                    // 角弧掃角範圍：兩條「線」（不是射線）在 apex 交叉，
+                    // 實際上把平面分成 4 個扇區（±dirA 與 ±dirB 兩兩相鄰
+                    // 圍成），對角的兩個扇區角度相同、相鄰的兩個扇區互為
+                    // 補角。夾角標註該畫哪一個扇區沒有唯一答案，必須由滑鼠
+                    // 落在哪個扇區來決定——不能不管滑鼠位置、永遠只挑
+                    // +dirA、+dirB 之間較小的那一段（那樣兩線用不同順序點
+                    // 選、或滑鼠實際落在補角那一側時，畫出來的角弧就會跟
+                    // 滑鼠位置對不上，也就是「不是臨近滑鼠點下的位置」）。
+                    // 做法：算出 4 條射線角度（dirA、-dirA、dirB、-dirB）、
+                    // 排序，再找滑鼠方向落在哪兩條相鄰射線之間，那一段就是
+                    // 要畫的扇區——相鄰兩射線間的扇區必然 ≤180°，不需要再
+                    // 另外判斷「較大/較小」。
+                    auto norm2pi = [](double a) {
+                        while (a < 0.0)        a += 2.0 * M_PI;
+                        while (a >= 2.0 * M_PI) a -= 2.0 * M_PI;
+                        return a;
+                    };
+                    double rays[4] = {
+                        norm2pi(std::atan2(static_cast<double>(dirA.y()),  static_cast<double>(dirA.x()))),
+                        norm2pi(std::atan2(static_cast<double>(-dirA.y()), static_cast<double>(-dirA.x()))),
+                        norm2pi(std::atan2(static_cast<double>(dirB.y()),  static_cast<double>(dirB.x()))),
+                        norm2pi(std::atan2(static_cast<double>(-dirB.y()), static_cast<double>(-dirB.x())))
+                    };
+                    std::sort(std::begin(rays), std::end(rays));
+
+                    QVector2D toMouse = m_mouse - apex;
+                    double a0, a1;
+                    if (toMouse.lengthSquared() < 1e-8f) {
+                        // 滑鼠剛好在 apex 上（尚未有明確方向）：退回兩線
+                        // 直接夾角（angA/angB 較小的那一段）當預設值。
+                        a0 = rays[0]; a1 = rays[1];
+                    } else {
+                        double angM = norm2pi(std::atan2(static_cast<double>(toMouse.y()),
+                                                          static_cast<double>(toMouse.x())));
+                        a0 = rays[3] - 2.0 * M_PI;  // 預設：落在「繞回第一段」的扇區
+                        a1 = rays[0];
+                        for (int i = 0; i < 3; ++i) {
+                            if (angM >= rays[i] && angM < rays[i + 1]) {
+                                a0 = rays[i]; a1 = rays[i + 1];
+                                break;
+                            }
+                        }
+                    }
+                    arcAngStart = a0;
+                    arcAngEnd   = a1;
 
                     A  = apex;
                     B  = apex;
-                    dA = apex + dirA * arcR;
-                    dB = apex + dirB * arcR;
+                    dA = QVector2D(static_cast<float>(apex.x() + arcDimR * std::cos(a0)),
+                                   static_cast<float>(apex.y() + arcDimR * std::sin(a0)));
+                    dB = QVector2D(static_cast<float>(apex.x() + arcDimR * std::cos(a1)),
+                                   static_cast<float>(apex.y() + arcDimR * std::sin(a1)));
+                    isAngleArcPreview = true;
                     built = true;
                 }
             }
@@ -550,10 +608,10 @@ void DimPreviewOverlay::rebuild()
     Quantity_Color lineCol(0.0, 0.85, 0.0, Quantity_TOC_RGB);
 
     // ── 延伸線 + 尺寸線（Style 與 FixedDistance 相同：全實線，單一 polyline）────
-    if (isArcLengthPreview) {
-        // ⚠️ 弧長專用：尺寸線本身必須是一段真正的弧（同心弧），不能沿用
-        // 下面共用的「dA→dB 直線」畫法——那是給線性尺寸用的，用在弧長上
-        // 會變成「有預覽了，但尺寸線不是弧線」。做法與
+    if (isArcLengthPreview || isAngleArcPreview) {
+        // ⚠️ 弧長／角度共用同一段畫法：尺寸線本身必須是一段真正的弧，不能
+        // 沿用下面共用的「dA→dB 直線」畫法——那是給線性尺寸用的，角度／
+        // 弧長用會變成「有預覽了，但尺寸線不是弧線」。做法與
         // AIS_DimensionLine::drawArcLengthDimension() 一致：取樣同心弧上的
         // 點連成折線，延伸線則是原弧端點→同心弧端點的放射線段。
         Handle(Graphic3d_AspectLine3d) asp =
@@ -644,10 +702,11 @@ void DimPreviewOverlay::rebuild()
             label = "~" + QString::number(m_info.value, 'f', 2);   // 與 drawArcLengthDimension() 的 "~" 前綴一致
         else
             label = QString::number(m_info.value, 'f', 2);
-        // 標籤放在尺寸線中點：弧長要用「弧中點角度」而非直線中點（dA+dB)/2，
-        // 否則標籤會落在弦的中點而不是弧線本身上，跟彎曲的尺寸線對不齊。
+        // 標籤放在尺寸線中點：弧長／角度都要用「弧中點角度」而非直線中點
+        // （dA+dB)/2，否則標籤會落在弦的中點而不是弧線本身上，跟彎曲的
+        // 尺寸線對不齊。
         QVector2D midDim;
-        if (isArcLengthPreview) {
+        if (isArcLengthPreview || isAngleArcPreview) {
             double midAng = (arcAngStart + arcAngEnd) * 0.5;
             midDim = QVector2D(static_cast<float>(arcCenter.x() + arcDimR * std::cos(midAng)),
                                 static_cast<float>(arcCenter.y() + arcDimR * std::sin(midAng)));

@@ -138,6 +138,9 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
         {&m_btnPointOnCurve,  tr("點在線"),  tr("PointOnCurve：點在曲線上"),         ConstraintType::PointOnCurve},
         {&m_btnCollinear,     tr("共線"),    tr("Collinear：三點共線或線段共線"),     ConstraintType::Collinear},
         {&m_btnSymmetric,     tr("對稱"),    tr("Symmetric：相對某軸對稱"),           ConstraintType::Symmetric},
+        {&m_btnSlope,         tr("斜度"),    tr("Slope：線段斜度 dy/dx（依 Start→End 方向定正負號）\n"
+                                                "指令：SLOPE，輸入格式如 1:40、-1:40、2.5%、-2.5%"),
+                                              ConstraintType::Slope},
     };
 
     // ✅ Task G: 幾何約束按鈕走命令列路徑（記錄歷史 + 觸發互動選取）
@@ -157,6 +160,7 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
         {ConstraintType::PointOnCurve,  QStringLiteral("POINTONCURVE")},
         {ConstraintType::Collinear,     QStringLiteral("COLLINEAR")},
         {ConstraintType::Symmetric,     QStringLiteral("SYMMETRIC")},
+        {ConstraintType::Slope,         QStringLiteral("SLOPE")},
     };
 
     for (int i = 0; i < defs.size(); ++i) {
@@ -474,10 +478,19 @@ void SketchPanel::refreshConstraintList()
             const bool isAngleType =
                 (c.type == cad::ConstraintType::FixedAngleDim ||
                  c.type == cad::ConstraintType::FixedAngle);
-            double displayValue = isAngleType ? (c.value * 180.0 / M_PI) : c.value;
-            QString unitSuffix  = isAngleType ? QStringLiteral("°") : QString();
+            // Slope：內部以無單位 dy/dx 比值儲存，清單顯示轉換為百分比坡度
+            // （與 DimensionLineAIS::labelText()／VAlignProfileView 既有坡度
+            // 顯示慣例一致），並保留正負號代表上升/下降。
+            const bool isSlopeType = (c.type == cad::ConstraintType::Slope);
+            double displayValue = isAngleType ? (c.value * 180.0 / M_PI)
+                                 : isSlopeType ? (c.value * 100.0)
+                                 : c.value;
+            QString unitSuffix  = isAngleType ? QStringLiteral("°")
+                                 : isSlopeType ? QStringLiteral("%")
+                                 : QString();
+            QString signPrefix  = (isSlopeType && displayValue >= 0) ? QStringLiteral("+") : QString();
             QString label = c.paramExpr.isEmpty()
-                ? QString::number(displayValue, 'f', 3) + unitSuffix
+                ? signPrefix + QString::number(displayValue, 'f', 3) + unitSuffix
                 : QString("%1=%2").arg(c.paramExpr)
                                   .arg(displayValue, 0, 'f', 3) + unitSuffix;
             // 量測模式用灰色斜體
@@ -538,6 +551,7 @@ QString SketchPanel::constraintTypeName(ConstraintType t) const
          {ConstraintType::PointOnCurve,  tr("點在曲線")},
          {ConstraintType::Collinear,     tr("共線")},
          {ConstraintType::Symmetric,     tr("對稱")},
+         {ConstraintType::Slope,         tr("斜度")},
          };
     return names.value(t, tr("未知"));
 }
@@ -633,12 +647,17 @@ void SketchPanel::onConstraintItemDoubleClicked(QTreeWidgetItem* item, int /*col
         const bool isAngleType =
             (c.type == cad::ConstraintType::FixedAngleDim ||
              c.type == cad::ConstraintType::FixedAngle);
+        // Slope：內部以無單位 dy/dx 比值儲存，編輯對話框顯示/輸入一律
+        // 使用百分比坡度（與 SLOPE 指令、清單顯示一致）。
+        const bool isSlopeType = (c.type == cad::ConstraintType::Slope);
 
         // 彈出 inline 編輯對話框
         bool ok = false;
-        double displayValue = isAngleType ? (c.value * 180.0 / M_PI) : c.value;
+        double displayValue = isAngleType ? (c.value * 180.0 / M_PI)
+                             : isSlopeType ? (c.value * 100.0)
+                             : c.value;
         QString current = c.paramExpr.isEmpty()
-                        ? QString::number(displayValue, 'f', 3)
+                        ? QString::number(displayValue, 'f', 3) + (isSlopeType ? "%" : "")
                         : c.paramExpr;
 
         QString newExpr = QInputDialog::getText(
@@ -646,6 +665,8 @@ void SketchPanel::onConstraintItemDoubleClicked(QTreeWidgetItem* item, int /*col
             tr("編輯尺寸約束"),
             isAngleType
                 ? tr("數值（度）或參數表達式（如 45、width、height*2）：")
+                : isSlopeType
+                ? tr("斜度值（如 1:40、-1:40、2.5%、-2.5%）或參數表達式：")
                 : tr("數值或參數表達式（如 50、width、height*2）："),
             QLineEdit::Normal,
             current,
@@ -653,20 +674,17 @@ void SketchPanel::onConstraintItemDoubleClicked(QTreeWidgetItem* item, int /*col
 
         if (!ok || newExpr.trimmed().isEmpty()) return;
 
-        newExpr = newExpr.trimmed();
-
-        // 嘗試解析純數字
-        bool isNum = false;
-        double numVal = newExpr.toDouble(&isNum);
-
-        // 角度類型：使用者輸入的數字視為「度」，轉換為弧度後再交給
-        // requestEditConstraint（其內部直接寫入 SketchConstraint::value）。
-        double storedVal = c.value;
-        if (isNum) {
-            storedVal = isAngleType ? (numVal * M_PI / 180.0) : numVal;
-        }
-
-        Q_EMIT requestEditConstraint(uuid, newExpr, storedVal, isNum);
+        // ⚠️ 簡化：改為直接呼叫 applyDimensionEdit()（EDITCON／尺寸線雙擊
+        // 行內編輯共用的核心邏輯），取代這裡原本各自重複實作的角度轉換／
+        // Slope 比例百分比／純數字／表達式解析。原因：這份對話框原本繞過
+        // applyDimensionEdit()、自己重寫一遍幾乎一樣的解析邏輯，透過
+        // requestEditConstraint 訊號間接呼叫 UIManager 裡「又另一份」邏輯
+        // ——兩份平行實作，任何一處修正（例如角度/Slope/自動命名參數的
+        // 處理）都得記得同步改兩邊，先前已經因為這種重複實作出過幾次
+        // bug（GDIM 距離約束、標註同步）。改為直接呼叫同一份共用函式，
+        // 單一事實來源。
+        command::applyDimensionEdit(m_sketch, uuid, newExpr.trimmed(),
+                                    core::CommandLineManager::instance());
         break;
     }
 }

@@ -29,6 +29,12 @@
  *      節點（TS/SC/CS/.../ST）的座標、方位角、里程；若失敗顯示原因。
  *   6. 試算成功後按「套用」：呼叫 addCompoundChain() 寫入線形並 solve()、
  *      關閉對話框。
+ *   7. 螺線形式、圓弧數 N、輸入表格內容（Lk/Rk/Dk），以及在未鎖定切線
+ *      下拉選單時的入/出切線選取，會在對話框關閉時透過 QSettings 記錄，
+ *      下次開啟時自動帶入（比照 VBA GetSetting/SaveSetting 的用法，見
+ *      loadSettings()/saveSettings()）；鎖定切線的情況（由
+ *      AlignmentSCSChainCommand 建構）不記錄切線選取，因為切線由呼叫端
+ *      的畫面選取決定，不該被「上次選擇」覆蓋。
  *
  * @author AICAD Team
  */
@@ -76,6 +82,17 @@ Q_SIGNALS:
     /** 套用成功後發出，供外部（UIManager）整體刷新畫面。 */
     void chainApplied();
 
+protected:
+    /**
+     * @brief 對話框關閉（無論 accept 或 reject／按右上角 X）都會經過這裡，
+     *        用來把目前的選取／輸入資料寫回 QSettings，讓下次開啟時
+     *        （見 loadSettings()）可以帶入這次的內容——類似 VBA
+     *        SaveSetting/GetSetting 的持久化模式，但「儲存」這一半選在
+     *        對話框真正關閉的時候做一次即可，不需要每次編輯儲存格都寫
+     *        磁碟。
+     */
+    void done(int result) override;
+
 private Q_SLOTS:
     void onArcCountChanged(int n);
     void onCalculate();
@@ -83,6 +100,20 @@ private Q_SLOTS:
 
 private:
     void init();   ///< 兩個建構子共用的初始化（UI 建構、訊號連接）。
+
+    /**
+     * @brief 依目前圓弧數 N 重建輸入表格（N+1 列）。
+     *
+     * N 改變時（使用者調整 spinbox，或 loadSettings() 還原上次的 N）不會
+     * 把表格內容整個洗掉重來，也不會因為 N 反覆縮小又放大就遺失中間縮小
+     * 時被砍掉的那些列的資料：重建前會先把目前每一列的文字寫回
+     * m_cachedLens/m_cachedRadii/m_cachedArcLens（這三個快取只增不減，
+     * 縮小 N 也不會清掉裡面已經記住的列），重建表格時優先從快取依「同一
+     * 列索引」取值——比目前 N 多出來的舊列資料留在快取裡，N 之後再放大、
+     * 同一個列索引重新出現時可以再次取用；快取裡沒有資料的欄位，才填入
+     * 0（Lk／Rk）或留白（Dk）。「Auto」（最後一段圓弧的弧長，鎖定唯讀）
+     * 與「—」（row==n 那一列的 N/A 佔位符號）都不當成使用者資料寫入快取。
+     */
     void rebuildInputTable();
     void populateTangentCombos();
     void lockTangentCombos(int entryIdx, int exitIdx);
@@ -103,6 +134,25 @@ private:
     /** 目前「螺線形式」下拉選單所選的類型（套用到全部 N+1 段緩和曲線）。 */
     railway::SpiralType selectedSpiralType() const;
 
+    /**
+     * @brief 從 QSettings 還原上一次執行時的選取／輸入資料（螺線形式、
+     *        圓弧數 N、輸入表格各欄、以及在未鎖定切線下拉選單時的入/出
+     *        切線選取），比照 VBA GetSetting 的用法。由兩個建構子分別在
+     *        init()（以及鎖定切線建構子的 lockTangentCombos()）之後呼叫
+     *        ——必須晚於 lockTangentCombos()，m_tangentsLocked 才會是
+     *        正確的值，才能判斷要不要還原切線選取（見兩個建構子內的
+     *        說明）。若對應鍵不存在或內容已不適用於目前文件（例如上次
+     *        儲存的切線 index 在這次的下拉選單裡找不到），該項目直接
+     *        跳過、維持既有預設值，不會報錯。
+     */
+    void loadSettings();
+
+    /**
+     * @brief 把目前的選取／輸入資料寫回 QSettings，比照 VBA SaveSetting
+     *        的用法。由 done() 在對話框關閉時呼叫一次。
+     */
+    void saveSettings() const;
+
     railway::AlignmentDocument* m_doc = nullptr;
 
     QComboBox*    m_entryTangentCombo = nullptr;
@@ -118,6 +168,25 @@ private:
 
     bool m_lastCalcValid  = false;   ///< 上次「試算」是否成功（決定「套用」是否可按）
     bool m_tangentsLocked = false;   ///< true = 建構時已預選入/出切線，下拉選單鎖定不可改
+
+    /**
+     * @brief 依「列索引」快取使用者曾經在該列輸入過的值，供 N 縮小又放大
+     *        時取用（見 rebuildInputTable() 說明）。
+     *
+     * 索引就是表格的列（row）索引，跟目前 N 底下這張表格實際有沒有那麼
+     * 多列無關；大小只增不減——N 縮小時，即將被砍掉的列在真的縮小之前
+     * 會先寫回這裡，資料不會因為表格列數變少而消失；N 之後再放大、同一
+     * 個列索引重新出現時，rebuildInputTable() 會優先從這裡取值，而不是
+     * 填回預設的 0／留白。
+     *
+     * m_cachedRadii／m_cachedArcLens 只到「N-1」（每段圓弧一個值，比
+     * m_cachedLens 少一個，因為 Lk 是 N+1 個緩和曲線、Rk/Dk 是 N 個圓弧）
+     * ——這跟 m_inputTable 每一列的欄位定義一致（見 rebuildInputTable()
+     * 內 `row < n` 的判斷）。
+     */
+    QVector<QString> m_cachedLens;
+    QVector<QString> m_cachedRadii;
+    QVector<QString> m_cachedArcLens;
 };
 
 } // namespace ui

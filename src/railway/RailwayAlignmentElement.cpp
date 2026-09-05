@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cassert>
 #include <functional>
+#include <algorithm>
 
 namespace aicad {
 namespace railway {
@@ -1639,24 +1640,213 @@ QJsonObject BlossEulerHybridElement::toJson() const { return TransitionElement::
 //  EggTransitionElement
 // ============================================================================
 
+// ── Generalised equivalent-spiral machinery ─────────────────────────────────
+//
+//  The classical OLS egg-curve construction reduces the CC transition to a
+//  sub-portion of a full-length CLOTHOID because a clothoid's curvature is
+//  *exactly* linear in arc length: kappa(L) = (L/Ls)/R. That linearity is
+//  exactly why "traverse [Ls-LE, Ls] of a length-Ls clothoid" reproduces the
+//  correct curvature at both physical ends of the egg segment for ANY LE —
+//  restricting a linear function to a sub-interval is still linear, so it
+//  can always be re-scaled to hit two prescribed endpoint values.
+//
+//  For a general curvature-ramp family kappa(L) = g(L/Ls)/R (g monotonic,
+//  not necessarily linear), the equivalent-spiral trick still works, but Ls
+//  must be solved so that g(t*) at t* = (Ls-LE)/Ls equals the target
+//  curvature RATIO |R2|/|R1| (r1Dominant case), or the mirror for the other
+//  case — not just linearly interpolated. Two building blocks below make
+//  this generic across every isFamilyEggCompatible() family, with no
+//  per-family formula required here:
+//
+//   1. gRampDerivative()/invertNormalisedRamp() recover g(t) (up to the
+//      family's own normalisation) by finite-differencing localFrame(t).theta
+//      on a small reference instance of the family — theta'(t) is exactly
+//      the curvature shape function for every family built on
+//      integrateCurvatureRamp() (Sinusoidal, Bloss, Radioid, Polynomial,
+//      Quintic, Biquadratic, Spline, BlossEulerHybrid, HalfSine's closed
+//      form) since kappa(L) there is by construction g(L/Ls)/R exactly,
+//      independent of the reference instance's own Ls/R.
+//   2. For the "small-deflection Cartesian shortcut" families (Parabola,
+//      CubicJPN, CubicECI, Cosine — see their own doc comments: these
+//      approximate arc length by the Cartesian x-coordinate, so their
+//      shape has a residual, usually small, dependence on the dimensionless
+//      ratio rho=Ls/R, not purely on t), ols() below iterates a short
+//      fixed-point loop so the reference instance's own rho converges to
+//      the actual target rho, rather than accepting extra unaccounted error
+//      from an arbitrary fixed reference ratio. This converges in 1
+//      iteration for the exact families above and typically 2-4 for the
+//      Cartesian-shortcut ones, since realistic railway Ls/R ratios are
+//      small and the shape's rho-dependence is correspondingly weak.
+// ============================================================================
+
+namespace {
+
+/** Central-difference estimate of d(theta)/dt at parameter t (t in [0,1])
+ *  for a TransitionElement configured with unit length (Ls=1). Equals the
+ *  family's curvature shape function kappa(t)*R exactly for every family
+ *  built on integrateCurvatureRamp()/halfSineExactFrame(); an approximation
+ *  (function of both t and rho=1/R here, since Ls=1) for the small-
+ *  deflection Cartesian families — see the comment block above. */
+double gRampDerivative(const TransitionElement& ref, double t)
+{
+    constexpr double h = 1e-4;
+    const double t0 = std::max(0.0, t - h);
+    const double t1 = std::min(1.0, t + h);
+    if (t1 - t0 < 1e-9) return 0.0;
+    return (ref.localFrame(t1).theta - ref.localFrame(t0).theta) / (t1 - t0);
+}
+
+/** Solve g(t*)/g(1) = ratio for t* in [0,1] via bisection (g assumed
+ *  monotonic nondecreasing on [0,1], per isFamilyEggCompatible()'s
+ *  contract). Normalising by g(1) rather than assuming it's already
+ *  exactly 1 is a defensive measure against finite-difference/quadrature
+ *  noise right at the endpoint. */
+double invertNormalisedRamp(const TransitionElement& ref, double ratio)
+{
+    const double gEnd = gRampDerivative(ref, 1.0);
+    if (!(gEnd > 1e-12)) return std::clamp(ratio, 0.0, 1.0); // degenerate guard
+    const double target = std::clamp(ratio, 0.0, 1.0) * gEnd;
+    double lo = 0.0, hi = 1.0;
+    for (int i = 0; i < 50; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        if (gRampDerivative(ref, mid) < target) lo = mid; else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
+} // anonymous namespace
+
+std::unique_ptr<TransitionElement> EggTransitionElement::makeElement(ElementType family)
+{
+    switch (family) {
+    case ElementType::HalfSine:         return std::make_unique<HalfSineElement>();
+    case ElementType::Parabola:         return std::make_unique<ParabolaElement>();
+    case ElementType::CubicJPN:         return std::make_unique<CubicJPNElement>();
+    case ElementType::CubicECI:         return std::make_unique<CubicECIElement>();
+    case ElementType::Sinusoidal:       return std::make_unique<SinusoidalElement>();
+    case ElementType::Cosine:           return std::make_unique<CosineElement>();
+    case ElementType::Bloss:            return std::make_unique<BlossElement>();
+    case ElementType::Radioid:          return std::make_unique<RadioidElement>();
+    case ElementType::Logarithmic:      return std::make_unique<LogarithmicElement>();
+    case ElementType::Hyperbolic:       return std::make_unique<HyperbolicElement>();
+    case ElementType::Polynomial:       return std::make_unique<PolynomialElement>();
+    case ElementType::Quintic:          return std::make_unique<QuinticElement>();
+    case ElementType::Biquadratic:      return std::make_unique<BiquadraticElement>();
+    case ElementType::Spline:           return std::make_unique<SplineElement>();
+    case ElementType::BlossEulerHybrid: return std::make_unique<BlossEulerHybridElement>();
+    case ElementType::Clothoid:
+    default:
+        // Also the fallback for any non-egg-compatible family (WienerBogen,
+        // Lemniscate, PHQuintic, ElasticRadioid, NorwichSturm,
+        // PseudoEllipticRadioid, …) — callers are expected to have already
+        // routed those through isFamilyEggCompatible() before reaching here,
+        // but this keeps the factory total/safe regardless.
+        return std::make_unique<ClothoidElement>();
+    }
+}
+
+bool EggTransitionElement::isFamilyEggCompatible(ElementType family)
+{
+    switch (family) {
+    case ElementType::Clothoid:
+    case ElementType::HalfSine:
+    case ElementType::Parabola:
+    case ElementType::CubicJPN:
+    case ElementType::CubicECI:
+    case ElementType::Sinusoidal:
+    case ElementType::Cosine:
+    case ElementType::Bloss:
+    case ElementType::Radioid:
+    case ElementType::Logarithmic:
+    case ElementType::Hyperbolic:
+    case ElementType::Polynomial:
+    case ElementType::Quintic:
+    case ElementType::Biquadratic:
+    case ElementType::Spline:
+    case ElementType::BlossEulerHybrid:
+        return true;
+    default:
+        return false;
+    }
+}
+
+QString EggTransitionElement::familyName(ElementType f)
+{
+    return isFamilyEggCompatible(f) ? makeElement(f)->typeName()
+                                     : QStringLiteral("Clothoid");
+}
+
+ElementType EggTransitionElement::familyFromName(const QString& name)
+{
+    if      (name == "HalfSine")         return ElementType::HalfSine;
+    else if (name == "Parabola")         return ElementType::Parabola;
+    else if (name == "CubicJPN")         return ElementType::CubicJPN;
+    else if (name == "CubicECI")         return ElementType::CubicECI;
+    else if (name == "Sinusoidal")       return ElementType::Sinusoidal;
+    else if (name == "Cosine")           return ElementType::Cosine;
+    else if (name == "Bloss")            return ElementType::Bloss;
+    else if (name == "Radioid")          return ElementType::Radioid;
+    else if (name == "Logarithmic")      return ElementType::Logarithmic;
+    else if (name == "Hyperbolic")       return ElementType::Hyperbolic;
+    else if (name == "Polynomial")       return ElementType::Polynomial;
+    else if (name == "Quintic")          return ElementType::Quintic;
+    else if (name == "Biquadratic")      return ElementType::Biquadratic;
+    else if (name == "Spline")           return ElementType::Spline;
+    else if (name == "BlossEulerHybrid") return ElementType::BlossEulerHybrid;
+    return ElementType::Clothoid; // includes "Clothoid" itself and unknowns
+}
+
 double EggTransitionElement::ols(double R1, double R2, double LE)
+{
+    return ols(ElementType::Clothoid, R1, R2, LE);
+}
+
+double EggTransitionElement::ols(ElementType family, double R1, double R2, double LE)
 {
     const double aR1 = std::abs(R1), aR2 = std::abs(R2);
     const double diff = std::abs(aR1 - aR2);
-    if (diff < 1e-9) return LE; // degenerate: equal radii
-    return LE * std::max(aR1, aR2) / diff;
+    if (diff < 1e-9 || LE <= 0.0) return LE; // degenerate: equal radii
+
+    // Closed form for the exactly-linear clothoid shape (g(t)=t exactly) —
+    // also the fallback for any non-egg-compatible family, so this class
+    // never silently applies a foreign curvature shape's math to a family
+    // it wasn't derived for.
+    if (family == ElementType::Clothoid || !isFamilyEggCompatible(family))
+        return LE * std::max(aR1, aR2) / diff;
+
+    const double rTight = std::min(aR1, aR2);
+    const double rLoose = std::max(aR1, aR2);
+    const double ratio  = rTight / rLoose;   // target g(t*)/g(1), in (0,1)
+
+    // Fixed-point solve for Ls (see the comment block above this section for
+    // why this is needed instead of a single reference evaluation).
+    double Ls = LE * rLoose / diff; // clothoid-formula initial guess
+    for (int iter = 0; iter < 8; ++iter) {
+        const double rho = rTight > 1e-9 ? Ls / rTight : 0.0;
+        auto ref = makeElement(family);
+        ref->setLength(1.0);
+        ref->setRadius(rho > 1e-12 ? 1.0 / rho : kMaxRadius);
+
+        const double tStar  = invertNormalisedRamp(*ref, ratio);
+        const double LsNext = LE / std::max(1.0 - tStar, 1e-9);
+
+        if (std::abs(LsNext - Ls) < 1e-6 * std::max(1.0, Ls)) { Ls = LsNext; break; }
+        Ls = LsNext;
+    }
+    return Ls;
 }
 
 void EggTransitionElement::rebuild()
 {
     if (!m_r1 || !m_r2 || !m_le) return;
 
-    m_ls         = ols(m_r1, m_r2, m_le);
+    m_ls         = ols(m_family, m_r1, m_r2, m_le);
     m_r1Dominant = std::abs(m_r1) >= std::abs(m_r2);
     m_length     = m_le;
 
-    // Build an internal ClothoidElement for the equivalent full spiral
-    m_equiv = std::make_unique<ClothoidElement>();
+    // Build the internal equivalent full-length spiral, in whichever family
+    // was selected (defaults to Clothoid — see setSpiralFamily()).
+    m_equiv = makeElement(m_family);
     m_equiv->setLength(m_ls);
     m_equiv->setRadius(m_r1Dominant ? m_r2 : -m_r1);
 
@@ -1773,6 +1963,7 @@ QJsonObject EggTransitionElement::toJson() const
     o["r1"] = m_r1;
     o["r2"] = m_r2;
     o["le"] = m_le;
+    o["spiralFamily"] = familyName(m_family);
     return o;
 }
 
@@ -1877,6 +2068,39 @@ AlignmentElementFactory::createSpiral(const AlignmentPoint& prev,
     const QChar prevElem = asPatternChar((prev.tsc.size() >= 2) ? prev.tsc[1] : QChar('T'));
     const QChar nextElem = asPatternChar((next.tsc.size() >= 2) ? next.tsc[1] : QChar('T'));
 
+    // Map cur.curveType (the uppercase ALD-style token written by
+    // AlignmentSolver.cpp's spiralTypeName(), e.g. "BLOSS", "HALFSINE") to
+    // ElementType. Shared by both the Egg branch below and the
+    // makeTransition() lambda further down — kept as two separate small
+    // switches rather than factored into a shared header, matching this
+    // project's existing "minimal-surface-area repeated lookup table"
+    // convention (see e.g. the near-identical table inside makeTransition()
+    // just below, and AlignmentElementFactory::fromJson() above).
+    auto curveTypeToElementType = [](const QString& ct) -> ElementType {
+        if      (ct == "HALFSINE")         return ElementType::HalfSine;
+        else if (ct == "PARABOLA")         return ElementType::Parabola;
+        else if (ct == "CUBICJPN")         return ElementType::CubicJPN;
+        else if (ct == "CUBICECI")         return ElementType::CubicECI;
+        else if (ct == "SINUSOIDAL")       return ElementType::Sinusoidal;
+        else if (ct == "COSINE")           return ElementType::Cosine;
+        else if (ct == "BLOSS")            return ElementType::Bloss;
+        else if (ct == "LEMNISCATE")       return ElementType::Lemniscate;
+        else if (ct == "WIENERBOGEN")      return ElementType::WienerBogen;
+        else if (ct == "RADIOID")          return ElementType::Radioid;
+        else if (ct == "ELASRADIOID")      return ElementType::ElasticRadioid;
+        else if (ct == "NORWICHSTURM")     return ElementType::NorwichSturm;
+        else if (ct == "PSEUELLRADIOID")   return ElementType::PseudoEllipticRadioid;
+        else if (ct == "LOGARITHMIC")      return ElementType::Logarithmic;
+        else if (ct == "HYPERBOLIC")       return ElementType::Hyperbolic;
+        else if (ct == "POLYNOMIAL")       return ElementType::Polynomial;
+        else if (ct == "QUINTIC")          return ElementType::Quintic;
+        else if (ct == "PHQUINTIC")        return ElementType::PHQuintic;
+        else if (ct == "BIQUADRATIC")      return ElementType::Biquadratic;
+        else if (ct == "SPLINE")           return ElementType::Spline;
+        else if (ct == "BLOSSEULERHYBRID") return ElementType::BlossEulerHybrid;
+        return ElementType::Clothoid;
+    };
+
     // ── Egg (CC): circle → spiral → circle ────────────────────────────────
     if (prevElem == 'C' && nextElem == 'C') {
         if (!isValidRadius(prev.radius) || !isValidRadius(next.radius)) {
@@ -1885,8 +2109,21 @@ AlignmentElementFactory::createSpiral(const AlignmentPoint& prev,
                        << "R1=" << prev.radius << "R2=" << next.radius;
             return nullptr;
         }
+        // BUG FIX: this used to always default to ElementType::Clothoid (the
+        // 3-arg EggTransitionElement constructor), silently ignoring
+        // cur.curveType. Any ACA spiral solved with a non-Clothoid family by
+        // AlignmentSolver::solveACA() was therefore re-rendered here as a
+        // *different* curve (Clothoid) sharing the same R1/R2/Ls — which
+        // does not actually pass through the solved SC₂ point, so the drawn
+        // spiral visibly failed to connect to the second arc for every
+        // family except Clothoid. cur.curveType carries the actually-solved
+        // family (see spiralTypeName() in AlignmentSolver.cpp, which wrote
+        // it into the "CS" keypoint emitted by the ACA branch of the raw-
+        // point generator) — map it back to ElementType exactly the way
+        // makeTransition() below does for ordinary TC/CT spirals.
+        const ElementType eggFamily = curveTypeToElementType(cur.curveType);
         auto elem = std::make_unique<EggTransitionElement>(
-            prev.radius, next.radius, cur.length);
+            prev.radius, next.radius, cur.length, eggFamily);
         elem->setPlacement(makePlacement(cur));
         elem->setLength(cur.length);
         // The EggTransitionElement uses next.radius as R2 for OLS
@@ -2047,6 +2284,10 @@ AlignmentElementFactory::fromJson(const QJsonObject& j)
     }
 
     if (auto* egg = dynamic_cast<EggTransitionElement*>(elem.get())) {
+        // Family must be set before r1/r2/le so the final rebuild() (fired
+        // by setLE(), the last of the three) already uses it.
+        if (j.contains("spiralFamily"))
+            egg->setSpiralFamily(EggTransitionElement::familyFromName(j["spiralFamily"].toString()));
         egg->setR1(j["r1"].toDouble());
         egg->setR2(j["r2"].toDouble());
         egg->setLE(j["le"].toDouble());

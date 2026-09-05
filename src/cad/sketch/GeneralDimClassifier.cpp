@@ -71,12 +71,25 @@ GeneralDimClassifier::inferPointLike(const GeomRef& r, const Sketch* sketch,
     QVector2D p = r.resolvePosition(sketch);
     Zone zone = classifyZone(mousePt - p);
 
+    // ⚠️ 修正：Zone 與 X/Y 座標型別的對應先前是反的。
+    //
+    // DimensionLineAIS::labelPos()（實際畫尺寸線的地方）對 FixedX 用的是
+    // m_dimOffsetY 定位尺寸線（水平尺寸線，隨滑鼠上下移動而上下位移）；
+    // FixedY 用的是 m_dimOffsetX（垂直尺寸線，隨滑鼠左右移動而左右位移）——
+    // 這是所有 2D CAD 通用慣例：要放「水平方向」的尺寸線／座標標註，滑鼠要
+    // 往上下（垂直）拖；要放「垂直方向」的尺寸線／座標標註，滑鼠要往左右
+    // （水平）拖（尺寸線本身與拖曳方向垂直）。
+    //
+    // 但這裡先前把 Zone::Horizontal（滑鼠往左右移動）配 X 座標、
+    // Zone::Vertical（滑鼠往上下移動）配 Y 座標——兩者互換了，導致滑鼠往上
+    // 下移動時（該選 X 座標）卻選到 Y 座標，往左右移動時卻選到 X 座標，
+    // 使用者完全無法用直覺的滑鼠方向選到想要的座標型別。改為對調。
     Inference inf;
     switch (zone) {
     case Zone::Horizontal:
-        inf.kind = AnnotationKind::X; inf.label = "X 座標"; break;
-    case Zone::Vertical:
         inf.kind = AnnotationKind::Y; inf.label = "Y 座標"; break;
+    case Zone::Vertical:
+        inf.kind = AnnotationKind::X; inf.label = "X 座標"; break;
     case Zone::Diagonal:
         inf.kind = AnnotationKind::Coordinate; inf.label = "XY 座標"; break;
     }
@@ -109,13 +122,15 @@ GeneralDimClassifier::inferSingle(const GeomRef& r, const Sketch* sketch,
     case SketchGeometryType::Line:
         if (r.handle == GeomHandle::Start || r.handle == GeomHandle::End)
             return inferPointLike(r, sketch, mousePt);
-        // 整條線：無歧義，只有一種單幾何型別 —— 線長
-        {
-            Inference inf;
-            inf.kind = AnnotationKind::Length;
-            inf.label = "線長";
-            return inf;
-        }
+        // ⚠️ 修正：整條線（WholeGeom）先前無條件回傳「線長」，使用者完全
+        // 無法用滑鼠位置選到水平/垂直距離。現在等同於同時選取其 Start/End
+        // 兩個端點——直接複用 inferPair() 對「同一條線」的特例（對角帶＝
+        // 線長、水平/垂直帶＝水平/垂直距離），與直接點選兩端點（點+點）
+        // 完全一致的使用者體驗（本次需求）。單一函式維護 Zone 判斷邏輯，
+        // 避免重複實作。
+        return inferPair(GeomRef(r.geomUuid, GeomHandle::Start),
+                         GeomRef(r.geomUuid, GeomHandle::End),
+                         sketch, mousePt);
 
     case SketchGeometryType::Circle: {
         if (r.handle == GeomHandle::Center)
@@ -215,20 +230,75 @@ GeneralDimClassifier::inferPair(const GeomRef& a, const GeomRef& b,
                                 && b.handle == GeomHandle::WholeGeom;
 
     // ── 點 + 點：唯一需要滑鼠位置的雙幾何組合 ───────────────────────────────
-    // 依遊標相對兩點連線／中點的方位：偏左右→水平距離；偏上下→垂直距離；
-    // 偏對角（接近兩點連線延伸方向）→對齊距離（真實距離）。
+    // ⚠️ 修正：Zone 與 HorizDist/VertDist 型別的對應先前是反的（與上面
+    // inferPointLike() 的 X/Y 對調是同一個根因）。
+    //
+    // DimensionLineAIS::labelPos() 畫 FixedHorizDist（水平距離）尺寸線時，
+    // 用的是 m_dimOffsetY 定位（尺寸線水平、隨滑鼠上下移動而上下位移）；
+    // FixedVertDist（垂直距離）用的是 m_dimOffsetX（尺寸線垂直、隨滑鼠左右
+    // 移動而左右位移）——與 2D CAD 通用慣例一致：尺寸線本身的方向與拖曳
+    // 方向互相垂直。
+    //
+    // 先前程式碼把 Zone::Horizontal（滑鼠往左右移動）配「水平距離」、
+    // Zone::Vertical（滑鼠往上下移動）配「垂直距離」——這正好對調，導致
+    // 使用者依直覺往上下拖曳（想選水平距離、把尺寸線放在兩點上方或下方）
+    // 時，選到的卻是垂直距離，完全無法用滑鼠位置選中水平距離（本次回報的
+    // 問題）。改為對調，與 X/Y 座標的修正邏輯一致。
     if (aIsPoint && bIsPoint) {
         QVector2D pa  = a.resolvePosition(sketch);
         QVector2D pb  = b.resolvePosition(sketch);
         QVector2D mid = (pa + pb) * 0.5f;
         Zone zone = classifyZone(mousePt - mid);
 
+        // ⚠️ 新增：若這兩個「點」其實是同一條線的 Start/End（使用者選的是
+        // 整條線本身——見 inferSingle() 的 Line 分支、以及
+        // GeneralDimCommand::lockSingleGeom() 對整條線 WholeGeom 的轉呼叫），
+        // 對角帶應對應「線長」而非「對齊距離」：數值上兩者相等，但型別
+        // 語意不同（FixedLength vs FixedDistance(PointToPoint)），且線長
+        // 需要沿用既有的單一 WholeGeom ref 表示法（見 FixedLengthEquation／
+        // DimensionLineAIS::drawLengthDimension()），不能直接用兩個端點
+        // 各自的 ref。水平/垂直距離則不受影響——兩個端點各自的 ref 正好是
+        // FixedHorizDist/FixedVertDist 所需要的格式，維持原樣即可。
+        const bool sameLine = geomA && geomB
+                            && a.geomUuid == b.geomUuid
+                            && geomA->type == SketchGeometryType::Line;
+
+        // ⚠️ 新增：若 sameLine 且這條線本身幾乎是純垂直或純水平線，
+        // Start/End 在另一軸方向上幾乎沒有差異——這正是使用者「直接 hover
+        // 在線本身上」時最容易落入的情況：游標相對線中點的方位，天生就
+        // 跟著線自己的方向走（沿著垂直線 hover ⟹ 落在 Zone::Vertical；
+        // 沿著水平線 hover ⟹ 落在 Zone::Horizontal），而 Zone::Vertical 對
+        // 應「水平距離」、Zone::Horizontal 對應「垂直距離」（見上面的 H/V
+        // 對調修正）——對一條垂直線而言，兩端點的水平距離趨近於 0；對一條
+        // 水平線而言，兩端點的垂直距離也趨近於 0。這種退化（數值幾乎為 0）
+        // 的尺寸不但沒有意義，底層 DimPreviewOverlay 繪製尺寸線/延伸線時
+        // 的方向向量也會趨近零向量，導致完全畫不出來——這正是「hover
+        // 垂直或水平線完全沒有任何尺寸線顯示」的根因（斜線因為天生落在
+        // Zone::Diagonal、對應「線長」，數值正常，才會沒事）。
+        // 修正：這種退化組合一律回退成「線長」（數值上本來就與退化前想選的
+        // 水平/垂直距離相等或更有意義），沿一條垂直/水平線 hover，不論
+        // 游標實際落在哪個 zone，看到的都會是有意義、非退化的線長預覽。
+        QVector2D dLine = pb - pa;
+        const bool lineIsVertical   = sameLine && std::abs(dLine.x()) < 1e-4f;
+        const bool lineIsHorizontal = sameLine && std::abs(dLine.y()) < 1e-4f;
+        if ((zone == Zone::Vertical   && lineIsVertical) ||
+            (zone == Zone::Horizontal && lineIsHorizontal)) {
+            zone = Zone::Diagonal;
+        }
+
         Inference inf;
         inf.distMode = DistanceMode::PointToPoint;
         switch (zone) {
-        case Zone::Horizontal: inf.kind = AnnotationKind::HorizDist; inf.label = "水平距離"; break;
-        case Zone::Vertical:   inf.kind = AnnotationKind::VertDist;  inf.label = "垂直距離"; break;
-        case Zone::Diagonal:   inf.kind = AnnotationKind::Distance;  inf.label = "對齊距離"; break;
+        case Zone::Horizontal: inf.kind = AnnotationKind::VertDist;  inf.label = "垂直距離"; break;
+        case Zone::Vertical:   inf.kind = AnnotationKind::HorizDist; inf.label = "水平距離"; break;
+        case Zone::Diagonal:
+            if (sameLine) {
+                inf.kind = AnnotationKind::Length; inf.label = "線長";
+                inf.pairedRefs = { GeomRef(a.geomUuid, GeomHandle::WholeGeom) };
+            } else {
+                inf.kind = AnnotationKind::Distance; inf.label = "對齊距離";
+            }
+            break;
         }
         return inf;
     }

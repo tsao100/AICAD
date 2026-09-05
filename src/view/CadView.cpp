@@ -9,6 +9,7 @@
 #include "DimPreviewOverlay.h"
 #include <limits>
 #include "InputJig.h"
+#include "InputJigOverlay.h"
 #include "RubberBand.h"
 #include "ViewGrid.h"
 #include "cad/Feature.h"
@@ -100,6 +101,27 @@ using namespace aicad::cad;
 
 namespace aicad {
 namespace view {
+
+namespace {
+/// QVector3D → gp_Pnt（世界座標），供 InputJigOverlay 等需要 OCCT 型別的
+/// 呼叫端使用。
+inline gp_Pnt toGpPnt(const QVector3D& v)
+{
+    return gp_Pnt(static_cast<Standard_Real>(v.x()),
+                  static_cast<Standard_Real>(v.y()),
+                  static_cast<Standard_Real>(v.z()));
+}
+/// QVector3D → gp_Dir。退化（零向量）時回傳 +X，避免 gp_Dir 建構子丟例外
+/// 讓呼叫端多一層 try/catch。
+inline gp_Dir toGpDir(const QVector3D& v)
+{
+    if (v.lengthSquared() < 1e-12) return gp_Dir(1.0, 0.0, 0.0);
+    return gp_Dir(static_cast<Standard_Real>(v.x()),
+                  static_cast<Standard_Real>(v.y()),
+                  static_cast<Standard_Real>(v.z()));
+}
+} // namespace
+
 
 // 輔助函式：Qt 座標轉 OCCT 座標
 #if defined(_WIN32) || defined(__APPLE__)
@@ -199,6 +221,24 @@ public:
     Qt::MouseButton pressedButton;
     // ✅ FIX: 追蹤中間鍵是否正在按壓
     bool middleButtonPressed;
+    // ── 右鍵「結束選取/送出輸入」press/release 保險機制的去重旗標 ─────────
+    // tryEndPendingTextInputViaRightClick()/tryEndGetGeomSelectionViaRightClick()/
+    // tryConfirmYesNoViaRightClick() 這組判斷式在 mousePressEvent() 與
+    // mouseReleaseEvent() 都會各呼叫一次（release 端原意是「press 端沒觸發
+    // 時的保險」，見該處註解）。原本假設 press 端一旦觸發，
+    // CommandLineManager::isWaitingForInput() 就會變 false，讓 release 端
+    // 的呼叫安全地 no-op——但 TRIM/EXTEND 這類「一個 STRING_INPUT 處理完、
+    // 同一個呼叫堆疊內下游 handler 又同步呼叫 waitForInput() 掛號下一輪
+    // 等待」的命令（例如 TRIM 選完剪切邊、右鍵確認後立即進入逐段點選
+    // 階段並重新等待字串輸入）會讓 isWaitingForInput() 在 press 處理完後
+    // 又變回 true——這次是「下一階段」在等待，跟這次右鍵點擊完全無關。
+    // release 端保險呼叫因此誤判成「還沒送出」，把同一次右鍵點擊又送出一
+    // 次空字串，等同使用者多按了一次 Enter，導致命令提前結束（見
+    // TRIM 選完邊界、右鍵後命令直接結束而非進入逐段點選的臭蟲）。
+    // 用旗標明確標記「這次右鍵按下時 press 端已經處理過」，release 端看到
+    // 旗標為 true 就直接跳過，不重複呼叫 tryEnd*，從根本避免同一次點擊
+    // 被處理兩次；旗標在每次右鍵 press 開始時重設。
+    bool rightClickHandledOnPress = false;
     QMap<AIS_InteractiveObject*, QString>  aisToFeatureId;
     QMap<AIS_InteractiveObject*, QString>  aisToGeomUuid;
     QMap<AIS_InteractiveObject*, int>     aisToGeomIndex;
@@ -211,6 +251,7 @@ public:
     bool isDisplayingAllFeatures = false;
     bool constraintPickActive = false;  ///< pickSession 等待選取中（GetGeom 但 command 已 finished）
     bool gdimWholeGeomHitTestEnabled = false;  ///< GDIM 專用：圓/弧內部幾何式命中測試開關（見 CadView::setGdimWholeGeomHitTestEnabled()）
+    bool refPickModeActive = false;     ///< 尺寸參數選取插入模式（見 CadView::setRefPickModeActive()）
 
     // ── 草圖平面參考幾何 AIS（X 軸 / Y 軸 / 原點）────────────────────────
     // 用 AIS_Shape 基底型別儲存（SketchAxisAIS/SketchOriginAIS 繼承 AIS_Shape）
@@ -266,6 +307,7 @@ public:
     // 水平線形 PI／IP）都套用同一套邏輯。
     bool       orthoLock = false;
     InputJig*  inputJig  = nullptr;
+    InputJigOverlay* jigOverlay = nullptr;  ///< InputJig 的 3D 即時顯示（見 InputJigOverlay.h）
 
     enum class JigContext { None, PointPick, GripDrag };
     JigContext jigContext = JigContext::None;
@@ -397,6 +439,15 @@ CadView::CadView(QWidget* parent)
                     d->gripManager->commitDragAt(pos);
                 }
             });
+    connect(d->inputJig, &InputJig::liveTextChanged, this, [this]() {
+        // 使用者正在打字（跟滑鼠移動無關）：只更新 InputJigOverlay 的文字，
+        // 沿用上一次滑鼠移動時算出的線段端點（見 InputJigOverlay::
+        // updateText() 的說明——這跟橡皮筋本身「打字不會馬上移動端點、要
+        // 等下一次滑鼠事件」的既有行為一致，不是新引入的不一致）。
+        if (d->jigOverlay && d->inputJig)
+            d->jigOverlay->updateText(d->inputJig->distanceEditText(),
+                                      d->inputJig->angleEditText());
+    });
     connect(d->inputJig, &InputJig::cancelled, this, [this]() {
         // Jig 自己已經在收到 Escape 當下呼叫 hideJig()（見 InputJig::eventFilter）。
         //
@@ -538,6 +589,11 @@ void CadView::initializeViewer() {
 
     // 建立輔助物件
     d->rubberBand = new RubberBand(d->context, this);
+    // InputJig 的 3D 即時顯示：與 InputJig（Qt widget，見建構子）分工，
+    // 見 InputJigOverlay.h 開頭說明。
+    d->jigOverlay = new InputJigOverlay(this);
+    d->jigOverlay->setContext(d->context);
+    d->jigOverlay->setView(d->view);
     // GDIM 預覽 overlay 使用 OCCT context
     if (m_dimOverlay)
         m_dimOverlay->setContext(d->context);
@@ -673,6 +729,7 @@ void CadView::initializeViewer() {
             if (!d->inputJig) return;
             if (data.toMap().value("clearRubberBand").toBool()) {
                 d->inputJig->hideJig();
+                if (d->jigOverlay) d->jigOverlay->hide();
                 d->inputJig->resetLocks();
                 d->jigContext = Private::JigContext::None;
             }
@@ -1143,17 +1200,26 @@ void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
                 }
                 const QPoint startScreen(sx0, sy0);
                 const QPoint endScreen(sx1, sy1);
-                const QPointF lineDir(endScreen.x() - startScreen.x(),
-                                       endScreen.y() - startScreen.y());
                 const QPoint distAnchor((startScreen.x() + endScreen.x()) / 2,
                                          (startScreen.y() + endScreen.y()) / 2);
-                d->inputJig->showLive(distAnchor, startScreen, lineDir, liveDist, liveAngle);
+                d->inputJig->showLive(distAnchor, startScreen, liveDist, liveAngle);
+                // InputJigOverlay：3D 即時顯示（見 InputJigOverlay.h）。
+                // GripDrag 情境本來就是世界座標（gp_Pnt），不需要另外從
+                // 平面 2D 座標轉換。
+                if (d->jigOverlay) {
+                    d->jigOverlay->showLive(
+                        d->jigBasePointWorld, pos,
+                        d->gripManager->planeXAxis(), d->gripManager->planeYAxis(),
+                        liveDist, liveAngle, d->inputJig->isAzimuthMode(),
+                        d->inputJig->distanceEditText(), d->inputJig->angleEditText());
+                }
             });
 
     connect(d->gripManager, &GripManager::gripDragFinished, this,
             [this](const QString&, const gp_Pnt&, const gp_Pnt&) {
                 if (!d->inputJig) return;
                 d->inputJig->hideJig();
+                if (d->jigOverlay) d->jigOverlay->hide();
                 d->jigContext = Private::JigContext::None;
             });
 }
@@ -1260,6 +1326,16 @@ void CadView::setConstraintPickActive(bool active)
     d->constraintPickActive = active;
 }
 
+void CadView::setRefPickModeActive(bool active)
+{
+    d->refPickModeActive = active;
+}
+
+bool CadView::isRefPickModeActive() const
+{
+    return d->refPickModeActive;
+}
+
 void CadView::setCommandBoxSelectEligible(bool eligible)
 {
     d->commandBoxSelectEligible = eligible;
@@ -1322,6 +1398,7 @@ void CadView::setMode(InteractionMode mode) {
             d->inputJig->hideJig();
             d->inputJig->resetLocks();
         }
+        if (d->jigOverlay) d->jigOverlay->hide();
         d->jigContext = Private::JigContext::None;
     }
 
@@ -3215,6 +3292,14 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     d->mousePressed = true;
     d->pressedButton = event->button();
 
+    // 每次右鍵按下都是「新的一次點擊」，重設 press/release 去重旗標（見
+    // Private::rightClickHandledOnPress 宣告處的說明）。放在最前面，確保
+    // 不論這次右鍵最終有沒有被下面的 tryEnd* 判斷式吃掉，旗標都反映的是
+    // 「這次」點擊的狀態，不會殘留上一次點擊的結果。
+    if (event->button() == Qt::RightButton) {
+        d->rightClickHandledOnPress = false;
+    }
+
     // ── 籬選 / 多邊形窗選 / 多邊形框選：每次左鍵點擊新增一個頂點 ──────────────
     if (event->button() == Qt::LeftButton && d->boxSelectArmed &&
         d->boxSelectShape != BoxSelectShape::Rectangle) {
@@ -3235,6 +3320,25 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
     d->context->MoveTo(xp, yp, d->view, Standard_True);
+
+    // ── 尺寸參數選取插入模式：點擊命中尺寸線／文字 → 發出 dimensionRefPicked()，
+    // 不做一般選取/拖曳（見 setRefPickModeActive() 說明，供 DimExpressionDialog
+    // 的「插入參考」功能使用）。放在 MoveTo() 之後、其餘滑鼠模式判斷之前，
+    // 確保命中偵測結果是最新的，且優先權高於一般選取。
+    if (d->refPickModeActive && event->button() == Qt::LeftButton) {
+        if (d->context->HasDetected()) {
+            QString cUuid = constraintUuidForAIS(d->context->DetectedInteractive());
+            if (!cUuid.isEmpty()) {
+                Q_EMIT dimensionRefPicked(cUuid);
+                event->accept();
+                return;
+            }
+        }
+        // 沒點中尺寸線：忽略這次點擊（避免誤觸一般選取/拖曳/平移等操作），
+        // 但仍要 accept，不讓事件繼續往下傳遞造成非預期副作用。
+        event->accept();
+        return;
+    }
 
     // ✅ FIX: 中間鍵按下 → 記錄狀態，開始 pan
     if (event->button() == Qt::MiddleButton) {
@@ -3312,20 +3416,32 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     // 框選手勢互相干擾——讓右鍵維持原本啟動視角旋轉的行為，框選本身另有
     // Esc/Enter/Space 可結束。
     //
-    // 同一組判斷在 mouseReleaseEvent() 也會再呼叫一次（見該處），純屬保險：
-    // 兩者其中一個實際觸發即可，isWaitingForInput() 在第一次觸發後就會變
-    // false，第二次呼叫會安全地no-op，不會重複送出。
+    // 同一組判斷在 mouseReleaseEvent() 也會再呼叫一次（見該處），原意是
+    // 「press 端沒觸發時的保險」。⚠️ 這裡不能再假設「isWaitingForInput()
+    // 在第一次觸發後就會變 false，第二次呼叫自然 no-op」——TRIM/EXTEND 這
+    // 類命令，STRING_INPUT 處理完的同一個呼叫堆疊內，下游 handler 經常會
+    // 同步呼叫 waitForInput() 掛號「下一階段」的等待（例如 TRIM 選完剪切
+    // 邊、右鍵確認後立即進入逐段點選階段並重新等待字串輸入），這會讓
+    // isWaitingForInput() 在 press 端處理完後又變回 true——但那是下一階段
+    // 在等待，跟這次右鍵點擊無關。若這裡觸發成功，標記
+    // rightClickHandledOnPress = true，讓 mouseReleaseEvent() 的保險呼叫
+    // 直接跳過，不會把同一次右鍵點擊誤判成「還沒送出」而重複送出一次
+    // （等同使用者多按一次 Enter，會讓 TRIM 選完邊界、右鍵後命令直接結束
+    // 而非進入逐段點選）。
     if (tryEndPendingTextInputViaRightClick(event)) {
+        d->rightClickHandledOnPress = true;
         event->accept();
         return;
     }
 
     if (tryEndGetGeomSelectionViaRightClick(event)) {
+        d->rightClickHandledOnPress = true;
         event->accept();
         return;
     }
 
     if (tryConfirmYesNoViaRightClick(event)) {
+        d->rightClickHandledOnPress = true;
         event->accept();
         return;
     }
@@ -3981,13 +4097,47 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
                 const QPoint startScreen = planeToScreen(QVector2D(basePt));
                 const QPoint endScreen   = planeToScreen(QVector2D(planePtF));  // 反映最終（可能已被覆寫）的點
-                const QPointF lineDir(endScreen.x() - startScreen.x(),
-                                       endScreen.y() - startScreen.y());
                 const QPoint distAnchor((startScreen.x() + endScreen.x()) / 2,
                                          (startScreen.y() + endScreen.y()) / 2);
-                d->inputJig->showLive(distAnchor, startScreen, lineDir, liveDist, liveAngle);
+                d->inputJig->showLive(distAnchor, startScreen, liveDist, liveAngle);
+
+                // InputJigOverlay：3D 即時顯示（見 InputJigOverlay.h）。
+                // 平面 2D → 世界座標，沿用與 planeToScreen() 完全相同的
+                // 「目前活躍平面」解析邏輯（Sketch 平面，或依 viewType 取
+                // 標準平面）——特意內嵌而非抽成共用私有方法：這段邏輯很
+                // 小、很穩定，抽成 CadView.h 的新私有方法需要改動這個
+                // public 標頭，牽動的其他編譯單元這裡沒辦法逐一重新驗證，
+                // 屬於本專案「小範圍、有正當理由的重複」慣例（同一份取
+                // spiralTypeName 的對照表在三個檔案各自維護一份也是同樣
+                // 考量）。
+                if (d->jigOverlay) {
+                    cad::Plane* plane = nullptr;
+                    auto* sk = core::Application::instance()
+                               ? core::Application::instance()->activeSketch()
+                               : nullptr;
+                    if (sk && sk->plane()) plane = sk->plane();
+                    if (!plane) {
+                        cad::PlaneManager* mgr = cad::PlaneManager::instance();
+                        switch (d->viewType) {
+                        case ViewType::Front: case ViewType::Back: plane = mgr->xzPlane(); break;
+                        case ViewType::Right: case ViewType::Left: plane = mgr->yzPlane(); break;
+                        default:                                   plane = mgr->xyPlane(); break;
+                        }
+                    }
+                    if (plane) {
+                        const gp_Pnt baseWorld = toGpPnt(plane->toWorld(basePt.x(), basePt.y()));
+                        const gp_Pnt endWorld  = toGpPnt(plane->toWorld(planePtF.x(), planePtF.y()));
+                        const gp_Dir xAxis = toGpDir(plane->xAxis());
+                        const gp_Dir yAxis = toGpDir(plane->yAxis());
+                        d->jigOverlay->showLive(
+                            baseWorld, endWorld, xAxis, yAxis,
+                            liveDist, liveAngle, d->inputJig->isAzimuthMode(),
+                            d->inputJig->distanceEditText(), d->inputJig->angleEditText());
+                    }
+                }
             } else if (d->inputJig) {
                 d->inputJig->hideJig();
+                if (d->jigOverlay) d->jigOverlay->hide();
                 d->jigContext = Private::JigContext::None;
             }
 
@@ -4117,10 +4267,22 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
 
     if (event->button() == Qt::RightButton) {
         // ── 保險：mousePressEvent() 的右鍵結束選取沒有觸發時，這裡再試一次 ──
-        // （見 tryEndGetGeomSelectionViaRightClick() 說明；正常情況下
-        // press 階段就已經處理掉，這裡的呼叫會因為 isWaitingForInput()
-        // 已是 false 而安全地 no-op。）
-        if (tryEndPendingTextInputViaRightClick(event)) {
+        // （見 tryEndGetGeomSelectionViaRightClick() 說明）。
+        //
+        // ⚠️ 不能單純依賴「isWaitingForInput() 已是 false」來判斷 press 端
+        // 是否已經處理過：TRIM/EXTEND 這類命令在 press 端處理完當次右鍵、
+        // 同步進入下一階段時，會重新呼叫 waitForInput() 掛號「下一階段」
+        // 的等待，導致這裡的保險呼叫誤判成「這次右鍵還沒送出」而重複送出
+        // 一次（等同多按一次 Enter），提前結束命令（例如 TRIM 選完剪切
+        // 邊、右鍵確認後理應進入逐段點選階段，卻直接結束）。改用
+        // d->rightClickHandledOnPress 明確判斷「press 端這次是否已經處理
+        // 過」，處理過就直接跳過，不再呼叫 tryEnd*；沒處理過（例如
+        // press 端命中的是別的分支、或本來就沒觸發任何 tryEnd*）才照原本
+        // 邏輯在這裡補一次。
+        if (d->rightClickHandledOnPress) {
+            d->rightClickHandledOnPress = false;
+            event->accept();
+        } else if (tryEndPendingTextInputViaRightClick(event)) {
             event->accept();
         } else if (tryEndGetGeomSelectionViaRightClick(event)) {
             event->accept();

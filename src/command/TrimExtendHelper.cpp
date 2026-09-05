@@ -36,6 +36,9 @@
 
 #include <QDebug>
 #include <QVector>
+#include <QVector3D>
+#include <QSet>
+#include <QPair>
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -996,6 +999,7 @@ struct FilletChamferSetup {
     QVector2D   dir1, dir2;     ///< 分別指向 line1/line2 保留側的單位向量
     QString     line1PointUuid; ///< 會被移動到切點/倒角點的 line1 端點
     QString     line2PointUuid; ///< 會被移動到切點/倒角點的 line2 端點
+    bool        removedExistingCoincident = false;  ///< 見 filletAt() 文件說明
 };
 
 /// 若 line1 與 line2 的「近角點」是同一個 SketchPoint（最常見的相連轉角
@@ -1019,6 +1023,22 @@ void unshareCornerPointIfNeeded(cad::Sketch* sketch, FilletChamferSetup& s)
         s.line2->endUuid = newUuid;
     }
     s.line2PointUuid = newUuid;
+}
+
+/// 掃描 sketch 現有的 Coincident 約束，找出（若存在）連結 ptA／ptB 兩個
+/// SketchPoint 的那一條，回傳其 UUID（找不到則回傳空字串）。用於偵測
+/// 「兩線交點原本就有明確的重合約束」這種情形（見 filletAt() 文件說明）。
+QString findCoincidentConstraint(cad::Sketch* sketch, const QString& ptA, const QString& ptB)
+{
+    if (ptA.isEmpty() || ptB.isEmpty()) return QString();
+    for (const SketchConstraint& c : sketch->constraints()) {
+        if (c.type != ConstraintType::Coincident || c.refs.size() != 2) continue;
+        const QString rA = c.refs[0].resolvedPointUuid(sketch);
+        const QString rB = c.refs[1].resolvedPointUuid(sketch);
+        if ((rA == ptA && rB == ptB) || (rA == ptB && rB == ptA))
+            return c.uuid;
+    }
+    return QString();
 }
 
 std::optional<FilletChamferSetup> prepareFilletChamfer(cad::Sketch* sketch,
@@ -1063,44 +1083,67 @@ std::optional<FilletChamferSetup> prepareFilletChamfer(cad::Sketch* sketch,
 
     unshareCornerPointIfNeeded(sketch, setup);
 
+    // 兩線的角點若原本就靠一條明確的 Coincident 約束連在一起（而非直接
+    // 共用同一個 SketchPoint——那種情形已經在 unshareCornerPointIfNeeded()
+    // 處理過了），這裡要在移動端點之前先把它移除，否則舊約束會要求兩點
+    // 保持重合，跟圓角/倒角要把它們拉開到個別切點/倒角點的目標互相衝突。
+    const QString coincUuid = findCoincidentConstraint(sketch, setup.line1PointUuid,
+                                                        setup.line2PointUuid);
+    if (!coincUuid.isEmpty()) {
+        sketch->removeConstraint(coincUuid);
+        setup.removedExistingCoincident = true;
+    }
+
     return setup;
 }
 
 } // 匿名 namespace
 
-bool filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line2Uuid,
-             double radius, const QVector2D& clickPt1, const QVector2D& clickPt2)
+FilletResult filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line2Uuid,
+                      double radius, const QVector2D& clickPt1, const QVector2D& clickPt2)
 {
-    if (radius < 0.0) return false;
+    FilletResult result;
+    if (radius < 0.0) return result;
 
     auto setupOpt = prepareFilletChamfer(sketch, line1Uuid, line2Uuid, clickPt1, clickPt2);
-    if (!setupOpt) return false;
+    if (!setupOpt) return result;
     const FilletChamferSetup& s = *setupOpt;
+    result.line1PointUuid = s.line1PointUuid;
+    result.line2PointUuid = s.line2PointUuid;
+    result.removedExistingCoincident = s.removedExistingCoincident;
 
     if (radius <= 1e-9) {
         // 半徑 0：退化為單純延伸相交，不插入圓弧（比照 AutoCAD 行為）。
+        // 兩個端點現在是各自獨立的點（見 prepareFilletChamfer()），移到
+        // 同一個座標後仍然沒有明確的連結關係，補上一條 Coincident 約束
+        // 讓它們維持重合，行為與「線-弧」情形一致（都靠明確約束銜接，
+        // 而不是隱性共用同一個點物件）。
         sketch->movePoint(s.line1PointUuid, s.intersection);
         sketch->movePoint(s.line2PointUuid, s.intersection);
+        sketch->addConstraint(SketchConstraint::makeCoincident(
+            GeomRef(s.line1PointUuid, GeomHandle::WholeGeom),
+            GeomRef(s.line2PointUuid, GeomHandle::WholeGeom)));
         sketch->solveConstraints();
         Q_EMIT sketch->rebuildRequested();
-        return true;
+        result.success = true;
+        return result;
     }
 
     const double cosTheta = std::max(-1.0, std::min(1.0, double(QVector2D::dotProduct(s.dir1, s.dir2))));
     const double theta = std::acos(cosTheta);
-    if (theta < 1e-4 || theta > M_PI - 1e-4) return false;  // 平行/共線，無法求圓角
+    if (theta < 1e-4 || theta > M_PI - 1e-4) return result;  // 平行/共線，無法求圓角
 
     const double halfTheta = theta / 2.0;
     const double tanHalf = std::tan(halfTheta);
     const double sinHalf = std::sin(halfTheta);
-    if (std::abs(tanHalf) < 1e-9 || std::abs(sinHalf) < 1e-9) return false;
+    if (std::abs(tanHalf) < 1e-9 || std::abs(sinHalf) < 1e-9) return result;
 
     const double dAlongRay = radius / tanHalf;
     const QVector2D tangent1 = s.intersection + s.dir1 * float(dAlongRay);
     const QVector2D tangent2 = s.intersection + s.dir2 * float(dAlongRay);
 
     QVector2D bisector = s.dir1 + s.dir2;
-    if (bisector.lengthSquared() < 1e-12f) return false;  // dir1 ≈ -dir2（理論上已被 theta 範圍排除，防呆用）
+    if (bisector.lengthSquared() < 1e-12f) return result;  // dir1 ≈ -dir2（理論上已被 theta 範圍排除，防呆用）
     bisector.normalize();
 
     const double centerDist = radius / sinHalf;
@@ -1110,11 +1153,29 @@ bool filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line
     sketch->movePoint(s.line1PointUuid, tangent1);
     sketch->movePoint(s.line2PointUuid, tangent2);
 
-    const QString newUuid = sketch->addArcGeom(tangent1, midPt, tangent2,
-                                               s.line1PointUuid, s.line2PointUuid, QString());
+    // 弧的起訖點刻意不重用 line1PointUuid/line2PointUuid（不像先前版本那樣
+    // 直接共用同一個點物件）——各自建立獨立的新點，讓呼叫端事後可以疊加
+    // 明確的 Coincident 約束把它們接回去，使用者在束制清單裡才看得到、
+    // 能編輯/刪除這個接合關係（見 FilletResult／filletAt() 文件說明）。
+    const QString newArcUuid = sketch->addArcGeom(tangent1, midPt, tangent2,
+                                                   QString(), QString(), QString());
+    if (newArcUuid.isEmpty()) {
+        sketch->solveConstraints();
+        Q_EMIT sketch->rebuildRequested();
+        return result;
+    }
+
+    result.arcUuid = newArcUuid;
+    result.arcMidDir = midPt - center;   // 圓心→弧中點方向（草圖平面局部座標）
+    if (auto* arc = dynamic_cast<SketchArc*>(sketch->findGeometry(newArcUuid))) {
+        result.arcStartUuid = arc->startUuid;
+        result.arcEndUuid   = arc->endUuid;
+    }
+
     sketch->solveConstraints();
     Q_EMIT sketch->rebuildRequested();
-    return !newUuid.isEmpty();
+    result.success = true;
+    return result;
 }
 
 bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line2Uuid,
@@ -1127,10 +1188,32 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
     if (!setupOpt) return false;
     const FilletChamferSetup& s = *setupOpt;
 
+    // ── 先清掉舊的重合約束（若有）───────────────────────────────────────
+    // line1/line2 的兩個近角端點若本來就是「兩個獨立的 SketchPoint、靠一條
+    // Coincident 約束綁在同一位置」（例如由 Sketch::addLineChainGeom() 畫出
+    // 的相連線段、或使用者手動下過 COINCIDENT 指令），倒角要把這兩個端點
+    // 分別搬到不同的倒角落點——如果不先移除這條舊約束，稍後
+    // sketch->solveConstraints() 會依約束把兩點拉回同一點，等於當場抵消
+    // 倒角結果。若兩點本來就是同一個 SketchPoint（共用點，非約束關係），
+    // prepareFilletChamfer() 內的 unshareCornerPointIfNeeded() 已經處理過，
+    // 這裡查不到約束，findCoincidentConstraint() 回傳空字串、safely no-op。
+    const QString staleCoincUuid =
+        findCoincidentConstraint(sketch, s.line1PointUuid, s.line2PointUuid);
+    if (!staleCoincUuid.isEmpty())
+        sketch->removeConstraint(staleCoincUuid);
+
     if (dist1 <= 1e-9 && dist2 <= 1e-9) {
         // 兩個倒角距離都是 0：退化為單純延伸相交，不插入倒角線。
         sketch->movePoint(s.line1PointUuid, s.intersection);
         sketch->movePoint(s.line2PointUuid, s.intersection);
+
+        // 兩個端點各自獨立（否則早被 unshareCornerPointIfNeeded 合併成同一
+        // 點），現在既然退化成「單純相交」、沒有新倒角線可以順便共用端點
+        // 幫忙鎖住位置，補上一條新的 Coincident 約束，讓它們之後仍保持
+        // 綁定在同一點（對應：CHAMFER 完成後自動加上重合約束）。
+        sketch->constrainCoincident(GeomRef(s.line1PointUuid, GeomHandle::WholeGeom),
+                                     GeomRef(s.line2PointUuid, GeomHandle::WholeGeom));
+
         sketch->solveConstraints();
         Q_EMIT sketch->rebuildRequested();
         return true;
@@ -1142,11 +1225,600 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
     sketch->movePoint(s.line1PointUuid, chamferPt1);
     sketch->movePoint(s.line2PointUuid, chamferPt2);
 
+    // 新倒角線直接沿用 line1/line2 的角點當自己的端點（reuseStart/reuseEnd），
+    // 是比 Coincident 約束更強的連結（同一個 SketchPoint，0 DOF，不會有解算
+    // 殘差），所以這裡不需要另外補重合約束——這點與退化分支（上面）不同，
+    // 那裡沒有新線可以共用端點，才需要額外補約束。
     const QString newUuid = sketch->addLineGeom(chamferPt1, chamferPt2,
                                                 s.line1PointUuid, s.line2PointUuid);
+
+    if (!newUuid.isEmpty()) {
+        // 自動加上「交點」與尺寸約束，讓 D1、D2 之後仍各自保有意義——
+        // 而不是只鎖住整條倒角線的長度：
+        //
+        //   1. 把兩線交點也建立成真正的 SketchPoint（沿用
+        //      unshareCornerPointIfNeeded() 同一種 Origin::Intersection，
+        //      渲染成依約束求解狀態變色的小圖示，不會被誤認成一般端點）。
+        //   2. D1、D2 各自表示成「交點 → chamferPt1／chamferPt2」的
+        //      FixedDistance 約束（距離為 0 的那一側改用 Coincident 直接
+        //      釘死，理由見下方 (a)）：兩條距離＋交點初始座標本身就設在
+        //      正確的交點位置，數學上剛好唯一決定交點座標，不需要再額外
+        //      靠其他方程式輔助。
+        //
+        // ⚠️ 這裡刻意「不」對交點加 PointOnCurve(line1)/(line2) 去讓它與兩
+        //    線「共線」，理由是實測發現的一個真實 crash／錯誤根因，記錄如
+        //    下避免之後重踩：
+        //
+        //    PointOnCurveEquation 的方程式是 (P-Start)×(End-Start)=0，
+        //    Start／End 指的是 line1（或 line2）目前的兩個端點——也就是
+        //    說，這條約束不只牽動交點本身，還會把 line1／line2「還沒被
+        //    倒角碰到的那一個遠端點」也一起拉進同一條方程式的自由變數。
+        //    如果 line1、line2 在倒角之前完全沒有任何其他約束（例如使用
+        //    者剛畫好兩條單純相交的線就直接下 CHAMFER，不像矩形那樣還有
+        //    重合／水平／垂直把四個角都釘死）——那兩條線的遠端點就是完全
+        //    自由的變數，PointOnCurve 對「交點＋line1 的 Start/End」這 6
+        //    個未知數只提供 1 條方程式，數學上有極大的零空間（rank
+        //    deficient）。理論上，只要交點、line1、line2 的初始座標本來就
+        //    已經精確共線（本來就是事實，交點是用 line1∩line2 算出來
+        //    的），殘差應該是 0、Newton 法第一輪就該直接收斂、完全不需要
+        //    移動任何東西；但實測發現：一旦系統存在這種真正的（不是「病
+        //    態」而是「精確」）秩虧，ConstraintSolver::solveLinearLS() 用
+        //    來處理病態方程組的平滑阻尼（見該函式註解、σ/(σ²+λ)公式）反而
+        //    會把 SVD 分解出來、理論上該是恰好 0、但受浮點誤差影響變成
+        //    「極小但不為 0」的奇異值，當成「還有一點點資訊的病態方向」
+        //    去放大處理，而不是正確地判斷成「完全冗餘、應忽略」——結果就
+        //    是浮點誤差等級（1e-5～1e-7）的極小初始殘差，被這個非線性放大
+        //    效應（σ 越接近 0、放大倍率 1/σ 越誇張）硬生生轉成使用者看得
+        //    到的「點線位置整個跑掉」的巨大誤差。矩形四個角測試「結果正
+        //    確」，並不是這個機制不存在，而是矩形的重合／水平／垂直約束
+        //    已經把每個自由度都釘死、系統根本沒有零空間可以被放大，所以
+        //    沒有觸發同一個問題。
+        //
+        //    這是 ConstraintSolver 這個共用求解器對「精確秩虧」處理不夠
+        //    穩健的既有限制，不是單靠 chamferAt() 這個呼叫端能安全解決
+        //    的——貿然在這裡繞過或加特例，风险高於效益。因此改成更保守、
+        //    但已證實穩健的作法：交點的座標只靠「與 line1PointUuid／
+        //    line2PointUuid 的距離＝D1／D2」這兩條方程式決定，兩者都只牽
+        //    動「已經被移動到位、不再自由」的倒角端點，不會碰到 line1／
+        //    line2 遠端那個可能完全自由的端點，數學上不會有秩虧、不會觸
+        //    發上述放大效應。
+        //    代價：之後如果使用者去拖動 line1／line2（改變它們的方向），
+        //    這個交點不會自動跟著重新解算成新的正確交點——它只會維持與
+        //    兩個倒角端點的距離不變，不再保證真的落在兩線的（新）延長線
+        //    上。如果之後要做到「真正共線、隨拖動即時更新」，正確的做法
+        //    是先強化 ConstraintSolver 對精確秩虧系統的處理（例如把奇異
+        //    值門檻從「相對 σmax 的比例」改成搭配一個絕對值下限，明確把
+        //    小於這個下限的方向直接視為 0、不放大），而不是在單一呼叫端
+        //    繞過去；這是共用元件的行為調整，影響全 App，需要另外評估、
+        //    測試後再動。
+        const QString xUuid = sketch->addPoint(s.intersection, SketchPoint::Origin::Intersection);
+
+        QStringList addedConstraintUuids;
+        auto addOrTrack = [&](const SketchConstraint& c) -> bool {
+            const QString cu = sketch->addConstraint(c);
+            if (cu.isEmpty()) return false;
+            addedConstraintUuids.append(cu);
+            return true;
+        };
+
+        bool ok = true;
+        if (dist1 > 1e-9) {
+            ok = addOrTrack(SketchConstraint::makeFixedDistance(
+                GeomRef(xUuid, GeomHandle::WholeGeom),
+                GeomRef(s.line1PointUuid, GeomHandle::WholeGeom), dist1));
+        } else {
+            // dist1（或 dist2，下同）＝0：這一側等同「沒有被裁切」，端點
+            // 本來就該與交點是同一個位置，直接 Coincident 釘死，不留給
+            // 距離方程式間接猜（避免留下兩個只靠方程式間接耦合、可能解出
+            // 錯誤分支的重合點，見先前 crash 修正的說明）。
+            ok = addOrTrack(SketchConstraint::makeCoincident(
+                GeomRef(xUuid, GeomHandle::WholeGeom),
+                GeomRef(s.line1PointUuid, GeomHandle::WholeGeom)));
+        }
+        if (ok) {
+            if (dist2 > 1e-9) {
+                ok = addOrTrack(SketchConstraint::makeFixedDistance(
+                    GeomRef(xUuid, GeomHandle::WholeGeom),
+                    GeomRef(s.line2PointUuid, GeomHandle::WholeGeom), dist2));
+            } else {
+                ok = addOrTrack(SketchConstraint::makeCoincident(
+                    GeomRef(xUuid, GeomHandle::WholeGeom),
+                    GeomRef(s.line2PointUuid, GeomHandle::WholeGeom)));
+            }
+        }
+
+        // 每次 addConstraint() 內部都已經 solveConstraints() 過一次；這裡
+        // 再明確呼叫一次單純是為了拿到目前最終狀態的 SolveResult 判斷是否
+        // 衝突，成本上可接受（sketch 規模通常不大，重複 solve 幾次不是
+        // 效能瓶頸；正確性優先）。萬一 line1/line2 在倒角之前就已經有別的
+        // 約束跟這裡新加的東西衝突（例如已經有 FixedLength 把端點釘死在
+        // 別處），一樣整批退回，避免把 sketch 留在衝突/退化狀態。
+        if (ok) {
+            SolveResult r = sketch->solveConstraints();
+            ok = (r.status != SolveStatus::Conflict);
+        }
+
+        if (!ok) {
+            for (auto it = addedConstraintUuids.rbegin(); it != addedConstraintUuids.rend(); ++it)
+                sketch->removeConstraint(*it);
+            sketch->removeGeometry(xUuid);
+        }
+    }
+
     sketch->solveConstraints();
     Q_EMIT sketch->rebuildRequested();
     return !newUuid.isEmpty();
+}
+
+OffsetResult offsetAt(cad::Sketch* sketch, const QString& curveUuid,
+                      double distance, const QVector2D& sidePt)
+{
+    OffsetResult result;
+    if (!sketch || distance <= 0.0) return result;
+
+    auto* geom = sketch->findGeometry(curveUuid);
+    if (!geom) return result;
+
+    if (auto* line = dynamic_cast<SketchLine*>(geom)) {
+        QVector2D dir = line->end - line->start;
+        if (dir.lengthSquared() < 1e-12f) return result;  // 退化線段
+        dir.normalize();
+        const QVector2D normal(-dir.y(), dir.x());
+
+        const float side = QVector2D::dotProduct(sidePt - line->start, normal);
+        if (std::abs(side) < 1e-9f) return result;  // 點擊落在線上，方向不明確
+
+        const QVector2D offsetVec = normal * float((side > 0.0f ? 1.0 : -1.0) * distance);
+        const QVector2D p1 = line->start + offsetVec;
+        const QVector2D p2 = line->end   + offsetVec;
+
+        result.newCurveUuid = sketch->addLineGeom(p1, p2);
+        result.success = !result.newCurveUuid.isEmpty();
+        if (result.success) {
+            // 供呼叫端疊加 Parallel／FixedDistance 約束用（見 offsetAt()
+            // 文件「約束處理」說明）——起點雖然只是任取一個對應點，但因為
+            // 兩點的位移向量正好就是 offsetVec（純平移，構造保證），這對
+            // 起點連線在建立當下確實垂直於兩線，可以直接拿來當
+            // FixedDistance 的參考點。
+            result.sourceRefPointUuid = line->startUuid;
+            if (auto* newLine = dynamic_cast<SketchLine*>(sketch->findGeometry(result.newCurveUuid)))
+                result.newRefPointUuid = newLine->startUuid;
+
+            sketch->solveConstraints();
+            Q_EMIT sketch->rebuildRequested();
+        }
+        return result;
+    }
+
+    if (auto* circ = dynamic_cast<SketchCircle*>(geom)) {
+        const double distFromCenter = double((sidePt - circ->center).length());
+        const double newRadius = (distFromCenter > circ->radius) ? circ->radius + distance
+                                                                  : circ->radius - distance;
+        if (newRadius <= 1e-6) return result;  // 內縮超過圓心，退化
+
+        result.newCurveUuid = sketch->addCircleGeom(circ->center, newRadius);
+        result.success = !result.newCurveUuid.isEmpty();
+        if (result.success) {
+            result.newRadius = newRadius;  // 供呼叫端疊加 Concentric／FixedRadius 約束用
+            sketch->solveConstraints();
+            Q_EMIT sketch->rebuildRequested();
+        }
+        return result;
+    }
+
+    if (auto* arc = dynamic_cast<SketchArc*>(geom)) {
+        SketchPoint* centerPt = sketch->point(arc->centerUuid);
+        SketchPoint* startPt  = sketch->point(arc->startUuid);
+        SketchPoint* endPt    = sketch->point(arc->endUuid);
+        if (!centerPt || !startPt || !endPt || arc->curve.IsNull() || !sketch->plane())
+            return result;
+
+        const QVector2D center = centerPt->pos;
+        const double radius = double((startPt->pos - center).length());
+        if (radius < 1e-9) return result;  // 退化弧（起點與圓心重合）
+
+        const double distFromCenter = double((sidePt - center).length());
+        const double newRadius = (distFromCenter > radius) ? radius + distance
+                                                             : radius - distance;
+        if (newRadius <= 1e-6) return result;  // 內縮超過圓心，退化
+
+        // 把起點/終點/中點各自沿著「圓心→該點」的方向，等比例縮放到新
+        // 半徑——這樣新弧跟原弧的起訖角度完全一致（優弧/劣弧、順逆時針
+        // 都自動保留），不需要另外處理角度方向的正負號判斷。
+        const double scale = newRadius / radius;
+        auto scaledFromCenter = [&](const QVector2D& p) -> QVector2D {
+            return center + (p - center) * float(scale);
+        };
+        const QVector2D newStart = scaledFromCenter(startPt->pos);
+        const QVector2D newEnd   = scaledFromCenter(endPt->pos);
+
+        // 中點：直接從原弧的 OCCT curve 取實際中點（世界座標），轉回草圖
+        // 平面局部座標後再套用同樣的縮放——比自己用角度重建（優弧/劣弧、
+        // 順逆時針方向容易搞混）穩妥，直接複用既有幾何的真實資料。
+        const double t0 = arc->curve->FirstParameter();
+        const double t1 = arc->curve->LastParameter();
+        const gp_Pnt worldMid = arc->curve->Value((t0 + t1) * 0.5);
+        const QVector2D localMid = sketch->plane()->toPlane(
+            QVector3D(float(worldMid.X()), float(worldMid.Y()), float(worldMid.Z())));
+        const QVector2D newMid = scaledFromCenter(localMid);
+
+        result.newCurveUuid = sketch->addArcGeom(newStart, newMid, newEnd);
+        result.success = !result.newCurveUuid.isEmpty();
+        if (result.success) {
+            result.newRadius = newRadius;  // 供呼叫端疊加 Concentric／FixedRadius 約束用
+            sketch->solveConstraints();
+            Q_EMIT sketch->rebuildRequested();
+        }
+        return result;
+    }
+
+    return result;  // 不支援的幾何型別（Polyline／Spline／Ellipse／Point 等）
+}
+
+namespace {
+
+/// 找出跟 pointUuid「重合」的所有其他 SketchPoint UUID（含自己）：字面上
+/// 相同的 UUID，以及透過明確 Coincident 約束連結的其他點（只找一步，不做
+/// 遞移傳遞——多重 Coincident 串接的情形一般使用情境下很少見，先不處理）。
+/// 供 offsetChainAt() 的鏈偵測使用。
+QSet<QString> coincidentPointUuids(cad::Sketch* sketch, const QString& pointUuid)
+{
+    QSet<QString> result;
+    result.insert(pointUuid);
+    for (const SketchConstraint& c : sketch->constraints()) {
+        if (c.type != ConstraintType::Coincident || c.refs.size() != 2) continue;
+        const QString rA = c.refs[0].resolvedPointUuid(sketch);
+        const QString rB = c.refs[1].resolvedPointUuid(sketch);
+        if (rA == pointUuid) result.insert(rB);
+        else if (rB == pointUuid) result.insert(rA);
+    }
+    return result;
+}
+
+/// 取出 g（Line 或 Arc）的起訖點 UUID。回傳 false 表示 g 不是鏈支援的
+/// 型別。
+bool chainEndpointUuids(SketchGeometry* g, QString& outStart, QString& outEnd)
+{
+    if (auto* l = dynamic_cast<SketchLine*>(g)) { outStart = l->startUuid; outEnd = l->endUuid; return true; }
+    if (auto* a = dynamic_cast<SketchArc*>(g))  { outStart = a->startUuid; outEnd = a->endUuid; return true; }
+    return false;
+}
+
+/// 在 atPointUuid 這個接點（含跟它重合的其他點）上，找出「唯一一個」跟
+/// usedUuids 無關的其他鏈成員（Line 或 Arc）。回傳 nullptr 代表：沒有其他
+/// 鏈成員相連（鏈的終點）、有 2 個以上相連（分岔/T 字路口，鏈的終點）、
+/// 或這個接點還連著鏈不支援的幾何（Circle／Polyline／Spline／Ellipse
+/// 等；鏈只支援連續的 Line／Arc，遇到這種情形視為鏈的終點，不繼續延伸，
+/// 避免跳過中間的幾何、產生錯誤的偏移轉角）。
+SketchGeometry* findSingleOtherChainMember(cad::Sketch* sketch, const QString& atPointUuid,
+                                           const QVector<QString>& usedUuids)
+{
+    const QSet<QString> group = coincidentPointUuids(sketch, atPointUuid);
+    SketchGeometry* found = nullptr;
+    for (const QString& pu : group) {
+        for (auto* g : sketch->curvesReferencingPoint(pu)) {
+            QString s, e;
+            if (!chainEndpointUuids(g, s, e)) return nullptr;  // 接到鏈不支援的幾何，鏈到此為止
+            if (usedUuids.contains(g->uuid)) continue;
+            if (found && found->uuid != g->uuid) return nullptr;  // 分岔
+            found = g;
+        }
+    }
+    return found;
+}
+
+/// 一段鏈成員的來源型別資訊（Line 或 Arc）。
+struct ChainSourceSeg {
+    QString   uuid;
+    bool      isArc = false;
+    QVector2D arcCenter;    ///< 僅 isArc 時有意義
+    double    arcRadius = 0.0;
+};
+
+/// 一段的「素樸偏移邊界」，供轉角相接求交點用：Line 用兩點表示無限長
+/// 直線，Arc／Circle 用圓心＋半徑表示整個圓（Arc 的轉角交點只需要圓的
+/// 資訊，弧段範圍的裁切由呼叫端事後用 addArcGeom() 的三點法自然決定）。
+struct OffsetBoundary {
+    bool      isCircle = false;
+    QVector2D p1, p2;      ///< isCircle=false 時使用
+    QVector2D center;
+    double    radius = 0.0;  ///< isCircle=true 時使用
+};
+
+/// 求兩個偏移邊界的交點，多解時取離 nearRef（原始素樸偏移下這個轉角該在
+/// 的位置）最近的那一個，避免選到幾何上不合理的另一側。找不到交點（平行
+/// /相離/同心）回傳 std::nullopt。
+std::optional<QVector2D> intersectBoundaries(const OffsetBoundary& a, const OffsetBoundary& b,
+                                             const QVector2D& nearRef)
+{
+    QVector<QVector2D> candidates;
+    if (!a.isCircle && !b.isCircle) {
+        if (auto p = g2d::lineLineIntersect(a.p1, a.p2, b.p1, b.p2)) candidates.append(*p);
+    } else if (a.isCircle && !b.isCircle) {
+        candidates = g2d::lineCircleIntersect(b.p1, b.p2, a.center, a.radius);
+    } else if (!a.isCircle && b.isCircle) {
+        candidates = g2d::lineCircleIntersect(a.p1, a.p2, b.center, b.radius);
+    } else {
+        candidates = g2d::circleCircleIntersect(a.center, a.radius, b.center, b.radius);
+    }
+    if (candidates.isEmpty()) return std::nullopt;
+
+    QVector2D best = candidates[0];
+    float bestDist = (best - nearRef).lengthSquared();
+    for (int k = 1; k < candidates.size(); ++k) {
+        const float d = (candidates[k] - nearRef).lengthSquared();
+        if (d < bestDist) { bestDist = d; best = candidates[k]; }
+    }
+    return best;
+}
+
+} // 匿名 namespace
+
+OffsetChainResult offsetChainAt(cad::Sketch* sketch, const QString& startUuid,
+                                double distance, const QVector2D& sidePt)
+{
+    OffsetChainResult result;
+    if (!sketch || distance <= 0.0) return result;
+
+    auto* startGeom = sketch->findGeometry(startUuid);
+    QString startPtA, startPtB;
+    if (!startGeom || !chainEndpointUuids(startGeom, startPtA, startPtB)) return result;
+
+    auto* startPtAObj = sketch->point(startPtA);
+    auto* startPtBObj = sketch->point(startPtB);
+    if (!startPtAObj || !startPtBObj) return result;
+
+    // ── 1. 追蹤連續鏈：以「節點座標序列」表示，沿著兩個方向各自延伸，
+    //    直到遇到分岔／鏈不支援的幾何／端點無其他鏈成員相連（鏈的終
+    //    點），或繞回起點（封閉環）為止。────────────────────────────────
+    QVector<QVector2D> pathPoints   = { startPtAObj->pos, startPtBObj->pos };
+    QVector<QString>   pathPointIds = { startPtA, startPtB };
+    QVector<QString>   segUuids     = { startUuid };
+    bool closedLoop = false;
+
+    // 往「尾端」延伸（append）。
+    while (true) {
+        const QString tailPtUuid = pathPointIds.last();
+        SketchGeometry* next = findSingleOtherChainMember(sketch, tailPtUuid, segUuids);
+        if (!next) break;
+
+        QString nStart, nEnd;
+        chainEndpointUuids(next, nStart, nEnd);
+        const QSet<QString> group = coincidentPointUuids(sketch, tailPtUuid);
+
+        QString otherPtUuid;
+        if (group.contains(nStart) && !group.contains(nEnd)) otherPtUuid = nEnd;
+        else if (group.contains(nEnd) && !group.contains(nStart)) otherPtUuid = nStart;
+        else break;  // 退化（兩端都在同一組），理論上不該發生，保守停止
+
+        auto* otherPtObj = sketch->point(otherPtUuid);
+        if (!otherPtObj) break;
+
+        if (segUuids.size() >= 2 &&
+            coincidentPointUuids(sketch, otherPtUuid).contains(pathPointIds.first())) {
+            // 繞回起點：封閉環，這是最後一段（wrap segment），不需要再
+            // 新增節點——見 segEndpoints() 對這種情形的處理。
+            closedLoop = true;
+            segUuids.append(next->uuid);
+            break;
+        }
+
+        pathPoints.append(otherPtObj->pos);
+        pathPointIds.append(otherPtUuid);
+        segUuids.append(next->uuid);
+    }
+
+    // 往「頭端」延伸（prepend）——已經因為封閉環而停止的話不用再找另一個
+    // 方向（起點跟終點本來就是同一個點了）。
+    if (!closedLoop) {
+        while (true) {
+            const QString headPtUuid = pathPointIds.first();
+            SketchGeometry* prev = findSingleOtherChainMember(sketch, headPtUuid, segUuids);
+            if (!prev) break;
+
+            QString pStart, pEnd;
+            chainEndpointUuids(prev, pStart, pEnd);
+            const QSet<QString> group = coincidentPointUuids(sketch, headPtUuid);
+
+            QString otherPtUuid;
+            if (group.contains(pStart) && !group.contains(pEnd)) otherPtUuid = pEnd;
+            else if (group.contains(pEnd) && !group.contains(pStart)) otherPtUuid = pStart;
+            else break;
+
+            auto* otherPtObj = sketch->point(otherPtUuid);
+            if (!otherPtObj) break;
+
+            pathPoints.prepend(otherPtObj->pos);
+            pathPointIds.prepend(otherPtUuid);
+            segUuids.prepend(prev->uuid);
+        }
+    }
+
+    const int segCount = segUuids.size();
+    const int clickedIdx = segUuids.indexOf(startUuid);
+    if (segCount < 1 || clickedIdx < 0) return result;  // 理論上不會發生
+
+    // 第 i 段沿鏈行進方向的 from→to（封閉環最後一段的 to 繞回 pathPoints[0]）。
+    auto segEndpoints = [&](int i, QVector2D& from, QVector2D& to) {
+        from = pathPoints[i];
+        to   = (i + 1 < pathPoints.size()) ? pathPoints[i + 1] : pathPoints[0];
+    };
+
+    // 收集每段的來源型別資訊（Line／Arc）。
+    QVector<ChainSourceSeg> sources(segCount);
+    for (int i = 0; i < segCount; ++i) {
+        sources[i].uuid = segUuids[i];
+        if (auto* arc = dynamic_cast<SketchArc*>(sketch->findGeometry(segUuids[i]))) {
+            auto* c = sketch->point(arc->centerUuid);
+            if (!c) return result;
+            sources[i].isArc = true;
+            sources[i].arcCenter = c->pos;
+            QVector2D from, to;
+            segEndpoints(i, from, to);
+            sources[i].arcRadius = double((from - sources[i].arcCenter).length());
+            if (sources[i].arcRadius < 1e-9) return result;  // 退化弧
+        }
+    }
+
+    // ── 2. 決定整條鏈統一的偏移方向（正負號）：只用使用者實際點擊、對應
+    //    到的那一段（startUuid）判斷，其餘每一段（不論 Line 或 Arc）都
+    //    套用同一個正負號，確保整條鏈偏移到一致的同一側。Arc 段這個
+    //    正負號該對應到半徑變大還是變小，見下方第 3 步的換算。────────
+    QVector2D clickedFrom, clickedTo;
+    segEndpoints(clickedIdx, clickedFrom, clickedTo);
+
+    float sideSign;
+    if (sources[clickedIdx].isArc) {
+        const QVector2D& c = sources[clickedIdx].arcCenter;
+        const double distFromCenter = double((sidePt - c).length());
+        const bool clickWantsGrow = distFromCenter > sources[clickedIdx].arcRadius;
+        const QVector2D fromC = clickedFrom - c, toC = clickedTo - c;
+        const bool isCCW = (fromC.x() * toC.y() - fromC.y() * toC.x()) > 0.0f;
+        // grow ⇔ (isCCW == (sideSign < 0))，見下方第 3 步／檔頭文件說明；
+        // 這裡反推：已知 clickWantsGrow，求 sideSign。
+        sideSign = (clickWantsGrow == isCCW) ? -1.0f : 1.0f;
+    } else {
+        QVector2D dir = clickedTo - clickedFrom;
+        if (dir.lengthSquared() < 1e-12f) return result;
+        dir.normalize();
+        const QVector2D normal(-dir.y(), dir.x());
+        sideSign = (QVector2D::dotProduct(sidePt - clickedFrom, normal) > 0.0f) ? 1.0f : -1.0f;
+    }
+
+    // ── 3. 每一段各自的「素樸」偏移邊界／端點（尚未做轉角相接處理）。──
+    QVector<OffsetBoundary> boundaries(segCount);
+    QVector<QVector2D> offA(segCount), offB(segCount);
+    QVector<double> arcNewRadius(segCount, 0.0);
+    for (int i = 0; i < segCount; ++i) {
+        QVector2D from, to;
+        segEndpoints(i, from, to);
+
+        if (sources[i].isArc) {
+            const QVector2D& c = sources[i].arcCenter;
+            const double r = sources[i].arcRadius;
+            const QVector2D fromC = from - c, toC = to - c;
+            // 沿鏈行進方向（from→to）是順時針還是逆時針掃過圓心：外積
+            // >0 為逆時針。「左手邊（sideSign>0，即 Line 情形 normal 指向
+            // 的那一側）」對逆時針掃過的弧是朝圓心（縮小），對順時針掃過
+            // 的弧是遠離圓心（放大）——見檔頭文件「Arc 段的偏移方向」
+            // 說明，這裡是這個規則的正向套用。
+            const bool isCCW = (fromC.x() * toC.y() - fromC.y() * toC.x()) > 0.0f;
+            const bool grow = (isCCW == (sideSign < 0.0f));
+            const double newR = grow ? r + distance : r - distance;
+            if (newR <= 1e-6) return result;  // 內縮超過圓心，退化
+
+            const double scale = newR / r;
+            offA[i] = c + fromC * float(scale);
+            offB[i] = c + toC   * float(scale);
+            arcNewRadius[i] = newR;
+            boundaries[i] = OffsetBoundary{ true, QVector2D(), QVector2D(), c, newR };
+        } else {
+            QVector2D dir = to - from;
+            if (dir.lengthSquared() < 1e-12f) return result;  // 退化線段
+            dir.normalize();
+            const QVector2D normal(-dir.y(), dir.x());
+            const QVector2D offsetVec = normal * (sideSign * float(distance));
+            offA[i] = from + offsetVec;
+            offB[i] = to   + offsetVec;
+            boundaries[i] = OffsetBoundary{ false, offA[i], offB[i], QVector2D(), 0.0 };
+        }
+    }
+
+    // ── 4. 內部轉角相接：依邊界型別分三種情形求交點（Line-Line／
+    //    Line-Arc／Arc-Arc），多解時取離原始素樸偏移角點最近的那個（見
+    //    intersectBoundaries()）。開放鏈的頭尾兩端（沒有相鄰段可以求交）
+    //    維持素樸偏移結果不變。封閉環額外處理「最後一段↔第一段」這個
+    //    wrap-around 轉角。────────────────────────────────────────────
+    const int jointCount = closedLoop ? segCount : (segCount - 1);
+    for (int j = 0; j < jointCount; ++j) {
+        const int prevIdx = j;
+        const int nextIdx = (j + 1) % segCount;
+        const QVector2D nearRef = offB[prevIdx];  // 素樸偏移下，這個轉角原本該在的位置
+        if (auto p = intersectBoundaries(boundaries[prevIdx], boundaries[nextIdx], nearRef)) {
+            offB[prevIdx] = *p;
+            offA[nextIdx] = *p;
+        }
+        // 找不到交點（平行/相離/同心）：維持素樸偏移結果。
+    }
+
+    // ── 5. 建立幾何：Line 段用 addLineGeom()；Arc 段比照 offsetAt() 的
+    //    做法，中點直接從原弧的 OCCT curve 取樣、轉回平面座標後，沿
+    //    「圓心→原中點位置」方向縮放到新半徑（用第 3 步算好的
+    //    arcNewRadius，不是從轉角調整後的 offA/offB 反推，避免頭尾兩端
+    //    只有一端被轉角調整時，兩次反推可能出現的極小數值落差）。每段都
+    //    是各自獨立的新幾何（不與來源共用點、彼此之間也不共用點），事後
+    //    靠約束銜接（與 offsetAt() 單曲線情形、filletAt() 的弧一致的
+    //    慣例）。────────────────────────────────────────────────────────
+    QVector<QString> newUuids(segCount);
+    for (int i = 0; i < segCount; ++i) {
+        if (sources[i].isArc) {
+            auto* arcGeom = dynamic_cast<SketchArc*>(sketch->findGeometry(sources[i].uuid));
+            if (!arcGeom || arcGeom->curve.IsNull() || !sketch->plane()) return result;
+
+            const QVector2D& c = sources[i].arcCenter;
+            const double r = sources[i].arcRadius;
+            const double scale = arcNewRadius[i] / r;
+
+            const double t0 = arcGeom->curve->FirstParameter();
+            const double t1 = arcGeom->curve->LastParameter();
+            const gp_Pnt worldMid = arcGeom->curve->Value((t0 + t1) * 0.5);
+            const QVector2D localMid = sketch->plane()->toPlane(
+                QVector3D(float(worldMid.X()), float(worldMid.Y()), float(worldMid.Z())));
+            const QVector2D newMid = c + (localMid - c) * float(scale);
+
+            newUuids[i] = sketch->addArcGeom(offA[i], newMid, offB[i]);
+        } else {
+            newUuids[i] = sketch->addLineGeom(offA[i], offB[i]);
+        }
+        if (newUuids[i].isEmpty()) return result;  // 建立失敗，整批放棄（已建立的部分留在 sketch 裡）
+    }
+
+    // ── 6. 組裝結果：每段的來源/新曲線對應與約束參考資訊、以及內部轉角
+    //    的 Coincident 點對（見 offsetChainAt() 文件的「約束處理」與
+    //    Line FixedDistance 的已知限制說明）。──────────────────────────
+    result.segments.reserve(segCount);
+    for (int i = 0; i < segCount; ++i) {
+        OffsetChainSegment seg;
+        seg.sourceUuid = segUuids[i];
+        seg.newUuid    = newUuids[i];
+        seg.isArc      = sources[i].isArc;
+
+        if (seg.isArc) {
+            // Concentric／FixedRadius 是 Arc 整體的性質，不受轉角調整
+            // 影響，每一個 Arc 段都提供，沒有 Line 情形那種限制。
+            seg.newRadius = arcNewRadius[i];
+        } else if (auto* newLine = dynamic_cast<SketchLine*>(sketch->findGeometry(newUuids[i]))) {
+            const bool headAdjusted = closedLoop || i > 0;             // 這段起點是否被轉角調整過
+            const bool tailAdjusted = closedLoop || i < segCount - 1;  // 這段終點是否被轉角調整過
+            if (!headAdjusted) {
+                seg.sourceRefPointUuid = pathPointIds[i];
+                seg.newRefPointUuid    = newLine->startUuid;
+            } else if (!tailAdjusted) {
+                seg.sourceRefPointUuid = pathPointIds[i + 1];
+                seg.newRefPointUuid    = newLine->endUuid;
+            }
+            // 兩端都被調整過（中間段，或封閉環的每一段）：不提供參考點。
+        }
+        result.segments.append(seg);
+    }
+
+    for (int j = 0; j < jointCount; ++j) {
+        const int prevIdx = j;
+        const int nextIdx = (j + 1) % segCount;
+        QString prevEndUuid, nextStartUuid, dummy;
+        auto* prevNewGeom = sketch->findGeometry(newUuids[prevIdx]);
+        auto* nextNewGeom = sketch->findGeometry(newUuids[nextIdx]);
+        if (prevNewGeom && nextNewGeom &&
+            chainEndpointUuids(prevNewGeom, dummy, prevEndUuid) &&
+            chainEndpointUuids(nextNewGeom, nextStartUuid, dummy)) {
+            result.joints.append(qMakePair(prevEndUuid, nextStartUuid));
+        }
+    }
+
+    sketch->solveConstraints();
+    Q_EMIT sketch->rebuildRequested();
+    result.success = true;
+    return result;
 }
 
 } // namespace trimext

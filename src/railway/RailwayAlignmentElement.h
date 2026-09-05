@@ -13,7 +13,11 @@
  *       ├── ParabolaElement   (cubic parabola          – "PARABOLA")
  *       ├── CubicJPNElement   (Japanese cubic parabola – "CUBICJPN")
  *       ├── CubicECIElement   (CECI cubic parabola     – "CUBICECI")
- *       └── EggTransitionElement  (bi-quadratic / compound spiral – CC)
+ *       ├── … (Sinusoidal/Cosine/Bloss/… curvature-ramp families, see below)
+ *       └── EggTransitionElement  (bi-quadratic / compound spiral – CC;
+ *                                  equivalent spiral defaults to Clothoid,
+ *                                  selectable among the families for which
+ *                                  isFamilyEggCompatible() is true)
  *
  * Coordinate conventions
  * ──────────────────────
@@ -1064,19 +1068,42 @@ public:
  * @brief Bi-quadratic compound spiral connecting two circles of different radii.
  *
  * Used for CC transitions (circle–spiral–circle without an intervening
- * tangent).  The element is reduced to an equivalent clothoid of length
- *   Ls = LE · max(|R1|,|R2|) / ||R1|−|R2||
+ * tangent).  The element is reduced to an equivalent spiral of length
+ *   Ls = LE · max(|R1|,|R2|) / ||R1|−|R2||          (Clothoid, closed form)
  * starting at a computed origin, then traversed partially (LS−LE … LS).
  *
- * The equivalent sub-spiral is built dynamically as a @c ClothoidElement
- * with adjusted placement.
+ * The equivalent sub-spiral defaults to a @c ClothoidElement (matching the
+ * classical "OLS" egg-curve construction) but can be built from any other
+ * curvature-ramp @c TransitionElement family instead — see setSpiralFamily()
+ * and isFamilyEggCompatible(). Whichever family is selected, the underlying
+ * equivalent-spiral object is generalised from @c ClothoidElement to the
+ * common @c TransitionElement base (localFrame()/setLength()/setRadius() is
+ * all this class ever needs from it — see rebuild()/localFrame() below),
+ * so every family gets exactly the same re-anchoring treatment described in
+ * the localFrame() comment in the .cpp with no per-family special-casing.
+ *
+ * Generalised Ls solve (families other than Clothoid): the classical OLS
+ * formula above only holds because a clothoid's curvature is *exactly*
+ * linear in arc length (g(t)=t). For any other family, this class instead
+ * numerically inverts that family's own normalised curvature-ramp shape
+ * g(t) — obtained by finite-differencing localFrame(t).theta on a reference
+ * instance of the family, no per-family formula needed — to find the
+ * fraction t* of the full equivalent spiral at which its curvature equals
+ * the smaller-magnitude of the two egg radii, then sets
+ * Ls = LE / (1 − t*). See ols() in the .cpp for the full derivation and the
+ * outer fixed-point iteration used for the small-deflection Cartesian
+ * families (Parabola/CubicJPN/CubicECI/Cosine) whose shape has a (weak)
+ * residual dependence on Ls/R.
  */
 class EggTransitionElement : public TransitionElement
 {
 public:
     EggTransitionElement() = default;
-    EggTransitionElement(double r1, double r2, double le)
-        : m_r1(clampRadius(r1)), m_r2(clampRadius(r2)), m_le(le) { rebuild(); }
+    EggTransitionElement(double r1, double r2, double le,
+                          ElementType family = ElementType::Clothoid)
+        : m_r1(clampRadius(r1)), m_r2(clampRadius(r2)), m_le(le),
+          m_family(isFamilyEggCompatible(family) ? family : ElementType::Clothoid)
+    { rebuild(); }
 
     ElementType type()     const override { return ElementType::Egg; }
     QString     typeName() const override { return QStringLiteral("Egg"); }
@@ -1087,9 +1114,18 @@ public:
     double ls() const { return m_ls; }          ///< Equivalent spiral length [m]
     bool   r1Dominant() const { return m_r1Dominant; } ///< True when |R1| ≥ |R2|
 
+    /** Which TransitionElement family the equivalent full-length spiral is
+     *  built from (default Clothoid — the classical egg-curve construction). */
+    ElementType spiralFamily() const { return m_family; }
+
     void setR1(double r) { m_r1 = clampRadius(r); rebuild(); }
     void setR2(double r) { m_r2 = clampRadius(r); rebuild(); }
     void setLE(double l) { m_le = l; rebuild(); }
+
+    /** Select the equivalent-spiral family. Falls back silently to Clothoid
+     *  for a family that isn't egg-compatible (see isFamilyEggCompatible()). */
+    void setSpiralFamily(ElementType f)
+    { m_family = isFamilyEggCompatible(f) ? f : ElementType::Clothoid; rebuild(); }
 
     LocalFrame  localFrame(double L) const override;
     QPointF     worldXY   (double p, double w = 0.0) const override;
@@ -1097,16 +1133,47 @@ public:
     QPointF     inversePW (double x, double y)        const override;
     QJsonObject toJson()                               const override;
 
-    /** OLS: equivalent spiral length = LE · max(|R|) / ||R1|−|R2|| */
+    /** OLS: equivalent spiral length for a Clothoid equivalent spiral,
+     *  = LE · max(|R|) / ||R1|−|R2||. Kept for source/behaviour
+     *  compatibility; equivalent to ols(ElementType::Clothoid, ...). */
     static double ols(double R1, double R2, double LE);
+
+    /** Generalised OLS: equivalent spiral length for the given equivalent-
+     *  spiral @p family. See the class doc comment above for the derivation. */
+    static double ols(ElementType family, double R1, double R2, double LE);
+
+    /**
+     * @brief Whether @p family's curvature is a pure function of the
+     *        normalised chainage fraction t=L/Ls — i.e. κ(L)=g(t)/R with g
+     *        depending only on t (to good approximation) — the property
+     *        this class's equivalent-spiral construction relies on.
+     *
+     * Excluded: WienerBogen (its roll-dynamics correction term is NOT of
+     * g(t)/R form — see WienerBogenElement's doc comment), Lemniscate and
+     * PHQuintic (their shape parameter is itself jointly solved from Ls/R —
+     * see each class's own doc comment on why they have "no simple
+     * κ(s)=g(s/Ls)/R scaling"), and ElasticRadioid/NorwichSturm/
+     * PseudoEllipticRadioid (curvature is a function of position, not
+     * chainage fraction — coupled-ODE families, see their doc comments).
+     */
+    static bool isFamilyEggCompatible(ElementType family);
+
+    /** Human-readable family name (matches the corresponding element's own
+     *  typeName()), used for JSON round-tripping. */
+    static QString familyName(ElementType f);
+    /** Inverse of familyName(); unrecognised names map to Clothoid. */
+    static ElementType familyFromName(const QString& name);
 
 private:
     double m_r1 = 0.0;
     double m_r2 = 0.0;
     double m_le = 0.0;
+    ElementType m_family = ElementType::Clothoid;
 
-    /** Equivalent clothoid (owned, rebuilt when R1/R2/LE change). */
-    std::unique_ptr<ClothoidElement> m_equiv;
+    /** Equivalent full-length spiral (owned, rebuilt when R1/R2/LE/family
+     *  change). Generalised from ClothoidElement to the common
+     *  TransitionElement base so any egg-compatible family can be used. */
+    std::unique_ptr<TransitionElement> m_equiv;
 
     /** True when |R1| ≥ |R2|: traversal from the R2 side. */
     bool m_r1Dominant = true;
@@ -1114,9 +1181,14 @@ private:
     /** Equivalent spiral length Ls. */
     double m_ls = 0.0;
 
+    /** Construct a fresh, default-configured instance of @p family. Falls
+     *  back to ClothoidElement for any family isFamilyEggCompatible()
+     *  rejects (defensive; callers are expected to have already validated). */
+    static std::unique_ptr<TransitionElement> makeElement(ElementType family);
+
     /**
-     * @brief Rebuild the internal equivalent ClothoidElement.
-     * Called whenever R1, R2 or LE change.
+     * @brief Rebuild the internal equivalent spiral.
+     * Called whenever R1, R2, LE, or the spiral family change.
      */
     void rebuild();
 };

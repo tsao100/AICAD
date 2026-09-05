@@ -126,6 +126,25 @@ private:
     /// 每次滑鼠移動／最終點擊時重新呼叫 inferPair(m_refs[0], m_refs[1],
     /// ..., mousePtAbs) 更新 m_type/m_distMode，而不僅僅更新 offset。
     bool m_isPointPairHVA = false;
+    // ⚠️ 新增：m_isPointPairHVA 為 true 時，WaitDimPlace 期間持續重新分類
+    // 用的「穩定」點對——固定為 lockPairGeom() 當初收到的 anchor/second，
+    // 不可用 m_refs[0]/m_refs[1] 代替。原因：m_refs 會隨每次重分類結果
+    // 改變形狀（水平/垂直距離＝兩個端點 ref；線長＝單一 WholeGeom ref），
+    // 若直接拿 m_refs[0]/[1] 當下一輪分類的輸入，一旦分類成線長、m_refs
+    // 收斂成只有 1 個元素，下一次滑鼠移動再讀 m_refs[1] 就會是未定義行為
+    // （out-of-bounds）。改用這兩個獨立、貫穿整個 WaitDimPlace 期間都不變
+    // 的欄位，避免這個問題。
+    cad::GeomRef m_hvaRefA;
+    cad::GeomRef m_hvaRefB;
+
+    // ⚠️ 新增：Idle 狀態（尚未點擊任何東西）下的「軟性 hover 錨點」——記住
+    // 最近一次顯著 hover 到的幾何，讓使用者不需要真的點擊，只要「先 hover
+    // 一條線、再把滑鼠移到另一條不平行/不平的線上」，就能直接預覽兩者的
+    // 配對型別（例如角度），跟已經點擊建立正式 anchor 後的 hover 配對邏輯
+    // （m_stickyPairedRef，見 onGeomHover() 的 Anchored 分支）互相獨立、
+    // 不干擾——這個欄位只在 State::Idle 分支讀寫。
+    cad::GeomRef m_lastHoverRef;
+    bool m_hasLastHoverRef = false;
 
     void subscribeGeomPicked   ();
     void subscribeGeomHover    ();
@@ -142,6 +161,14 @@ private:
     void onDimConfirmed (const QVariant& payload);
     void onCancelled    (const QVariant&);
 
+    /// ⚠️ 新增：取代原本 WaitValue 階段「命令列輸入數值/運算式」的處理——
+    /// 改用 DimExpressionDialog（非模態，支援「插入參考」點選其他尺寸取得
+    /// 參數名稱）取值，語意與原本 onStringInput() 完全相同（純數字/表達式/
+    /// 空字串=採用量測值），只是輸入來源從命令列換成對話框。見
+    /// transitionToWaitValue() 的說明。
+    void onValueDialogAccepted(const QString& expr);
+    void onValueDialogRejected();
+
     /// Anchored 狀態下，第 2 次點擊落在可配對的第二幾何上：鎖定雙幾何型別，
     /// 進入 WaitDimPlace（第 3 次點擊定位）。
     void lockPairGeom(const cad::GeomRef& anchor, const cad::GeomRef& second,
@@ -151,6 +178,15 @@ private:
     /// 位置鎖定單幾何型別，同時用這次點擊的位置算出 offset，直接進 WaitValue
     /// （不經過 WaitDimPlace，因為型別與位置已經在同一次點擊裡一起決定）。
     void lockSingleGeom(const cad::GeomRef& anchor, const QVector2D& mousePt);
+
+    /// 若 r 是「整條線」（WholeGeom），視為同時代表其 Start/End 兩個端點，
+    /// 填入 outStart/outEnd 並回傳 true；否則回傳 false。
+    /// 給 lockSingleGeom()（點擊時）與 onGeomHover()（Idle 純 hover、不需
+    /// 先點一下即可預覽——本次需求）共用，避免同一個判斷分兩處實作、
+    /// 日後改一邊忘了改另一邊而不同步（本檔案已因類似重複實作出過幾次
+    /// bug，見上方多處 ⚠️ 修正註解）。
+    bool lineWholeGeomEndpoints(const cad::GeomRef& r, cad::Sketch* sk,
+                                cad::GeomRef& outStart, cad::GeomRef& outEnd) const;
 
     void transitionToWaitDimPlace ();
     void transitionToWaitValue    ();

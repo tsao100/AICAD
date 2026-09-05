@@ -4,10 +4,14 @@
  *
  *   • 2D 模式（草圖內）：在兩條直線之間插入倒角線（MVP 僅支援直線，弧不
  *     支援倒角，天然降低範圍，同 AutoCAD 慣例）。實際幾何運算由既有的
- *     TrimExtendHelper::chamferAt() 負責。互動流程：
- *       指定第一個倒角距離 → 指定第二個倒角距離 →
- *       選取第一條直線（GEOM_PICKED）→ 選取第二條直線（GEOM_PICKED）→ 完成。
- *     兩個倒角距離都輸入 0 時，退化為單純延伸相交（不插入倒角線）。
+ *     TrimExtendHelper::chamferAt() 負責。互動流程（比照 AutoCAD CHAMFER
+ *     的「Distance」選項慣例，指令啟動不強制先問距離）：
+ *       選取第一條直線（帶入上一次指令執行設定的 D1/D2，兩者預設皆為 0；
+ *       提示列同時提供 [距離(D)] 選項，見 onOptionSelected2D()）→
+ *       若使用者輸入 D：依序詢問新的 D1、D2（記入 s_lastDist1/s_lastDist2，
+ *       供下次呼叫 CHAMFER 沿用）→ 回到「選取第一條直線」→
+ *       選取第二條直線（GEOM_PICKED）→ 完成。
+ *     兩個倒角距離都是 0 時，退化為單純延伸相交（不插入倒角線）。
  *
  *   • 3D 模式（實體特徵）：對任意已顯示實體 Feature（Extrude/Loft…）的
  *     選取邊執行倒角，建立新的 cad::ChamferSolid 特徵。設計決議
@@ -71,11 +75,13 @@ private:
 
     void subscribeNumberInput2D();
     void subscribeGeomPicked2D();
+    void subscribeOptionSelected2D();
     void subscribeCancelled2D();
     void unsubscribeAll2D();
 
     void onNumberInput2D(const QVariant& payload);
     void onGeomPicked2D(const QVariant& payload);
+    void onOptionSelected2D(const QVariant& payload);
     void onCancelled2D(const QVariant&);
 
     // 還原 2D 模式的互動狀態並視情況完成指令（比照舊行為：若指令仍在
@@ -88,6 +94,15 @@ private:
     double     m_dist2 = 0.0;
     QString    m_line1Uuid;
     QVector2D  m_clickPt1;
+
+    // 上一次成功執行 CHAMFER（2D 模式）時使用者最終設定的 D1/D2，供下一次
+    // 指令啟動時直接帶入當作預設值（不需要每次都重新輸入）；static 是刻意
+    // 的——ChamferCommand 由 CommandFactory 每次呼叫都 new 出全新物件（見
+    // CommandFactory::create()），一般成員變數活不過單次指令執行，只有
+    // static／全域狀態才能跨指令呼叫存活。啟動應用程式後、使用者第一次下
+    // CHAMFER 之前，兩者維持建構時的初始值 0.0（對應「D1、D2 預設值為零」）。
+    static double s_lastDist1;
+    static double s_lastDist2;
 
     // ─────────────────────────────────────────────────────────────────────
     // 3D 模式：實體邊選取倒角（Document::createChamferSolid）

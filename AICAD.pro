@@ -267,6 +267,7 @@ SOURCES += \
     src/command/TrimCommand.cpp \
     src/command/ExtendCommand.cpp \
     src/command/FilletCommand.cpp \
+    src/command/OffsetCommand.cpp \
     src/command/GeneralDimCommand.cpp \
     src/command/LeaderNoteCommand.cpp \
     src/cad/sketch/GeneralDimClassifier.cpp \
@@ -287,6 +288,7 @@ SOURCES += \
     src/command/alignment/ImportAlignmentCommand.cpp \
     src/command/alignment/ImportAldCommand.cpp \
     src/command/alignment/TrackExtractCommand.cpp \
+    src/command/alignment/AlignmentReverseSCSCommand.cpp \
     src/command/ScaleCommand.cpp \
     src/command/alignment/ExportAlignmentCommand.cpp \
     src/command/alignment/ProfileArrayCommand.cpp \
@@ -363,6 +365,11 @@ SOURCES += \
     src/ui/TransientCommandHistory.cpp \
     src/ui/UIManager.cpp \
     src/ui/ResultPopup.cpp \
+    src/ui/DimExpressionDialog.cpp \
+    src/ui/AddSpiralCalcDialog.cpp \
+    src/ui/TrackNameSequenceDialog.cpp \
+    src/ui/SCSCalcDialog.cpp \
+    src/ui/AlignmentReverseSCSCalcDialog.cpp \
     \
     # View Module (Felicia - 視圖系統)
     src/ui/VAlignCommandBar.cpp \
@@ -375,6 +382,7 @@ SOURCES += \
     src/view/CadView.cpp \
     src/view/DimPreviewOverlay.cpp \
     src/view/InputJig.cpp \
+    src/view/InputJigOverlay.cpp \
     src/view/RubberBand.cpp \
     #src/view/SelectionManager.cpp \
     src/view/ViewGrid.cpp \
@@ -443,6 +451,7 @@ HEADERS += \
     src/command/TrimCommand.h \
     src/command/ExtendCommand.h \
     src/command/FilletCommand.h \
+    src/command/OffsetCommand.h \
     src/command/alignment/SetOriginCommand.h \
     src/command/alignment/AlignmentAddSpiralCommand.h \
     src/command/alignment/Alignment3DAddVProfileCommand.h \
@@ -458,6 +467,7 @@ HEADERS += \
     src/command/alignment/ImportAlignmentCommand.h \
     src/command/alignment/ImportAldCommand.h \
     src/command/alignment/TrackExtractCommand.h \
+    src/command/alignment/AlignmentReverseSCSCommand.h \
     src/command/ScaleCommand.h \
     src/command/alignment/ExportAlignmentCommand.h \
     src/command/alignment/ProfileArrayCommand.h \
@@ -535,6 +545,11 @@ HEADERS += \
     src/ui/TransientCommandHistory.h \
     src/ui/UIManager.h \
     src/ui/ResultPopup.h \
+    src/ui/DimExpressionDialog.h \
+    src/ui/AddSpiralCalcDialog.h \
+    src/ui/TrackNameSequenceDialog.h \
+    src/ui/SCSCalcDialog.h \
+    src/ui/AlignmentReverseSCSCalcDialog.h \
     \
     # View Module (Felicia)
     src/ui/VAlignCommandBar.h \
@@ -547,6 +562,7 @@ HEADERS += \
     src/view/CadView.h \
     src/view/DimPreviewOverlay.h \
     src/view/InputJig.h \
+    src/view/InputJigOverlay.h \
     src/view/RubberBand.h \
     #src/view/SelectionManager.h \
     src/view/ViewGrid.h \

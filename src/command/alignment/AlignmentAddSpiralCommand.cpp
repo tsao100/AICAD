@@ -32,10 +32,12 @@
 #include "core/EventBus.h"
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
+#include "ui/AddSpiralCalcDialog.h"
 #include "ui/UIManager.h"
 #include "view/CadView.h"
 
 #include <QDebug>
+#include <QDialog>
 #include <QLineF>
 #include <QtMath>
 #include <cmath>
@@ -523,6 +525,85 @@ void AlignmentAddSpiralCommand::showSolverPreview()
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  openCalcDialog
+// ────────────────────────────────────────────────────────────────────────────
+
+void AlignmentAddSpiralCommand::openCalcDialog()
+{
+    EventBus* bus = Application::instance()->eventBus();
+
+    ui::AddSpiralCalcDialog::GroupMode dlgMode;
+    switch (m_mode) {
+    case GroupMode::LC:  dlgMode = ui::AddSpiralCalcDialog::GroupMode::LC;  break;
+    case GroupMode::CA:  dlgMode = ui::AddSpiralCalcDialog::GroupMode::CA;  break;
+    case GroupMode::ACA: dlgMode = ui::AddSpiralCalcDialog::GroupMode::ACA; break;
+    default:
+        // Should not happen — by the time openCalcDialog() is called, mode
+        // is always resolved (see the PickSecond handler above).
+        qDebug() << "[AS] openCalcDialog() called with unresolved GroupMode";
+        dlgMode = ui::AddSpiralCalcDialog::GroupMode::LC;
+        break;
+    }
+
+    auto* dlg = new ui::AddSpiralCalcDialog(m_alignDoc, dlgMode,
+                                            m_tangentIdx, m_arcIdx, m_arc2Idx,
+                                            m_parentWidget);
+    const int result = dlg->exec();   // Modal — 阻塞直到使用者按「套用」或取消/關閉
+    const int resultIdx = dlg->resultElementIndex();
+    delete dlg;
+
+    if (m_isFinishing) return;   // 對話框開啟期間指令被外部取消（極少見，保險檢查）
+
+    if (result == QDialog::Accepted) {
+        // 對話框「套用」已完成 addLC()/addCA()/addACA() + solve()，這裡只
+        // 需回報結果並結束指令（比照 commitSpiral() 的成功訊息格式）。
+        const auto& elems = m_alignDoc->horizontal()->elements();
+        const double Ls = (resultIdx >= 0 && resultIdx < elems.size())
+                               ? elems[resultIdx].length : 0.0;
+
+        QString modeStr;
+        switch (m_mode) {
+        case GroupMode::LC:  modeStr = QStringLiteral("LC");  break;
+        case GroupMode::CA:  modeStr = QStringLiteral("CA");  break;
+        case GroupMode::ACA: modeStr = QStringLiteral("ACA"); break;
+        default:              modeStr = QStringLiteral("?");   break;
+        }
+
+        if (m_mode == GroupMode::ACA) {
+            outputMessage(
+                QString("ACA spiral #%1 added via dialog  Ls = %2 m\n"
+                        "  Arc\xE2\x82\x81 #%3  \xE2\x86\x92  Clothoid  \xE2\x86\x92  Arc\xE2\x82\x82 #%4")
+                    .arg(resultIdx).arg(Ls, 0, 'f', 3).arg(m_arcIdx).arg(m_arc2Idx));
+        } else {
+            outputMessage(
+                QString("%1 spiral #%2 added via dialog  Ls = %3 m  "
+                        "(tangent #%4  arc #%5)")
+                    .arg(modeStr).arg(resultIdx).arg(Ls, 0, 'f', 3)
+                    .arg(m_tangentIdx).arg(m_arcIdx));
+        }
+
+        m_isFinishing = true;
+        Q_EMIT finished(CommandResult::Success("AlignmentAddSpiral completed via dialog"));
+        return;
+    }
+
+    // 取消/關閉對話框 → 退回原本的純文字循序輸入模式。
+    outputMessage("Dialog cancelled.  Falling back to text input for spiral type "
+                  "(or ESC / right-click to cancel the command entirely):");
+    outputMessage(
+        QString("Spiral type T= [Clothoid(C) / HalfSine(HS) / Parabola(P) / "
+                "CubicJPN(JPN) / CubicECI(ECI) / Sinusoidal(SIN) / Cosine(COS) / "
+                "Bloss(BL) / Lemniscate(LEM) / WienerBogen(WB) / Radioid(RAD) / "
+                "Logarithmic(LOG) / Hyperbolic(HYP) / Polynomial(POLY) / "
+                "Quintic(QNT) / Biquadratic(BIQ) / Spline(SPL) / "
+                "BlossEulerHybrid(BEH)]  (Enter = Clothoid):"));
+    bus->publish(Events::COMMAND_PROMPT,
+                 tr("Spiral type T= (Enter = Clothoid):"));
+    m_step = Step::WaitingForType;
+    CommandLineManager::instance()->waitForInput(core::InputType::Number);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  goToConfirm
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -553,7 +634,8 @@ void AlignmentAddSpiralCommand::goToConfirm()
 
 CommandResult AlignmentAddSpiralCommand::execute(const CommandContext& context)
 {
-    m_alignDoc = context.alignmentDoc;
+    m_alignDoc     = context.alignmentDoc;
+    m_parentWidget = static_cast<QWidget*>(context.cadView);   // CadView : public QWidget
     if (!m_alignDoc) {
         return CommandResult::Failure(
             "No AlignmentDocument — open or create an alignment first.");
@@ -739,12 +821,37 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
                 highlightElement(idx);
                 outputMessage(QString("CA mode: Fixed Tangent #%1 selected.").arg(idx));
             } else {
-                // ACA mode: second element is another Fixed Arc
-                m_mode    = GroupMode::ACA;
-                m_arc2Idx = idx;
+                // ACA mode: second element is another Fixed Arc.
+                //
+                // addACA()'s insertion arithmetic (insertPos = arc1Idx + 1)
+                // and the whole downstream Pass2e ACA-detection logic assume
+                // arc1Idx < arc2Idx (Arc₁ precedes Arc₂ along the alignment
+                // — element index order IS chainage order for a sequential
+                // PI-chain, so this is a simple index comparison). Nothing
+                // stops the user clicking the two arcs in either screen
+                // order, so auto-correct here rather than silently handing
+                // addACA() a reversed pair (which previously produced
+                // geometrically wrong — and previously also
+                // Clothoid-only-rendered, see the EggTransitionElement
+                // family fixes — results instead of being rejected).
+                const int firstClickedIdx = m_arcIdx;
+                if (idx < firstClickedIdx) {
+                    m_arcIdx  = idx;             // earlier along the alignment → Arc₁
+                    m_arc2Idx = firstClickedIdx; // later along the alignment   → Arc₂
+                    outputMessage(
+                        QString("ACA mode: arcs auto-reordered to match alignment"
+                                " direction (you clicked #%1 then #%2; using"
+                                " Arc\xE2\x82\x81=#%3 \xE2\x86\x92 Arc\xE2\x82\x82=#%4,"
+                                " earlier chainage first).")
+                            .arg(firstClickedIdx).arg(idx).arg(m_arcIdx).arg(m_arc2Idx));
+                } else {
+                    m_arc2Idx = idx;
+                }
+                m_mode = GroupMode::ACA;
                 highlightElement(idx);
-                outputMessage(QString("ACA mode: Fixed Arc₂ #%1 selected.  "
-                                      "Arc₁=#%2  Arc₂=#%3").arg(idx).arg(m_arcIdx).arg(idx));
+                outputMessage(QString("ACA mode: Fixed Arc\xE2\x82\x82 #%1 selected.  "
+                                      "Arc\xE2\x82\x81=#%2  Arc\xE2\x82\x82=#%3")
+                                  .arg(idx).arg(m_arcIdx).arg(m_arc2Idx));
             }
             {
                 const QString warn = describeAdjacentFloatingSpiral(idx, m_alignDoc->horizontal());
@@ -752,18 +859,10 @@ void AlignmentAddSpiralCommand::handlePointAcquired(const QPointF& point)
             }
         }
 
-        // Proceed to spiral type selection
-        outputMessage(
-            QString("Spiral type T= [Clothoid(C) / HalfSine(HS) / Parabola(P) / "
-                    "CubicJPN(JPN) / CubicECI(ECI) / Sinusoidal(SIN) / Cosine(COS) / "
-                    "Bloss(BL) / Lemniscate(LEM) / WienerBogen(WB) / Radioid(RAD) / "
-                    "Logarithmic(LOG) / Hyperbolic(HYP) / Polynomial(POLY) / "
-                    "Quintic(QNT) / Biquadratic(BIQ) / Spline(SPL) / "
-                    "BlossEulerHybrid(BEH)]  (Enter = Clothoid):"));
-        bus->publish(Events::COMMAND_PROMPT,
-                     tr("Spiral type T= (Enter = Clothoid):"));
-        m_step = Step::WaitingForType;
-        CommandLineManager::instance()->waitForInput(core::InputType::Number);
+        // Both elements selected, group direction resolved — open the
+        // calculation dialog (see openCalcDialog(); falls back to the text
+        // flow below if the user cancels the dialog).
+        openCalcDialog();
         break;
     }
 
@@ -956,6 +1055,7 @@ void AlignmentAddSpiralCommand::cleanup()
     m_arc2Idx     = -1;
     m_spiralType  = SpiralType::Clothoid;
     m_alignDoc    = nullptr;
+    m_parentWidget = nullptr;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -966,6 +1066,10 @@ QString AlignmentAddSpiralCommand::getUsage() const
 {
     return
         "Usage: AS  (Add Spiral — LC, CA, or ACA group)\n"
+        "\n"
+        "  After the two elements are picked, a calculation dialog opens:\n"
+        "  choose the spiral type, click Calculate to preview Ls/points, then\n"
+        "  Apply to insert. Cancel the dialog to fall back to text-mode input.\n"
         "\n"
         "  LC mode (Line → Clothoid → Arc):\n"
         "    1. Click a Fixed Tangent (the incoming straight line).\n"

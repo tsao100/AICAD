@@ -193,6 +193,50 @@ makeTransitionElement(SpiralType type, double Ls, double signedR)
 }
 
 // ============================================================================
+//  spiralTypeToElementType  (file-local helper)
+//
+//  EggTransitionElement's internal equivalent-spiral (see
+//  RailwayAlignmentElement.h/.cpp) is selected via ElementType (Tangent /
+//  CircularArc / ... / Egg — the RailwayAlignmentElement.h enum used by the
+//  whole element hierarchy), not SpiralType (the AlignmentDocument.h enum
+//  used by the solver/edit-command layer for user-facing spiral selection).
+//  Same enumerator names, different ordinal values (ElementType inserts
+//  Tangent/CircularArc before Clothoid and appends Egg at the end), so a
+//  raw static_cast between them is NOT safe — this switch is the one
+//  translation point, mirrored 1:1 against makeTransitionElement()'s switch
+//  just above so the two never drift apart.
+// ============================================================================
+
+ElementType spiralTypeToElementType(SpiralType t)
+{
+    switch (t) {
+    case SpiralType::HalfSine:         return ElementType::HalfSine;
+    case SpiralType::Parabola:         return ElementType::Parabola;
+    case SpiralType::CubicJPN:         return ElementType::CubicJPN;
+    case SpiralType::CubicECI:         return ElementType::CubicECI;
+    case SpiralType::Sinusoidal:       return ElementType::Sinusoidal;
+    case SpiralType::Cosine:           return ElementType::Cosine;
+    case SpiralType::Bloss:            return ElementType::Bloss;
+    case SpiralType::Lemniscate:       return ElementType::Lemniscate;
+    case SpiralType::WienerBogen:      return ElementType::WienerBogen;
+    case SpiralType::Radioid:          return ElementType::Radioid;
+    case SpiralType::ElasticRadioid:   return ElementType::ElasticRadioid;
+    case SpiralType::NorwichSturm:     return ElementType::NorwichSturm;
+    case SpiralType::PseudoEllipticRadioid: return ElementType::PseudoEllipticRadioid;
+    case SpiralType::Logarithmic:      return ElementType::Logarithmic;
+    case SpiralType::Hyperbolic:       return ElementType::Hyperbolic;
+    case SpiralType::Polynomial:       return ElementType::Polynomial;
+    case SpiralType::Quintic:          return ElementType::Quintic;
+    case SpiralType::PHQuintic:        return ElementType::PHQuintic;
+    case SpiralType::Biquadratic:      return ElementType::Biquadratic;
+    case SpiralType::Spline:           return ElementType::Spline;
+    case SpiralType::BlossEulerHybrid: return ElementType::BlossEulerHybrid;
+    case SpiralType::Clothoid:
+    default:                           return ElementType::Clothoid;
+    }
+}
+
+// ============================================================================
 //  spiralTypeName  (file-local helper)
 //
 //  Map SpiralType → AlignmentPoint::curveType token (uppercase, as written to
@@ -882,7 +926,7 @@ SolvedACA AlignmentSolver::solveACA(
     QPointF arc1Start,  double arc1AzStart,
     QPointF arc2Center, double arc2Radius,
     QPointF arc2End,    double arc2AzEnd,
-    SpiralType /*spiralType*/)
+    SpiralType spiralType)
 {
     SolvedACA result;
 
@@ -896,6 +940,24 @@ SolvedACA AlignmentSolver::solveACA(
         qWarning() << "[AlignmentSolver] solveACA: R1 ≈ R2 — degenerate (concentric arcs)";
         return result;
     }
+
+    // ── Equivalent-spiral family for the internal EggTransitionElement ──────
+    //  BUG FIX (previously this parameter was named /*spiralType*/ and
+    //  completely unused — every ACA solve silently built a Clothoid-family
+    //  EggTransitionElement regardless of what the caller/dialog asked for,
+    //  so switching the dialog's spiral-type combo had zero effect on the
+    //  ACA result). See spiralTypeToElementType() just above makeTransitionElement()
+    //  for the enum-to-enum mapping (SpiralType and ElementType share names
+    //  but not ordinal values). isFamilyEggCompatible() families
+    //  (Lemniscate/WienerBogen/PHQuintic/ElasticRadioid/NorwichSturm/
+    //  PseudoEllipticRadioid) aren't valid equivalent-spiral shapes for the
+    //  Egg construction (see that method's doc comment in
+    //  RailwayAlignmentElement.h) — EggTransitionElement itself falls back
+    //  to Clothoid for those, but we determine that HERE too so
+    //  result.actualSpiralType can report it transparently to the caller.
+    const ElementType eggFamily = spiralTypeToElementType(spiralType);
+    const bool familyCompatible = EggTransitionElement::isFamilyEggCompatible(eggFamily);
+    result.actualSpiralType = familyCompatible ? spiralType : SpiralType::Clothoid;
 
     // ── Determine turn signs from arc centres relative to the travel direction ─
     //   signR1 = +1 if Arc₁ turns right, -1 if left; signR2 likewise for Arc₂.
@@ -965,7 +1027,7 @@ SolvedACA AlignmentSolver::solveACA(
     auto DistOfLs = [&](double LsTrial) -> double {
         if (LsTrial <= 1e-9) return std::abs(std::abs(signedR1) - std::abs(signedR2));
         const QPointF ctrial1 = CircleCenterFromSpiralEnd(QPointF(0.0, 0.0), 0.0, signedR1);
-        EggTransitionElement egg(signedR1, signedR2, LsTrial);
+        EggTransitionElement egg(signedR1, signedR2, LsTrial, eggFamily);
         const LocalFrame lf = egg.localFrame(LsTrial);
         const QPointF sc2Local = rotateLocal(lf.x, lf.y, 0.0);
         const QPointF ctrial2  = CircleCenterFromSpiralEnd(sc2Local, lf.theta, signedR2);
@@ -1095,7 +1157,7 @@ SolvedACA AlignmentSolver::solveACA(
 
     // ── 由 Ls 反推 ALFA1(=azSC1)：比較本地試算方向跟實際 O1→O2 方向 ────────
     const QPointF ctrial1 = CircleCenterFromSpiralEnd(QPointF(0.0, 0.0), 0.0, signedR1);
-    EggTransitionElement eggF(signedR1, signedR2, Ls);
+    EggTransitionElement eggF(signedR1, signedR2, Ls, eggFamily);
     const LocalFrame lfF = eggF.localFrame(Ls);
     const double thetaSF = lfF.theta;
     const QPointF sc2LocalF = rotateLocal(lfF.x, lfF.y, 0.0);
@@ -1974,6 +2036,167 @@ SolvedReverseSpiral AlignmentSolver::solveReverseSpiralLM(
 }
 
 // ============================================================================
+//  solveReverseSCS  — Tangent → SpiralIn(L1) → Arc1(R1) → [反向對
+//  Lm1/Lm2，EqualLength] → Arc2(R2) → SpiralOut(L2) → Tangent
+//
+//  見 AlignmentSolver.h 宣告處的分步說明；本函式不做任何聯立迭代，純粹
+//  是「兩段封閉式正/反向追跡 + 1 次既有 solveReverseSpiral() 呼叫」，
+//  刻意避免對「L1/L2 全部留白」重新推導一套新的聯立方程式（該情境數學上
+//  是 1 自由度欠定，已與使用者確認改為 L1/L2 皆為輸入已知量，見
+//  AlignmentDocument.h ReverseSCSSpec 註解）。
+// ============================================================================
+
+SolvedReverseSCS AlignmentSolver::solveReverseSCS(
+    double radius1, double length1, SpiralType type1,
+    double radius2, double length2, SpiralType type2,
+    SpiralType typeM1, SpiralType typeM2,
+    const QPointF& tan1Start, const QPointF& tan1End,
+    const QPointF& tan2Start, const QPointF& tan2End)
+{
+    SolvedReverseSCS result;
+
+    const double R1 = std::abs(radius1);
+    const double R2 = std::abs(radius2);
+    if (R1 < 1e-9 || R2 < 1e-9) {
+        qWarning() << "[AlignmentSolver] solveReverseSCS: radius1/radius2 ≈ 0";
+        return result;
+    }
+    const double L1 = std::max(0.0, length1);
+    const double L2 = std::max(0.0, length2);
+
+    // ── Step 1：轉向自動判斷 ────────────────────────────────────────────────
+    //    以 tangent1 方向的右垂直分量，判斷 tangent2 的參考點落在哪一側：
+    //    落在右側 → Arc1 先右彎（signR1=+1）；落在左側 → Arc1 先左彎
+    //    （signR1=-1）。Arc2 轉向恆與 Arc1 相反（反向曲線定義）。
+    const double az1 = azimuthOf(tan1Start, tan1End);
+    const double sA1 = std::sin(az1), cA1 = std::cos(az1);
+    const double n1x = cA1, n1y = -sA1;   // tangent1 的右垂直方向
+
+    const double sideVal = (tan2Start.x() - tan1End.x()) * n1x
+                         + (tan2Start.y() - tan1End.y()) * n1y;
+    const int signR1 = (sideVal >= 0.0) ? 1 : -1;
+    const int signR2 = -signR1;
+
+    // ── Step 2：正向追跡 tangent1 + L1 → Arc1 起點（PC₁）───────────────────
+    QPointF arc1Start;
+    double  arc1AzStart = 0.0;
+    QPointF arc1Center;
+    {
+        const auto elem = makeTransitionElement(type1, L1, signR1 * R1);
+        const LocalFrame lf = elem->localFrame(L1);
+        const double Xm = lf.x, Ym = lf.y, thetaS = lf.theta;
+
+        const double worldDx = Xm * sA1 + Ym * cA1;
+        const double worldDy = Xm * cA1 - Ym * sA1;
+        arc1Start    = tan1End + QPointF(worldDx, worldDy);
+        arc1AzStart  = az1 + thetaS;
+        arc1Center   = QPointF(
+            arc1Start.x() + signR1 * R1 * std::cos(arc1AzStart),
+            arc1Start.y() - signR1 * R1 * std::sin(arc1AzStart));
+    }
+
+    // ── Step 3：反向追跡 tangent2 + L2 → Arc2 終點（PT₂）───────────────────
+    //    「走 ST→CS、訊號取反」，比照 solveCA() Step 4 的既有慣例。
+    QPointF arc2End;
+    double  arc2AzEnd = 0.0;
+    QPointF arc2Center;
+    {
+        const double az2 = azimuthOf(tan2Start, tan2End);
+        const double sA2 = std::sin(az2), cA2 = std::cos(az2);
+
+        const auto elem = makeTransitionElement(type2, L2, -signR2 * R2);
+        const LocalFrame lf = elem->localFrame(L2);
+        const double Xm = lf.x, Ym = lf.y, thetaS = lf.theta;
+
+        const double azCS  = az2 + thetaS;
+        const double stDx  = Xm * sA2 + Ym * cA2;
+        const double stDy  = Xm * cA2 - Ym * sA2;
+
+        arc2End    = tan2Start - QPointF(stDx, stDy);
+        arc2AzEnd  = azCS;
+        arc2Center = QPointF(
+            arc2End.x() + signR2 * R2 * std::cos(arc2AzEnd),
+            arc2End.y() - signR2 * R2 * std::sin(arc2AzEnd));
+    }
+
+    // ── Step 4：中間反向對，固定 EqualLength ───────────────────────────────
+    //
+    //  Arc₁/Arc₂ 的入口/出口幾何（arc1Pc/arc1Center/arc2Pt/arc2Center 等）
+    //  只依賴上面 Step 2／Step 3 算出的值，跟這裡的反向對解不解得出來
+    //  無關，所以不論成功或失敗都先填進 result——失敗時這組值就是唯一能
+    //  告訴使用者「兩弧實際落在哪裡、為什麼搭不起來」的診斷資訊（見下面
+    //  failureReason 組出的訊息，直接用得上這幾個值算出的圓心距離）。
+    result.arc1Pc     = arc1Start;
+    result.azArc1Pc   = arc1AzStart;
+    result.arc1Center = arc1Center;
+    result.signR1     = signR1;
+
+    result.arc2Pt     = arc2End;
+    result.azArc2Pt   = arc2AzEnd;
+    result.arc2Center = arc2Center;
+    result.signR2     = signR2;
+
+    result.R1 = R1;
+    result.R2 = R2;
+
+    const SolvedReverseSpiral rs = solveReverseSpiral(
+        arc1Center, R1, arc1Start, arc1AzStart,
+        arc2Center, R2, arc2End,   arc2AzEnd,
+        typeM1, typeM2,
+        ReverseSpiralStrategy::EqualLength, 0.0);
+
+    if (!rs.valid) {
+        // 組出具體數據的失敗說明，而不是只講「失敗」兩個字——這幾個數字
+        // 是判斷「為什麼搭不起來」最直接的線索：
+        //  - centerDist：兩弧圓心的實際距離。
+        //  - R1+R2／|R1-R2|：兩圓「外切」／「內切」的臨界距離，反向曲線
+        //    的兩弧圓心距離需要落在合理範圍內（太接近或太遠，緩和曲線
+        //    在 π·R·0.45 的掃描上限內都搭不出一個能讓兩段等長的交會點），
+        //    給使用者一個具體的參考基準，而不用自己去猜。
+        const double centerDist = std::hypot(arc2Center.x() - arc1Center.x(),
+                                             arc2Center.y() - arc1Center.y());
+        result.failureReason = QStringLiteral(
+            "Reverse pair (EqualLength) could not be solved.\n"
+            "Arc1 center = (%1, %2),  Arc2 center = (%3, %4)\n"
+            "Center distance = %5 m   |   R1+R2 = %6 m   |   |R1-R2| = %7 m\n"
+            "The transition-spiral search is capped at pi*R*0.45 per side"
+            " (~%8 m for Arc1, ~%9 m for Arc2); if the centers are far outside the"
+            " R1+R2/|R1-R2| range, or the required spiral length would exceed that cap,"
+            " no EqualLength junction exists for these inputs.\n"
+            "Try: larger/smaller R1 or R2, different L1/L2 (they shift where each arc"
+            " starts), or re-check which tangents were selected.")
+            .arg(arc1Center.x(), 0, 'f', 3).arg(arc1Center.y(), 0, 'f', 3)
+            .arg(arc2Center.x(), 0, 'f', 3).arg(arc2Center.y(), 0, 'f', 3)
+            .arg(centerDist, 0, 'f', 3)
+            .arg(R1 + R2, 0, 'f', 3)
+            .arg(std::abs(R1 - R2), 0, 'f', 3)
+            .arg(M_PI * R1 * 0.45, 0, 'f', 3)
+            .arg(M_PI * R2 * 0.45, 0, 'f', 3);
+
+        qWarning() << "[AlignmentSolver] solveReverseSCS: inner solveReverseSpiral() failed"
+                   << "(R1=" << R1 << "L1=" << L1 << "R2=" << R2 << "L2=" << L2
+                   << "centerDist=" << centerDist << ")";
+        return result;   // result.valid stays false; entry/exit geometry above is kept
+    }
+
+    result.valid          = true;
+    result.arc1TrimPoint  = rs.arc1TrimPoint;
+    result.azArc1Trim     = rs.azArc1Trim;
+    result.arc1Len        = rs.arc1Len;
+
+    result.Lm1             = rs.length1;
+    result.junction         = rs.junction;
+    result.junctionAzimuth  = rs.junctionAzimuth;
+    result.Lm2             = rs.length2;
+
+    result.arc2TrimPoint  = rs.arc2TrimPoint;
+    result.azArc2Trim     = rs.azArc2Trim;
+    result.arc2Len        = rs.arc2Len;
+
+    return result;
+}
+
+// ============================================================================
 //  solveCompoundChain  — S0 C0 S1 C1 ... Sn（N≥2 個圓弧），封閉解
 //
 //  結構上是 solveSCS 的直接推廣：
@@ -2474,6 +2697,23 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     };
     QVector<RSData> rsData(n);
 
+    // RSCS group data (ALIGNMENTREVSCS/RSCS) — stored per group's leading
+    // SpiralIn(L1) element index. See Pass 2g below and the emission-loop
+    // hasRSCS_* blocks (mirrors RSData's role, but for the 6-element group
+    // built by addReverseSCS(): SpiralIn(L1)/CircularArc(R1)/SpiralOut(Lm1)/
+    // SpiralIn(Lm2)/CircularArc(R2)/SpiralOut(L2)).
+    struct RSCSData {
+        bool              valid   = false;
+        SolvedReverseSCS  rscs;
+        int               arc1Idx = -1;   ///< index of CircularArc(R1)
+        int               mid1Idx = -1;   ///< index of SpiralOut(Lm1), reverse-pair 1st leg
+        int               mid2Idx = -1;   ///< index of SpiralIn(Lm2), reverse-pair 2nd leg
+        int               arc2Idx = -1;   ///< index of CircularArc(R2)
+        int               out2Idx = -1;   ///< index of SpiralOut(L2)
+        int               tanAfterIdx = -1; ///< real Tangent(after) index
+    };
+    QVector<RSCSData> rscsData(n);
+
     // ════════════════════════════════════════════════════════════════════════
     //  Pass 1 – Fixed CircularArc: foot-of-perpendicular T1 / T2
     // ════════════════════════════════════════════════════════════════════════
@@ -2602,6 +2842,13 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
     for (int i = 0; i < n - 2; ++i) {
         if (elems[i].type != EditableElementType::SpiralIn)  continue;
         if (elems[i].mode != ConstraintMode::Floating)        continue;
+        // RSCS 群組（見 Pass 2g）自成一套 6 元素辨識與求解路徑，即使
+        // tangentIdxBefore/After 恰好也指向兩條真正 Tangent（比照
+        // addCompoundChain() 的邊界切線共用慣例），也不可讓 Pass 2b 把它
+        // 前 3 個元素誤判為一般 SCS/複合鏈結——RSCS 中間的 SpiralOut
+        // （反向對第一段）長度尚未反解（此時為 0），提早被 Pass 2b 當成
+        // 一般 SCS 消費會產生錯誤幾何。
+        if (elems[i].isReverseSCSGroup)                       continue;
 
         // Expect the next two elements to be CircularArc and SpiralOut
         if (i + 2 >= n)                                        continue;
@@ -3025,11 +3272,24 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
 
         // arc1 azimuth at its start = arcData[arc1I].azPC
         const double az1Start = arcData[arc1I].azPC;
-        // arc2 azimuth at its end = azPC + arcLen / R (signed delta)
-        const double signedDelta2 = (elems[arc2I].radius >= 0.0)
-                                    ? (arcData[arc2I].arcLen / R2)
-                                    : -(arcData[arc2I].arcLen / R2);
-        const double az2End = arcData[arc2I].azPC + signedDelta2;
+        // arc2 azimuth at its end = azPC + arcLen/R2, signed by arc2's
+        // ACTUAL turn direction — NOT elems[arc2I].radius's sign. Fixed
+        // CircularArc elements (see HorizontalAlignmentEdit::addFixedCurve())
+        // always store radius = std::abs(radius), so "elems[arc2I].radius >=
+        // 0.0" is true unconditionally and carries no turn-direction
+        // information at all: a left-turning Arc₂ was previously always
+        // (silently, incorrectly) treated as right-turning here, corrupting
+        // az2End — and with it the whole ACA solve — for any ACA group
+        // whose second arc turns left. Re-derive the sign the same way
+        // Pass 1 did when computing arcData[arc2I].azPC (cross product of
+        // Arc₂'s own PC/PT relative to its centre — see the "Pass 1 – Fixed
+        // CircularArc" loop above).
+        const QPointF arc2R1 = arcData[arc2I].pc - elems[arc2I].arcCenter;
+        const QPointF arc2R2 = arcData[arc2I].pt - elems[arc2I].arcCenter;
+        const double  arc2CrossVal = arc2R1.x() * arc2R2.y() - arc2R1.y() * arc2R2.x();
+        const double  arc2TurnSign = (arc2CrossVal >= 0.0) ? 1.0 : -1.0;
+        const double az2End = arcData[arc2I].azPC
+                             + arc2TurnSign * (arcData[arc2I].arcLen / R2);
 
         const SolvedACA aca = solveACA(
             elems[arc1I].arcCenter, R1,
@@ -3081,6 +3341,12 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         if (elems[i].type != EditableElementType::SpiralIn)  continue;
         if (elems[i].mode != ConstraintMode::Floating)       continue;
         if (!elems[i].isReverseSpiralGroup)                  continue;
+        // RSCS 群組（Pass 2g）的中間反向對兩個元素也帶 isReverseSpiralGroup
+        // （沿用同一套「反向對」標記），但 tangentIdxBefore/After 存的是
+        // RSCS 群組外側的 Tangent index，不是 CircularArc index，必須交給
+        // Pass 2g 整組處理，這裡明確跳過（下面的型別檢查其實也會自然
+        // 擋掉，這裡加上明確判斷純粹是避免未來改動時的隱性耦合）。
+        if (elems[i].isReverseSCSGroup)                      continue;
 
         const int arc1I = elems[i].tangentIdxBefore;
         const int arc2I = elems[i].tangentIdxAfter;
@@ -3155,6 +3421,97 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
         arcData[arc2I].pc     = rs.arc2TrimPoint;
         arcData[arc2I].azPC   = rs.azArc2Trim;
         arcData[arc2I].arcLen = rs.arc2Len;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  Pass 2g — RSCS group  (Tangent → SpiralIn(L1) → CircularArc(R1) →
+    //            [反向對 Lm1/Lm2] → CircularArc(R2) → SpiralOut(L2) →
+    //            Tangent；見 AlignmentDocument.h ReverseSCSSpec、
+    //            AlignmentSolver.h solveReverseSCS() 說明）。
+    //
+    //  Identification: 連續 6 個元素，全部 isReverseSCSGroup==true，
+    //    型別依序為 SpiralIn / CircularArc / SpiralOut / SpiralIn /
+    //    CircularArc / SpiralOut，tangentIdxBefore/After 皆指向本群組外側
+    //    的兩條真正 Tangent（addReverseSCS() 建立時的固定慣例）。
+    //
+    //  本 Pass 完成 arcData／長度反解寫回後，寫入 rscsData[i]；「Build
+    //  AlignmentPoint sequence」區塊的 hasRSCS_asArc1／hasRSCS_asArc2／
+    //  hasRSCS_L1／hasRSCS_L2 幾個旗標（在 CircularArc 分支內，緊鄰
+    //  hasLC/hasCA/hasRS_exit/hasRS_entry 之後）負責讀取 rscsData 並發出
+    //  對應的 AlignmentPoint（TS/CS/ST/SC 等關鍵點）。尚未在真實建置環境
+    //  驗證過，見與 Jack 的討論——下一步務必先跑一個具體案例核對座標。
+    // ════════════════════════════════════════════════════════════════════════
+    for (int i = 0; i + 5 < n; ++i) {
+        if (elems[i].type != EditableElementType::SpiralIn) continue;
+        if (elems[i].mode != ConstraintMode::Floating)       continue;
+        if (!elems[i].isReverseSCSGroup)                     continue;
+
+        const int arc1I = i + 1;
+        const int mid1I = i + 2;
+        const int mid2I = i + 3;
+        const int arc2I = i + 4;
+        const int out2I = i + 5;
+
+        if (elems[arc1I].type != EditableElementType::CircularArc || !elems[arc1I].isReverseSCSGroup ||
+            elems[mid1I].type != EditableElementType::SpiralOut   || !elems[mid1I].isReverseSCSGroup ||
+            elems[mid2I].type != EditableElementType::SpiralIn    || !elems[mid2I].isReverseSCSGroup ||
+            elems[arc2I].type != EditableElementType::CircularArc || !elems[arc2I].isReverseSCSGroup ||
+            elems[out2I].type != EditableElementType::SpiralOut   || !elems[out2I].isReverseSCSGroup) {
+            qWarning() << "[AlignmentSolver] Pass2g RSCS idx" << i
+                       << ": malformed 6-element group — skipping";
+            continue;
+        }
+
+        const int tb = elems[i].tangentIdxBefore;
+        const int ta = elems[i].tangentIdxAfter;
+        if (tb < 0 || tb >= n || elems[tb].type != EditableElementType::Tangent) {
+            qWarning() << "[AlignmentSolver] Pass2g RSCS idx" << i << ": invalid tangentIdxBefore =" << tb;
+            continue;
+        }
+        if (ta < 0 || ta >= n || elems[ta].type != EditableElementType::Tangent) {
+            qWarning() << "[AlignmentSolver] Pass2g RSCS idx" << i << ": invalid tangentIdxAfter =" << ta;
+            continue;
+        }
+
+        const SolvedReverseSCS rscs = solveReverseSCS(
+            elems[arc1I].radius, elems[i].length,     elems[i].spiralType1,
+            elems[arc2I].radius, elems[out2I].length,  elems[out2I].spiralType1,
+            elems[mid1I].spiralType1, elems[mid2I].spiralType1,
+            tanStart[tb], tanEnd[tb], tanStart[ta], tanEnd[ta]);
+
+        if (!rscs.valid) {
+            qWarning() << "[AlignmentSolver] Pass2g RSCS idx" << i << ": solveReverseSCS() failed";
+            continue;
+        }
+
+        // Write solved mid-pair lengths back so they survive serialisation.
+        const_cast<EditableElement&>(elems[mid1I]).length = rscs.Lm1;
+        const_cast<EditableElement&>(elems[mid2I]).length = rscs.Lm2;
+
+        arcData[arc1I].valid  = true;
+        arcData[arc1I].pc     = rscs.arc1Pc;
+        arcData[arc1I].pt     = rscs.arc1TrimPoint;
+        arcData[arc1I].azPC   = rscs.azArc1Pc;
+        arcData[arc1I].arcLen = rscs.arc1Len;
+
+        arcData[arc2I].valid  = true;
+        arcData[arc2I].pc     = rscs.arc2TrimPoint;
+        arcData[arc2I].pt     = rscs.arc2Pt;
+        arcData[arc2I].azPC   = rscs.azArc2Trim;
+        arcData[arc2I].arcLen = rscs.arc2Len;
+
+        RSCSData rd;
+        rd.valid       = true;
+        rd.rscs        = rscs;
+        rd.arc1Idx     = arc1I;
+        rd.mid1Idx     = mid1I;
+        rd.mid2Idx     = mid2I;
+        rd.arc2Idx     = arc2I;
+        rd.out2Idx     = out2I;
+        rd.tanAfterIdx = ta;
+        rscsData[i] = rd;
+
+        i += 5;   // skip the remaining 5 elements of this group
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -3336,6 +3693,30 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             const int ta = elems[i].tangentIdxAfter;
             if (ta >= 0 && ta < n && elems[ta].type == EditableElementType::Tangent)
                 handledBySCS[ta] = true;
+        }
+        // RSCS group (ALIGNMENTREVSCS/RSCS): the 4 spiral elements
+        // (SpiralIn(L1), SpiralOut(Lm1), SpiralIn(Lm2), SpiralOut(L2)) are
+        // all emitted inline by the hasRSCS_* blocks below, attached to the
+        // two CircularArc elements — suppress just the spirals here (mirrors
+        // the hasLC/hasCA suppression pattern), leaving arc1Idx/arc2Idx to
+        // flow through the normal CircularArc branch. The exit tangent
+        // (tanAfterIdx) is suppressed too, same reasoning as the CA block
+        // above: its ST keypoint is emitted inline only when L2 > 0 (see
+        // the hasRSCS_asArc2exit block); when L2 == 0 we deliberately leave
+        // the exit tangent un-suppressed so it still gets a normal "CT"
+        // Tangent row.
+        if (rscsData[i].valid) {
+            const RSCSData& rd = rscsData[i];
+            handledBySCS[i]          = true;   // SpiralIn(L1)
+            handledBySCS[rd.mid1Idx] = true;   // SpiralOut(Lm1)
+            handledBySCS[rd.mid2Idx] = true;   // SpiralIn(Lm2)
+            handledBySCS[rd.out2Idx] = true;   // SpiralOut(L2)
+
+            if (elems[rd.out2Idx].length > 1e-9
+                && rd.tanAfterIdx >= 0 && rd.tanAfterIdx < n
+                && elems[rd.tanAfterIdx].type == EditableElementType::Tangent) {
+                handledBySCS[rd.tanAfterIdx] = true;
+            }
         }
     }
 
@@ -3633,6 +4014,39 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             // This arc is Arc₂ of a reverse-spiral group → SpiralIn at i-2
             const bool hasRS_entry = (i >= 2     && rsData[i-2].valid && rsData[i-2].arc2Idx == i);
 
+            // ── RSCS group (ALIGNMENTREVSCS/RSCS) ─────────────────────────────
+            // Group layout (base index g = the leading SpiralIn(L1)):
+            //   g, g+1=arc1Idx, g+2=mid1Idx, g+3=mid2Idx, g+4=arc2Idx, g+5=out2Idx
+            // This arc is Arc₁ of an RSCS group → base sits at (i-1)
+            const bool hasRSCS_asArc1 = (i > 0 && rscsData[i-1].valid && rscsData[i-1].arc1Idx == i);
+            // This arc is Arc₂ of an RSCS group → base sits at (i-4)
+            const bool hasRSCS_asArc2 = (i >= 4 && rscsData[i-4].valid && rscsData[i-4].arc2Idx == i);
+            // Whether Arc₁'s entry spiral (L1) actually has non-zero length
+            // (addReverseSCS() allows L1=0, degenerating this side to a plain
+            // "TC" tangent-to-arc join — mirrors solveSCS()'s L1=0 handling).
+            const bool hasRSCS_L1 = hasRSCS_asArc1 && elems[i-1].length > 1e-9;
+            // Whether Arc₂'s exit spiral (L2) actually has non-zero length.
+            const bool hasRSCS_L2 = hasRSCS_asArc2 && elems[rscsData[i-4].out2Idx].length > 1e-9;
+
+            // ── Emit RSCS entry spiral keypoint (TS) before Arc₁'s own point ──
+            if (hasRSCS_L1) {
+                const SolvedReverseSCS& rscs = rscsData[i-1].rscs;
+                const QString curveType = spiralTypeName(elems[i-1].spiralType1);
+                const int tb = elems[i-1].tangentIdxBefore;
+
+                AlignmentPoint tspt;
+                tspt.tsc       = QStringLiteral("TS");
+                tspt.curveType = curveType;
+                tspt.easting   = tanEnd[tb].x();
+                tspt.northing  = tanEnd[tb].y();
+                tspt.azimuth   = azimuthOf(tanStart[tb], tanEnd[tb]);
+                tspt.length    = elems[i-1].length;
+                tspt.radius    = rscs.R1;
+                tspt.chainage  = chainage;
+                chainage      += elems[i-1].length;
+                pts.append(tspt);
+            }
+
             // ── Emit LC spiral keypoint (TS) before the arc CC point ──────────
             if (hasLC) {
                 const SolvedLC& lc = lcData[i-1].lc;
@@ -3657,7 +4071,7 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
             //   前一元素為 Tangent → "TC"（切線→圓弧）
             //   前一元素為 CircularArc → "CC"（弧→弧，反向曲線）
             {
-                const bool hasLC_entry = (hasLC || hasACA_entry || hasRS_entry);
+                const bool hasLC_entry = (hasLC || hasACA_entry || hasRS_entry || hasRSCS_L1 || hasRSCS_asArc2);
                 if (hasLC_entry) {
                     pt.tsc = QStringLiteral("SC");
                 } else {
@@ -3763,6 +4177,59 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 continue;  // skip default PT waypoint for Arc₁
             }
 
+            // ── Emit RSCS reverse-pair keypoints (CS: Arc₁→Lm1, junction,
+            //    TS: Lm2→Arc₂) — mirrors the hasRS_exit block above exactly,
+            //    sourced from rscsData instead of rsData (see Pass 2g /
+            //    solveReverseSCS() — same underlying geometry shape, this
+            //    arc's exit spiral is just called Lm1/Lm2 here since it sits
+            //    between two Floating arcs traced from raw tangents rather
+            //    than two pre-existing Fixed arcs).
+            if (hasRSCS_asArc1) {
+                const SolvedReverseSCS& rscs = rscsData[i-1].rscs;
+                const int mid1Idx = rscsData[i-1].mid1Idx;
+                const int mid2Idx = rscsData[i-1].mid2Idx;
+
+                // CS point = start of Lm1 (exit of Arc₁ = entry of reverse pair)
+                AlignmentPoint cspt;
+                cspt.tsc       = QStringLiteral("CS");
+                cspt.curveType = spiralTypeName(elems[mid1Idx].spiralType1);
+                cspt.easting   = rscs.arc1TrimPoint.x();
+                cspt.northing  = rscs.arc1TrimPoint.y();
+                cspt.azimuth   = rscs.azArc1Trim;
+                cspt.length    = rscs.Lm1;
+                cspt.radius    = rscs.R1;
+                cspt.chainage  = chainage;
+                chainage      += rscs.Lm1;
+                pts.append(cspt);
+
+                // ST point = end of Lm1 = the curvature-zero junction
+                AlignmentPoint stpt;
+                stpt.tsc      = QStringLiteral("ST");
+                stpt.easting  = rscs.junction.x();
+                stpt.northing = rscs.junction.y();
+                stpt.azimuth  = rscs.junctionAzimuth;
+                stpt.chainage = chainage;
+                pts.append(stpt);
+
+                // TS point = start of Lm2, same location as ST above (zero
+                // chainage gap — the S1><S2 junction itself).
+                AlignmentPoint tspt;
+                tspt.tsc       = QStringLiteral("TS");
+                tspt.curveType = spiralTypeName(elems[mid2Idx].spiralType1);
+                tspt.easting   = rscs.junction.x();
+                tspt.northing  = rscs.junction.y();
+                tspt.azimuth   = rscs.junctionAzimuth;
+                tspt.length    = rscs.Lm2;
+                tspt.radius    = rscs.R2;
+                tspt.chainage  = chainage;
+                chainage      += rscs.Lm2;
+                pts.append(tspt);
+
+                // Arc₂ (starting at rscs.arc2TrimPoint) will be emitted in
+                // the normal arc flow below for element rscsData[i-1].arc2Idx.
+                continue;  // skip default PT waypoint for Arc₁
+            }
+
             // ── Emit CA spiral keypoint (CS then ST) after the arc ────────────
             if (hasCA) {
                 const SolvedCA& ca = caData[i+1].ca;
@@ -3796,6 +4263,48 @@ AlignmentSolver::solve(const QVector<EditableElement>& elems)
                 stpt.easting  = ca.stPoint.x();
                 stpt.northing = ca.stPoint.y();
                 stpt.azimuth  = ca.azST;
+                stpt.length   = tlen;
+                stpt.chainage = chainage;
+                chainage     += tlen;
+                pts.append(stpt);
+                continue;  // skip the default PT waypoint below
+            }
+
+            // ── Emit RSCS exit spiral keypoint (CS then ST) after Arc₂ ────────
+            //  Mirrors the hasCA block above, but L2 is a direct input (see
+            //  ReverseSCSSpec) rather than solved via bisection, so the ST
+            //  point is simply tan2Start (the anchor used unmodified by
+            //  solveReverseSCS() — no additional trimming applied on this
+            //  side, see AlignmentSolver.h solveReverseSCS() step 3).
+            if (hasRSCS_L2) {
+                const RSCSData& rd  = rscsData[i-4];
+                const SolvedReverseSCS& rscs = rd.rscs;
+                const int out2Idx = rd.out2Idx;
+                const int ta      = rd.tanAfterIdx;
+                const QString curveType = spiralTypeName(elems[out2Idx].spiralType1);
+
+                // CS point (arc-end / spiral-start)
+                AlignmentPoint cspt;
+                cspt.tsc       = QStringLiteral("CS");
+                cspt.curveType = curveType;
+                cspt.easting   = rscs.arc2Pt.x();
+                cspt.northing  = rscs.arc2Pt.y();
+                cspt.azimuth   = rscs.azArc2Pt;
+                cspt.length    = elems[out2Idx].length;
+                cspt.radius    = rscs.R2;
+                cspt.chainage  = chainage;
+                chainage      += elems[out2Idx].length;
+                pts.append(cspt);
+
+                // ST waypoint = start of the (un-trimmed) exit tangent.
+                const double tlen = (ta >= 0 && ta < n)
+                    ? QLineF(tanStart[ta], tanEnd[ta]).length()
+                    : 0.0;
+                AlignmentPoint stpt;
+                stpt.tsc      = QStringLiteral("ST");
+                stpt.easting  = tanStart[ta].x();
+                stpt.northing = tanStart[ta].y();
+                stpt.azimuth  = azimuthOf(tanStart[ta], tanEnd[ta]);
                 stpt.length   = tlen;
                 stpt.chainage = chainage;
                 chainage     += tlen;

@@ -112,24 +112,6 @@ QString curveTypeToDisplay(const QString& ct)
     return QObject::tr("STRAIGHT");
 }
 
-/// 方位角（弧度，順時針由北）→ ddd°mm'ss.sss" 格式，不足位補零
-/// 例：方位角 123.7524° → "123°45'08.640\""
-QString azimuthToDMS(double rad)
-{
-    double deg = qRadiansToDegrees(rad);
-    while (deg <    0.0) deg += 360.0;
-    while (deg >= 360.0) deg -= 360.0;
-    const int    d = static_cast<int>(deg);
-    const double rem1 = (deg - d) * 60.0;
-    const int    m = static_cast<int>(rem1);
-    const double s = (rem1 - m) * 60.0;
-    // 度：3 位補零；分：2 位補零；秒：ss.sss（共 6 字元）補零
-    return QString(u8"%1\u00B0%2'%3\"")
-        .arg(d,  3, 10, QChar('0'))
-        .arg(m,  2, 10, QChar('0'))
-        .arg(s,  6, 'f', 3, QChar('0'));
-}
-
 /// 唯讀儲存格（灰底）
 QTableWidgetItem* roItem(const QString& text,
                          const QColor& bg = QColor(242, 242, 242))
@@ -305,6 +287,27 @@ public:
 };
 
 } // namespace
+
+// 方位角（弧度，順時針由北）→ ddd°mm'ss.sss" 格式，不足位補零
+// 例：方位角 123.7524° → "123°45'08.640\""
+// ⚠️ 特意放在匿名 namespace 外（有外部連結、宣告於 AlignmentDataTableDialog.h），
+// 讓其他對話框（例如 CompoundChainCalcDialog）也能重用同一份格式化邏輯，
+// 不需要各自重複實作一份、日後格式要調整還要記得改好幾個地方。
+QString azimuthToDMS(double rad)
+{
+    double deg = qRadiansToDegrees(rad);
+    while (deg <    0.0) deg += 360.0;
+    while (deg >= 360.0) deg -= 360.0;
+    const int    d = static_cast<int>(deg);
+    const double rem1 = (deg - d) * 60.0;
+    const int    m = static_cast<int>(rem1);
+    const double s = (rem1 - m) * 60.0;
+    // 度：3 位補零；分：2 位補零；秒：ss.sss（共 6 字元）補零
+    return QString(u8"%1\u00B0%2'%3\"")
+        .arg(d,  3, 10, QChar('0'))
+        .arg(m,  2, 10, QChar('0'))
+        .arg(s,  6, 'f', 3, QChar('0'));
+}
 
 // ============================================================================
 //  Construction / setup

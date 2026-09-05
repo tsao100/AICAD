@@ -198,6 +198,16 @@ struct SolvedACA
     QPointF arc2EndPoint;      ///< Original arc2 end (PT₂), unchanged
     double  arc2Len  = 0.0;   ///< Trimmed arc2 length  SC₂ → PT₂ [m]
     double  azSC2    = 0.0;   ///< Forward azimuth at SC₂ [rad]
+
+    /** The SpiralType actually used to build the internal EggTransitionElement.
+     *  Equal to the requested type UNLESS that type failed
+     *  EggTransitionElement::isFamilyEggCompatible() (Lemniscate,
+     *  WienerBogen, PHQuintic, ElasticRadioid, NorwichSturm,
+     *  PseudoEllipticRadioid), in which case this reports
+     *  SpiralType::Clothoid — the family EggTransitionElement transparently
+     *  fell back to. Compare against the requested type to detect a
+     *  fallback (see AddSpiralCalcDialog::onCalculate()'s ACA branch). */
+    SpiralType actualSpiralType = SpiralType::Clothoid;
 };
 
 // ============================================================================
@@ -265,6 +275,66 @@ struct ReverseSpiralFamilySample
     double  length1 = 0.0;
     double  length2 = 0.0;
     QPointF junction;
+};
+
+// ============================================================================
+//  SolvedReverseSCS  — Tangent → SpiralIn(L1) → Arc1(R1) → [反向對
+//  Lm1/Lm2，EqualLength] → Arc2(R2) → SpiralOut(L2) → Tangent
+//
+//  由 solveReverseSCS() 產生：R1/L1/R2/L2 皆為輸入已知量（直接沿兩條
+//  給定切線做正向/反向幾何追跡，非反解），只有 Lm1/Lm2 交由內部呼叫既有
+//  solveReverseSpiral(EqualLength) 反解。座標/角度慣例與 SolvedSCS、
+//  SolvedReverseSpiral 相同。
+// ============================================================================
+
+struct SolvedReverseSCS
+{
+    bool    valid = false;
+
+    /**
+     * @brief valid==false 時，說明求解失敗原因的可讀文字（已內嵌具體數據，
+     *        例如兩弧圓心距離、R1+R2、|R1-R2| 等），供 UI（見
+     *        AlignmentReverseSCSCalcDialog::onCalculate()）直接顯示，
+     *        不需 UI 層重新計算或猜測失敗原因。valid==true 時為空字串。
+     *
+     *        下面 arc1Pc/arc1Center/signR1/arc2Pt/arc2Center/signR2/R1/R2
+     *        這組「入口/出口幾何」不論成功或失敗都會照樣算出並填入——
+     *        這幾個值只依賴使用者直接輸入的 R1/L1/R2/L2 與兩條切線，跟
+     *        中間反向對解不解得出來無關（見 solveReverseSCS() 內部的
+     *        Step 2／Step 3），失敗時仍是有意義的診斷資訊：使用者可以
+     *        看到兩弧實際落在哪裡、兩圓心距離是多少，藉此判斷是半徑
+     *        太大/太小、還是切線本身間距不合理。
+     */
+    QString failureReason;
+
+    // Arc₁：PC₁（入螺旋 L1 終點）→ 反向對交會前的裁切點
+    QPointF arc1Pc;             ///< Arc1 起點（= SpiralIn(L1) 終點）
+    double  azArc1Pc = 0.0;     ///< Arc1 起點切線方位角 [rad]
+    QPointF arc1Center;
+    QPointF arc1TrimPoint;      ///< Arc1 裁切後終點（反向對 Lm1 起點）
+    double  azArc1Trim = 0.0;   ///< Arc1TrimPoint 切線方位角 [rad]
+    double  arc1Len  = 0.0;     ///< 裁切後 Arc1 弧長 [m]
+    int     signR1   = 1;       ///< Arc1 轉向：+1 = 右彎，-1 = 左彎（自動判斷）
+
+    double  Lm1 = 0.0;          ///< 反向對第一段（Arc1 出口）解出的長度 [m]
+
+    /** 反向對過零交會點（Lm1 終點 == Lm2 起點）。 */
+    QPointF junction;
+    double  junctionAzimuth = 0.0;
+
+    double  Lm2 = 0.0;          ///< 反向對第二段（Arc2 入口）解出的長度 [m]
+
+    // Arc₂：反向對交會後的裁切起點 → PT₂（出螺旋 L2 起點）
+    QPointF arc2TrimPoint;      ///< Arc2 裁切後起點（反向對 Lm2 終點）
+    double  azArc2Trim = 0.0;
+    QPointF arc2Center;
+    QPointF arc2Pt;             ///< Arc2 終點（= SpiralOut(L2) 起點）
+    double  azArc2Pt = 0.0;
+    double  arc2Len  = 0.0;     ///< 裁切後 Arc2 弧長 [m]
+    int     signR2   = -1;      ///< Arc2 轉向，恆與 signR1 相反
+
+    double  R1 = 0.0;
+    double  R2 = 0.0;
 };
 
 // ============================================================================
@@ -534,7 +604,18 @@ public:
      * @param arc2Radius   Absolute radius of Arc₂ [m].
      * @param arc2End      Unchanged end (PT₂) of Fixed Arc₂.
      * @param arc2AzEnd    Forward azimuth at PT₂ [rad].
-     * @param spiralType   Clothoid family (default: Clothoid).
+     * @param spiralType   Equivalent-spiral family for the internal
+     *                     EggTransitionElement (default: Clothoid). Families
+     *                     EggTransitionElement::isFamilyEggCompatible()
+     *                     rejects (Lemniscate, WienerBogen, PHQuintic,
+     *                     ElasticRadioid, NorwichSturm, PseudoEllipticRadioid
+     *                     — see that method's doc comment) transparently
+     *                     fall back to Clothoid inside EggTransitionElement
+     *                     itself; SolvedACA::actualSpiralType reports which
+     *                     family was actually used, so callers (e.g.
+     *                     AddSpiralCalcDialog) can surface the fallback
+     *                     instead of silently showing Clothoid-based numbers
+     *                     under the requested type's name.
      * @return SolvedACA with valid==true on success.
      */
     static SolvedACA solveACA(
@@ -624,6 +705,41 @@ public:
         SpiralType type1, SpiralType type2,
         ReverseSpiralStrategy strategy, double strategyParam,
         QPointF pickedJunctionHint = QPointF());
+
+    /**
+     * @brief 求解 ALIGNMENTREVSCS（RSCS）反向 SCS+SCS：Tangent(before) →
+     *        SpiralIn(L1) → Arc1(R1) → [反向對 Lm1/Lm2，EqualLength] →
+     *        Arc2(R2) → SpiralOut(L2) → Tangent(after)。
+     *
+     * 作法（非聯立迭代，全程封閉式追跡 + 1 次既有 solveReverseSpiral()
+     * 呼叫，見 AlignmentDocument.h ReverseSCSSpec 註解的設計動機）：
+     *   1. 轉向自動判斷：以 tangent1 方向的右垂直分量判斷 tangent2 落在
+     *      哪一側，決定 signR1（Arc1 轉向），signR2 = -signR1。
+     *   2. 由 tangent1（tan1Start/tan1End）+ L1 + type1 正向追跡（沿用
+     *      makeTransitionElement + LocalFrame 的世界座標轉換慣例，等同
+     *      solveLC() Step 4 的正向版本）算出 Arc1 起點（PC₁）、起點方位
+     *      角、與圓心。
+     *   3. 由 tangent2（tan2Start/tan2End）+ L2 + type2 反向追跡（等同
+     *      solveCA() Step 4 用的「走 ST→CS、訊號取反」版本）算出 Arc2
+     *      終點（PT₂）、終點方位角、與圓心。
+     *   4. 兩弧的起點/終點狀態皆已知後，直接呼叫既有
+     *      solveReverseSpiral(..., ReverseSpiralStrategy::EqualLength)
+     *      反解中間的 Lm1/Lm2 與交會點。
+     *
+     * @param tan1Start/tan1End  入切線（Tangent(before)）的兩個端點，僅用
+     *                           其方向；沿用 solveLC()/solveSCS() 的慣例，
+     *                           以 tan1End 做為追跡錨點。
+     * @param tan2Start/tan2End  出切線（Tangent(after)）的兩個端點；以
+     *                           tan2Start 做為追跡錨點（沿用 solveCA() 的
+     *                           stPoint 慣例）。
+     * @return SolvedReverseSCS，valid==true 時全部欄位皆已求解。
+     */
+    static SolvedReverseSCS solveReverseSCS(
+        double radius1, double length1, SpiralType type1,
+        double radius2, double length2, SpiralType type2,
+        SpiralType typeM1, SpiralType typeM2,
+        const QPointF& tan1Start, const QPointF& tan1End,
+        const QPointF& tan2Start, const QPointF& tan2End);
 
     /**
      * @brief 求解 S0 C0 S1 C1 ... Sn 複合緩和曲線鏈結（N≥2 個圓弧）。

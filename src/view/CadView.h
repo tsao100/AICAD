@@ -172,6 +172,13 @@ public:
     /// （GetGeom 模式下 command 已結束，需要區分 idle 與 pick 路徑）
     void setConstraintPickActive(bool active);
 
+    /// 「尺寸參數選取插入」模式（見 dimensionRefPicked() 訊號說明）。啟用時，
+    /// 點擊命中尺寸線／文字改為發出 dimensionRefPicked()，不做一般選取／
+    /// 拖曳；不影響其他滑鼠操作（平移、縮放、一般幾何選取）。由
+    /// DimExpressionDialog 在顯示/隱藏時開關。
+    void setRefPickModeActive(bool active);
+    bool isRefPickModeActive() const;
+
     /// 窗選 / 穿越窗選是否正在進行中（包含拖曳中或等待第二次點擊）。
     /// 供 GripEventFilter 判斷是否應暫時避開 grip 命中檢測，避免卡住流程。
     bool isBoxSelectArmed() const;
@@ -483,6 +490,15 @@ Q_SIGNALS:
      *        例如「已選取 N 條邊」）。實際選取集合請呼叫 pickedEdges() 取得。
      */
     void edgePicked();
+
+    /**
+     * @brief 尺寸參數「選取插入」模式（見 setRefPickModeActive()）啟用時，
+     *        點擊命中一條尺寸線／文字所發出，帶出該尺寸對應的約束 UUID。
+     *        用於 DimExpressionDialog：使用者可以不打字，直接點選草圖裡
+     *        其他既有的尺寸標註，把它的自動命名參數（d1、a1…）插入正在
+     *        編輯的運算式裡。
+     */
+    void dimensionRefPicked(const QString& constraintUuid);
 
     /**
      * @brief 視圖類型改變時發出
