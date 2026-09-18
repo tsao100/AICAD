@@ -136,7 +136,7 @@ void SketchPanel::setupConstraintGroup(QWidget*, QVBoxLayout* layout)
         {&m_btnFixed,         tr("固定"),    tr("Fixed：幾何元素位置固定"),           ConstraintType::Fixed},
         {&m_btnMidpoint,      tr("中點"),    tr("Midpoint：點在線段中點"),            ConstraintType::Midpoint},
         {&m_btnPointOnCurve,  tr("點在線"),  tr("PointOnCurve：點在曲線上"),         ConstraintType::PointOnCurve},
-        {&m_btnCollinear,     tr("共線"),    tr("Collinear：三點共線或線段共線"),     ConstraintType::Collinear},
+        {&m_btnCollinear,     tr("共線"),    tr("Collinear：兩線段共線，或一點與一線段共線"), ConstraintType::Collinear},
         {&m_btnSymmetric,     tr("對稱"),    tr("Symmetric：相對某軸對稱"),           ConstraintType::Symmetric},
         {&m_btnSlope,         tr("斜度"),    tr("Slope：線段斜度 dy/dx（依 Start→End 方向定正負號）\n"
                                                 "指令：SLOPE，輸入格式如 1:40、-1:40、2.5%、-2.5%"),
@@ -868,7 +868,11 @@ void SketchPanel::onConstraintReadyFromSession(
         }
         int dofBefore = m_sketch->degreesOfFreedom();
         m_sketch->addConstraint(c);
-        cad::SolveResult result = m_sketch->solveConstraints();
+        // ⚠️ 效能優化：addConstraint() 內部已經呼叫過一次 solveConstraints()
+        // 並完成求解＋AIS 重建；這裡改讀快取結果，不再重新呼叫
+        // solveConstraints() 讓整個 Newton-Raphson 疊代（含 BDCSVD）與
+        // AIS 重建/重繪白白多跑一遍。
+        cad::SolveResult result = m_sketch->lastSolveResult();
         int dofAfter = m_sketch->degreesOfFreedom();
         if (cmdMgr) {
             cmdMgr->printSuccess(
@@ -889,7 +893,16 @@ void SketchPanel::onConstraintReadyFromSession(
         return;
     }
 
-    cad::SolveResult result = m_sketch->solveConstraints();
+    // ⚠️ 效能優化：上面每個 constrainXxx()（Horizontal/Parallel/Collinear…）
+    // 內部都已經透過 addConstraint() 呼叫過一次 solveConstraints() 並完成
+    // 求解＋AIS 重建；這裡改讀快取結果，不再重新呼叫 solveConstraints()。
+    // 過去這裡會整個再求解＋重建一次，等於每下一個幾何約束都要跑兩遍
+    // Newton-Raphson 疊代（每次疊代都含一次 BDCSVD 分解）與兩遍 AIS 重建
+    // /重繪，在幾何/約束數量較多的草圖（例如 CurbPlinth.aicad 這類有數
+    // 十條線＋數十個約束的檔案）上，使用者感受到的延遲有一半以上其實是
+    // 這個重複求解白白浪費的，而非單一約束方程式（如 Collinear）本身的
+    // 計算量。
+    cad::SolveResult result = m_sketch->lastSolveResult();
     int dof = m_sketch->degreesOfFreedom();
     if (cmdMgr) {
         cmdMgr->printSuccess(

@@ -402,9 +402,17 @@ void applyToSelection(Sketch* sketch, const QStringList& geomUuids, const Transf
         // 與 SketchGripProvider::onGripDragEnd() 相同的收尾方式：
         // 先讓約束求解器有機會依新基準位置重新收斂，再請求重建。
         // solveAfter=false（拖曳預覽中間幀）時略過求解，只重建畫面。
+        //
+        // ⚠️ 效能修正：solveConstraints() 內部已經會透過 markDirty()
+        // emit 一次 rebuildRequested()，觸發 Document::rebuildFeature()
+        // 完整重建；若 solveAfter 為 true 就不需要在這裡再手動 emit 一次
+        // （那會讓每次套用變形都多跑一輪完整的 AIS Erase/rebuild/Display）。
+        // 只有 solveAfter=false（沒呼叫 solveConstraints()，什麼都不會
+        // 觸發重建）時，才需要自己明確 emit 一次。
         if (solveAfter)
             sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        else
+            Q_EMIT sketch->rebuildRequested();
     }
 }
 
@@ -620,8 +628,9 @@ QStringList cloneAndTransform(Sketch* sketch, const QStringList& geomUuids, cons
     }
 
     if (!result.isEmpty()) {
+        // ⚠️ 效能修正：見上方 applyToSelection() 的說明——solveConstraints()
+        // 內部已經 emit 過 rebuildRequested()，這裡不再重複 emit。
         sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
     }
 
     return result;
@@ -766,14 +775,19 @@ QStringList stretchWithinRect(Sketch* sketch, const QVector2D& rectMin, const QV
         for (const QString& u : fullyEnclosed)
             if (!affected.contains(u)) affected.append(u);
     } else if (!touched.isEmpty()) {
-        // 與 applyToSelection() 收尾方式一致：solveAfter 只決定要不要重新
-        // 解約束，rebuildRequested() 一律送出（movePoint() 自己雖然也會
-        // emit geometryChanged()，但畫面重繪實際掛的是 rebuildRequested()，
-        // 這裡明確送出、不依賴前者間接觸發，行為才會跟 applyToSelection()
-        // 一致）。
+        // ⚠️ 效能修正：原本這裡的註解說「solveAfter 只決定要不要重新解約束，
+        // rebuildRequested() 一律送出」——這個假設其實不成立：
+        // solveConstraints() 內部一定會透過 markDirty() emit 一次
+        // rebuildRequested()，觸發 Document::rebuildFeature() 完整重建；
+        // solveAfter=true 時再手動多 emit 一次，等於同一次操作把整個
+        // 「Erase 全部 AIS → rebuild() → Display 全部 AIS」跑兩遍。改成
+        // 與上面 applyToSelection() 一致：只有 solveAfter=false（沒呼叫
+        // solveConstraints()，不會有任何東西觸發重建）時才需要自己明確
+        // emit 一次。
         if (solveAfter)
             sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        else
+            Q_EMIT sketch->rebuildRequested();
     }
 
     return affected;

@@ -35,17 +35,26 @@ bool isFixedReferenceUuid(const QString& uuid)
            uuid.startsWith("sketch_origin:");
 }
 
-/// 統一的單一物件刪除入口：先當作一般幾何刪除，找不到再當作約束刪除
-/// （例如點擊尺寸線文字選到的是 constraint UUID，而不是幾何 UUID）。
-bool eraseOne(cad::Sketch* sk, const QString& uuid)
+/// 統一的批次刪除入口：過濾掉固定參考幾何後交給 Sketch::removeMany()
+/// 一次處理，只在整批結束後重繪一次（見 Sketch::removeMany() 的說明），
+/// 而不是像先前的 eraseOne() 那樣在呼叫端逐一迴圈、每刪一個就各自觸發
+/// 一次 geometryChanged()/rebuildRequested()。
+int eraseMany(cad::Sketch* sk, const QStringList& uuids)
 {
-    if (!sk || uuid.isEmpty() || isFixedReferenceUuid(uuid))
-        return false;
-    if (sk->removeGeometry(uuid))
-        return true;
-    if (sk->removeConstraint(uuid))
-        return true;
-    return false;
+    // 批次刪除入口：實際的「幾何→約束（含隱含約束→標註）→標註」判斷順序，
+    // 以及第 7 項回報（GDIM 隱含約束刪除須連同 SketchAnnotation 一併清掉，
+    // 否則存檔/重載後尺寸「復活」）的修正，統一下沉到 Sketch::removeMany()
+    // 內部處理（單一刪除路徑 removeGeometry()/removeConstraint() 沒有這個
+    // 問題，只有走批次時才會繞過 eraseOne() 原本的判斷，故修正需一併下沉）。
+    if (!sk) return 0;
+    QStringList filtered;
+    filtered.reserve(uuids.size());
+    for (const QString& uuid : uuids) {
+        if (uuid.isEmpty() || isFixedReferenceUuid(uuid)) continue;
+        filtered.append(uuid);
+    }
+    if (filtered.isEmpty()) return 0;
+    return sk->removeMany(filtered);
 }
 } // namespace
 
@@ -80,10 +89,7 @@ CommandResult EraseCommand::execute(const CommandContext& ctx)
     // （Delete 鍵、或「先選取再輸入 ERASE / 按按鈕」皆會由 UIManager
     //   經 COMMAND_EXECUTE_REQUEST 把目前選取塞進 ctx.args）
     if (!ctx.args.isEmpty()) {
-        int erased = 0;
-        for (const QString& uuid : ctx.args) {
-            if (eraseOne(sk, uuid)) ++erased;
-        }
+        int erased = eraseMany(sk, ctx.args);
 
         auto* uiMgr = app->uiManager();
         view::CadView* cadView = uiMgr ? uiMgr->cadView() : nullptr;
@@ -207,10 +213,7 @@ void EraseCommand::onConfirm(const QVariant& /*data*/)
         return;
     }
 
-    int erased = 0;
-    for (const QString& uuid : m_pending) {
-        if (eraseOne(sk, uuid)) ++erased;
-    }
+    int erased = eraseMany(sk, m_pending);
 
     if (cmdMgr) {
         if (erased > 0)

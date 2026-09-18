@@ -112,6 +112,10 @@ Q_SIGNALS:
     void deleteTrackRequested(const QString& tclId);
     void showAlignmentDataTableRequested(const QString& tclId);
 
+    /** 右鍵 TrackCenterLine 節點 →「以 AQT 編輯」，開啟
+     *  ALIGNMENTQUICKTABLE 對話框並預先載入此線路現有的關鍵點資料。 */
+    void editWithQuickTableRequested(const QString& tclId);
+
     /** Step 8：右鍵 AlignedProfileArray 節點 → 顯示唯讀站位資料表。 */
     void showProfileArrayTableRequested(const QString& featureId);
     

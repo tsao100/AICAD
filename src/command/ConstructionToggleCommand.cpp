@@ -153,8 +153,7 @@ void ConstructionToggleCommand::applyToggle(cad::Sketch* sketch, const QStringLi
         // emit rebuildRequested()），確保這個草圖若正驅動 Extrude 等下游
         // 3D 特徵，輪廓變更（因為某條邊變成/不再是建構線）能正確觸發
         // Document::rebuildFeature() 重新生成實體，而不只是刷新 2D 顯示。
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     }
 
     if (cmdMgr) {

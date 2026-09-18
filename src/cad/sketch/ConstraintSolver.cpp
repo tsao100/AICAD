@@ -3,6 +3,7 @@
 #include <QtMath>
 #include <QDebug>
 #include <cmath>
+#include <algorithm>
 
 #include <Geom_Circle.hxx>
 #include <Geom_TrimmedCurve.hxx>
@@ -261,6 +262,79 @@ namespace {
     }
 }
 
+void FixedDistanceEquation::lockReference(const QVector<double>& v) {
+    const auto& c = constraint();
+    // 第 10 項回報後續需求：若這個約束已經有「記住的哪一側」（使用者按過
+    // 翻轉方向，或先前求解已經成功鎖定過、被 Sketch::solveConstraints()
+    // 寫回），優先沿用它，不要每次都從當下幾何位置重新現算——這樣「翻轉
+    // 方向」的操作結果、以及跨越距離值接近 0 那個瞬間的方向記憶，才能
+    // 真正持續生效、存檔後也不會丟失。全部為 0.0 表示尚未鎖定過，才退回
+    // 用當下 vars 現算（例如這個約束第一次求解）。
+    switch (c.distMode) {
+    case DistanceMode::PointToLine:
+    case DistanceMode::LineToLine:
+        if (c.distSideSign != 0.0) { m_lockedSign = c.distSideSign; return; }
+        break;
+    case DistanceMode::PointToPoint:
+    default:
+        if (c.distSideDirX != 0.0 || c.distSideDirY != 0.0) {
+            m_lockedDirX = c.distSideDirX;
+            m_lockedDirY = c.distSideDirY;
+            return;
+        }
+        break;
+    }
+    switch (c.distMode) {
+    case DistanceMode::PointToLine: {
+        int ip = varIdx(c.refs[0]);
+        auto itL = layout().find(c.refs[1].geomUuid);
+        if (ip < 0 || itL == layout().end() || ip+1 >= v.size()) return;
+        int isx = itL->indexFor(GeomHandle::Start);
+        int iex = itL->indexFor(GeomHandle::End);
+        if (isx+1 >= v.size() || iex+1 >= v.size()) return;
+        double len;
+        double signedDist = perpDistance(v[ip], v[ip+1],
+                                         v[isx], v[isx+1], v[iex], v[iex+1], len);
+        // ⚠️ 修正：這裡原本誤判成「len（參考線本身的長度）夠大才鎖定」，
+        // 但 len 只是 perpDistance() 內部防止除以 0 的參考線長度守衛（線本身
+        // 退化才會是 0），跟「這個點目前離線有多近」是兩件事——應該檢查的
+        // 是 signedDist（點到線的實際距離）夠不夠大，太小（點幾乎剛好在線
+        // 上，例如尺寸值剛好經過/接近 0）才代表現在讀到的正負號本身就是
+        // 雜訊，不該拿來當作「第一次鎖定」的依據（fallback 到預設值，等
+        // 之後這個約束的目標值真的不是 0 附近時，才會由下面真正非退化的
+        // 讀數重新建立鎖定）。
+        if (std::abs(signedDist) >= 1e-6) m_lockedSign = (signedDist >= 0.0) ? 1.0 : -1.0;
+        break;
+    }
+    case DistanceMode::LineToLine: {
+        auto itA = layout().find(c.refs[0].geomUuid);
+        auto itB = layout().find(c.refs[1].geomUuid);
+        if (itA == layout().end() || itB == layout().end()) return;
+        int aSx = itA->indexFor(GeomHandle::Start), aEx = itA->indexFor(GeomHandle::End);
+        int bSx = itB->indexFor(GeomHandle::Start);
+        if (aSx+1 >= v.size() || aEx+1 >= v.size() || bSx+1 >= v.size()) return;
+        double len;
+        double signedDist = perpDistance(v[bSx], v[bSx+1],
+                                         v[aSx], v[aSx+1], v[aEx], v[aEx+1], len);
+        // 同上：檢查 signedDist，不是 len。
+        if (std::abs(signedDist) >= 1e-6) m_lockedSign = (signedDist >= 0.0) ? 1.0 : -1.0;
+        break;
+    }
+    case DistanceMode::PointToPoint:
+    default: {
+        int ia = varIdx(c.refs[0]), ib = varIdx(c.refs[1]);
+        if (ia < 0 || ib < 0 || ia+1 >= v.size() || ib+1 >= v.size()) return;
+        double dx = v[ia]-v[ib], dy = v[ia+1]-v[ib+1];
+        double d = qSqrt(dx*dx+dy*dy);
+        // d 太小（起始位置幾乎重合）：這是真正的數學奇異點——兩點重合時
+        // 「該往哪個方向分開」本來就無法從目前狀態判斷，保留預設方向
+        // (0,1)，不強行用雜訊等級的 dx/dy 算出不穩定的單位向量。
+        if (d >= 1e-9) { m_lockedDirX = dx/d; m_lockedDirY = dy/d; }
+        break;
+    }
+    }
+}
+
 void FixedDistanceEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     const auto& c = constraint();
     switch (c.distMode) {
@@ -274,7 +348,7 @@ void FixedDistanceEquation::evaluate(const QVector<double>& v, QVector<double>& 
         double signedDist = perpDistance(v[ip], v[ip+1],
                                           v[isx], v[isx+1], v[iex], v[iex+1], len);
         if (len < 1e-10) { out[0] = 0; return; }
-        out[0] = std::abs(signedDist) - c.value;
+        out[0] = m_lockedSign * signedDist - c.value;
         break;
     }
     case DistanceMode::LineToLine: {
@@ -289,7 +363,7 @@ void FixedDistanceEquation::evaluate(const QVector<double>& v, QVector<double>& 
         double signedDist = perpDistance(v[bSx], v[bSx+1],
                                           v[aSx], v[aSx+1], v[aEx], v[aEx+1], len);
         if (len < 1e-10) { out[0] = 0; return; }
-        out[0] = std::abs(signedDist) - c.value;
+        out[0] = m_lockedSign * signedDist - c.value;
         break;
     }
     case DistanceMode::PointToPoint:
@@ -297,7 +371,10 @@ void FixedDistanceEquation::evaluate(const QVector<double>& v, QVector<double>& 
         int ia = varIdx(c.refs[0]), ib = varIdx(c.refs[1]);
         if (ia < 0 || ib < 0) { out[0] = 0; return; }
         double dx = v[ia]-v[ib], dy = v[ia+1]-v[ib+1];
-        out[0] = qSqrt(dx*dx+dy*dy) - c.value;
+        // 投影到求解開始時鎖定的方向上（見 lockReference() 的說明），
+        // 而不是用不分方向的 sqrt(dx²+dy²)，避免兩點距離經過/接近 0 時
+        // Newton 疊代跳到鏡射的另一組解。
+        out[0] = m_lockedDirX * dx + m_lockedDirY * dy - c.value;
         break;
     }
     }
@@ -307,14 +384,13 @@ void FixedDistanceEquation::jacobian(const QVector<double>& v, int r0,
                                      QVector<QVector<double>>& J) const {
     const auto& c = constraint();
     if (c.distMode == DistanceMode::PointToPoint) {
-        // 解析雅可比（與原本行為一致，數值最穩定）
+        // F = lockedDir · (A-B) - value 對 lockedDir 是常數（本次求解開始
+        // 時就鎖定，見 lockReference()），雅可比比原本「不分方向」的
+        // dx/dist、dy/dist 更簡單、也不會在 dist→0 時除以極小值。
         int ia = varIdx(c.refs[0]), ib = varIdx(c.refs[1]);
         if (ia < 0 || ib < 0) return;
-        double dx = v[ia]-v[ib], dy = v[ia+1]-v[ib+1];
-        double dist = qSqrt(dx*dx+dy*dy);
-        if (dist < 1e-10) return;
-        J[r0][ia]  =  dx/dist; J[r0][ia+1] =  dy/dist;
-        J[r0][ib]  = -dx/dist; J[r0][ib+1] = -dy/dist;
+        J[r0][ia]  =  m_lockedDirX; J[r0][ia+1] =  m_lockedDirY;
+        J[r0][ib]  = -m_lockedDirX; J[r0][ib+1] = -m_lockedDirY;
         return;
     }
     // PointToLine / LineToLine：涉及線的 Start/End 兩個端點，關係較複雜，
@@ -501,12 +577,60 @@ void SymmetricEquation::jacobian(const QVector<double>& v, int r0,
         J[r0+2][col] = J[r0+1][col];
 }
 
-// ── Collinear：F0 = cross(dA,dB)=0 (平行),  F1 = cross(dB, B1→A1)=0 ──
-// refs[0]=線A, refs[1]=線B
+// ── Collinear：兩線共線，或一點＋一線共線（見標頭檔類別註解）──────────────
+bool CollinearEquation::refIsPoint(int refIdx) const {
+    auto it = layout().find(constraint().refs[refIdx].geomUuid);
+    return it != layout().end() && it->isPoint;
+}
+
+int CollinearEquation::equationCount() const {
+    // ⚠️ 修正：COLLINEAR 選「一點 + 一線」時 crash 的根源之一——舊版
+    // 固定回傳 2，讓「點在線上」這種只有 1 個自由方程式的組合，多出一條
+    // 不存在對應變數的方程式，殘差/雅可比矩陣尺寸與實際可填的項目對不上。
+    // 現在依 refs 實際型別動態決定：只要有一邊是獨立 SketchPoint，就只有
+    // 「點在線的延伸線上」這 1 條方程式；兩邊都是線才是原本的 2 條。
+    return (refIsPoint(0) || refIsPoint(1)) ? 1 : 2;
+}
+
+// refs[0]=線A, refs[1]=線B（兩線皆非點時）
 void CollinearEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
-    if (itA==layout().end()||itB==layout().end()){out[0]=out[1]=0;return;}
+    if (itA==layout().end()||itB==layout().end()){
+        out[0]=0; if (out.size()>1) out[1]=0;
+        return;
+    }
+
+    const bool aIsPoint = itA->isPoint;
+    const bool bIsPoint = itB->isPoint;
+
+    if (aIsPoint != bIsPoint) {
+        // ── 一點 + 一線：點在線的延伸線上（1 條方程式）───────────────
+        // ⚠️ 修正：過去無條件把兩個 ref 都當「線」處理，對 SketchPoint
+        // 呼叫 indexFor(GeomHandle::End) 會讀到 offset+2——超出點自身
+        // 只有 2 個 DOF 的範圍，若該點剛好是變數向量中最後一個元素，
+        // offset+2 會整個超出向量長度，觸發 QVector::operator[] 的
+        // index-out-of-range assert 而讓程式崩潰（使用者操作：COLLINEAR
+        // 選一點、再選一線）。公式與 PointOnCurveEquation 相同：
+        // cross(dLine, P－LineStart) = 0。
+        const auto& itP = aIsPoint ? itA : itB;
+        const auto& itL = aIsPoint ? itB : itA;
+        int px_i = itP->offset, py_i = px_i + 1;   // 獨立 SketchPoint：offset/offset+1 即 x/y
+        int lx1  = itL->indexFor(GeomHandle::Start), ly1 = lx1 + 1;
+        int lx2  = itL->indexFor(GeomHandle::End),   ly2 = lx2 + 1;
+        double px = v[px_i], py = v[py_i];
+        double x1 = v[lx1], y1 = v[ly1], x2 = v[lx2], y2 = v[ly2];
+        out[0] = (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1);
+        return;
+    }
+    if (aIsPoint && bIsPoint) {
+        // 兩個獨立點沒有方向可言，無法定義「共線」——理論上 Sketch::
+        // constrainCollinear() 已擋掉這個組合，這裡僅作最後防呆，
+        // 回傳 0（no-op）而非讀取不存在的 Start/End 造成崩潰。
+        out[0] = 0;
+        return;
+    }
+
     int ax1=itA->indexFor(GeomHandle::Start), ay1=ax1+1;
     int ax2=itA->indexFor(GeomHandle::End),   ay2=ax2+1;
     int bx1=itB->indexFor(GeomHandle::Start), by1=bx1+1;
@@ -524,6 +648,29 @@ void CollinearEquation::jacobian(const QVector<double>& v, int r0,
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()) return;
+
+    const bool aIsPoint = itA->isPoint;
+    const bool bIsPoint = itB->isPoint;
+
+    if (aIsPoint != bIsPoint) {
+        // 同上：一點 + 一線，公式與 PointOnCurveEquation::jacobian 相同。
+        const auto& itP = aIsPoint ? itA : itB;
+        const auto& itL = aIsPoint ? itB : itA;
+        int px_i = itP->offset, py_i = px_i + 1;
+        int lx1  = itL->indexFor(GeomHandle::Start), ly1 = lx1 + 1;
+        int lx2  = itL->indexFor(GeomHandle::End),   ly2 = lx2 + 1;
+        double px = v[px_i], py = v[py_i];
+        double x1 = v[lx1], y1 = v[ly1], x2 = v[lx2], y2 = v[ly2];
+        double dx = x2 - x1, dy = y2 - y1;
+        J[r0][px_i] =  dy;  J[r0][py_i] = -dx;
+        J[r0][lx1]  = -(py-y1); J[r0][ly1]  =  (px-x1);
+        J[r0][lx2]  =  (py-y1); J[r0][ly2]  = -(px-x1);
+        return;
+    }
+    if (aIsPoint && bIsPoint) {
+        return;   // no-op：見 evaluate() 同分支說明
+    }
+
     int ax1=itA->indexFor(GeomHandle::Start), ay1=ax1+1;
     int ax2=itA->indexFor(GeomHandle::End),   ay2=ax2+1;
     int bx1=itB->indexFor(GeomHandle::Start), by1=bx1+1;
@@ -897,8 +1044,9 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
         if (g->type != SketchGeometryType::Point) continue;
         const auto* pt = static_cast<const SketchPoint*>(g);
         GeomVarLayout vl;
-        vl.offset = vars.size();
-        vl.dof    = 2;
+        vl.offset  = vars.size();
+        vl.dof     = 2;
+        vl.isPoint = true;   // ← COLLINEAR 點+線分支靠這個旗標辨識
         vars << pt->pos.x() << pt->pos.y();
         layout[g->uuid] = vl;
     }
@@ -1250,7 +1398,7 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
         case ConstraintType::Perpendicular: eq = new PerpendicularEquation(c, &layout); break;
         case ConstraintType::Tangent:       eq = new TangentEquation(c, &layout);       break;
         case ConstraintType::Concentric:    eq = new ConcentricEquation(c, &layout);    break;
-        case ConstraintType::FixedDistance: eq = new FixedDistanceEquation(c, &layout); break;
+        case ConstraintType::FixedDistance: eq = new FixedDistanceEquation(c, &layout, vars); break;
         case ConstraintType::EqualLength:   eq = new EqualLengthEquation(c, &layout);   break;
         case ConstraintType::FixedRadius:   eq = new FixedRadiusEquation(c, &layout);   break;
         case ConstraintType::PointOnCurve:  eq = new PointOnCurveEquation(c, &layout);  break;
@@ -1286,7 +1434,18 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
             if (it != layout.end() && it->dof > 0 && it->offset >= 0) {
                 auto* feq = new FixedEquation(c, &layout);
                 QVector<double> snap;
-                for (int i = 0; i < it->dof; ++i) snap << vars[it->offset+i];
+                if (c.fixedAbsolute && it->dof >= 2) {
+                    // ⚠️ 第 17 項回報修正：X 軸／Y 軸／原點這類自動產生的
+                    // 參考幾何，snapshot 要用建立時就存好的絕對座標
+                    // （c.value/c.value2），不是每次求解都從當下 vars 重新
+                    // 取樣——否則多次求解下來，數值誤差會逐次累積，讓理論
+                    // 上永遠不動的參考幾何慢慢飄移（見 SketchConstraint.h
+                    // fixedAbsolute 欄位的說明）。
+                    snap << c.value << c.value2;
+                    for (int i = 2; i < it->dof; ++i) snap << vars[it->offset+i];
+                } else {
+                    for (int i = 0; i < it->dof; ++i) snap << vars[it->offset+i];
+                }
                 feq->setSnapshot(snap, it->offset, it->dof);
                 eqs.append(feq);
             } else if (it != layout.end() && it->dof == 0) {
@@ -1415,7 +1574,26 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
     // 都能避免。λ 取「最大奇異值的一個極小相對比例」的平方，只在數量級
     // 差距懸殊（封閉迴路那種近似線性相依）時才有感，一般良態系統幾乎測
     // 不出差異。
+    //
+    // ★ 2026-09 追加：純相對比例的 λ 有個沒處理到的邊界情況——如果整個
+    //    系統本身數值尺度就偏小（sigmaMax 本身很小，不是「跟其他奇異值
+    //    比起來小」，是連最大的那個都很小，例如 CHAMFER 對交點加
+    //    PointOnCurve 共線約束、而其中一條線的遠端點完全沒有其他約束時
+    //    出現過的精確秩虧），純比例算出來的 λ 也會跟著等比縮小、沒辦法
+    //    提供足夠的絕對阻尼，退化方向的修正量還是可能被放大。
+    //    （這正是 TrimExtendHelper.cpp::chamferAt() 那段長篇註解裡，一開
+    //    始就指名要在這裡補的修法：「奇異值門檻改用絕對值下限，而不是只
+    //    看相對 σmax 的比例」。）
+    //
+    //    做法：λ 改成「相對比例」與「絕對下限」兩者取其大——良態系統幾乎
+    //    只吃到相對項（跟修正前完全一樣，不影響既有已驗證正確的圓角弧行
+    //    為）；只有當相對項本身也小到不足以壓制退化方向時，絕對下限才會
+    //    接手，把該方向平滑地壓到趨近 0，而不是任由它被 1/σ 放大。絕對
+    //    下限沿用先前試過的 1e-6（見上面的說明——當時是拿來當「硬性」門
+    //    檻用，數量級已經是這個問題領域驗證過的合理尺度，這裡只是把它
+    //    的角色從「一刀切」改成「平滑下限」）。
     static constexpr double kRegRelativeSigma = 1e-6;   // 阻尼生效的相對奇異值尺度
+    static constexpr double kRegAbsoluteSigma = 1e-6;   // 阻尼生效的絕對奇異值下限
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0) //EIGEN_VERSION_AT_LEAST(3,4,0)
     Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(A);
@@ -1431,7 +1609,9 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
         dx.fill(0.0, n);
         return true;   // J 全 0：沒有任何方向可修正
     }
-    const double lambda = (kRegRelativeSigma * sigmaMax) * (kRegRelativeSigma * sigmaMax);
+    const double lambdaRelative = (kRegRelativeSigma * sigmaMax) * (kRegRelativeSigma * sigmaMax);
+    const double lambdaAbsolute = kRegAbsoluteSigma * kRegAbsoluteSigma;
+    const double lambda = std::max(lambdaRelative, lambdaAbsolute);
 
     const Eigen::VectorXd UtB = svd.matrixU().transpose() * b;
     Eigen::VectorXd filtered(k);

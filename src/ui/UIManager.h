@@ -246,6 +246,28 @@ public:
      */
     railway::AlignmentDocument* ensureTclAlignmentDocument(const QString& tclId);
 
+    /**
+     * @brief 供命令層（ALIGNMENTQUICKTABLE／ALIGNMENTDRAWCHAIN）在直接改寫
+     *        某條 TrackCenterLine 的 raw points（tcl->loadHorizontal()）之後
+     *        呼叫：把該 tclId 對應、已快取的 AlignmentDocument（若存在）從
+     *        快取中移除並延遲刪除。
+     *
+     *        背景：ensureTclAlignmentDocument() 若快取已存在會直接回傳，
+     *        不會重新從 raw points 反推元素鏈（seedFromRawPoints() 本身
+     *        「已有資料時為 no-op」）。ALIGNMENTQUICKTABLE／
+     *        ALIGNMENTDRAWCHAIN 走的是「稠密 raw points」這條資料路徑
+     *        （與「線形資料表」的 EditableElement 鏈是兩種表示法），若不
+     *        在寫入後讓快取失效，「線形資料表」後續開啟時會顯示過期資料。
+     *        呼叫本函式後，下一次 ensureTclAlignmentDocument(tclId) 會
+     *        重新建立，並從（已更新的）raw points 重新反推，確保兩邊看到
+     *        的是同一份資料——即使底層儲存形式不同，也不會出現分岔。
+     *
+     *        由於 AQT／ADC 皆以 exec() 模態對話框運作，呼叫當下不可能有
+     *        別的視窗正在顯示同一份 AlignmentDocument，故直接以
+     *        deleteLater() 延遲刪除是安全的。
+     */
+    void invalidateTclAlignmentDocument(const QString& tclId);
+
     /// Railway 資料夾「3D Alignment」彙總顯示（可能為 nullptr，直到第一次
     /// eyeOpen 觸發建立）。
     view::Railway3DAlignmentRenderer* railway3DRenderer() const;

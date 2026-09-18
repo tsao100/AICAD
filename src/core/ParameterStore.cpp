@@ -31,8 +31,17 @@ void ParameterStore::setLocal(const QString& name, double value) {
     p.value = value;
     p.deps  = QStringList();          // 避免 {} 歧義
     m_params[name] = p;
-    Q_EMIT parameterChanged(name, value);
-    Q_EMIT parametersRecomputed();
+    // ⚠️ 修正：「相關參數也要同步重新計算更新」——這裡原本只更新
+    // name 自己這一筆，若有其他本地參數的表達式依賴 name（例如
+    // d2 = "d1 * 2"，這裡改的是 d1），d2 快取的 .value 完全沒被動到，
+    // 會一直沿用改動前的舊值，直到「剛好」有別的地方觸發一次
+    // recomputeAll() 才會被動更新，造成「改了 d1，用到 d2 的約束/畫面
+    // 卻沒有跟著變」的現象。改成呼叫 recomputeAll()：它會依拓樸排序
+    // 重新算過「所有」本地參數（含 name 自己與所有直接/間接依賴它的
+    // 參數），對每個「值真的改變」的參數各自 emit parameterChanged，
+    // 最後統一 emit 一次 parametersRecomputed()，取代這裡原本各自獨立
+    // 的 emit。
+    recomputeAll();
 }
 
 void ParameterStore::setLocal(const QString& name, const QString& expression) {
@@ -46,8 +55,10 @@ void ParameterStore::setLocal(const QString& name, const QString& expression) {
     p.value = ok ? v : 0.0;
     p.deps  = extractDependencies(expression);
     m_params[name] = p;
-    if (ok) Q_EMIT parameterChanged(name, v);
-    Q_EMIT parametersRecomputed();
+    // ⚠️ 修正：同上一個 setLocal() 重載——把「連鎖更新所有依賴此參數的
+    // 其他本地參數」交給 recomputeAll() 統一處理，而不是只 emit name
+    // 自己的 parameterChanged。
+    recomputeAll();
 }
 
 bool ParameterStore::hasLocal(const QString& name) const {

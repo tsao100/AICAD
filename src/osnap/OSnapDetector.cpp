@@ -313,19 +313,48 @@ void OSnapDetector::detectOnShape(
     const SnapTypes& enabled = m_settings.enabledTypes;
 
     // ✅ Step 14: SketchPointAIS 優先偵測（點優先於曲線端點）
+    //
+    // ⚠️ 修正：先前這裡只分兩類——Origin::Center → SnapType::Center，
+    // 其餘（Endpoint／Intersection／★Explicit★…）一律歸類成
+    // SnapType::Endpoint。這代表使用者用新的 POINT 命令畫出來的獨立點
+    // （Origin::Explicit）在 OSNAP 系統裡被誤判成「線段端點」，而不是
+    // AutoCAD 慣例裡對應的「Node（節點）」鎖點類型——即使使用者在 OSNAP
+    // 工具列上單獨開啟 Node、關掉 Endpoint，也完全抓不到獨立點；反過來，
+    // 只開 Endpoint 卻會抓到本來不該歸類在那裡的獨立點。
+    //
+    // 下面把 Origin::Explicit 獨立分類成 SnapType::Node，並在啟用判斷
+    // （下一行）加入 SnapType::Node，讓「只開 Node」也能正確抓到獨立點、
+    // 「只開 Endpoint」則不會再誤抓。
     if (auto ptAis = Handle(aicad::cad::SketchPointAIS)::DownCast(aisObj)) {
-        if (enabled.testFlag(SnapType::Endpoint) ||
-            enabled.testFlag(SnapType::Center)) {
+        const auto origin = ptAis->origin();
+        SnapType stype = SnapType::Endpoint;
+        if (origin == aicad::cad::SketchPoint::Origin::Center) {
+            stype = SnapType::Center;
+        } else if (origin == aicad::cad::SketchPoint::Origin::Explicit) {
+            stype = SnapType::Node;
+        }
+
+        if (enabled.testFlag(stype)) {
             gp_Pnt pos = ptAis->position3D();
             double screenDist = screenDistance(view, pos, mouseX, mouseY);
             if (screenDist < m_settings.pickPixelRadius * 2.0) {
-                SnapType stype = (ptAis->origin() == aicad::cad::SketchPoint::Origin::Center)
-                                 ? SnapType::Center : SnapType::Endpoint;
                 SnapCandidate c;
                 c.type       = stype;
                 c.worldPoint = pos;
                 c.geomUuid   = ptAis->pointUuid();
                 c.geomHandle = static_cast<int>(aicad::cad::GeomHandle::WholeGeom);
+                // ⚠️ 修正：這裡先前完全沒設定 c.screenDist／c.isValid。
+                // SnapCandidate::screenDist 預設是 1e9（見 OSnapTypes.h），
+                // 而 detect() 最後在 Step 4 會用
+                // `c.screenDist > m_settings.magnetRadius` 過濾掉太遠的候選
+                // ——沒設定就等於永遠是 1e9，一定大於 magnetRadius（預設
+                // 8px），所以不管滑鼠移到哪、多接近這個點，候選都會在最後
+                // 一步被濾掉，等於「偵測到了但永遠不會被選中」。這正是
+                // OSNAP 對 SketchPoint（不管是 Center 還是這次新加的
+                // Node）測試起來完全沒反應的根本原因，且是比對 Node 判斷
+                // 邏輯更早、更根本的一層 bug——即使 stype 分類全對也沒用。
+                c.screenDist = screenDist;
+                c.isValid    = true;
                 // 轉回平面座標
                 if (m_activePlane) {
                     c.planePoint = m_activePlane->toPlane(

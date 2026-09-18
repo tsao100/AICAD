@@ -407,7 +407,8 @@ void MirrorCommand::teardownPreviewClone()
         // 的既有作法。
         for (const QString& uuid : m_previewClone)
             sk->removeGeometry(uuid);
-        Q_EMIT sk->rebuildRequested();
+        // ⚠️ 效能修正：removeGeometry() 每次呼叫結尾都已經 emit 一次
+        // rebuildRequested()，這裡不再多 emit 一次（同 CopyCommand 的修正）。
     }
     m_previewClone.clear();
     m_previewHasAxis = false;

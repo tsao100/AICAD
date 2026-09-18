@@ -268,6 +268,21 @@ public:
     bool removeGeometry(const QString& uuid);
     void clearGeometry();
 
+    /// @brief 批次刪除一批幾何元素／約束（ERASE 命令一次刪除多個選取物件用）。
+    ///
+    /// 逐一呼叫 removeGeometry(const QString&)／removeConstraint(const QString&)
+    /// 每次都會各自 Q_EMIT geometryChanged()／rebuildRequested()，而
+    /// rebuildRequested() 掛在 Document 的完整 Feature 重建上（見
+    /// Document.cpp connect(feature, &Feature::rebuildRequested, ...)），
+    /// 一批 N 個物件就會重建 N 次。本函式對整批 uuids 只在最後統一
+    /// Q_EMIT 一次，把「刪一個重繪一次」改成「刪一批只重繪一次」。
+    ///
+    /// @param uuids 要刪除的幾何或約束 UUID（可混合，逐一嘗試先當幾何、
+    ///        找不到再當約束刪除，與既有 EraseCommand 內 eraseOne() 的邏輯
+    ///        一致）。
+    /// @return 實際成功刪除的物件數量。
+    int removeMany(const QStringList& uuids);
+
     QList<SketchGeometry*> geometries() const { return m_geometries; }
     const QList<SketchGeometry*>& geometriesRef() const { return m_geometries; }
     int geometryCount() const { return m_geometries.size(); }
@@ -279,10 +294,20 @@ public:
     }
 
     // ── 基本幾何添加（Phase 0B：傳回 UUID，自動建立點）─────────────────────
+    /**
+     * @param emitSignals 是否在建立後立即發出 geometryChanged()／
+     *        rebuildRequested()（預設 true，維持原本行為）。呼叫端如果
+     *        接下來還要繼續加其他幾何／約束、最後才要一次重繪（例如
+     *        CHAMFER 一次建立倒角線＋交點＋多條約束），可以傳 false 跳過
+     *        這裡的即時重繪，自己在最後統一 Q_EMIT rebuildRequested() 一
+     *        次——原理同 addConstraint() 的 solve 參數、Sketch::removeMany()
+     *        對批次刪除「只重繪一次」。
+     */
     QString addLineGeom(const QVector2D& p1, const QVector2D& p2,
                         const QString& reuseStart = QString(),
                         const QString& reuseEnd   = QString(),
-                        GeomRole role = GeomRole::Normal);
+                        GeomRole role = GeomRole::Normal,
+                        bool emitSignals = true);
     QString addCircleGeom(const QVector2D& center, double radius,
                           const QString& reuseCenterUuid = QString());
     QString addArcGeom(const QVector2D& startPoint,
@@ -331,6 +356,22 @@ public:
      */
     QString addPoint(const QVector2D& pos,
                      SketchPoint::Origin origin = SketchPoint::Origin::Explicit);
+
+    /**
+     * @brief 建立一個使用者明確繪製、需要立即顯示在畫面上的獨立點
+     *        （POINT 命令用）。
+     *
+     * addPoint() 是給 TrimExtendHelper／SketchGeomTransformUtil 等內部
+     * 幾何操作使用的低階 API：只把 SketchPoint 加進 m_geometries／
+     * m_uuidToGeomIndex 快取，刻意不 Q_EMIT geometryChanged()／
+     * rebuildRequested()，因為這些呼叫端一律緊接著呼叫其他會自動 emit
+     * 的高階方法（如 addLine()），先 emit 只會造成多餘的一次重繪。
+     * 但這代表如果只呼叫 addPoint() 就結束，畫面完全不會更新——新的點
+     * 會「建立了但看不到」，直到下一次任何原因觸發的重繪才會意外冒出來。
+     * POINT 命令要畫的是一個獨立、當下就要能看到的點，沒有後續動作，
+     * 因此需要這個會自己 emit 一次的版本。
+     */
+    QString addExplicitPoint(const QVector2D& pos);
 
     /**
      * 取得指定 UUID 的點（若不存在回傳 nullptr）
@@ -392,7 +433,20 @@ public:
 
     // ==================== 約束管理 ====================
 
-    QString addConstraint(const SketchConstraint& c);
+    /**
+     * @brief 新增一條約束
+     * @param c 約束
+     * @param solve 是否在加入後立即求解（預設 true，維持原本行為）。
+     *
+     * 呼叫端如果要一次加入一整批約束（例如 CHAMFER 一次建立交點＋距離＋
+     * 共線共 4 條約束），可以把中間每一次都傳 false 跳過求解，全部加完
+     * 後再自己呼叫一次 solveConstraints()——比照 removeMany() 對批次刪除
+     * 幾何「只重繪一次」的同一個原則：中間每一次的 solve 除了浪費運算，
+     * 用「只加了一部分約束」的不完整系統去解，中途還可能先收斂到一個錯誤
+     * 的過渡狀態，反而讓最後那個用完整方程組做的正式求解要多繞一段路才
+     * 收斂，不如全部加完、資訊完整後一次求解。
+     */
+    QString addConstraint(const SketchConstraint& c, bool solve = true);
     bool removeConstraint(const QString& uuid);
     const QList<SketchConstraint>& constraints() const { return m_constraints; }
     QList<SketchConstraint>& constraintsMutable() { return m_constraints; }
@@ -401,6 +455,15 @@ public:
     void removeConstraintsOf(const QString& geomUuid);
     /// 僅更新尺寸線偏移，不重新求解（拖曳尺寸線時輕量更新）
     bool updateConstraintDimOffset(const QString& uuid, double offsetX, double offsetY);
+
+    /// 第 10 項回報的後續需求：讓使用者手動切換 FixedDistance 約束求解
+    /// 的「哪一側」。做法是把約束的其中一個參考幾何反射到目前的另一側
+    /// （PointToPoint：把 refs[1] 的點對 refs[0] 的點做點對稱；PointToLine：
+    /// 把 refs[0] 的點對 refs[1] 的線做鏡射；LineToLine：把 refs[1] 整條
+    /// 線的兩個端點對 refs[0] 的線做鏡射），距離值不變、只是換到另一側，
+    /// 再重新求解一次讓其餘約束一起收斂。uuid 對應的約束型別不是
+    /// FixedDistance 時回傳 false（no-op）。
+    bool flipDistanceSide(const QString& uuid);
 
     // ==================== 標註管理（GDIM v2 Phase 1）====================
     // SketchAnnotation 是「標註」的唯一對外資料來源（GeneralDimClassifier /
@@ -428,6 +491,17 @@ public:
     void addImplicitConstraint(const SketchAnnotation& a);
     /// 移除 uuid 對應標註的隱含約束（若有），不影響標註本身。
     void removeImplicitConstraint(const QString& annotationUuid);
+    /// 見 removeAnnotation() 的說明：刪除標註後，若它原本引用的參數名稱
+    /// 符合 GDIM 自動命名格式且已無其他引用者，一併從 ParameterStore 移除。
+    void maybeRemoveOrphanedAutoParam(const QString& name);
+    /// 第 10 項回報後續需求：從目前（通常是剛求解完）的幾何位置，計算
+    /// 一個 FixedDistance 約束「現在」對應到哪一側／方向。非退化（兩個
+    /// 參考幾何沒有幾乎重合/重疊）時回傳 true，並把結果寫入 sign（給
+    /// PointToLine/LineToLine）或 dirX/dirY（給 PointToPoint，單位向量）。
+    /// 供 solveConstraints() 求解後同步「記住的哪一側」、以及
+    /// flipDistanceSide() 共用。
+    bool computeDistanceSide(const SketchConstraint& c,
+                             double& sign, double& dirX, double& dirY) const;
 
     /**
      * @brief GDIM v2 Phase 6：重複尺寸偵測
@@ -442,6 +516,12 @@ public:
 
     SolveResult solveConstraints();
     SolveResult solveWithStore(const aicad::core::ParameterStore* store);
+
+    /// ⚠️ 效能優化：取得最近一次 solveConstraints() 的結果，供呼叫端組
+    /// 「約束已施加，DOF: X → Y」這類報告訊息，而不需要為了拿 SolveResult
+    /// 再重新呼叫一次 solveConstraints()（那會讓 Newton-Raphson 疊代與
+    /// AIS 重建/重繪整個再跑一遍，見 solveConstraints() 尾端註解）。
+    SolveResult lastSolveResult() const { return m_lastSolveResult; }
     int degreesOfFreedom() const;
 
     // 便捷 API
@@ -535,6 +615,17 @@ private:
      *  representation actually needs rebuilding after solve(). */
     static quint64 geometryFingerprint(const SketchGeometry* geom);
 
+    /// removeGeometry(int) 的內部實作：實際移除幾何/相關約束/標註，但不
+    /// Q_EMIT geometryChanged()／rebuildRequested()。供 removeGeometry()
+    /// （單一刪除，維持原本每次都 emit 的行為）與 removeMany()（批次刪除，
+    /// 只在整批結束後 emit 一次）共用，避免邏輯重複。
+    void removeGeometryAt(int index);
+
+    /// removeConstraint(const QString&) 的內部實作：移除約束本身，但不
+    /// Q_EMIT constraintRemoved()、不呼叫 solveConstraints()。供
+    /// removeConstraint()（單一刪除）與 removeMany()（批次刪除）共用。
+    bool removeConstraintInternal(const QString& uuid);
+
 private:
     Plane* m_plane;
     QList<SketchGeometry*> m_geometries;
@@ -555,6 +646,7 @@ private:
     QList<QString>            m_constructionShapeUuids;    ///< parallel to m_constructionShapes（見 constructionShapes() 說明）
     QHash<QString, quint64>   m_constructionFingerprints;  ///< parallel cache for m_constructionShapes
     ConstraintSolver        m_solver;
+    SolveResult             m_lastSolveResult;   ///< 見 lastSolveResult() 註解
     Handle(AIS_InteractiveContext) m_aisContext;
     aicad::core::ParameterStore*  m_parameterStore = nullptr;
 

@@ -123,6 +123,7 @@ private:
 
     QLabel*       m_modeLabel       = nullptr;   ///< 唯讀顯示群組方向與已選元素
     QComboBox*    m_spiralTypeCombo = nullptr;
+    QPushButton*  m_helpButton      = nullptr;   ///< 螺旋線類型旁的「？」按鈕，效果等同 F1（見 TransitionCurveHelp::show()）
     QTableWidget* m_previewTable    = nullptr;   ///< 試算結果：Key/Value 兩欄
     QLabel*       m_statusLabel     = nullptr;
     QPushButton*  m_calcButton      = nullptr;

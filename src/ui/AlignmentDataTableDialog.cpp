@@ -431,22 +431,26 @@ void AlignmentDataTableDialog::populateHorizontalTable()
     // 設定而退化成恆等轉換（顯示出遠小於 TM2 量級的數字）。
     aicad::core::geometry::ProjectOrigin::ensureDefault();
 
-    // 優先用 m_doc 的 solver result；若尚未 solve，fallback 到 TCL 已載入的 rawPoints
-    const HorizontalAlignment* ha = m_doc->horizontal()->result();
+    // 抑制元素鏈（AlignmentDocument／HorizontalAlignmentEdit 的 solve()
+    // 結果）對本表格顯示的影響：一律直接讀 tcl->horizontal()->rawPoints()
+    // （與 3D 算圖、AQT、ADC 完全相同的來源），不再優先採用
+    // m_doc->horizontal()->result()。
+    //
+    // 背景：ensureTclAlignmentDocument() 會用 seedFromRawPoints() 把
+    // rawPoints() 反推成 EditableElement 鏈（Fixed/Floating Tangent／
+    // CircularArc／SpiralIn／SpiralOut／SCS 群組……），這是一套複雜的
+    // 模式比對邏輯，對 ADC／AQT 產生的某些線元序列可能無法正確還原
+    // （例如緩和曲線被誤判、群組邊界抓錯），導致這裡顯示的表格與
+    // 3D 畫面（讀原始 rawPoints()）不一致，看起來像是新加入的緩和曲線
+    // 「被元素鏈吃掉」──表格顯示不出來，即使它確實已經正確寫入 TCL、
+    // 3D 也正確畫出來了。在元素鏈的還原邏輯被個別排查、修正之前，一律
+    // 直接讀 rawPoints() 是唯一能保證「所見即所存」的作法。
     const QVector<AlignmentPoint>* rawSrc = nullptr;
     QVector<AlignmentPoint> fallback;
-    bool usingSolverResult = false;
-    if (ha && !ha->isEmpty()) {
-        rawSrc = &ha->rawPoints();
-        usingSolverResult = true;
-    } else if (m_tcl && !m_tcl->horizontal()->isEmpty()) {
-        // ALD 直接匯入、尚未 solve 的 fallback：ImportAlignmentCommand 在匯入
-        // 邊界已把 easting/northing 從 TM2 轉成 Local（扣掉 TM2 origin，未
-        // 設定時套用預設值），所以這裡 rawPoints() 已經和 solver 分支一樣是
-        // Local 座標，不需要（也不應該）再轉換一次。
+    const bool usingSolverResult = false;
+    if (m_tcl && !m_tcl->horizontal()->isEmpty()) {
         fallback = m_tcl->horizontal()->rawPoints();
         rawSrc   = &fallback;
-        usingSolverResult = false;
     }
     if (!rawSrc || rawSrc->isEmpty()) {
         m_hAux.clear();

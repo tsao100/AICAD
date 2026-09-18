@@ -125,6 +125,17 @@ public:
     void clearPoints();
 
     /**
+     * @brief 設定正多邊形邊數（Polygon 模式使用，POLYGON 命令的 S 選項）
+     * @param sides 邊數，須 >= 3；小於 3 會被夾到 3。
+     */
+    void setPolygonSides(int sides);
+
+    /**
+     * @brief 取得目前設定的正多邊形邊數
+     */
+    int polygonSides() const;
+
+    /**
      * @brief 設定圓弧半徑（Spiral / SCS 模式使用）
      * @param r 半徑 [m]，正值 = 右彎，負值 = 左彎
      */

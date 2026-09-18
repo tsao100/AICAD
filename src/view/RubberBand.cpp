@@ -60,6 +60,12 @@ public:
     railway::SpiralType spiralType1 = railway::SpiralType::Clothoid;
     /// Spiral family for the exit spiral L2 (SCS mode only).
     railway::SpiralType spiralType2 = railway::SpiralType::Clothoid;
+
+    // ── Polygon parameters ──────────────────────────────────────────────────
+    /// 正多邊形邊數（POLYGON 命令的 S 選項）。先前這裡完全沒有對應成員，
+    /// updatePolygon() 內是直接寫死 sides = 6（見該函式），S 選項改的邊數
+    /// 因此從未反映到即時預覽上；補上這個成員並由 setPolygonSides() 寫入。
+    int polygonSides = 6;
 };
 
 RubberBand::RubberBand(const Handle(AIS_InteractiveContext)& context, QObject* parent)
@@ -150,6 +156,16 @@ void RubberBand::clearPoints() {
     d->points.clear();
     d->hasCurrentPoint = false;
     clear();
+}
+
+void RubberBand::setPolygonSides(int sides)
+{
+    d->polygonSides = (sides >= 3) ? sides : 3;
+}
+
+int RubberBand::polygonSides() const
+{
+    return d->polygonSides;
 }
 
 void RubberBand::setRadius(double r)
@@ -525,16 +541,22 @@ void RubberBand::updatePolygon() {
         return;  // 半徑太小，不顯示
     }
 
-    // 邊數（可以從成員變數讀取，預設為 6）
-    //int sides = d->polygonSides > 0 ? d->polygonSides : 6;
-    int sides = 6;
+    // 邊數：改用真正的成員變數（由 PolygonCommand 透過 setPolygonSides()／
+    // "setParams" 事件寫入，見 UIManager.cpp 的 command.update-rubber-band
+    // 處理），不再寫死為 6。
+    int sides = d->polygonSides > 0 ? d->polygonSides : 6;
 
     // 計算多邊形頂點（閉合，所以需要 sides + 1 個點）
     int numPoints = sides + 1;
     Handle(Graphic3d_ArrayOfPolylines) polyline = new Graphic3d_ArrayOfPolylines(numPoints);
 
     double angleStep = 2.0 * M_PI / sides;
-    double startAngle = -M_PI / 2.0;  // 從頂部（12點鐘方向）開始
+    // 第一個頂點的方向改為「目前滑鼠/當前點相對於中心的實際角度」，而非固定
+    // 從正上方（12 點鐘方向）開始。這樣拖曳滑鼠選取半徑點時，多邊形會即時
+    // 旋轉，讓第一個頂點跟著滑鼠走，點下的位置就是第一個頂點——與
+    // PolygonCommand::handlePointAcquired() 建立最終幾何時使用的角度算法
+    // （同樣是 atan2(dy,dx)）保持一致。
+    double startAngle = std::atan2(dy, dx);
 
     QVector<QPointF> vertices;
     for (int i = 0; i < sides; ++i) {

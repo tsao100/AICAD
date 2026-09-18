@@ -193,8 +193,7 @@ void FilletCommand::onGeomPicked(const QVariant& payload)
             radiusConstraint.dimLineOffsetX = r.arcMidDir.x();
             radiusConstraint.dimLineOffsetY = r.arcMidDir.y();
             sk->addConstraint(radiusConstraint);
-            sk->solveConstraints();
-            Q_EMIT sk->rebuildRequested();
+            sk->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         }
         // 半徑 = 0（無插入弧）：filletAt() 內部已經另外補上一條 Coincident
         // 約束把兩線端點接起來，這裡不需要再做任何事。

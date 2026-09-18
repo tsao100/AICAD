@@ -403,7 +403,11 @@ void SketchGripProvider::onGripDragEnd(const QString& gripId,
     // ✅ 拖動結束：重新求解約束，然後走完整 Document 路徑更新
     if (m_sketch) {
         m_sketch->solveConstraints();  // 套用現有約束
-        Q_EMIT m_sketch->rebuildRequested();  // 通知 Document 更新
+        // ⚠️ 效能修正：solveConstraints() 內部已透過 markDirty() emit 過
+        // rebuildRequested()，觸發 Document::rebuildFeature() 完整重建
+        // 一次；這裡先前又手動 emit 一次，等於每放開一次 grip（最常見的
+        // 互動操作之一）都要多跑一整輪「Erase 全部 AIS → rebuild() →
+        // Display 全部 AIS」，是拖曳操作「感覺卡」的主要原因之一，故移除。
     }
 }
 
@@ -466,13 +470,20 @@ QVector<GripPoint> SketchGripProvider::gripsForConstraint(
         QVector2D center = (p1 + p2) * 0.5f;
 
         // 將新位置轉換為相對偏移量並儲存
-        c->dimLineOffsetX = static_cast<double>(newPlanePt.x() - center.x());
-        c->dimLineOffsetY = static_cast<double>(newPlanePt.y() - center.y());
+        const double offsetX = static_cast<double>(newPlanePt.x() - center.x());
+        const double offsetY = static_cast<double>(newPlanePt.y() - center.y());
+        // ⚠️ 修正（第 9 項回報：尺寸約束移動調整後，位置沒有存檔）：改呼叫
+        // Sketch::updateConstraintDimOffset()，而不是像先前那樣直接寫
+        // c->dimLineOffsetX/Y。GDIM 尺寸線對應的隱含約束存檔時不會被序列化
+        // （見 Sketch::updateConstraintDimOffset() 的說明），偏移量真正的
+        // 存檔來源是對應的 SketchAnnotation::dimLineOffset；只寫隱含約束
+        // 自己那份的話，這裡拖出來的位置只在本次執行期間有效，存檔/重新
+        // 載入後會被標註裡的舊值蓋掉。updateConstraintDimOffset() 內部會
+        // 同時同步隱含約束與其 SketchAnnotation 兩邊。
+        m_sketch->updateConstraintDimOffset(constraintUuid, offsetX, offsetY);
 
         // 即時更新 AIS 顯示
-        overlay->updateDimLine(constraintUuid,
-                               c->dimLineOffsetX,
-                               c->dimLineOffsetY);
+        overlay->updateDimLine(constraintUuid, offsetX, offsetY);
     };
 
     grips.append(grip);

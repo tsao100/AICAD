@@ -179,6 +179,18 @@ private:
     /// （不經過 WaitDimPlace，因為型別與位置已經在同一次點擊裡一起決定）。
     void lockSingleGeom(const cad::GeomRef& anchor, const QVector2D& mousePt);
 
+    /// 供 lockSingleGeom() 共用：m_refs/m_type/m_distMode/m_useSupplementAngle
+    /// 都已決定好之後，用 mousePt 同時當作「量測時的滑鼠位置」與「尺寸線
+    /// offset 的依據」，直接進 WaitValue（不經過 WaitDimPlace）。
+    /// ⚠️ 新增（第 14 項回報的後續確認：「起點是整條線」時，額外多出的
+    /// 那一次點擊，就是原本無條件轉呼叫 lockPairGeom() 進 WaitDimPlace
+    /// 造成的）。起點是整條線時，「這條線自己的兩個端點」跟真正兩個不同
+    /// 幾何配對不一樣——使用者不需要额外一次點擊來確認位置，跟其他單幾何
+    /// 型別（點、圓、弧）應該有一致的「一次點擊同時定型＋定位」體驗，
+    /// 所以抽出這段共用邏輯，讓「整條線」分支也能直接呼叫，不必繞
+    /// WaitDimPlace。
+    void commitTypeAndPosition(const QVector2D& mousePt);
+
     /// 若 r 是「整條線」（WholeGeom），視為同時代表其 Start/End 兩個端點，
     /// 填入 outStart/outEnd 並回傳 true；否則回傳 false。
     /// 給 lockSingleGeom()（點擊時）與 onGeomHover()（Idle 純 hover、不需

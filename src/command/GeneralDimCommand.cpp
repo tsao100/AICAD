@@ -328,6 +328,33 @@ QVector2D GeneralDimCommand::refMidpoint2D() const {
             return *apex;
     }
 
+    // ⚠️ 修正：弧長標註（FixedArcLength）跟上面角度標註是同一類問題——
+    // 弧長約束唯一的 ref 用的是 GeomHandle::WholeGeom，
+    // GeomRef::resolvedPointUuid() 對 Arc 只處理 Start/End/Center 三種
+    // handle，WholeGeom 沒對應到，於是 resolvePosition() 會落到通用
+    // fallback「points 非空就回傳 points[0]」——但 SketchArc::points[0]
+    // 存的是弧的「起點」（見 Sketch::addArcGeom()），不是圓心。
+    //
+    // 這個基準點會被 CadView 拖曳尺寸線時拿來換算 offsetX/Y
+    // （= 滑鼠 - 這個基準點），再被
+    // AIS_DimensionLine::drawArcLengthDimension() 直接拿 offset 的
+    // magnitude 當同心弧半徑使用。如果基準點錯用成起點，使用者實際上
+    // 多半是在「弧中點附近的標籤」上按下滑鼠開始拖曳，起點距離標籤可能
+    // 很遠，於是滑鼠的些微移動相對這個很大的基準向量幾乎不會改變其
+    // magnitude，呈現出來就是「拖曳弧長尺寸線時，尺寸線位置沒有跟著
+    // 滑鼠位置調整」。
+    //
+    // 改成直接找弧的圓心（跟 drawArcLengthDimension()/drawRadiusDimension()
+    // 內部真正取用的圓心一致，兩者都是從 arc->curve 或 centerUuid 取得），
+    // 讓 offset 真正代表「圓心→滑鼠」向量。
+    if (m_type == cad::ConstraintType::FixedArcLength && m_refs.size() == 1) {
+        if (auto* arc = dynamic_cast<const cad::SketchArc*>(
+                sk->findGeometry(m_refs[0].geomUuid))) {
+            if (auto* ctr = sk->point(arc->centerUuid))
+                return ctr->pos;
+        }
+    }
+
     QVector2D sum;
     for (const auto& r : m_refs)
         sum += r.resolvePosition(sk);
@@ -1025,16 +1052,37 @@ void GeneralDimCommand::lockSingleGeom(const cad::GeomRef& anchor, const QVector
 {
     Sketch* sk = activeSketch();
 
-    // ⚠️ 新增：整條線（WholeGeom）視為「同時選取其 Start/End 兩個端點」，
-    // 讓使用者可依滑鼠位置在 線長／水平距離／垂直距離 之間選擇——與直接
-    // 點選線段兩端點（點+點流程）完全等價的使用者體驗（本次需求：GDIM
-    // 選一線後，也等同點兩點可由滑鼠位置選中形式）。轉呼叫 lockPairGeom()，
-    // 同時重用其 WaitDimPlace 期間即時重分類的邏輯（見 subscribePreview()
-    // 裡的 m_isPointPairHVA 分支），而不是像其餘單幾何型別那樣「點下去
-    // 同時定型定位」。
+    // ⚠️ 修正（第 14 項回報後續確認：起點是整條線時，多出的第 3 次點擊
+    // 就出在這裡）。整條線（WholeGeom）視為同時選取其 Start/End 兩個
+    // 端點，讓使用者可依滑鼠位置在 線長／水平距離／垂直距離（甚至角度）
+    // 之間選擇——但這終究是「同一條線自己的兩個端點」，不是使用者另外
+    // 選取的第二個幾何，不應該因此被迫多點一次去確認位置。原本這裡轉
+    // 呼叫 lockPairGeom() 會進 WaitDimPlace，需要第 3 次點擊才能定位、
+    // 彈出對話框，跟其他單幾何型別（點、圓、弧：一次點擊同時定型＋定位）
+    // 體驗不一致。改成直接在這裡用 inferPair() 判斷型別（沿用跟
+    // lockPairGeom() 完全相同的分類邏輯），然後呼叫
+    // commitTypeAndPosition() 用同一次點擊的位置同時定型＋定位，跳過
+    // WaitDimPlace。
     cad::GeomRef startRef, endRef;
     if (lineWholeGeomEndpoints(anchor, sk, startRef, endRef)) {
-        lockPairGeom(startRef, endRef, mousePt);
+        auto inf = GeneralDimClassifier::inferPair(startRef, endRef, sk, mousePt);
+        auto ct  = inf ? annotationKindToConstraintType(inf->kind) : std::nullopt;
+        if (!inf || !ct) {
+            // 理論上不會發生（onGeomHover() 已經能用同一份邏輯畫出預覽）；
+            // 防呆 fallback，退回原本會進 WaitDimPlace 的路徑，避免命令卡死。
+            lockPairGeom(startRef, endRef, mousePt);
+            return;
+        }
+
+        m_refs = inf->pairedRefs.isEmpty()
+            ? QList<GeomRef>{ startRef, endRef } : inf->pairedRefs;
+        m_type = *ct;
+        m_distMode = inf->distMode;
+        m_useSupplementAngle = inf->useSupplementAngle;
+        m_wasSingleGeomFlow = true;
+        m_isPointPairHVA = false;  // 不進 WaitDimPlace，不需要期間重分類
+
+        commitTypeAndPosition(mousePt);
         return;
     }
 
@@ -1059,6 +1107,13 @@ void GeneralDimCommand::lockSingleGeom(const cad::GeomRef& anchor, const QVector
 
     // 單幾何：這次點擊「同時完成定型與定位」——不進 WaitDimPlace，
     // 直接以起點與這次點擊的滑鼠位置算出 offset，直接進 WaitValue。
+    commitTypeAndPosition(mousePt);
+}
+
+void GeneralDimCommand::commitTypeAndPosition(const QVector2D& mousePt)
+{
+    auto* cmdMgr = core::CommandLineManager::instance();
+
     m_measuredValue  = measureCurrentValue();
     m_measuredValue2 = measureCurrentValue2();
     m_dimAnchor2D    = refMidpoint2D();
@@ -1583,13 +1638,21 @@ void GeneralDimCommand::commitDimension()
         }
 
         sk->addAnnotation(ann);
-        // addAnnotation() 內部已呼叫過一次 solveConstraints()（driving 標註皆如此），
-        // 這裡再呼叫一次單純是為了取得 SolveResult 回傳值供下方訊息回報使用——
-        // 此時系統已收斂在同一組數值，重複求解成本可忽略、無數值風險。
-        result = sk->solveConstraints();
+        // ⚠️ 效能修正：addAnnotation() 內部已呼叫過一次 solveConstraints()
+        // （driving 標註皆如此）。先前這裡的假設「重複求解成本可忽略」並
+        // 不成立——即使 Newton 疊代因為殘差已收斂而立刻跳過（省下
+        // BDCSVD 分解），solveConstraints() 仍然一定會走一次完整的
+        // markDirty() → Document::rebuildFeature()（整個 sketch 的 AIS
+        // 全部 Erase 再 Display 一次）＋一次 rebuildShapesOnly()（整個
+        // 幾何再 rebuild() 一次＋逐一 diff fingerprint）。GDIM 是最常用
+        // 的指令之一，每下一個尺寸都要多跑一輪完整 AIS 重建/重繪，在
+        // 幾何/約束數量較多的草圖上就是明顯可感覺到的延遲。改讀快取
+        // 結果即可，不需要重新求解。
+        result = sk->lastSolveResult();
     } else {
         sk->addConstraint(c);
-        result = sk->solveConstraints();
+        // 同上：addConstraint() 內部已呼叫過一次 solveConstraints()。
+        result = sk->lastSolveResult();
     }
     int dofAfter = sk->degreesOfFreedom();
 

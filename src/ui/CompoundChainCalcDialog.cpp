@@ -1,4 +1,5 @@
 #include "ui/CompoundChainCalcDialog.h"
+#include "ui/TransitionCurveHelp.h"
 
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
@@ -18,6 +19,9 @@
 #include <QDoubleSpinBox>
 #include <QSettings>
 #include <QtMath>
+#include <QShortcut>
+#include <QKeySequence>
+#include <QStyle>
 
 using aicad::railway::AlignmentDocument;
 using aicad::railway::HorizontalAlignmentEdit;
@@ -139,7 +143,21 @@ void CompoundChainCalcDialog::init()
                           SpiralType::Quintic, SpiralType::PHQuintic, SpiralType::Biquadratic, SpiralType::Spline,
                           SpiralType::BlossEulerHybrid })
         m_spiralTypeCombo->addItem(spiralTypeDisplayName(t), static_cast<int>(t));
-    form->addRow(tr("Spiral form (all segments):"), m_spiralTypeCombo);
+
+    // 螺旋線類型下拉選單旁邊放一顆小「？」說明按鈕，效果等同按 F1（見
+    // TransitionCurveHelp::show()）；樣式與 AddSpiralCalcDialog 一致
+    // （SP_DialogHelpButton 圖示、28x28、不搶 Tab 焦點）。
+    auto* helpButton = new QPushButton(this);
+    helpButton->setIcon(style()->standardIcon(QStyle::SP_DialogHelpButton));
+    helpButton->setFixedSize(28, 28);
+    helpButton->setToolTip(tr("Show transition curve literature references (F1)"));
+    helpButton->setFocusPolicy(Qt::NoFocus);
+    connect(helpButton, &QPushButton::clicked, this, [this] { TransitionCurveHelp::show(this); });
+
+    auto* spiralTypeRow = new QHBoxLayout();
+    spiralTypeRow->addWidget(m_spiralTypeCombo, /*stretch=*/1);
+    spiralTypeRow->addWidget(helpButton);
+    form->addRow(tr("Spiral form (all segments):"), spiralTypeRow);
 
     m_arcCountSpin = new QSpinBox(this);
     m_arcCountSpin->setRange(kMinArcs, kMaxArcs);
@@ -186,6 +204,11 @@ void CompoundChainCalcDialog::init()
             this, &CompoundChainCalcDialog::onArcCountChanged);
     connect(m_calcButton,  &QPushButton::clicked, this, &CompoundChainCalcDialog::onCalculate);
     connect(m_applyButton, &QPushButton::clicked, this, &CompoundChainCalcDialog::onApply);
+
+    // F1 → 顯示螺旋線公式參考文件（見 TransitionCurveHelp::show()）；效果
+    // 與螺旋線類型旁的「？」按鈕相同。
+    auto* helpShortcut = new QShortcut(QKeySequence(Qt::Key_F1), this);
+    connect(helpShortcut, &QShortcut::activated, this, [this] { TransitionCurveHelp::show(this); });
 
     populateTangentCombos();
     rebuildInputTable();

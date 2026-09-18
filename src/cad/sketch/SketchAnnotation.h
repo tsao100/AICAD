@@ -125,6 +125,17 @@ struct SketchAnnotation {
     DistanceMode    distMode = DistanceMode::PointToPoint;
     QVector2D       dimLineOffset;      ///< 尺寸線偏移（草圖平面座標）
 
+    // ── 第 10 項回報後續需求：「翻轉方向」設定後要能記住/存檔 ────────────
+    // 只有 FixedDistance 對應的標註（distMode 有意義的那些）會用到，
+    // 意義與 SketchConstraint 同名欄位一致（見該處說明）：PointToLine/
+    // LineToLine 用 distSideSign，PointToPoint 用 distSideDirX/Y；全部
+    // 0.0 表示尚未鎖定過。這裡才是「真正」的存檔來源——隱含約束本身不會
+    // 被序列化，每次載入都是靠 toImplicitConstraint() 從這裡重新產生，
+    // 見該函式與 Sketch::solveConstraints() 尾端的同步說明。
+    double          distSideSign = 0.0;
+    double          distSideDirX = 0.0;
+    double          distSideDirY = 0.0;
+
     // ── 標註專屬屬性（SketchConstraint 從未支援，是拆分的主要理由） ──────
     QString         prefix;
     QString         suffix;

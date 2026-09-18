@@ -34,6 +34,7 @@ class QLabel;
 class QFrame;
 class QWidget;
 class QEvent;
+class QValidator;
 
 namespace aicad {
 namespace view {
@@ -83,7 +84,16 @@ public:
     /** 同上，角度欄位。 */
     QString angleEditText() const;
 
-    void beginTypedInput(const QString& firstChars);
+    /** 使用者在尚未聚焦任何欄位時直接打字（見 CadView::keyPressEvent()
+     *  的「Jig 可見時，直接打字＝輸入距離」）——預設塞進距離欄位並聚焦
+     *  它，跟原本行為一致。
+     *  @param angleField 為 true 時改塞進角度欄位並聚焦它。目前只有
+     *         方位角模式下，使用者直接打 '-'（開始輸入「度-分-秒」格式
+     *         的角度值）時才會用到——距離恆為正值，不會用到開頭的 '-'，
+     *         所以方位角模式下把 '-' 一律視為「要開始輸入角度」的訊號，
+     *         而不是機械地塞進距離欄位（見 CadView::keyPressEvent()）。
+     */
+    void beginTypedInput(const QString& firstChars, bool angleField = false);
 
 Q_SIGNALS:
     void committed(double distance, double angleDeg);
@@ -113,8 +123,28 @@ private:
     QLabel*    m_distLabel  = nullptr;
     QLabel*    m_angleLabel = nullptr;
 
+    /// 方位角模式刻意「不設驗證器」（見 setAzimuthMode()）——之前這裡
+    /// 曾經改用允許 '-' 分隔符的正規表示式驗證器，但使用者實測仍然打不
+    /// 出 '-'；為了徹底排除任何驗證器本身的字元組成限制造成的疑慮，
+    /// 方位角模式乾脆完全不設驗證器，讓使用者能輸入任何字元組成
+    /// 「度-分-秒」格式（真正的格式/範圍檢查交給送出/鎖定時呼叫的
+    /// parseAngleText()，見該函式）。以 m_angleEdit 為 parent，交給
+    /// Qt 的 parent-child 機制自動釋放，這裡不用手動 delete。
+    QValidator* m_angleValidatorDecimal = nullptr;
+
     bool m_distLocked  = false;
     bool m_angleLocked = false;
+    /// 角度欄位是否被使用者「實際打字」修改過內容（由 textEdited 訊號
+    /// 設定），跟 m_angleLocked 是兩件事：m_angleLocked 只代表「這個
+    /// 欄位目前是否被凍結，不再隨滑鼠即時更新」，Tab／Enter 經過而完全
+    /// 沒打字也會讓它變 true（見 lockField()）。這裡額外記錄「是否真的
+    /// 打過字」，是因為一般模式下畫面顯示的文字已經折算成不大於 180°、
+    /// 無方向性的角度值（見 InputJig.cpp 內 formatAngleForDisplay() 的
+    /// 說明），如果使用者只是 Tab／Enter 經過、沒有實際修改內容，就不能
+    /// 直接把這段「折算過」的顯示文字拿來反推座標，否則方向可能被錯誤
+    /// 對摺到 X 軸另一側；這種情況要改用 m_liveAngle（真正、有方向性的
+    /// 即時角度）——見 angleValue()／emitCommit()。
+    bool m_angleTypedByUser = false;
     bool m_azimuth      = false;
     bool m_active        = false;  ///< session 是否作用中，見 isJigVisible()
 

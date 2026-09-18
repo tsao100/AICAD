@@ -227,6 +227,15 @@ class NewCommand : public Command {
 public:
     NewCommand() : Command("new", "New Document") {}
 
+    // ⚠️ 必須回傳 true：CommandManager::executeCommand() 在 execute() 回傳後，
+    //    只要 cmd->state() != Running 就會立刻 Q_EMIT finished() 並
+    //    deleteLater() 這個命令物件（見 CommandManager.cpp 對應註解）。
+    //    NEW 在「有未儲存變更」時會非同步等待 YESNO_INPUT 才能完成，
+    //    execute() 回傳當下必須已經是 Running，否則命令物件會在使用者
+    //    還沒作答前就被摧毀，訂閱的 lambda 抓著一個即將消失的 this，
+    //    導致按 Yes/No 完全沒有反應（見下方 execute() 內的對應處理）。
+    bool isInteractive() const override { return true; }
+
     CommandResult execute(const CommandContext& /*context*/) override {
         Application*     app    = Application::instance();
         DocumentManager* docMgr = app->documentManager();
@@ -239,6 +248,13 @@ public:
             // consistent with the rest of the command-line workflow.
             core::CommandLineManager* clm = app->commandLineManager();
             if (clm) {
+                // ★ 關鍵修正：在回傳「等待確認」之前，先把狀態設為 Running。
+                //   否則 CommandManager::executeCommand() 會誤判這個命令已經
+                //   同步結束，馬上 emit finished() 並 deleteLater() 掉它
+                //   （見上方 isInteractive() 的說明），使用者的 Yes/No 輸入
+                //   永遠等不到回應。
+                setState(CommandState::Running);
+
                 clm->showPrompt("Unsaved changes will be lost. Continue? [Yes/No] <No>:");
                 clm->waitForInput(core::InputType::YesNo);
 
@@ -280,16 +296,46 @@ private:
                    EventBus*        /*bus*/,
                    core::CommandLineManager* clm)
     {
-        // 1. Cancel any active sketch / command
+        // 1. 若目前正在草圖編輯模式，先走正常的「結束草圖編輯」流程再關閉
+        //    文件——不能只是把 activeSketch 設成 nullptr 就直接關文件！
+        //
+        // ⚠️ 這是 Sketch 模式下執行 NEW 會 crash 的根因：closeDocument()
+        //    只是單純把 Document／Sketch 物件 deleteLater()，完全不知道、
+        //    也不會去清理 CadView／OSnapManager／GripManager 這些 UI 層
+        //    還留著、指向這個即將被刪除的 Sketch 的狀態——CadView 的
+        //    InteractionMode 仍停在 Sketching、RubberBand 的 plane、
+        //    OSnapManager 的 active sketch/plane、GripManager 掛載的
+        //    provider 全部都還指著舊 Sketch。等 Document::deleteLater()
+        //    真正執行、Sketch 被摧毀後，這些懸空指標只要被下一個事件
+        //    （滑鼠移動、paint、甚至下一次 deleteLater 處理本身）碰到，
+        //    就會直接 use-after-free crash——對照 log，crash 前完全沒有
+        //    出現「[CadView] Interaction mode changed to: 0」與
+        //    「sketch.exited」/「sketch.editEnded」，代表正常的結束草圖
+        //    流程根本沒有被觸發。
+        //
+        // 正確作法比照既有的「刪除特徵」邏輯（UIManager.cpp
+        // FeatureBrowser::deleteFeatureRequested 處理）：如果正在編輯的就
+        // 是即將被移除的這個 Sketch，先呼叫 onSketchEditEnded()（會發布
+        // SKETCH_EXITED／sketch.editEnded，讓 OSnapManager／GripManager／
+        // SketchPanel 等都正確釋放對舊 Sketch 的參照），再把 CadView 切回
+        // Navigation 模式，最後才真正關閉文件。
+        ui::UIManager* uiMgr = app->uiManager();
+        if (uiMgr && app->activeSketch() != nullptr) {
+            uiMgr->onSketchEditEnded();
+            view::CadView* cadView = uiMgr->cadView();
+            if (cadView) cadView->setMode(view::InteractionMode::Navigation);
+        }
+
+        // 2. Cancel any active sketch / command
         app->setActiveSketch(nullptr);
 
-        // 2. Close current document
+        // 3. Close current document
         cad::Document* current = docMgr->currentDocument();
         if (current) {
             docMgr->closeDocument(current, /*force=*/true);
         }
 
-        // 3. Create a fresh, empty document
+        // 4. Create a fresh, empty document
         cad::Document* newDoc = docMgr->createDocument("Untitled");
         if (!newDoc) {
             if (clm) clm->printError("Failed to create new document.");
@@ -297,9 +343,8 @@ private:
             return;
         }
 
-        // 4. Reset railway alignment — load an empty JSON object so all
+        // 5. Reset railway alignment — load an empty JSON object so all
         //    PI/VIP lists and solved results are cleared.
-        ui::UIManager* uiMgr = app->uiManager();
         if (uiMgr) {
             railway::AlignmentDocument* alignDoc = uiMgr->alignmentDocument();
             if (alignDoc) {
@@ -308,7 +353,7 @@ private:
                 newDoc->setAlignmentData(QJsonObject{});
             }
 
-            // 5. Reset view to isometric and fit-all so the user sees a
+            // 6. Reset view to isometric and fit-all so the user sees a
             //    clean workspace with the origin/reference geometry visible.
             //    Note: DOCUMENT_CREATED event (subscribed in UIManager) has
             //    already called cadView->setDocument(newDoc) and
@@ -326,7 +371,7 @@ private:
             }
         }
 
-        // 6. Notify the rest of the system
+        // 7. Notify the rest of the system
         if (clm) clm->printMessage("New document ready. Use SKETCH, LINE, HALINE, or other commands to begin.");
 
         Q_EMIT finished(CommandResult::Success("New document created"));

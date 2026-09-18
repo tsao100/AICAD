@@ -1095,6 +1095,18 @@ void Document::onFeatureRebuildRequested() {
     if (feature) {
         rebuildFeature(feature);
     }
+    // ⚠️ 修正：Document 的「已修改」旗標（isModified()／setModified()）只
+    // 接在 Feature::nameChanged／shapeChanged 上，沒有接 rebuildRequested。
+    // 但幾何新增/編輯（LINE、CIRCLE、POLYGON、POINT、CHAMFER、ERASE…）
+    // 一律是透過 Sketch::addXxxGeom()／addConstraint()／removeGeometry()
+    // 等方法 Q_EMIT rebuildRequested() 來觸發畫面重繪，從來不會單獨發
+    // shapeChanged——結果是：光是畫一條線、加一個點，Document 完全不會
+    // 認為「有未儲存的變更」。SaveCommand 本身是不管這個旗標、無條件寫檔
+    // （見 BasicCommands.cpp），所以手動按 Save 不受影響；但任何看這個旗
+    // 標的地方（例如「有未儲存變更，是否繼續？」的確認提示、標題列的
+    // * 標記）都會誤判成「沒有變更」。這裡補上，讓幾何變更也正確標記為
+    // 已修改。
+    setModified(true);
 }
 
 void Document::onFeatureChanged() {

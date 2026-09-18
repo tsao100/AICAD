@@ -72,6 +72,15 @@ Q_SIGNALS:
      */
     void expressionAccepted(const QString& constraintUuid, const QString& newExpr);
 
+    /**
+     * 使用者按下「翻轉方向」時發出（第 10 項回報的後續需求：提供讓使用者
+     * 手動切換距離約束求解「哪一側」的操作入口）。只有 constraintUuid
+     * 對應的約束是 ConstraintType::FixedDistance 時，對話框才會顯示這個
+     * 按鈕。實際套用（呼叫 Sketch::flipDistanceSide()）由外部（CadView）
+     * 接手處理，理由同上。
+     */
+    void flipSideRequested(const QString& constraintUuid);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
 
@@ -79,6 +88,7 @@ private Q_SLOTS:
     void onDimensionRefPicked(const QString& refConstraintUuid);
     void onAccept();
     void onReject();
+    void onFlipSide();
 
 private:
     /// refConstraintUuid 對應的自動命名參數（例如 "d1"）；找不到（該約束
@@ -92,6 +102,7 @@ private:
     QLabel*      m_titleLabel      = nullptr;
     QLineEdit*   m_exprEdit        = nullptr;
     QLabel*      m_hintLabel       = nullptr;
+    QPushButton* m_flipButton      = nullptr;
     QPushButton* m_okButton        = nullptr;
     QPushButton* m_cancelButton    = nullptr;
 };

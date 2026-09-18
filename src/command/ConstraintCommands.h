@@ -313,6 +313,23 @@ public:
 };
 
 /**
+ * @brief FLIPDIM <uuid> — 翻轉一般距離約束（FixedDistance）求解的「哪一側」
+ *
+ * 第 10 項回報的後續需求：FixedDistanceEquation 現在會把「哪一側」鎖定在
+ * 求解開始當下的位置（見 ConstraintSolver.cpp 說明），避免距離經過/接近 0
+ * 時自動跳到另一側；但這也代表使用者若真的想要另一側，需要一個手動切換
+ * 的操作入口。互動上更常用的入口是雙擊尺寸線彈出的 DimExpressionDialog
+ * 裡的「翻轉方向」按鈕（見 CadView::openDimExpressionDialog()），這個指令
+ * 提供給偏好指令列/腳本操作的使用者。
+ */
+class FlipDimCommand : public Command {
+    Q_OBJECT
+public:
+    FlipDimCommand();
+    CommandResult execute(const CommandContext& ctx) override;
+};
+
+/**
  * @brief EDITCON [uuid] [newExpr] — 編輯尺寸約束數值/表達式
  */
 class EditConCommand : public Command {

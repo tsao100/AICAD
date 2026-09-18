@@ -1,4 +1,5 @@
 #include "ui/AlignmentReverseSCSCalcDialog.h"
+#include "ui/TransitionCurveHelp.h"
 
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
@@ -15,6 +16,9 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QtMath>
+#include <QShortcut>
+#include <QKeySequence>
+#include <QStyle>
 
 using aicad::railway::AlignmentDocument;
 using aicad::railway::HorizontalAlignmentEdit;
@@ -70,6 +74,23 @@ QString spiralTypeDisplayName(SpiralType t)
     case SpiralType::BlossEulerHybrid: return QStringLiteral("BlossEulerHybrid");
     default:                           return QStringLiteral("Clothoid");
     }
+}
+
+/**
+ * @brief 建一顆小「？」說明按鈕，點下去等同按 F1（見 TransitionCurveHelp::
+ *        show()）——本對話框有 T1／T2／TM 三個獨立的螺旋線類型下拉選單，
+ *        各自旁邊都放一顆，樣式與 AddSpiralCalcDialog 的單一「？」按鈕一致
+ *        （SP_DialogHelpButton 圖示、28x28、不搶 Tab 焦點）。
+ */
+QPushButton* makeSpiralHelpButton(QWidget* parent)
+{
+    auto* btn = new QPushButton(parent);
+    btn->setIcon(parent->style()->standardIcon(QStyle::SP_DialogHelpButton));
+    btn->setFixedSize(28, 28);
+    btn->setToolTip(QObject::tr("Show transition curve literature references (F1)"));
+    btn->setFocusPolicy(Qt::NoFocus);
+    QObject::connect(btn, &QPushButton::clicked, parent, [parent] { TransitionCurveHelp::show(parent); });
+    return btn;
 }
 
 } // namespace
@@ -139,7 +160,12 @@ void AlignmentReverseSCSCalcDialog::init()
 
     m_type1Combo = new QComboBox(this);
     addSpiralTypeItems(m_type1Combo);
-    arc1Form->addRow(tr("T1 (entry spiral type):"), m_type1Combo);
+    {
+        auto* row = new QHBoxLayout();
+        row->addWidget(m_type1Combo, /*stretch=*/1);
+        row->addWidget(makeSpiralHelpButton(this));
+        arc1Form->addRow(tr("T1 (entry spiral type):"), row);
+    }
     mainLayout->addWidget(new QLabel(tr("<b>Entry side (Tangent \u2192 Spiral(L1) \u2192 Arc1(R1))</b>"), this));
     mainLayout->addLayout(arc1Form);
 
@@ -159,7 +185,12 @@ void AlignmentReverseSCSCalcDialog::init()
 
     m_type2Combo = new QComboBox(this);
     addSpiralTypeItems(m_type2Combo);
-    arc2Form->addRow(tr("T2 (exit spiral type):"), m_type2Combo);
+    {
+        auto* row = new QHBoxLayout();
+        row->addWidget(m_type2Combo, /*stretch=*/1);
+        row->addWidget(makeSpiralHelpButton(this));
+        arc2Form->addRow(tr("T2 (exit spiral type):"), row);
+    }
     mainLayout->addWidget(new QLabel(tr("<b>Exit side (Arc2(R2) \u2192 Spiral(L2) \u2192 Tangent)</b>"), this));
     mainLayout->addLayout(arc2Form);
 
@@ -167,7 +198,12 @@ void AlignmentReverseSCSCalcDialog::init()
     auto* midForm = new QFormLayout();
     m_typeMCombo = new QComboBox(this);
     addSpiralTypeItems(m_typeMCombo);
-    midForm->addRow(tr("TM (reverse-pair spiral type, Lm1=Lm2 auto-solved):"), m_typeMCombo);
+    {
+        auto* row = new QHBoxLayout();
+        row->addWidget(m_typeMCombo, /*stretch=*/1);
+        row->addWidget(makeSpiralHelpButton(this));
+        midForm->addRow(tr("TM (reverse-pair spiral type, Lm1=Lm2 auto-solved):"), row);
+    }
     mainLayout->addWidget(new QLabel(
         tr("<b>Reverse pair (Arc1 \u2194 Arc2, EqualLength \u2014 length auto-solved)</b>"), this));
     mainLayout->addLayout(midForm);
@@ -199,6 +235,11 @@ void AlignmentReverseSCSCalcDialog::init()
 
     connect(m_calcButton,  &QPushButton::clicked, this, &AlignmentReverseSCSCalcDialog::onCalculate);
     connect(m_applyButton, &QPushButton::clicked, this, &AlignmentReverseSCSCalcDialog::onApply);
+
+    // F1 → 顯示螺旋線公式參考文件（見 TransitionCurveHelp::show()）；效果
+    // 與 T1／T2／TM 旁的「？」按鈕相同。
+    auto* helpShortcut = new QShortcut(QKeySequence(Qt::Key_F1), this);
+    connect(helpShortcut, &QShortcut::activated, this, [this] { TransitionCurveHelp::show(this); });
 
     populateTangentCombos();
     loadLastSettings();   // 覆蓋上面硬編碼的 600.0/100.0/Clothoid 預設值

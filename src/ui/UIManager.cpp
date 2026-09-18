@@ -267,6 +267,28 @@ void UIManager::initGripSystem()
                        qDebug() << "[UIManager] Grips detached (selection cleared)";
                    });
 
+    // ── B1b) Sketch geometry selection cleared → 一併 detach grips ────
+    // ⚠️ 修正：CadView::clearSketchGeomSelection()（ERASE 命令刪除完成後、
+    // 以及點擊空白處清除 sketch 選取時都會呼叫，見 CadView.cpp）先前只發布
+    // Events::SKETCH_GEOM_CLEARED，但整個專案完全沒有任何地方訂閱這個
+    // 事件去 detach GripManager——只有 "selection.cleared"（另一條獨立
+    // 路徑）會 detach。結果是：ERASE 一批物件之後，AIS 選取高亮雖然清掉
+    // 了，GripManager 卻還留著刪除前掛載的 SketchGripProvider，而該
+    // provider 記住的是「幾何在 m_geometries 裡的索引（geomIndices）」。
+    // Sketch::removeGeometry()/removeMany() 用 QList::takeAt() 刪除元素
+    // 會讓後面所有元素的索引往前遞補，於是殘留的 grips 在刪除後很可能
+    // 指到完全不同、原本沒被選取的物件上——這正是「刪除結束後 grips 沒
+    // 自動關閉，且會顯示在本來沒選的物件上」的根本原因。訂閱這個事件、
+    // 一併執行與 "selection.cleared" 相同的 detach 邏輯即可修正。
+    bus->subscribe(Events::SKETCH_GEOM_CLEARED, this,
+                   [this](const QVariant&) {
+                       if (d->gripManager->isGripSelected())
+                           d->gripManager->cancelGrip();
+
+                       d->gripManager->detach();
+                       qDebug() << "[UIManager] Grips detached (sketch geometry selection cleared)";
+                   });
+
     // ── B2) Alignment element selected → attach AlignmentGripProvider ─────
     // 當使用者在 CadView 中點選任一 Alignment AIS 物件時，CadView 或
     // AlignmentRenderer 發布此事件，UIManager 負責掛載 Provider。
@@ -818,14 +840,18 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                     else
                                         aDoc->horizontal()->solve();  // solve empty → clears
 
-                                    // Sync solved rawPoints back to TCL for PLAN DEV
-                                    const railway::HorizontalAlignment* ha =
-                                        aDoc->horizontal()->result();
-                                    if (ha && !ha->isEmpty()) {
-                                        QVector<railway::AlignmentPoint> merged = ha->rawPoints();
-                                        railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
-                                        tcl->loadHorizontal(merged);
-                                    }
+                                    // 抑制元素鏈的功能：不在文件載入/還原時把
+                                    // solve() 的結果寫回 tcl（原本「Sync solved
+                                    // rawPoints back to TCL for PLAN DEV」的這段
+                                    // tcl->loadHorizontal(merged) 已移除，理由同
+                                    // showAlignmentDataTableRequested 分支的
+                                    // 說明：seedFromRawPoints()／解出的
+                                    // EditableElement 鏈若未能忠實還原某些線元
+                                    // 序列（例如 ADC／AQT 產生的緩和曲線），把
+                                    // 這個「重建版」寫回會永久覆蓋掉本來正確的
+                                    // tcl->horizontal()，讓文件一開/還原就把
+                                    // 資料損毀，而不是只在使用者主動編輯時才
+                                    // 同步）。
 
                                     if (tcl->hAlignVisible()) {
                                         view::AlignmentRenderer* r =
@@ -1155,6 +1181,17 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                            if (!rb) return;
                            QVariantMap map = data.toMap();
                            QString action = map["action"].toString();
+
+                           // ── Polygon 邊數（POLYGON 命令的 S 選項） ─────────────
+                           // 檢查放在 action 分派之外：PolygonCommand 在
+                           // "clearAndAdd"（指定中心點當下）與 "setParams"
+                           // （使用者按 S 變更邊數）兩種 action 都可能帶著
+                           // "polygonSides" 這個 key，若只在 "setParams" 分支內
+                           // 檢查，"clearAndAdd" 附帶的邊數就會被忽略。
+                           if (map.contains("polygonSides")) {
+                               rb->setPolygonSides(map["polygonSides"].toInt());
+                           }
+
                            if (action == "setParams") {
                                // ── Spiral / SCS geometric parameters ────────────────
                                if (map.contains("radius"))
@@ -2164,13 +2201,28 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                 r, &view::AlignmentRenderer::refresh);
                         d->tclRenderers.insert(tclId, r);
                     }
-                    // Sync solved rawPoints to TCL for PLAN DEV
-                    const railway::HorizontalAlignment* ha = aDoc->horizontal()->result();
-                    if (ha && !ha->isEmpty()) {
-                        QVector<railway::AlignmentPoint> merged = ha->rawPoints();
-                        railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
-                        tcl->loadHorizontal(merged);
-                    }
+                    // 抑制元素鏈的功能：不在此把 solve() 的結果寫回 tcl
+                    // （原本「Sync solved rawPoints to TCL for PLAN DEV」的
+                    // 這段 tcl->loadHorizontal(merged) 已移除）。
+                    //
+                    // 背景：這裡執行的時機是「這條 TCL 第一次建立 aDoc」，
+                    // 亦即 seedFromRawPoints() 剛把 rawPoints() 反推成
+                    // EditableElement 鏈、使用者完全還沒做任何編輯——這時候
+                    // 把 solve() 的結果寫回 tcl 對「同步使用者的編輯」毫無
+                    // 幫助（根本沒有編輯），卻讓 seedFromRawPoints()／
+                    // solveSCS() 這套複雜的模式比對／重建邏輯（Fixed／
+                    // Floating Tangent／CircularArc／SpiralIn／SpiralOut／
+                    // SCS 群組……）有機會在某些線元序列上還原失準（例如
+                    // ADC／AQT 產生的緩和曲線在特定組合下被誤判、群組邊界
+                    // 抓錯），進而用這個「重建版」永久覆蓋掉本來正確、剛
+                    // 由 ADC／AQT 寫入的 tcl->horizontal()——外觀上就像是
+                    // 新加入的緩和曲線「被元素鏈吃掉」：不只是這裡的顯示
+                    // 讀不到，就連 3D 算圖／再次開啟本表格都讀不到了，因為
+                    // 連權威資料本身都已經被覆寫。拿掉這段寫回，讓
+                    // rawPoints() 保持「唯一權威來源」，不會被這個時機點的
+                    // 重新求解意外覆寫。使用者若在「線形資料表」內實際編輯
+                    // （拖曳 grip、改欄位），仍會透過既有的 changed()／
+                    // dataCommitted 機制正常同步回 tcl，不受此處影響。
                     r->setAlignment(aDoc->horizontal());
                     r->setVisible(true);
                     r->refresh();
@@ -2316,6 +2368,21 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     dlg->show();
                     dlg->raise();
                     dlg->activateWindow();
+                });
+
+        // ── AQT 編輯既有線形 — editWithQuickTableRequested ─────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::editWithQuickTableRequested,
+                this, [this](const QString& tclId) {
+                    qDebug() << "[UIManager] editWithQuickTableRequested tclId=" << tclId;
+
+                    auto* cmdMgr = core::Application::instance()->commandManager();
+                    if (!cmdMgr) return;
+
+                    command::CommandContext ctx;
+                    ctx.uiManager = this;
+                    ctx.cadView   = d->cadView;
+                    ctx.data["tclId"] = tclId;
+                    cmdMgr->executeCommand("alignmentquicktable", ctx);
                 });
 
         // ── AlignedProfileArray — showProfileArrayTableRequested (Step 8) ──────
@@ -2960,9 +3027,23 @@ void UIManager::setupSketchPanel()
             this, [this](const QString& uuid) {
                 auto* sketch = core::Application::instance()->activeSketch();
                 if (!sketch) return;
-                // removeConstraint 內部已呼叫 solveConstraints() + emit rebuildRequested
+                // ⚠️ 修正（第 7 項回報：刪除尺寸約束，相關部分／存檔沒有同步
+                // 刪除）：SketchPanel 約束列表裡的 GDIM 尺寸列，對應的 uuid
+                // 是 addImplicitConstraint() 自動產生的「隱含約束」，其
+                // implicitOf 指回真正的 SketchAnnotation。只呼叫
+                // removeConstraint() 只會刪掉隱含約束，標註本身（連同
+                // Prefix/Suffix/公差等資料）留在 m_annotations 沒清掉，
+                // 存檔／重新載入後會依標註內容重新生成隱含約束，讓已刪除
+                // 的尺寸「復活」。改成優先呼叫 removeAnnotation()，同時
+                // 清掉標註與其隱含約束。
+                // removeConstraint()/removeAnnotation() 內部都已呼叫
+                // solveConstraints() + emit rebuildRequested
                 // → Document::rebuildFeature 會自動 erase+rebuild+display
-                sketch->removeConstraint(uuid);
+                cad::SketchConstraint* c = sketch->findConstraint(uuid);
+                if (c && !c->implicitOf.isEmpty())
+                    sketch->removeAnnotation(c->implicitOf);
+                else
+                    sketch->removeConstraint(uuid);
                 if (d->cadView) d->cadView->refreshView();
             });
 
@@ -3053,8 +3134,10 @@ void UIManager::setupSketchPanel()
                 cad::SketchConstraint c;
                 c.type = type; c.refs = refs; c.value = value;
                 c.paramExpr = paramExpr; c.driving = driving;
+                // ⚠️ 效能修正：addConstraint() 內部已呼叫過一次
+                // solveConstraints()（含 emit rebuildRequested()），這裡
+                // 不需要再呼叫一次，否則同一次操作要跑兩遍完整求解＋重建。
                 sketch->addConstraint(c);
-                sketch->solveConstraints();
             }
         }
         // 清除 constraintPickActive flag，切回 Sketching 模式
@@ -3105,10 +3188,29 @@ void UIManager::setupSketchPanel()
 
             const bool enterGetGeom = (mode == view::InteractionMode::GetGeom);
 
-            // ✅ Step 16: GetGeom 模式下停用 GripEventFilter，避免 AIS_GripHandle
-            // 搶先消費點擊事件，干擾約束選點流程。離開 GetGeom 時恢復。
-            if (d->gripFilter) d->gripFilter->setEnabled(!enterGetGeom);
-            if (d->gripManager) d->gripManager->setEnabled(!enterGetGeom);
+            // ⚠️ 修正（第 14 項回報：GDIM 彈出對話框前，確認尺寸線位置那一下
+            // 有時需要點兩次）：原本這裡只排除 GetGeom，但 GDIM 選完幾何後
+            // 會從 GetGeom 換到 PlaceDimLine（移動滑鼠定位尺寸線、點擊確認
+            // 位置），這裡把 mode!=GetGeom 誤判為「已經離開需要獨佔點擊的
+            // 階段」，把 GripEventFilter/GripManager 重新打開。PlaceDimLine
+            // 期間畫面上的草圖幾何點通常還留著 grip，若使用者點擊確認位置
+            // 的地方剛好靠近某個既有 grip，GripEventFilter::eventFilter()
+            // 會搶在 CadView::mousePressEvent() 收到事件之前，把這次點擊
+            // 當成「點到 grip」直接吃掉（回傳 true 消費事件、甚至進一步
+            // 把 grip 標記為「已選取，等下一次點擊確認拖曳位置」），使用者
+            // 這次點擊完全沒有觸發 PlaceDimLine 的確認邏輯，必須再點一次
+            // 才會成功——這正是「需要點兩次才彈出對話框」的根本原因。
+            // PlaceDimLine 跟 GetGeom 一樣，都是需要獨佔滑鼠點擊的中繼
+            // 狀態，這裡一併排除，讓 grip 在整個 GDIM 互動期間持續停用，
+            // 直到真正回到一般 Sketching 模式才恢復。
+            const bool exclusiveClickMode =
+                enterGetGeom || (mode == view::InteractionMode::PlaceDimLine);
+
+            // ✅ Step 16: 上述獨佔點擊模式下停用 GripEventFilter，避免
+            // AIS_GripHandle 搶先消費點擊事件，干擾約束選點/尺寸放置流程。
+            // 離開這些模式時恢復。
+            if (d->gripFilter) d->gripFilter->setEnabled(!exclusiveClickMode);
+            if (d->gripManager) d->gripManager->setEnabled(!exclusiveClickMode);
 
             // 從 overlay pointAISMap（Constraint overlay 建立的點）
             auto* overlay = d->sketchPanel ? d->sketchPanel->overlay() : nullptr;
@@ -3685,6 +3787,18 @@ railway::AlignmentDocument* UIManager::ensureTclAlignmentDocument(const QString&
     aDoc->vertical()->solve();
 
     return aDoc;
+}
+
+void UIManager::invalidateTclAlignmentDocument(const QString& tclId)
+{
+    railway::AlignmentDocument* aDoc = d->tclAlignmentDocs.take(tclId);
+    if (!aDoc)
+        return;
+
+    if (d->alignmentDoc == aDoc)
+        d->alignmentDoc = nullptr;
+
+    aDoc->deleteLater();
 }
 
 view::Railway3DAlignmentRenderer* UIManager::railway3DRenderer() const

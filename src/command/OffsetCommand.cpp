@@ -274,8 +274,7 @@ void OffsetCommand::onPointAcquired(const QVariant& payload)
                         GeomRef(joint.first,  GeomHandle::WholeGeom),
                         GeomRef(joint.second, GeomHandle::WholeGeom)));
                 }
-                sk->solveConstraints();
-                Q_EMIT sk->rebuildRequested();
+                sk->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
 
                 created = true;
                 if (cmdMgr) {
@@ -293,8 +292,7 @@ void OffsetCommand::onPointAcquired(const QVariant& payload)
                 if (r.newRadius > 0.0) {
                     sk->addConstraint(SketchConstraint::makeConcentric(m_curveUuid, r.newCurveUuid));
                     sk->addConstraint(SketchConstraint::makeFixedRadius(r.newCurveUuid, r.newRadius));
-                    sk->solveConstraints();
-                    Q_EMIT sk->rebuildRequested();
+                    sk->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
                 }
 
                 created = true;

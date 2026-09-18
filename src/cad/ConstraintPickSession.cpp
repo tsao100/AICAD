@@ -151,8 +151,10 @@ QString ConstraintPickSession::promptText() const {
         if (picked == 0) return tr("選取第一個幾何元素（重合）…");
         return tr("選取第二個幾何元素（重合）…");
     case ConstraintType::Collinear:
-        if (picked == 0) return tr("選取第一條線段（共線）…");
-        return tr("選取第二條線段（共線）…");
+        // ✅ COLLINEAR 支援「兩線段」或「一點 + 一線段」兩種組合
+        // （見 Sketch::constrainCollinear / CollinearEquation）。
+        if (picked == 0) return tr("選取第一個元素（線段或點，共線）…");
+        return tr("選取第二個元素（線段或點，共線）…");
     case ConstraintType::Midpoint:
         if (picked == 0) return tr("選取點（中點約束）…");
         return tr("選取線段（中點約束）…");

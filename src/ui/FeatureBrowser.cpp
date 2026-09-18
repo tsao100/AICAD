@@ -506,6 +506,11 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
             Q_EMIT showAlignmentDataTableRequested(itemId);
         });
 
+        QAction* actQuickTable = menu.addAction(tr("以 AQT 編輯..."));
+        connect(actQuickTable, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT editWithQuickTableRequested(itemId);
+        });
+
         menu.addSeparator();
 
         QAction* actRename = menu.addAction(tr("重新命名"));

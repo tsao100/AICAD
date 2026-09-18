@@ -21,6 +21,15 @@ struct GeomVarLayout {
     int startOffset = -1;  ///< Start handle 對應的 vars index（SketchPoint.x）
     int endOffset   = -1;  ///< End   handle 對應的 vars index（SketchPoint.x）
 
+    /// ⚠️ 修正（COLLINEAR 點+線 crash）：是否為獨立 SketchPoint（只有
+    /// offset/offset+1 兩個 DOF，沒有 Start/End 兩個端點）。CollinearEquation
+    /// 等原本假設 refs 一定是「線」的雙幾何約束，需要靠這個旗標分辨某個
+    /// ref 其實是點，才能避免對它呼叫 indexFor(GeomHandle::End) 讀到
+    /// offset+2——那已經超出該點自身的 DOF 範圍，若這個點剛好是變數向量
+    /// 中最後一個元素，offset+2 甚至會整個超出向量長度，觸發
+    /// QVector::operator[] 的 index-out-of-range assert 而讓程式崩潰。
+    bool isPoint = false;
+
     /// Arc 專用：求解前（pack 當下）的原始簽名掃角 t1_orig - t0_orig（弧度）。
     /// 純粹作為分支判斷用的參考常數，不是求解變數——用來讓
     /// FixedArcLengthEquation 判斷這是優弧（>π）還是劣弧，並讓
@@ -152,12 +161,38 @@ public:
     void jacobian(const QVector<double>&, int row0, QVector<QVector<double>>&) const override;
 };
 
+/// FixedDistance：兩點/點到線/線到線距離 = value。
+/// ⚠️ 修正（第 10 項回報：距離尺寸「兩邊」solve 後有時會左右對調）：
+/// 原本 PointToLine/LineToLine 用 `std::abs(signedDist) - value`、
+/// PointToPoint 用 `sqrt(dx²+dy²) - value`——兩者都是「不分方向」的
+/// 對稱式，數學上永遠有兩個（或一整個圓/兩側）等價解，Newton 疊代
+/// 收斂到哪一個純粹看起始猜測值落在哪一側，在距離目標值經過（或很接近）
+/// 0 附近時（例如本次回報的 cant 參數跨越 0，連動 d1=abs(cant)/2 跟著
+/// 趨近 0）尤其容易因為極小的數值雜訊「跳」到另一側，造成使用者看到的
+/// 「其中一邊延伸線沒動、另一邊延伸線跑到不動邊的另一側」。
+/// 修法：建構時（buildEquations() 傳入本次求解「起始」的 vars，也就是
+/// 求解前、使用者目前看到的幾何位置）鎖定當下的方向／符號，之後這次
+/// solve() 全程都沿用同一個鎖定值，把「哪一側」的選擇跟「這次求解開始
+/// 前使用者看到的畫面」綁定，而不是每次疊代都重新判斷正負號——如此
+/// Newton 疊代只會在鎖定的那一側收斂，不會跳到鏡射的另一組解。
 class FixedDistanceEquation : public ConstraintEquation {
 public:
-    using ConstraintEquation::ConstraintEquation;
+    FixedDistanceEquation(const SketchConstraint& c,
+                          const QHash<QString, GeomVarLayout>* layout,
+                          const QVector<double>& initialVars)
+        : ConstraintEquation(c, layout) { lockReference(initialVars); }
     int  equationCount() const override { return 1; }
     void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
     void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+private:
+    void lockReference(const QVector<double>& initialVars);
+    // PointToLine / LineToLine 用：鎖定 signedDist 在求解開始當下的正負號。
+    double m_lockedSign = 1.0;
+    // PointToPoint 用：鎖定求解開始當下 A→B 的單位方向向量，把「距離＝
+    // value」的等式從「以 A 為圓心、半徑 value 的圓」改成「沿這個鎖定
+    // 方向、投影距離＝value 的無限直線」，消除方向歧義。
+    double m_lockedDirX = 0.0;
+    double m_lockedDirY = 1.0;
 };
 
 class EqualLengthEquation : public ConstraintEquation {
@@ -208,18 +243,26 @@ public:
     void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
 };
 
-/// Collinear：兩線段共線
-/// 等價：Parallel + 線段 A 的起點在線段 B 上
-/// 產生 2 條方程式：
-/// F0 = cross(dA, dB) = 0  （平行）
-/// F1 = cross(dB, B1→A1) = 0  （A1 在 B 的延伸線上）
-/// refs[0] = 線段 A，refs[1] = 線段 B
+/// Collinear：兩線段共線，或一點與一線段共線
+/// ── 兩線段共線：等價 Parallel + 線段 A 的起點在線段 B 上，產生 2 條方程式：
+///    F0 = cross(dA, dB) = 0  （平行）
+///    F1 = cross(dB, B1→A1) = 0  （A1 在 B 的延伸線上）
+///    refs[0] = 線段 A，refs[1] = 線段 B
+/// ── 一點 + 一線段共線：退化為「點在線的延伸線上」，產生 1 條方程式：
+///    F0 = cross(dLine, P − LineStart) = 0
+///    refs[0]/refs[1] 其中一個 handle=WholeGeom 指向 SketchPoint、
+///    另一個 handle=Curve 指向線段，順序不拘（evaluate/jacobian 會
+///    透過 GeomVarLayout::isPoint 動態判斷哪一個是點）。
+/// equationCount() 依 refs 實際型別（是否有一邊是點）動態回傳 1 或 2，
+/// 而非固定常數，因此宣告為一般 override 而非 inline。
 class CollinearEquation : public ConstraintEquation {
 public:
     using ConstraintEquation::ConstraintEquation;
-    int  equationCount() const override { return 2; }
+    int  equationCount() const override;
     void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
     void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+private:
+    bool refIsPoint(int refIdx) const;
 };
 
 class EqualRadiusEquation : public ConstraintEquation {

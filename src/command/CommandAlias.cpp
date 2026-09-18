@@ -36,6 +36,7 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("A", "ARC", "Draw an arc", true);
     registerAlias("PL", "POLYLINE", "Draw a polyline", true);
     registerAlias("POL", "POLYGON", "Draw a polygon", true);
+    registerAlias("PO", "POINT", "Draw a sketch point", true);
     registerAlias("REC", "RECT", "Draw a rectangle", true);
     registerAlias("EL", "ELLIPSE", "Draw an ellipse", true);
     registerAlias("SPL", "SPLINE", "Draw a spline", true);
@@ -75,6 +76,8 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("AFC", "ALIGNMENTFLOATCURVE",  "Add Floating Curve between two tangents",      true);
     registerAlias("SCS", "ALIGNMENTSCS",         "Add SCS (Spiral-Circular-Spiral) curve",       true);
     registerAlias("RSCS", "ALIGNMENTREVSCS",     "Add reverse SCS+SCS curve (left-right or right-left)", true);
+    registerAlias("AQT", "ALIGNMENTQUICKTABLE",  "Compute full horizontal alignment table from partial keypoint data", true);
+    registerAlias("ADC", "ALIGNMENTDRAWCHAIN",   "Interactively draw alignment elements one after another", true);
     registerAlias("SCSCHAIN", "SCSCHAIN",        "Add S0-C0-S1-C1-...-Sn compound chain (N>=2 arcs)", true);
     registerAlias("AS",  "ALIGNMENTADDSPIRAL",   "Insert Clothoid between Fixed Tangent and Arc (LC/CA)", true);
     registerAlias("TCL", "TRACK",                "New Track Centerline",                         true);

@@ -187,7 +187,15 @@ int SketchConstraint::dofConsumed() const {
     case ConstraintType::Vertical:        return 1;
     case ConstraintType::Parallel:        return 1;
     case ConstraintType::Perpendicular:   return 1;
-    case ConstraintType::Collinear:       return 2;
+    case ConstraintType::Collinear:
+        // 兩線共線＝2 個方程式（平行＋點在延伸線上）；一點＋一線共線只有
+        // 「點在延伸線上」1 個方程式（見 Sketch::constrainCollinear／
+        // CollinearEquation 的點+線分支）。constrainCollinear() 建立 refs
+        // 時，點一律用 GeomHandle::WholeGeom、線用 Curve，故可藉此分辨，
+        // 讓 DOF 統計（degreesOfFreedom()／解算結果訊息）保持正確。
+        return (refs.size() >= 2 &&
+                (refs[0].handle == GeomHandle::WholeGeom ||
+                 refs[1].handle == GeomHandle::WholeGeom)) ? 1 : 2;
     case ConstraintType::EqualLength:     return 1;
     case ConstraintType::FixedAngle:      return 1;
     case ConstraintType::Concentric:      return 2;
@@ -221,6 +229,16 @@ QJsonObject SketchConstraint::toJson() const {
     o["distMode"]  = static_cast<int>(distMode);
     o["dimOffX"]   = dimLineOffsetX;
     o["dimOffY"]   = dimLineOffsetY;
+    if (fixedAbsolute) o["fixedAbsolute"] = true;
+    // 第 10 項回報後續需求：只有非隱含（implicitOf 為空，即非 GDIM 標註
+    // 產生）的 FixedDistance 約束才需要在這裡存這三個欄位——隱含約束
+    // 本來就不會被序列化進來（見上方 implicitOf 判斷），它的「哪一側」
+    // 記憶存在對應的 SketchAnnotation 裡（見 SketchAnnotation::toJson()）。
+    if (implicitOf.isEmpty() && type == ConstraintType::FixedDistance) {
+        o["distSideSign"] = distSideSign;
+        o["distSideDirX"] = distSideDirX;
+        o["distSideDirY"] = distSideDirY;
+    }
     if (!implicitOf.isEmpty()) o["implicitOf"] = implicitOf;
     QJsonArray arr;
     for (const auto& r : refs) arr.append(r.toJson());
@@ -239,6 +257,10 @@ SketchConstraint SketchConstraint::fromJson(const QJsonObject& j) {
     c.distMode  = static_cast<DistanceMode>(j["distMode"].toInt(0));
     c.dimLineOffsetX = j["dimOffX"].toDouble(0.0);
     c.dimLineOffsetY = j["dimOffY"].toDouble(0.0);
+    c.fixedAbsolute  = j["fixedAbsolute"].toBool(false);
+    c.distSideSign   = j["distSideSign"].toDouble(0.0);
+    c.distSideDirX   = j["distSideDirX"].toDouble(0.0);
+    c.distSideDirY   = j["distSideDirY"].toDouble(0.0);
     c.implicitOf     = j["implicitOf"].toString();
     for (const auto& rv : j["refs"].toArray())
         c.refs.append(GeomRef::fromJson(rv.toObject()));

@@ -399,14 +399,12 @@ bool trimLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& targetSh
     // extend 因為本來就是走 movePoint() 這條路徑，所以沒有這個問題）。
     if (keepsOnlyUpperSide && !keepsOnlyLowerSide) {
         sketch->movePoint(line->startUuid, upperPt);
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         return true;
     }
     if (keepsOnlyLowerSide && !keepsOnlyUpperSide) {
         sketch->movePoint(line->endUuid, lowerPt);
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         return true;
     }
 
@@ -426,8 +424,7 @@ bool trimLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& targetSh
         sketch->addLineGeom(upperPt, origP2, upperStartUuid, upperEndUuid, origRole);
     if (auto* ng = sketch->findGeometry(newUuid)) ng->role = origRole;
 
-    sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
+    sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     return true;
 }
 
@@ -500,8 +497,7 @@ bool trimCircle(cad::Sketch* sketch, SketchCircle* circ, const GeomShape2D& targ
         sketch->addArcGeom(upperPt, midPt, lowerPt, upperUuid, lowerUuid, origCenterUuid);
     if (auto* ng = sketch->findGeometry(newUuid)) ng->role = origRole;
 
-    sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
+    sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     return !newUuid.isEmpty();
 }
 
@@ -614,15 +610,13 @@ bool trimArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape
     if (range.hasLowerPart && !range.hasUpperPart) {
         // 只剩 [s0, lower] 這一截：沿用原本這個弧。
         if (!reshapeArc(arc, range.s0, range.lower)) return false;
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         return true;
     }
     if (range.hasUpperPart && !range.hasLowerPart) {
         // 只剩 [upper, e0] 這一截：沿用原本這個弧。
         if (!reshapeArc(arc, range.upper, range.e0)) return false;
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         return true;
     }
 
@@ -649,8 +643,7 @@ bool trimArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetShape
                                                 startUuid, endUuid, origCenterUuid);
     if (auto* ng = sketch->findGeometry(newUuid)) ng->role = origRole;
 
-    sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
+    sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     return true;
 }
 
@@ -727,8 +720,7 @@ bool extendLine(cad::Sketch* sketch, SketchLine* line, const GeomShape2D& target
     const QVector2D newPos =
         targetShape.p1 + (targetShape.p2 - targetShape.p1) * float(result.bestT);
     sketch->movePoint(movingUuid, newPos);
-    sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
+    sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     return true;
 }
 
@@ -835,8 +827,7 @@ bool extendArc(cad::Sketch* sketch, SketchArc* arc, const GeomShape2D& targetSha
     sketch->movePoint(arc->startUuid, newStartPt);
     sketch->movePoint(arc->endUuid, newEndPt);
 
-    sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
+    sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     return true;
 }
 
@@ -1123,8 +1114,7 @@ FilletResult filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QStri
         sketch->addConstraint(SketchConstraint::makeCoincident(
             GeomRef(s.line1PointUuid, GeomHandle::WholeGeom),
             GeomRef(s.line2PointUuid, GeomHandle::WholeGeom)));
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         result.success = true;
         return result;
     }
@@ -1160,8 +1150,7 @@ FilletResult filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QStri
     const QString newArcUuid = sketch->addArcGeom(tangent1, midPt, tangent2,
                                                    QString(), QString(), QString());
     if (newArcUuid.isEmpty()) {
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         return result;
     }
 
@@ -1172,8 +1161,7 @@ FilletResult filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QStri
         result.arcEndUuid   = arc->endUuid;
     }
 
-    sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
+    sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     result.success = true;
     return result;
 }
@@ -1214,13 +1202,30 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
         sketch->constrainCoincident(GeomRef(s.line1PointUuid, GeomHandle::WholeGeom),
                                      GeomRef(s.line2PointUuid, GeomHandle::WholeGeom));
 
-        sketch->solveConstraints();
-        Q_EMIT sketch->rebuildRequested();
+        sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         return true;
     }
 
     const QVector2D chamferPt1 = s.intersection + s.dir1 * float(dist1);
     const QVector2D chamferPt2 = s.intersection + s.dir2 * float(dist2);
+
+    // ── （2026-09）暫時固定遠端點的做法已移除 ───────────────────────────
+    // 下面會對交點 p1 加 PointOnCurve(line1)/(line2) 共線約束（見下方長篇
+    // 說明）。這在 line1／line2 完全沒有其他約束、遠端點完全自由時，原本
+    // 會讓 ConstraintSolver 的方程組出現精確秩虧、放大誤差甚至 crash——
+    // 之前在這裡用「暫時 FixedX/FixedY 釘住遠端點、解完再移除」的方式繞
+    // 過這個問題。
+    //
+    // 找到既有的正確修法後改掉了：問題根源其實在共用的
+    // ConstraintSolver::solveLinearLS()，這裡原本就有一套已經驗證成功、
+    // 拿來處理近似奇異方程組的 Levenberg-Marquardt 平滑阻尼（Tikhonov
+    // regularization，先前修過圓角弧 Start/End 沒對齊的問題），只是阻尼
+    // 量 λ 只看「相對最大奇異值的比例」，遇到像這裡這種整個系統本身數值
+    // 尺度就偏小的精確秩虧就不夠力。已經把 λ 改成「相對比例／絕對下限」
+    // 兩者取大（見 solveLinearLS() 內的說明），從根源解決、對全 App 的
+    // 所有約束求解都受益，不需要再由每個呼叫端（像這裡）各自加一層暫時
+    // 固定／解除的繞過邏輯，也少了本地暫時約束萬一跟既有約束衝突的額外
+    // 風險。
 
     sketch->movePoint(s.line1PointUuid, chamferPt1);
     sketch->movePoint(s.line2PointUuid, chamferPt2);
@@ -1229,8 +1234,14 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
     // 是比 Coincident 約束更強的連結（同一個 SketchPoint，0 DOF，不會有解算
     // 殘差），所以這裡不需要另外補重合約束——這點與退化分支（上面）不同，
     // 那裡沒有新線可以共用端點，才需要額外補約束。
+    //
+    // ★ emitSignals=false：addLineGeom() 預設一建立就立刻
+    // Q_EMIT rebuildRequested()（觸發整個 Feature 重建），但接下來還要繼
+    // 續加交點、FixedDistance／PointOnCurve 共 2～4 條約束才算完整——這裡
+    // 先不重繪，等全部東西都加完、約束也解完，只在函式最後統一重繪一次。
     const QString newUuid = sketch->addLineGeom(chamferPt1, chamferPt2,
-                                                s.line1PointUuid, s.line2PointUuid);
+                                                s.line1PointUuid, s.line2PointUuid,
+                                                GeomRole::Normal, /*emitSignals=*/false);
 
     if (!newUuid.isEmpty()) {
         // 自動加上「交點」與尺寸約束，讓 D1、D2 之後仍各自保有意義——
@@ -1245,9 +1256,12 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
         //      正確的交點位置，數學上剛好唯一決定交點座標，不需要再額外
         //      靠其他方程式輔助。
         //
-        // ⚠️ 這裡刻意「不」對交點加 PointOnCurve(line1)/(line2) 去讓它與兩
-        //    線「共線」，理由是實測發現的一個真實 crash／錯誤根因，記錄如
-        //    下避免之後重踩：
+        // ⚠️ 這裡「曾經」刻意不對交點加 PointOnCurve(line1)/(line2) 去讓它與
+        //    兩線「共線」——2026-09 已依需求改回加上（見下方 FixedDistance/
+        //    Coincident 之後那段），這裡把當初不加的理由完整留著，是因為
+        //    它描述的是 ConstraintSolver 一個尚未修好、跟這個決定無關的
+        //    既有限制，加回 PointOnCurve 後這個風險依然存在，留著才知道
+        //    症狀重現時要去哪裡查：
         //
         //    PointOnCurveEquation 的方程式是 (P-Start)×(End-Start)=0，
         //    Start／End 指的是 line1（或 line2）目前的兩個端點——也就是
@@ -1276,26 +1290,28 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
         //
         //    這是 ConstraintSolver 這個共用求解器對「精確秩虧」處理不夠
         //    穩健的既有限制，不是單靠 chamferAt() 這個呼叫端能安全解決
-        //    的——貿然在這裡繞過或加特例，风险高於效益。因此改成更保守、
-        //    但已證實穩健的作法：交點的座標只靠「與 line1PointUuid／
-        //    line2PointUuid 的距離＝D1／D2」這兩條方程式決定，兩者都只牽
-        //    動「已經被移動到位、不再自由」的倒角端點，不會碰到 line1／
-        //    line2 遠端那個可能完全自由的端點，數學上不會有秩虧、不會觸
-        //    發上述放大效應。
-        //    代價：之後如果使用者去拖動 line1／line2（改變它們的方向），
-        //    這個交點不會自動跟著重新解算成新的正確交點——它只會維持與
-        //    兩個倒角端點的距離不變，不再保證真的落在兩線的（新）延長線
-        //    上。如果之後要做到「真正共線、隨拖動即時更新」，正確的做法
-        //    是先強化 ConstraintSolver 對精確秩虧系統的處理（例如把奇異
-        //    值門檻從「相對 σmax 的比例」改成搭配一個絕對值下限，明確把
-        //    小於這個下限的方向直接視為 0、不放大），而不是在單一呼叫端
-        //    繞過去；這是共用元件的行為調整，影響全 App，需要另外評估、
-        //    測試後再動。
+        //    的——選擇更保守、已證實穩健的作法：交點的座標只靠三角函數
+        //    算好的 s.intersection 決定、只用「與 line1PointUuid／
+        //    line2PointUuid 的距離＝D1／D2」這兩條方程式記錄 D1/D2 的意
+        //    義，不加 PointOnCurve（詳見下方最終決定的完整說明）。
+        //
+        //    ConstraintSolver::solveLinearLS() 的平滑阻尼仍然照之前的改法
+        //    維持「相對比例／絕對下限」取大——這是全 App 共用求解器的
+        //    一般性強化，對其他約束組合仍然有幫助，只是不足以讓
+        //    PointOnCurve 這種「跟 line1/line2 遠端點共用未知數」的約束在
+        //    這裡安全使用，所以下面改回不加。
         const QString xUuid = sketch->addPoint(s.intersection, SketchPoint::Origin::Intersection);
 
         QStringList addedConstraintUuids;
+        // ★ 新增：solve=false——CHAMFER 一次要加 2～4 條約束（交點座標本身
+        // 就是靠這些約束共同決定的，中途任何一條加完就馬上單獨拿去解，
+        // 用的是「這批約束還沒加齊」的不完整系統，不但白算，用不完整方程
+        // 組解出來的中間過渡狀態也可能離最終正確解更遠，讓後面補齊約束
+        // 之後那次正式求解要多繞一段路才收斂。全部加完、資訊完整後只在
+        // 最後（下面 `sketch->solveConstraints()`）解一次，比照
+        // Sketch::removeMany() 對批次刪除「只重繪一次」的同一個原則。
         auto addOrTrack = [&](const SketchConstraint& c) -> bool {
-            const QString cu = sketch->addConstraint(c);
+            const QString cu = sketch->addConstraint(c, /*solve=*/false);
             if (cu.isEmpty()) return false;
             addedConstraintUuids.append(cu);
             return true;
@@ -1327,12 +1343,43 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
             }
         }
 
-        // 每次 addConstraint() 內部都已經 solveConstraints() 過一次；這裡
-        // 再明確呼叫一次單純是為了拿到目前最終狀態的 SolveResult 判斷是否
-        // 衝突，成本上可接受（sketch 規模通常不大，重複 solve 幾次不是
-        // 效能瓶頸；正確性優先）。萬一 line1/line2 在倒角之前就已經有別的
-        // 約束跟這裡新加的東西衝突（例如已經有 FixedLength 把端點釘死在
-        // 別處），一樣整批退回，避免把 sketch 留在衝突/退化狀態。
+        // ★ 2026-09（最終決定）：交點 p1（xUuid）不再加 PointOnCurve
+        //    （共線）約束——參考 FilletCommand 的作法：filletAt() 完全不
+        //    透過疊代求解器去「解出」切點位置，純粹用三角函數算好
+        //    tangent1/tangent2/midPt 之後直接 movePoint()／addArcGeom()，
+        //    从来不會讓求解器去牽動 line1/line2 的端點。
+        //
+        //    這裡曾經嘗試加上 PointOnCurve(p1, line1)/(p1, line2)，讓 p1
+        //    之後如果使用者拖動 line1／line2 也能跟著重新解算成正確的新
+        //    交點；上面那段長篇註解也試著從根源修好 ConstraintSolver 的
+        //    平滑阻尼（相對比例／絕對下限取大）。但實測結果證實：即使有
+        //    這個修正，PointOnCurve 的方程式本質上跟 line1/line2「自己的
+        //    兩個端點」共用同一組未知數——不是只牽動 p1，是連 line1/line2
+        //    完全自由的遠端點都會被同一個 Newton 疊代一起解，一旦系統存在
+        //    上面描述的那種精確秩虧，最終解出來的位置就可能是「殘差一樣
+        //    是 0，但遠端點被搬到別的地方」這種數學上同樣合法、但使用者
+        //    完全不要的解——實測看到的正是三條線位置全部跑掉，且因為
+        //    solveConstraints() 判定衝突觸發下面的整批回退，交點與約束反
+        //    而完全沒有顯示出來（回退會刪掉約束與 xUuid，但 movePoint()
+        //    對 line1PointUuid/line2PointUuid 的搬動不屬於「約束」，不會
+        //    被這個回退復原，才會出現「點/約束不見了，但線的位置還是跑
+        //    掉」這種混合症狀）。
+        //
+        //    比照 fillet 的哲學改回保守作法：p1 的座標完全交給三角函數
+        //    算好的 s.intersection 決定（已經是精確值，不需要、也不應該
+        //    再讓疊代求解器去「重新推導」一次），只用 FixedDistance 把
+        //    D1／D2 的意義記錄下來給使用者看／給尺寸標註用。代價是使用者
+        //    之後如果直接拖動 line1／line2，p1 不會自動跟著重新變成新的
+        //    交點——這點跟 fillet 目前的圓角弧行為一致（圓角弧的切點同樣
+        //    不會因為拖動原本的線就自動重新计算），不是這裡獨有的限制。
+
+        // ★ 上面所有 addOrTrack() 都用 solve=false 跳過了中間的求解，這裡
+        // 是這一整批約束加完後「唯一」的一次 solveConstraints()——用完整
+        // 方程組一次解，不再需要像先前那樣特地強調「反正每次 addConstraint
+        // 都已經解過一次，這裡再解一次只是為了拿 SolveResult」。
+        // 萬一 line1/line2 在倒角之前就已經有別的約束跟這裡新加的東西衝突
+        // （例如已經有 FixedLength 把端點釘死在別處），一樣整批退回，避免
+        // 把 sketch 留在衝突/退化狀態。
         if (ok) {
             SolveResult r = sketch->solveConstraints();
             ok = (r.status != SolveStatus::Conflict);
@@ -1343,10 +1390,21 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
                 sketch->removeConstraint(*it);
             sketch->removeGeometry(xUuid);
         }
+    } else {
+        // addLineGeom() 理論上一定會回傳非空 UUID（見上方呼叫處），這裡只
+        // 是防禦性地保留一次求解，確保萬一真的走到這裡，sketch 狀態仍然
+        // 一致——正常情況下不會執行到這個分支。
+        sketch->solveConstraints();
     }
 
+    // ★ 這是這次倒角操作「唯一」的一次求解：上面 addLineGeom() 已經用
+    // emitSignals=false 跳過了它自己的即時重繪，交點／約束的加入也都不會
+    // 單獨觸發重繪（addPoint() 不 emit；addConstraint() 這裡全部用
+    // solve=false）。全部完成後才在這裡統一 solve 一次。
+    // ⚠️ 效能修正：不再額外 Q_EMIT rebuildRequested()——solveConstraints()
+    // 內部已透過 markDirty() emit 過，重複 emit 只會讓 Document::rebuildFeature()
+    // 多跑一次。
     sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
     return !newUuid.isEmpty();
 }
 
@@ -1384,8 +1442,7 @@ OffsetResult offsetAt(cad::Sketch* sketch, const QString& curveUuid,
             if (auto* newLine = dynamic_cast<SketchLine*>(sketch->findGeometry(result.newCurveUuid)))
                 result.newRefPointUuid = newLine->startUuid;
 
-            sketch->solveConstraints();
-            Q_EMIT sketch->rebuildRequested();
+            sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         }
         return result;
     }
@@ -1400,8 +1457,7 @@ OffsetResult offsetAt(cad::Sketch* sketch, const QString& curveUuid,
         result.success = !result.newCurveUuid.isEmpty();
         if (result.success) {
             result.newRadius = newRadius;  // 供呼叫端疊加 Concentric／FixedRadius 約束用
-            sketch->solveConstraints();
-            Q_EMIT sketch->rebuildRequested();
+            sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         }
         return result;
     }
@@ -1446,8 +1502,7 @@ OffsetResult offsetAt(cad::Sketch* sketch, const QString& curveUuid,
         result.success = !result.newCurveUuid.isEmpty();
         if (result.success) {
             result.newRadius = newRadius;  // 供呼叫端疊加 Concentric／FixedRadius 約束用
-            sketch->solveConstraints();
-            Q_EMIT sketch->rebuildRequested();
+            sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
         }
         return result;
     }
@@ -1815,8 +1870,7 @@ OffsetChainResult offsetChainAt(cad::Sketch* sketch, const QString& startUuid,
         }
     }
 
-    sketch->solveConstraints();
-    Q_EMIT sketch->rebuildRequested();
+    sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
     result.success = true;
     return result;
 }

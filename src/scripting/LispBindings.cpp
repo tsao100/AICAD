@@ -843,7 +843,18 @@ void LispBindings::registerConstraintAPI()
         [getSketch](const QVariantList& args) -> QVariant {
             if (args.isEmpty()) return false;
             auto* sk = getSketch(); if (!sk) return false;
-            return sk->removeConstraint(args[0].toString());
+            const QString uuid = args[0].toString();
+            // ⚠️ 修正（第 7 項回報：刪除尺寸約束，相關部分／存檔沒有同步
+            // 刪除）：見 EraseCommand.cpp::eraseOne() 的說明——GDIM 尺寸
+            // 標註在 m_constraints 裡對應的是自動產生的「隱含約束」，只
+            // removeConstraint() 只會刪掉隱含約束，標註本身留在
+            // m_annotations 沒清掉，存檔/重新載入後會復活。這裡同樣先判斷
+            // implicitOf，改呼叫 removeAnnotation()。
+            if (SketchConstraint* c = sk->findConstraint(uuid)) {
+                if (!c->implicitOf.isEmpty())
+                    return sk->removeAnnotation(c->implicitOf);
+            }
+            return sk->removeConstraint(uuid);
         }, 1, 1);
 
     // (sk-list-constraints)  → list of maps: {uuid, type, value, refs}

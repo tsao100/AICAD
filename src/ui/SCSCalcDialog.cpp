@@ -1,4 +1,5 @@
 #include "ui/SCSCalcDialog.h"
+#include "ui/TransitionCurveHelp.h"
 
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
@@ -18,6 +19,9 @@
 #include <QSettings>
 #include <QVector>
 #include <QtMath>
+#include <QShortcut>
+#include <QKeySequence>
+#include <QStyle>
 
 using aicad::railway::AlignmentDocument;
 using aicad::railway::HorizontalAlignmentEdit;
@@ -71,6 +75,25 @@ void fillSpiralTypeCombo(QComboBox* combo)
                           SpiralType::Quintic, SpiralType::PHQuintic, SpiralType::Biquadratic, SpiralType::Spline,
                           SpiralType::BlossEulerHybrid })
         combo->addItem(spiralTypeDisplayName(t), static_cast<int>(t));
+}
+
+/**
+ * @brief 建一顆小「？」說明按鈕，點下去等同按 F1（見 TransitionCurveHelp::
+ *        show()）——本對話框有 T1／T2 兩個獨立的螺旋線類型下拉選單，各自
+ *        旁邊都放一顆，樣式與 AddSpiralCalcDialog 的單一「？」按鈕一致
+ *        （SP_DialogHelpButton 圖示、28x28、不搶 Tab 焦點）。
+ * @param parent 按鈕的 QWidget parent，同時也是點擊時 TransitionCurveHelp::
+ *               show() 的 parent（訊息框／陽春版視窗的歸屬）。
+ */
+QPushButton* makeSpiralHelpButton(QWidget* parent)
+{
+    auto* btn = new QPushButton(parent);
+    btn->setIcon(parent->style()->standardIcon(QStyle::SP_DialogHelpButton));
+    btn->setFixedSize(28, 28);
+    btn->setToolTip(QObject::tr("Show transition curve literature references (F1)"));
+    btn->setFocusPolicy(Qt::NoFocus);
+    QObject::connect(btn, &QPushButton::clicked, parent, [parent] { TransitionCurveHelp::show(parent); });
+    return btn;
 }
 
 /// 方位角（弧度，順時針由北）→ ddd°mm'ss.sss" 格式，不足位補零。
@@ -217,7 +240,12 @@ void SCSCalcDialog::init()
         const int pos = m_type1Combo->findData(static_cast<int>(last.type1));
         if (pos >= 0) m_type1Combo->setCurrentIndex(pos);
     }
-    form->addRow(tr("Entry spiral form T1:"), m_type1Combo);
+    {
+        auto* row = new QHBoxLayout();
+        row->addWidget(m_type1Combo, /*stretch=*/1);
+        row->addWidget(makeSpiralHelpButton(this));
+        form->addRow(tr("Entry spiral form T1:"), row);
+    }
 
     m_l2Spin = new QDoubleSpinBox(this);
     m_l2Spin->setRange(0.0, 1.0e6);
@@ -231,9 +259,20 @@ void SCSCalcDialog::init()
         const int pos = m_type2Combo->findData(static_cast<int>(last.type2));
         if (pos >= 0) m_type2Combo->setCurrentIndex(pos);
     }
-    form->addRow(tr("Exit spiral form T2:"), m_type2Combo);
+    {
+        auto* row = new QHBoxLayout();
+        row->addWidget(m_type2Combo, /*stretch=*/1);
+        row->addWidget(makeSpiralHelpButton(this));
+        form->addRow(tr("Exit spiral form T2:"), row);
+    }
 
     mainLayout->addLayout(form);
+
+    // F1 → 顯示螺旋線公式參考文件（見 TransitionCurveHelp::show()）；效果
+    // 與 T1／T2 旁的「？」按鈕相同。理由與 AddSpiralCalcDialog 一致：用
+    // QShortcut 掛在 this 上，不論鍵盤焦點在哪個子控件都能觸發。
+    auto* helpShortcut = new QShortcut(QKeySequence(Qt::Key_F1), this);
+    connect(helpShortcut, &QShortcut::activated, this, [this] { TransitionCurveHelp::show(this); });
 
     // ── 按鈕列 ───────────────────────────────────────────────────────────
     auto* btnRow = new QHBoxLayout();

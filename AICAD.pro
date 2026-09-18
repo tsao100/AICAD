@@ -289,6 +289,8 @@ SOURCES += \
     src/command/alignment/ImportAldCommand.cpp \
     src/command/alignment/TrackExtractCommand.cpp \
     src/command/alignment/AlignmentReverseSCSCommand.cpp \
+    src/command/alignment/AlignmentQuickTableCommand.cpp \
+    src/command/alignment/AlignmentDrawChainCommand.cpp \
     src/command/ScaleCommand.cpp \
     src/command/alignment/ExportAlignmentCommand.cpp \
     src/command/alignment/ProfileArrayCommand.cpp \
@@ -296,6 +298,7 @@ SOURCES += \
     src/core/CommandHistory.cpp \
     src/command/EllipseCommand.cpp \
     src/command/InputParser.cpp \
+    src/command/PointCommand.cpp \
     src/command/PolygonCommand.cpp \
     src/command/PolylineCommand.cpp \
     src/command/RectCommand.cpp \
@@ -346,6 +349,7 @@ SOURCES += \
     src/railway/AlignmentNLSolver.cpp \
     src/railway/RailwayAlignment.cpp \
     src/railway/RailwayAlignmentElement.cpp \
+    src/railway/AlignmentQuickCalc.cpp \
     src/railway/AldFileIO.cpp \
     src/ui/AutoCompleteModel.cpp \
     src/ui/CommandHistoryPopup.cpp \
@@ -356,6 +360,9 @@ SOURCES += \
     src/ui/MainWindow.cpp \
     src/ui/FeatureBrowser.cpp \
     src/ui/AlignmentDataTableDialog.cpp \
+    src/ui/AlignmentQuickTableDialog.cpp \
+    src/ui/HAlignTableWidget.cpp \
+    src/ui/AlignmentDrawElementDialog.cpp \
     src/ui/CompoundChainCalcDialog.cpp \
     src/ui/ProfileArrayStationTableDialog.cpp \
     src/ui/ParameterPanel.cpp \
@@ -367,6 +374,7 @@ SOURCES += \
     src/ui/ResultPopup.cpp \
     src/ui/DimExpressionDialog.cpp \
     src/ui/AddSpiralCalcDialog.cpp \
+    src/ui/TransitionCurveHelp.cpp \
     src/ui/TrackNameSequenceDialog.cpp \
     src/ui/SCSCalcDialog.cpp \
     src/ui/AlignmentReverseSCSCalcDialog.cpp \
@@ -468,6 +476,8 @@ HEADERS += \
     src/command/alignment/ImportAldCommand.h \
     src/command/alignment/TrackExtractCommand.h \
     src/command/alignment/AlignmentReverseSCSCommand.h \
+    src/command/alignment/AlignmentQuickTableCommand.h \
+    src/command/alignment/AlignmentDrawChainCommand.h \
     src/command/ScaleCommand.h \
     src/command/alignment/ExportAlignmentCommand.h \
     src/command/alignment/ProfileArrayCommand.h \
@@ -478,6 +488,7 @@ HEADERS += \
     src/core/CommandHistory.h \
     src/command/EllipseCommand.h \
     src/command/InputParser.h \
+    src/command/PointCommand.h \
     src/command/PolygonCommand.h \
     src/command/PolylineCommand.h \
     src/command/RectCommand.h \
@@ -525,6 +536,7 @@ HEADERS += \
     src/railway/AlignmentNLSolver.h \
     src/railway/RailwayAlignment.h \
     src/railway/RailwayAlignmentElement.h \
+    src/railway/AlignmentQuickCalc.h \
     src/railway/AldFileIO.h \
     src/ui/AutoCompleteModel.h \
     src/ui/CommandHistoryPopup.h \
@@ -536,6 +548,9 @@ HEADERS += \
     src/ui/FeatureBrowser.h \
     src/ui/FeatureTreeItem.h \
     src/ui/AlignmentDataTableDialog.h \
+    src/ui/AlignmentQuickTableDialog.h \
+    src/ui/HAlignTableWidget.h \
+    src/ui/AlignmentDrawElementDialog.h \
     src/ui/CompoundChainCalcDialog.h \
     src/ui/ProfileArrayStationTableDialog.h \
     src/ui/ParameterPanel.h \
@@ -547,6 +562,7 @@ HEADERS += \
     src/ui/ResultPopup.h \
     src/ui/DimExpressionDialog.h \
     src/ui/AddSpiralCalcDialog.h \
+    src/ui/TransitionCurveHelp.h \
     src/ui/TrackNameSequenceDialog.h \
     src/ui/SCSCalcDialog.h \
     src/ui/AlignmentReverseSCSCalcDialog.h \

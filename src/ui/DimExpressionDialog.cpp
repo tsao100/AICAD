@@ -62,6 +62,29 @@ DimExpressionDialog::DimExpressionDialog(cad::Sketch* sk,
     m_hintLabel->setStyleSheet("color: gray; font-size: 11px;");
     mainLayout->addWidget(m_hintLabel);
 
+    // ⚠️ 新增（第 10 項回報的後續需求）：距離類尺寸（FixedDistance——GDIM
+    // 一般距離標註對應的隱含約束）現在求解時，「哪一側」是鎖定在求解開始
+    // 當下使用者看到的位置（見 ConstraintSolver.cpp 的 FixedDistanceEquation
+    // 說明），這樣可以避免跨過 0 附近時自動跳到另一側，但也代表使用者若
+    // 真的想要它在另一側，需要一個手動切換的入口——這顆按鈕就是提供這個
+    // 操作：按下後會把該約束的參考幾何反射到目前的另一側，再重新求解。
+    // 只有 FixedDistance 才顯示，其他約束型別（角度、水平/垂直距離等）
+    // 沒有這個「哪一側」的歧義，不需要這個按鈕。
+    if (sk) {
+        cad::SketchConstraint* con = sk->findConstraint(constraintUuid);
+        if (con && con->type == cad::ConstraintType::FixedDistance) {
+            auto* flipRow = new QHBoxLayout();
+            m_flipButton = new QPushButton(tr("翻轉方向"), this);
+            m_flipButton->setToolTip(
+                tr("把這個距離約束的另一個參考點/線，反射到目前的另一側後重新求解。"));
+            flipRow->addWidget(m_flipButton);
+            flipRow->addStretch();
+            mainLayout->addLayout(flipRow);
+            connect(m_flipButton, &QPushButton::clicked,
+                    this, &DimExpressionDialog::onFlipSide);
+        }
+    }
+
     auto* btnRow = new QHBoxLayout();
     btnRow->addStretch();
     m_cancelButton = new QPushButton(tr("取消"), this);
@@ -138,6 +161,15 @@ void DimExpressionDialog::onAccept()
 void DimExpressionDialog::onReject()
 {
     reject();
+}
+
+void DimExpressionDialog::onFlipSide()
+{
+    // 純粹轉發，不直接呼叫 Sketch::flipDistanceSide()——維持本對話框
+    // 是單純的 UI 元件，不依賴 cad:: 以外的求解/套用邏輯（同
+    // expressionAccepted() 的設計取捨）。對話框留著開啟，讓使用者可以
+    // 立刻在畫面上看到翻轉結果，需要的話再繼續調整運算式或按確定/取消。
+    Q_EMIT flipSideRequested(m_constraintUuid);
 }
 
 } // namespace aicad::ui

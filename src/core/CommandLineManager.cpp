@@ -69,14 +69,32 @@ void CommandLineManager::processInput(const QString& input) {
     qDebug() << "[CommandLineManager] Processing input:" << input
              << "Type:" << static_cast<int>(m_expectedInputType);
 
-    // processInput 時比對 shortcut 或 label（case-insensitive）
-    const auto& opts = m_currentOptions;
-    for (const auto& po : opts) {
-        if (input.compare(po.shortcut, Qt::CaseInsensitive) == 0 ||
-            input.compare(po.label,    Qt::CaseInsensitive) == 0) {
-            auto* bus = Application::instance()->eventBus();
-            bus->publish(Events::OPTION_SELECTED, po.label);
-            return;
+    // ⚠️ 修正：Y/N 確認提示（NEW 的未儲存變更確認、MIRROR 的「是否刪除來源
+    // 物件」…）習慣上都是寫成 "... [Yes/No] <No>:" 這種文字，用意只是讓畫面
+    // 顯示「[Yes/No]」提示字樣。但 showPrompt() 會呼叫 InputParser::parsePrompt()
+    // 把提示文字裡「任何」中括號內容都當成選項語法解析——"[Yes/No]" 會被
+    // 拆成 {label:"Yes", shortcut:"Y"} 與 {label:"No", shortcut:"N"} 兩個
+    // 選項，蓋掉了 m_currentOptions。於是使用者輸入 "Y"／"N"（或 "Yes"／
+    // "No"）在下面這段比對 shortcut/label 的迴圈裡就被攔截，發布的是
+    // Events::OPTION_SELECTED 而不是 Events::YESNO_INPUT——但等待確認的
+    // 命令（NewCommand／MirrorCommand）只訂閱了 YESNO_INPUT，因此完全沒有
+    // 反應，就像「按了 Yes/No 卻沒有任何動作」。
+    //
+    // YesNo 提示的語意單純（只有 Yes/No 兩種合法回答，且接收端本來就會自
+    // 行解析 y/yes/n/no），不需要、也不應該套用這套通用的中括號選項比對
+    // 機制，因此這裡在比對 m_currentOptions 之前就先排除 YesNo 狀態，直接
+    // 交給下面 switch(m_expectedInputType) 裡的 InputType::YesNo 分支發布
+    // 原始文字。
+    if (m_expectedInputType != InputType::YesNo) {
+        // processInput 時比對 shortcut 或 label（case-insensitive）
+        const auto& opts = m_currentOptions;
+        for (const auto& po : opts) {
+            if (input.compare(po.shortcut, Qt::CaseInsensitive) == 0 ||
+                input.compare(po.label,    Qt::CaseInsensitive) == 0) {
+                auto* bus = Application::instance()->eventBus();
+                bus->publish(Events::OPTION_SELECTED, po.label);
+                return;
+            }
         }
     }
 

@@ -1065,15 +1065,24 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
 
     double r = (startPt - ctrPt).length();
 
-    // 同心弧半徑（略大，由 offset 決定偏移距離）
-    double extraR = m_offsetDist;
+    // ⚠️ 修正：同心弧半徑先前寫成 `dimR = r + magnitude(offset)`。配合
+    // GeneralDimCommand::refMidpoint2D() 對 FixedArcLength 的修正（offset
+    // 基準點改成圓心），m_dimOffsetX/Y 現在代表「圓心→滑鼠」向量，其
+    // magnitude 本身就已經是使用者想要的同心弧半徑（= 圓心到滑鼠的距離），
+    // 不應該再疊加一次原弧半徑 r——先前這樣寫，等於把 r 疊加了兩次
+    // （一次隱含在 magnitude 裡、一次額外相加），這也是「拖曳弧長尺寸線
+    // 時，尺寸線大小/位置對不上滑鼠」的原因之一。
+    // 改成跟 drawAngleDim() 對 arcR 的算法一致：直接用 magnitude，只做
+    // 最小間距防呆（避免同心弧跟原弧重疊、或半徑被拖成負值/ 反向）。
+    // 沒有 offset 可用時（例如舊資料、或尚未拖曳過的預設狀態），才退回
+    // 「原弧半徑 + m_offsetDist」這個預設外擴距離。
+    double dimR;
     if (m_dimOffsetX != 0.0 || m_dimOffsetY != 0.0) {
-        double ox = m_dimOffsetX, oy = m_dimOffsetY;
-        // offset 向外分量
-        gp_Vec2d ov(ox, oy);
-        if (ov.Magnitude() > 1e-6) extraR = ov.Magnitude();
+        gp_Vec2d ov(m_dimOffsetX, m_dimOffsetY);
+        dimR = std::max(ov.Magnitude(), r + 1.0);
+    } else {
+        dimR = r + m_offsetDist;
     }
-    double dimR = r + std::abs(extraR);
 
     double angStart = std::atan2(startPt.y() - ctrPt.y(), startPt.x() - ctrPt.x());
     double angEndRaw = std::atan2(endPt.y()   - ctrPt.y(), endPt.x()   - ctrPt.x());

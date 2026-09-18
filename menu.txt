@@ -36,6 +36,7 @@ toolbar|main|rect|Draw Rectangle|:/icons/rect.png|R
 toolbar|main|circle|Draw Circle|:/icons/circle.png|C
 toolbar|main|spline|Draw Spline|:/icons/spline.png|SPL
 toolbar|main|ellipse|Draw Ellipse|:/icons/ellipse.png|EL
+toolbar|main|point|Draw Point|:/icons/osnap/OSNNOD.ico|PO
 
 toolbar|main|separator|||
 
@@ -87,6 +88,7 @@ menu|Sketch|rect|Draw Rectangle||
 menu|Sketch|circle|Draw Circle||
 menu|Sketch|spline|Draw Spline||
 menu|Sketch|ellipse|Draw Ellipse||
+menu|Sketch|point|Draw Point||
 
 
 # ======================
@@ -118,6 +120,7 @@ command|sketch||0
 command|line|l|2
 command|polyline|pl|2
 command|polygon|pol|3
+command|point|po|2
 command|arc||3
 command|rect|r|2
 command|circle|c|2
@@ -144,6 +147,8 @@ command|alignmentfloatcurve||0
 command|alignmentscs||0
 command|scschain||0
 command|alignmentrevscs||0
+command|alignmentquicktable||0
+command|alignmentdrawchain||0
 command|alignmentaddspiral||0
 command|alignment3daddvprofile||0
 command|profilearray||0
@@ -156,6 +161,8 @@ command|setorigin||0
 # ======================
 
 menu|Railway|track|New Track Centerline||
+menu|Railway|alignmentquicktable|Quick Alignment Table (AQT)…||
+menu|Railway|alignmentdrawchain|Draw Alignment Chain (ADC)…||
 menu|Railway|importalignment|Import PRJ/ALD…||
 menu|Railway|trackextract|Extract Track Segment (TX)…||
 menu|Railway|importald|Import ALD…||

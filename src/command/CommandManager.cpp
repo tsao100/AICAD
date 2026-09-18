@@ -428,6 +428,26 @@ void CommandManager::cancelCurrentCommand() {
     qDebug() << "[CommandManager] Cancelling command:" << cmdName;
 
     if (cmd->canCancel()) {
+        // ⚠️ 重入防護（修正 Esc 造成的無窮遞迴 crash）：
+        //    cancelCurrentCommand() 目前唯一的呼叫者是 UIManager 對
+        //    Events::COMMAND_CANCELLED 的訂閱（見 UIManager.cpp
+        //    connectCommandLineEvents()）。也就是說，這個函式本身就是
+        //    「回應 COMMAND_CANCELLED 事件」而執行的。過去在還沒把
+        //    d->currentCommand 歸零之前，這裡又同步呼叫
+        //    bus->publish(Events::COMMAND_CANCELLED, ...) 一次，等於在
+        //    同一個呼叫堆疊內把同一個事件又發布了一次；EventBus::publish()
+        //    是同步呼叫所有訂閱者，於是 UIManager 的同一個訂閱又立刻被
+        //    觸發、又呼叫一次 cancelCurrentCommand()——此時
+        //    d->currentCommand 還是同一個、canCancel() 還是 true，因而無
+        //    限遞迴，最終堆疊溢位而整個程式 crash（任何在等待輸入狀態下
+        //    按 Esc 取消的互動命令都會觸發，GDIM 只是恰好被實際按到）。
+        //
+        //    修法：先把 d->currentCommand 歸零、拿掉重複的 EventBus 重新
+        //    發布。之後如果因為任何原因（現在或未來）又重入這個函式，
+        //    d->currentCommand 已經是 nullptr，會直接落入本函式開頭的
+        //    「沒有命令可取消」分支安全返回，徹底切斷遞迴的可能性。
+        d->currentCommand = nullptr;
+
         cmd->cancel();
 
         Q_EMIT commandCancelled(cmdName);
@@ -435,7 +455,15 @@ void CommandManager::cancelCurrentCommand() {
         // 透過 EventBus 發布事件
         if (Application* app = Application::instance()) {
             if (EventBus* bus = app->eventBus()) {
-                bus->publish(Events::COMMAND_CANCELLED, cmdName);
+                // ⚠️ 不再重新發布 Events::COMMAND_CANCELLED：這個事件已經由
+                //    觸發本函式呼叫的來源（CommandLineManager::cancelCommand()
+                //    收到 Esc 時）發布過一次，所有真正需要知道「使用者取消
+                //    了命令」的訂閱者（FilletCommand／TrimCommand／
+                //    GeneralDimCommand／ChamferCommand 等各自的 onCancelled）
+                //    在那一次發布時就已經收到通知。這裡再發一次不只是遞迴
+                //    的根源，也會讓那些訂閱者收到重複的取消通知、可能造成
+                //    重複清理。
+                //
                 // ✅ 不論指令本身是否有另外訂閱 POINT_CANCELLED 之類的事件來
                 //    自我收尾，這裡都要把命令列的提示重設回「等待下一個指令」，
                 //    否則使用者會看到舊的提示文字卡著不動。
@@ -448,9 +476,10 @@ void CommandManager::cancelCurrentCommand() {
         //    誤以為指令仍在執行中，後續指令送不進來。這裡比照
         //    onCommandFinished() 的收尾方式，確保「取消」等同於「指令徹底
         //    結束」，讓命令列真正回到可以接受下一個指令的狀態。
+        //    （d->currentCommand 已在上方提前歸零，這裡只需完成
+        //    cleanup()／deleteLater()。）
         cmd->cleanup();
         cmd->deleteLater();
-        d->currentCommand = nullptr;
     } else {
         qWarning() << "[CommandManager] Command cannot be cancelled:" << cmdName;
     }

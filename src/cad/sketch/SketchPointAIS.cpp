@@ -56,29 +56,28 @@ void SketchPointAIS::Compute(const Handle(PrsMgr_PresentationManager)& /*pm*/,
 {
     prs->Clear();
 
-    // Endpoint：固定為紅色實心圓點，螢幕空間固定像素大小，不受縮放與約束狀態影響
-    if (m_origin == SketchPoint::Origin::Endpoint) {
+    // Endpoint（線/弧端點）、Explicit（POINT 命令建立的獨立點）與
+    // Intersection（CHAMFER 建立的兩線交點 p1）統一採用同一種渲染方式：
+    // 固定為紅色實心圓點，螢幕空間固定像素大小，不受縮放與約束狀態影響。
+    if (m_origin == SketchPoint::Origin::Endpoint ||
+        m_origin == SketchPoint::Origin::Explicit ||
+        m_origin == SketchPoint::Origin::Intersection) {
         drawEndpointMarker(prs);
         return;
     }
 
     // ── 顏色 ──
     Quantity_Color color;
-    if (m_origin == SketchPoint::Origin::Explicit) {
-        color = Quantity_Color(Quantity_NOC_YELLOW);
-    } else {
-        switch (m_status) {
-        case SolveStatus::FullyConstrained: color = Quantity_Color(Quantity_NOC_GREEN3); break;
-        case SolveStatus::OverConstrained:  color = Quantity_Color(Quantity_NOC_RED);    break;
-        default:                            color = Quantity_Color(Quantity_NOC_CYAN1);  break;
-        }
+    switch (m_status) {
+    case SolveStatus::FullyConstrained: color = Quantity_Color(Quantity_NOC_GREEN3); break;
+    case SolveStatus::OverConstrained:  color = Quantity_Color(Quantity_NOC_RED);    break;
+    default:                            color = Quantity_Color(Quantity_NOC_CYAN1);  break;
     }
 
     // ── 大小（半邊長，mm） ──
     double halfSize;
     switch (m_origin) {
     case SketchPoint::Origin::Center:   halfSize = 1.5; break;
-    case SketchPoint::Origin::Explicit: halfSize = 1.2; break;
     default:                            halfSize = 1.0; break;
     }
 
@@ -131,25 +130,19 @@ void SketchPointAIS::drawSymbol(const Handle(Prs3d_Presentation)& prs,
         seg->AddVertex(offset(0.0, -halfSize));
         seg->AddVertex(offset(0.0,  halfSize));
         grp->AddPrimitiveArray(seg);
-    } else if (m_origin == SketchPoint::Origin::Explicit) {
-        // 菱形 ◇
-        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(5, 1);
-        seg->AddBound(5);                          // ← 必須在 vertex 之前
-        seg->AddVertex(offset( 0.0,       halfSize));
-        seg->AddVertex(offset( halfSize,  0.0));
-        seg->AddVertex(offset( 0.0,      -halfSize));
-        seg->AddVertex(offset(-halfSize,  0.0));
-        seg->AddVertex(offset( 0.0,       halfSize));
-        grp->AddPrimitiveArray(seg);
     } else {
-        // 正方形 □（Intersection，交點；Endpoint 已於 Compute() 提前分流至 drawEndpointMarker）
-        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(5, 1);
-        seg->AddBound(5);                          // ← 必須在 vertex 之前
+        // ✕（對角叉號）── 目前沒有任何 Origin 會走到這個分支：Explicit／
+        // Endpoint／Intersection 都已在 Compute() 提前分流到
+        // drawEndpointMarker()（紅色實心圓點），Center 走上面的「+」分支。
+        // 保留這個分支當作未來若新增其他 Origin 類型、需要專屬符號時的
+        // 參考／預設畫法，不是死碼故意留著刪不掉。
+        Handle(Graphic3d_ArrayOfPolylines) seg = new Graphic3d_ArrayOfPolylines(4, 2);
+        seg->AddBound(2);                          // ← 必須在 vertex 之前
         seg->AddVertex(offset(-halfSize, -halfSize));
-        seg->AddVertex(offset( halfSize, -halfSize));
         seg->AddVertex(offset( halfSize,  halfSize));
+        seg->AddBound(2);                          // ← 必須在 vertex 之前
         seg->AddVertex(offset(-halfSize,  halfSize));
-        seg->AddVertex(offset(-halfSize, -halfSize));
+        seg->AddVertex(offset( halfSize, -halfSize));
         grp->AddPrimitiveArray(seg);
     }
 }

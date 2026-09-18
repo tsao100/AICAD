@@ -27,6 +27,7 @@
 #include "ui/UIManager.h"
 #include "ui/CommandLineWidget.h"
 #include "ui/CommandInputEdit.h"
+#include "ui/DimExpressionDialog.h"
 #include "cad/grips/GripManager.h"
 #include "command/CommandManager.h"
 #include "geometry/GeometryBuilder.h"
@@ -119,6 +120,27 @@ inline gp_Dir toGpDir(const QVector3D& v)
     return gp_Dir(static_cast<Standard_Real>(v.x()),
                   static_cast<Standard_Real>(v.y()),
                   static_cast<Standard_Real>(v.z()));
+}
+
+/// 計算「角度輸入框」錨點相對於起點的偏移量（沿工作平面 X/Y 軸分解的
+/// (du,dv) 分量，與 GripDragging／Sketching 兩處既有的 du/dv 慣例一致，
+/// 可以直接乘上各自的 planeXAxis()/planeYAxis() 或加回 basePt）。
+///
+/// 比照 InputJigOverlay::rebuild() 對角度尺寸弧線／標籤「永遠顯示在小於
+/// 180° 的那一側」的邏輯（見該檔案 sweep 變數的說明）：把 angleDeg 正規化
+/// 到 (-180°,180°]，取一半當角平分線方向，讓角度輸入框浮現的位置跟 3D
+/// 場景裡實際畫出來的角度數值標籤位置一致（而不是像先前那樣固定貼在
+/// 起點正上方，跟畫面上顯示角度值的地方距離很遠、視覺上對不太起來）。
+/// radius 用當下拉出的距離（liveDist），跟 InputJigOverlay 的 arcRadius
+/// 是同一個量（見該檔案「弧半徑＝拉出的線長」的需求）。
+inline QPointF angleAnchorOffset(double angleDeg, double radius, bool azimuth)
+{
+    double sweep = std::fmod(angleDeg, 360.0);
+    if (sweep > 180.0) sweep -= 360.0;
+    else if (sweep <= -180.0) sweep += 360.0;
+    const double rad = (sweep * 0.5) * M_PI / 180.0;
+    if (azimuth) return QPointF(radius * std::sin(rad), radius * std::cos(rad));
+    return QPointF(radius * std::cos(rad), radius * std::sin(rad));
 }
 } // namespace
 
@@ -1202,7 +1224,21 @@ void CadView::setGripManager(GripManager* mgr, ui::GripEventFilter* filter) {
                 const QPoint endScreen(sx1, sy1);
                 const QPoint distAnchor((startScreen.x() + endScreen.x()) / 2,
                                          (startScreen.y() + endScreen.y()) / 2);
-                d->inputJig->showLive(distAnchor, startScreen, liveDist, liveAngle);
+
+                // 角度輸入框錨點：見上方 angleAnchorOffset() 說明，改成跟
+                // InputJigOverlay 3D 角度標籤一致的「較短路徑角平分線」位置，
+                // 不再固定貼在起點上。
+                const QPointF bisOff = angleAnchorOffset(
+                    liveAngle, liveDist, d->inputJig->isAzimuthMode());
+                const gp_Pnt bisWorld = d->jigBasePointWorld.Translated(
+                    gp_Vec(d->gripManager->planeXAxis()) * bisOff.x() +
+                    gp_Vec(d->gripManager->planeYAxis()) * bisOff.y());
+                Standard_Integer sxA = 0, syA = 0;
+                if (!d->view.IsNull())
+                    d->view->Convert(bisWorld.X(), bisWorld.Y(), bisWorld.Z(), sxA, syA);
+                const QPoint angleAnchor(sxA, syA);
+
+                d->inputJig->showLive(distAnchor, angleAnchor, liveDist, liveAngle);
                 // InputJigOverlay：3D 即時顯示（見 InputJigOverlay.h）。
                 // GripDrag 情境本來就是世界座標（gp_Pnt），不需要另外從
                 // 平面 2D 座標轉換。
@@ -2776,7 +2812,20 @@ void CadView::finishBoxSelect(const QPoint& screenPos)
     if (d->commandBoxSelectEligible) {
         clm->waitForInput(core::InputType::String);
     } else {
-        clm->clearPrompt();
+        // ★ 新增需求：窗選／穿越窗選／籬選（無作用中命令的預選，模式 A）
+        // 選到東西時，在命令列顯示選中物件的統計數量，比照命令執行中
+        // （模式 B，見 EraseCommand::updatePendingPrompt()）已經有的
+        // 「N object(s) selected」訊息，讓兩種情境的回饋一致。
+        // 用 NbSelected() 而非重新統計 uuids／selectionMap，是因為它是
+        // AIS_InteractiveContext 對「目前實際選取數量」最直接、涵蓋所有
+        // 類型（草圖幾何、3D 實體、alignment overlay）的來源，不需要在
+        // 這裡重複 publishBoxSelectionResult() 內部已經做過的分類邏輯。
+        int nSelected = (!d->context.IsNull()) ? d->context->NbSelected() : 0;
+        if (nSelected > 0) {
+            clm->printMessage(QString("%1 object(s) selected.").arg(nSelected));
+        } else {
+            clm->clearPrompt();
+        }
         clm->resetInputWait();
     }
 
@@ -3153,7 +3202,14 @@ void CadView::finishBoxSelectPolygon()
         // 且不清除提示文字。
         clm->waitForInput(core::InputType::String);
     } else {
-        clm->clearPrompt();
+        // ★ 同 finishBoxSelect()：籬選／WPolygon 選取（模式 A）選到東西時
+        // 也顯示選中物件的統計數量。
+        int nSelected = (!d->context.IsNull()) ? d->context->NbSelected() : 0;
+        if (nSelected > 0) {
+            clm->printMessage(QString("%1 object(s) selected.").arg(nSelected));
+        } else {
+            clm->clearPrompt();
+        }
         clm->resetInputWait();
     }
 
@@ -3673,13 +3729,9 @@ void CadView::mousePressEvent(QMouseEvent* event) {
                     handleObjectSelection(event->pos());
                 }
                 break;
-            case InteractionMode::PlaceDimLine: {  // ✅ Task E: 確認尺寸線位置
-                QVector2D planePt = screenToPlane(event->pos());
-                QVector2D offset  = planePt - d->dimLineAnchor2D;
-                Q_EMIT dimLinePosConfirmed(offset.x(), offset.y());
-                setMode(InteractionMode::Sketching);
+            case InteractionMode::PlaceDimLine:  // ✅ Task E: 確認尺寸線位置
+                confirmDimLinePlacement(event->pos());
                 break;
-            }
             default:
                 break;
             }
@@ -4080,17 +4132,18 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
                 double distOverride = 0.0, angleOverride = 0.0;
                 const bool hasDistOverride  = d->inputJig->distanceValue(distOverride);
                 const bool hasAngleOverride = d->inputJig->angleValue(angleOverride);
+                double finalDist = liveDist, finalAngle = liveAngle;
                 if (hasDistOverride || hasAngleOverride) {
-                    const double dist  = hasDistOverride  ? distOverride  : liveDist;
-                    const double angDg = hasAngleOverride ? angleOverride : liveAngle;
-                    const double rad   = angDg * M_PI / 180.0;
+                    finalDist  = hasDistOverride  ? distOverride  : liveDist;
+                    finalAngle = hasAngleOverride ? angleOverride : liveAngle;
+                    const double rad = finalAngle * M_PI / 180.0;
                     double du, dv;
                     if (d->inputJig->isAzimuthMode()) {
-                        du = dist * std::sin(rad);
-                        dv = dist * std::cos(rad);
+                        du = finalDist * std::sin(rad);
+                        dv = finalDist * std::cos(rad);
                     } else {
-                        du = dist * std::cos(rad);
-                        dv = dist * std::sin(rad);
+                        du = finalDist * std::cos(rad);
+                        dv = finalDist * std::sin(rad);
                     }
                     planePtF = QPointF(basePt.x() + du, basePt.y() + dv);
                 }
@@ -4099,7 +4152,18 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
                 const QPoint endScreen   = planeToScreen(QVector2D(planePtF));  // 反映最終（可能已被覆寫）的點
                 const QPoint distAnchor((startScreen.x() + endScreen.x()) / 2,
                                          (startScreen.y() + endScreen.y()) / 2);
-                d->inputJig->showLive(distAnchor, startScreen, liveDist, liveAngle);
+
+                // 角度輸入框錨點：見上方 angleAnchorOffset() 說明，改成跟
+                // InputJigOverlay 3D 角度標籤一致的「較短路徑角平分線」位置
+                // （並反映覆寫後的最終距離/角度，跟 endScreen 用同一組
+                // final 值，理由同 endScreen 上面的註解），不再固定貼在
+                // 起點上。
+                const QPointF bisOff = angleAnchorOffset(
+                    finalAngle, finalDist, d->inputJig->isAzimuthMode());
+                const QPoint angleAnchor = planeToScreen(
+                    QVector2D(basePt.x() + bisOff.x(), basePt.y() + bisOff.y()));
+
+                d->inputJig->showLive(distAnchor, angleAnchor, liveDist, liveAngle);
 
                 // InputJigOverlay：3D 即時顯示（見 InputJigOverlay.h）。
                 // 平面 2D → 世界座標，沿用與 planeToScreen() 完全相同的
@@ -4301,9 +4365,47 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
 // dragDimAIS 相關邏輯），第二次點擊直接由這裡接手，兩者不會互相干擾。
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// confirmDimLinePlacement — PlaceDimLine 模式下確認尺寸線位置的共用邏輯
+// （mousePressEvent() 的一般點擊、mouseDoubleClickEvent() 因 Qt 雙擊事件
+// 合成而收到的「偽雙擊」都會呼叫這裡，見 mouseDoubleClickEvent() 的說明）
+// ─────────────────────────────────────────────────────────────────────────────
+void CadView::confirmDimLinePlacement(const QPoint& screenPos) {
+    QVector2D planePt = screenToPlane(screenPos);
+    QVector2D offset  = planePt - d->dimLineAnchor2D;
+    Q_EMIT dimLinePosConfirmed(offset.x(), offset.y());
+    setMode(InteractionMode::Sketching);
+}
+
 void CadView::mouseDoubleClickEvent(QMouseEvent* event) {
     auto* cmdMgr = Application::instance() ? Application::instance()->commandManager() : nullptr;
     const bool hasActiveCmd = cmdMgr && cmdMgr->hasActiveCommand();
+
+    // ⚠️ 修正（第 14 項回報：GDIM 的 FixedAngleDim/FixedLength/
+    // FixedHorizDist/FixedVertDist 等單幾何類型，確認尺寸線位置那一下有
+    // 時需要點兩次；已排除 grip，log 顯示第二次點擊完全沒有任何輸出）：
+    // 根因其實是 Qt 自己的雙擊事件合成機制，跟 grip 無關。Qt 的滑鼠事件
+    // 序列是 press1, release1, press2, release2；但如果 press2 在系統的
+    // 雙擊時間間隔內發生（GDIM 錨定/確認類型/確認位置這三下點擊，使用者
+    // 手速快、或前兩下點擊間隔本來就短時很容易發生），Qt 不會把 press2
+    // 當成普通的 mousePressEvent 送來，而是直接合成一個
+    // mouseDoubleClickEvent「取代」press2！這個事件原本只在
+    // 「!hasActiveCmd」（沒有指令在執行）時才做事（雙擊既有尺寸約束彈出
+    // DimExpressionDialog），GDIM 執行中 hasActiveCmd 為 true，所以這個
+    // 被合成出來的事件就直接被略過、什麼事都沒做——被吃掉的正是使用者
+    // 原本要拿來確認尺寸線位置的那次點擊，完全不會有任何 log 輸出
+    // （因為連 mousePressEvent 裡的 PlaceDimLine case 都沒被執行到）。
+    // 使用者只好再點一次，這次因為離前一次已經有一段時間，Qt 不會再合成
+    // 雙擊事件，改成正常送出 press，才終於觸發確認。
+    // 修法：這裡額外偵測「有指令在執行、且目前正在 PlaceDimLine 模式」，
+    // 直接把這個合成出來的雙擊事件當成一次正常的確認點擊處理（呼叫跟
+    // mousePressEvent 的 PlaceDimLine case 完全相同的邏輯），而不是放著
+    // 不管。
+    if (hasActiveCmd && d->mode == InteractionMode::PlaceDimLine) {
+        confirmDimLinePlacement(event->pos());
+        event->accept();
+        return;
+    }
 
     if (!hasActiveCmd && event->button() == Qt::LeftButton &&
         !d->context.IsNull() && d->context->HasDetected())
@@ -4312,12 +4414,77 @@ void CadView::mouseDoubleClickEvent(QMouseEvent* event) {
         Handle(aicad::cad::AIS_DimensionLine) dimAIS =
             Handle(aicad::cad::AIS_DimensionLine)::DownCast(det);
         if (!dimAIS.IsNull()) {
-            startDimValueEdit(dimAIS);
+            // ⚠️ 修正（第 8 項回報：雙擊尺寸約束也請彈出 DimExpressionDialog）：
+            // 原本這裡呼叫 startDimValueEdit() 只會彈出畫面上的簡易行內
+            // 編輯欄（單行文字框，只能打字，不能像 GDIM 建立時那樣直接
+            // 點選畫面上其他尺寸標註插入參考）。GDIM 建立新尺寸時已經是用
+            // DimExpressionDialog（支援「插入參考」），這裡改成雙擊既有
+            // 尺寸約束時也開同一個對話框，體驗一致。實際套用邏輯仍走
+            // UIManager::applyDimExpressionEdit()（＝ EDITCON 指令、原本
+            // 行內編輯共用的同一份 command::applyDimensionEdit()），不需要
+            // 另外維護一份平行邏輯。
+            openDimExpressionDialog(dimAIS);
             event->accept();
             return;
         }
     }
     QWidget::mouseDoubleClickEvent(event);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// openDimExpressionDialog — 雙擊既有尺寸約束時彈出完整運算式編輯對話框
+// （取代原本的簡易行內編輯欄，見 mouseDoubleClickEvent() 的說明）
+// ─────────────────────────────────────────────────────────────────────────────
+
+void CadView::openDimExpressionDialog(const Handle(aicad::cad::AIS_DimensionLine)& dimAIS) {
+    if (dimAIS.IsNull()) return;
+
+    QString uuid = dimAIS->constraintUuid();
+
+    auto* app = core::Application::instance();
+    Sketch* sk = app ? app->activeSketch() : nullptr;
+    cad::SketchConstraint* con = sk ? sk->findConstraint(uuid) : nullptr;
+    if (!sk || !con) return;   // 找不到對應約束，不開對話框
+
+    // 預填文字：優先使用 paramExpr，否則用目前數值（CoordinateDim 用 "x,y"）。
+    // ⚠️ 修正（第 11 項回報：雙擊彈出 DimExpressionDialog，但參數/表達式
+    // 沒有正確顯示）：SketchConstraint::paramExpr 存的是「這個尺寸使用
+    // 哪一個已命名參數」的名稱（例如 "d1"），不是那個參數背後真正的
+    // 定義式（例如 "abs(cant)/2"）——上一版這裡誤把 paramExpr 本身當成
+    // 運算式塞進 currentExpr，導致編輯框顯示的是參數名稱「d1」而不是
+    // 使用者真正想編輯的公式「abs(cant)/2」；同時 autoParamName 又留空，
+    // 讓標籤退回顯示 UUID 前幾碼而不是「d1 =」。正確作法：用 paramExpr
+    // 當作 autoParamName（標籤），再用它向 ParameterStore 查詢真正的
+    // 定義式當作 currentExpr（編輯框內容）。若 paramExpr 不對應任何已
+    // 註冊的具名參數（使用者當初直接輸入寫死的運算式，未命名），則
+    // paramExpr 本身就是運算式，直接照原樣顯示即可。
+    QString autoParamName;
+    QString currentExpr;
+    if (con->type == cad::ConstraintType::CoordinateDim) {
+        currentExpr = QString("%1,%2").arg(con->value).arg(con->value2);
+    } else if (!con->paramExpr.isEmpty() &&
+               sk->parameterStore() && sk->parameterStore()->hasLocal(con->paramExpr)) {
+        autoParamName = con->paramExpr;
+        currentExpr   = sk->parameterStore()->expression(con->paramExpr);
+    } else if (!con->paramExpr.isEmpty()) {
+        currentExpr = con->paramExpr;
+    } else {
+        currentExpr = QString::number(con->value);
+    }
+
+    auto* dlg = new aicad::ui::DimExpressionDialog(sk, uuid, autoParamName, currentExpr, this);
+    connect(dlg, &aicad::ui::DimExpressionDialog::expressionAccepted,
+            this, [](const QString& constraintUuid, const QString& newExpr) {
+        if (auto* uiMgr = core::Application::instance()->uiManager())
+            uiMgr->applyDimExpressionEdit(constraintUuid, newExpr);
+    });
+    // ⚠️ 新增（第 10 項回報的後續需求）：對話框的「翻轉方向」按鈕只負責
+    // 發出訊號，實際套用交給這裡呼叫 Sketch::flipDistanceSide()。
+    connect(dlg, &aicad::ui::DimExpressionDialog::flipSideRequested,
+            this, [sk](const QString& constraintUuid) {
+        if (sk) sk->flipDistanceSide(constraintUuid);
+    });
+    dlg->show();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4694,6 +4861,21 @@ void CadView::keyPressEvent(QKeyEvent* event) {
     // ── InputJig：Jig 可見時，直接打數字/小數點/負號＝輸入距離 ──────────────
     if (d->inputJig && d->inputJig->isJigVisible() && !event->text().isEmpty()) {
         const QChar ch = event->text().at(0);
+        // ⚠️ 需求 8 修正：方位角模式下，使用者常會想直接打「度-分-秒」
+        // 格式的角度值（例如 "125-30-15"），開頭就是 '-'。先前不分青紅
+        // 皂白，只要按下數字/小數點/負號一律塞進「距離」欄位
+        // （beginTypedInput() 固定操作 m_distEdit），導致角度輸入框
+        // 永遠打不到這個開頭的 '-'——即使之後 Tab 過去，'-' 也已經卡在
+        // 距離欄位裡，不是使用者要的角度欄位。
+        // 距離（拉出的線長）恆為正值，不會有「打負號輸入距離」的需求，
+        // 所以在方位角模式下，把 '-' 一律視為「使用者要開始輸入角度」
+        // 的訊號，直接導向角度欄位；數字／小數點則維持原行為導向距離
+        // 欄位（一般直覺：先打距離，Tab 到角度）。
+        if (d->inputJig->isAzimuthMode() && ch == QChar('-')) {
+            d->inputJig->beginTypedInput(event->text(), /*angleField=*/true);
+            event->accept();
+            return;
+        }
         if (ch.isDigit() || ch == QChar('.') || ch == QChar('-')) {
             d->inputJig->beginTypedInput(event->text());
             event->accept();

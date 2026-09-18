@@ -1,4 +1,5 @@
 #include "ui/AddSpiralCalcDialog.h"
+#include "ui/TransitionCurveHelp.h"
 
 #include "railway/AlignmentDocument.h"
 #include "railway/AlignmentSolver.h"
@@ -14,6 +15,9 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QtMath>
+#include <QShortcut>
+#include <QKeySequence>
+#include <QStyle>
 #include <cmath>
 #include <limits>
 
@@ -218,7 +222,23 @@ void AddSpiralCalcDialog::init()
                           SpiralType::Quintic, SpiralType::PHQuintic, SpiralType::Biquadratic, SpiralType::Spline,
                           SpiralType::BlossEulerHybrid })
         m_spiralTypeCombo->addItem(spiralTypeDisplayName(t), static_cast<int>(t));
-    form->addRow(tr("Spiral type:"), m_spiralTypeCombo);
+
+    // 螺旋線類型下拉選單旁邊放一顆小「？」說明按鈕，效果等同按 F1
+    // （見 TransitionCurveHelp::show()）——F1 快速鍵在部分平台／輸入法
+    // 組合下不好按，或使用者根本不知道有這個快速鍵，放一顆看得到的按鈕
+    // 比較容易被發現。用 QStyle 內建的 SP_DialogHelpButton 圖示，跟系統
+    // 對話框「？」按鈕的視覺語言一致，不需要自己準備圖檔。
+    m_helpButton = new QPushButton(this);
+    m_helpButton->setIcon(style()->standardIcon(QStyle::SP_DialogHelpButton));
+    m_helpButton->setFixedSize(28, 28);
+    m_helpButton->setToolTip(tr("Show transition curve literature references (F1)"));
+    m_helpButton->setFocusPolicy(Qt::NoFocus); // 按鈕不搶 Tab 順序的鍵盤焦點，行為上偏「輔助」而非主要輸入流程的一環
+    connect(m_helpButton, &QPushButton::clicked, this, [this] { TransitionCurveHelp::show(this); });
+
+    auto* spiralTypeRow = new QHBoxLayout();
+    spiralTypeRow->addWidget(m_spiralTypeCombo, /*stretch=*/1);
+    spiralTypeRow->addWidget(m_helpButton);
+    form->addRow(tr("Spiral type:"), spiralTypeRow);
     mainLayout->addLayout(form);
 
     // 帶入上次（同一個群組方向）記錄的選取，取代每次都固定回到 Clothoid
@@ -265,6 +285,15 @@ void AddSpiralCalcDialog::init()
             });
     connect(m_calcButton,  &QPushButton::clicked, this, &AddSpiralCalcDialog::onCalculate);
     connect(m_applyButton, &QPushButton::clicked, this, &AddSpiralCalcDialog::onApply);
+
+    // F1 → 顯示螺旋線公式參考文件（見 TransitionCurveHelp::show()）。
+    // 用 QShortcut 而非覆寫 keyPressEvent()：Modal 對話框內各子控件
+    // （QComboBox／QTableWidget）都可能持有鍵盤焦點，QShortcut 掛在
+    // this（對話框本身）並以預設的 Qt::WindowShortcut context，
+    // 不論焦點在哪個子控件上，F1 都能觸發，不需要在每個子控件上
+    // 個別攔截或事件過濾。
+    auto* helpShortcut = new QShortcut(QKeySequence(Qt::Key_F1), this);
+    connect(helpShortcut, &QShortcut::activated, this, [this] { TransitionCurveHelp::show(this); });
 
     // 開啟時即先試算一次（帶入 restoreSettings() 還原的選取，或預設的
     // Clothoid）；上面的 addItem() 迴圈與 restoreSettings() 的

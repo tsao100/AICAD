@@ -143,7 +143,14 @@ struct OSnapSettings {
     // 4 個額外圖示才會生效——這在多輪追查中被反覆誤判成「資料沒接上」的
     // 各種管線問題，但實際上管線本身沒有問題，只是這幾個開關預設是關的，
     // FC/AS/FT 等命令的取點自然「看起來」完全抓不到 alignment 鎖點。
-    SnapTypes  enabledTypes     = SnapType::Standard | SnapType::AlignmentPI |
+    // ✅ 修正：Node（SketchPoint 獨立點）預設一併開啟。
+    // 先前只有 Standard（Endpoint|Midpoint|Center|Quadrant）+ 四個
+    // Alignment 類型預設開啟，Node 維持關閉——結果是剛加上的「OSNAP 支援
+    // SketchPoint」實測起來完全沒反應，因為使用者得先自己在 OSNAP 工具列
+    // 上多按一次 Node 圖示才會生效，跟這裡新增支援的當下预期（畫面上就
+    // 直接吃得到）不一致，也跟上面 Alignment 那四個當初的踩坑一模一樣。
+    SnapTypes  enabledTypes     = SnapType::Standard | SnapType::Node |
+                                   SnapType::AlignmentPI |
                                    SnapType::AlignmentTC | SnapType::AlignmentMid |
                                    SnapType::AlignmentPerp;
     double     pickPixelRadius  = 12.0;   ///< 螢幕吸附半徑（像素）
@@ -172,6 +179,7 @@ inline Quantity_NameOfColor snapColor(SnapType t) {
     case SnapType::Tangent:       return Quantity_NOC_LIGHTBLUE;
     case SnapType::Nearest:       return Quantity_NOC_WHITE;
     case SnapType::Extension:     return Quantity_NOC_GRAY60;
+    case SnapType::Node:          return Quantity_NOC_LIMEGREEN;  ///< SketchPoint（Origin::Explicit）獨立點
     case SnapType::Grid:          return Quantity_NOC_GRAY80;
     case SnapType::AlignmentPI:   return Quantity_NOC_ORANGE;
     case SnapType::AlignmentTC:   return Quantity_NOC_GREENYELLOW;

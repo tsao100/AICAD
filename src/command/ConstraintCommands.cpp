@@ -344,7 +344,12 @@ CommandResult GeomConstraintCommand::execute(const CommandContext& ctx)
             return CommandResult::Failure(
                 QString("Failed to apply %1 constraint. Check UUIDs.").arg(name()));
         }
-        SolveResult result = sk->solveConstraints();
+        // ⚠️ 效能優化：applyConstraint()（constrainXxx()）內部已經透過
+        // addConstraint() 呼叫過一次 solveConstraints() 並完成求解＋AIS
+        // 重建；這裡改讀快取結果，不再重新呼叫 solveConstraints()，避免
+        // Newton-Raphson 疊代（含每次疊代都要做的 BDCSVD 分解）與 AIS
+        // 重建/重繪整個再跑一遍。（見 Sketch::lastSolveResult() 註解）
+        SolveResult result = sk->lastSolveResult();
         int dofAfter = sk->degreesOfFreedom();
         cmdMgr->printSuccess(
             QString("✅ %1 constraint applied. DOF: %2 → %3")
@@ -943,9 +948,23 @@ CommandResult DelConCommand::execute(const CommandContext& ctx)
         }
         QString typeName; // shortcut
         int dofBefore = sk->degreesOfFreedom();
-        bool ok = sk->removeConstraint(uuid);
+        // ⚠️ 修正（第 7 項回報：刪除尺寸約束，相關部分／存檔沒有同步刪除）：
+        // GDIM 尺寸標註在 m_constraints 裡對應的是 addImplicitConstraint()
+        // 自動產生的「隱含約束」（implicitOf 指回產生它的 SketchAnnotation），
+        // 使用者點掉尺寸線、或這裡直接帶隱含約束的 uuid 執行 DELCON 時，若
+        // 只呼叫 removeConstraint()，只會刪掉隱含約束這一份，產生它的
+        // SketchAnnotation（連同 Prefix/Suffix/公差等資料）仍留在
+        // m_annotations 沒被清掉——存檔會把它寫回去，重新載入後又依標註
+        // 內容重新產生一次隱含約束，讓已經刪除的尺寸「復活」。改成優先
+        // 呼叫 removeAnnotation()：它會同時清掉標註本身與其隱含約束。
+        bool ok = con->implicitOf.isEmpty()
+            ? sk->removeConstraint(uuid)
+            : sk->removeAnnotation(con->implicitOf);
         if (!ok) return CommandResult::Failure("Failed to remove constraint.");
-        SolveResult result = sk->solveConstraints();
+        // ⚠️ 效能修正：removeConstraint() 內部已呼叫過一次
+        // solveConstraints()（含 emit rebuildRequested()），這裡改讀快取
+        // 結果，不再重新求解＋重建一次。
+        SolveResult result = sk->lastSolveResult();
         int dofAfter = sk->degreesOfFreedom();
         cmdMgr->printSuccess(
             QString("✅ Constraint removed. DOF: %1 → %2").arg(dofBefore).arg(dofAfter));
@@ -956,6 +975,49 @@ CommandResult DelConCommand::execute(const CommandContext& ctx)
 
     // 互動模式：提示點擊約束符號
     cmdMgr->showPrompt("[SELECT CONSTRAINT] Click on a constraint symbol in viewport, or type UUID:");
+    return CommandResult::Success();
+}
+
+// ── FLIPDIM ──────────────────────────────────────────────────────────────────
+
+FlipDimCommand::FlipDimCommand()
+    : Command("FLIPDIM", "Flip which side a FixedDistance constraint solves to (FLIPDIM <uuid>)") {}
+
+CommandResult FlipDimCommand::execute(const CommandContext& ctx)
+{
+    auto* app    = core::Application::instance();
+    auto* cmdMgr = core::CommandLineManager::instance();
+    Sketch* sk   = requireActiveSketch(app, cmdMgr);
+    if (!sk) return CommandResult::Failure("No active sketch.");
+
+    if (ctx.args.isEmpty()) {
+        // ⚠️ 目前只支援直接帶 UUID 參數（例如配合 LISTCON 查到的 uuid，
+        // 或雙擊尺寸線彈出 DimExpressionDialog 裡的「翻轉方向」按鈕——
+        // 那條路徑走的是 Sketch::flipDistanceSide() 直接呼叫，不經過這個
+        // 指令）。互動點選單一約束符號的 pick session 尚未實作，先提示
+        // 使用者改用上述兩種方式之一。
+        cmdMgr->showPrompt(
+            "[FLIPDIM] Interactive pick not yet supported — "
+            "type FLIPDIM <uuid>, or use \"Flip Side\" in the dimension's "
+            "double-click dialog.");
+        return CommandResult::Success();
+    }
+
+    const QString uuid = ctx.args[0];
+    SketchConstraint* con = sk->findConstraint(uuid);
+    if (!con) {
+        return CommandResult::Failure(QString("Constraint '%1' not found.").arg(uuid));
+    }
+    if (con->type != ConstraintType::FixedDistance) {
+        return CommandResult::Failure(
+            "FLIPDIM only applies to FixedDistance (linear dimension) constraints.");
+    }
+
+    if (!sk->flipDistanceSide(uuid))
+        return CommandResult::Failure("Failed to flip constraint side.");
+
+    cmdMgr->printSuccess("✅ Flipped to the other side.");
+    triggerOverlayRebuild(app);
     return CommandResult::Success();
 }
 
@@ -1412,6 +1474,9 @@ void registerConstraintCommands(core::Application* app)
     // ── 管理命令 ─────────────────────────────────────────────────────────────
     cmdMgr->registerCommand("DELCON",        {"DCO"},
         []() { return new DelConCommand(); });
+
+    cmdMgr->registerCommand("FLIPDIM",       {"FDM"},
+        []() { return new FlipDimCommand(); });
 
     cmdMgr->registerCommand("EDITCON",       {"ECO"},
         []() { return new EditConCommand(); });

@@ -155,6 +155,12 @@ std::optional<SketchConstraint> SketchAnnotation::toImplicitConstraint() const {
     c.distMode    = distMode;
     c.dimLineOffsetX = dimLineOffset.x();
     c.dimLineOffsetY = dimLineOffset.y();
+    // 第 10 項回報後續需求：把「記住的哪一側」一併帶進隱含約束，讓
+    // FixedDistanceEquation::lockReference() 求解時能優先沿用它，而不是
+    // 每次都從當下幾何位置現算（見 SketchConstraint.h 同名欄位說明）。
+    c.distSideSign = distSideSign;
+    c.distSideDirX = distSideDirX;
+    c.distSideDirY = distSideDirY;
     return c;
 }
 
@@ -172,6 +178,12 @@ QJsonObject SketchAnnotation::toJson() const {
     o["distMode"]  = static_cast<int>(distMode);
     o["dimOffX"]   = dimLineOffset.x();
     o["dimOffY"]   = dimLineOffset.y();
+    // 第 10 項回報後續需求：見標頭檔同名欄位說明，只有 FixedDistance 對應
+    // 的標註（kind == Distance）需要存這三個欄位，其他標註型別沒有
+    // 「哪一側」的歧義，留著也無妨（全部保持預設 0.0，不影響任何東西）。
+    o["distSideSign"] = distSideSign;
+    o["distSideDirX"] = distSideDirX;
+    o["distSideDirY"] = distSideDirY;
 
     o["prefix"]      = prefix;
     o["suffix"]      = suffix;
@@ -205,6 +217,9 @@ SketchAnnotation SketchAnnotation::fromJson(const QJsonObject& j) {
     an.driving   = j["driving"].toBool(true);
     an.distMode  = static_cast<DistanceMode>(j["distMode"].toInt(0));
     an.dimLineOffset = QVector2D(j["dimOffX"].toDouble(0.0), j["dimOffY"].toDouble(0.0));
+    an.distSideSign  = j["distSideSign"].toDouble(0.0);
+    an.distSideDirX  = j["distSideDirX"].toDouble(0.0);
+    an.distSideDirY  = j["distSideDirY"].toDouble(0.0);
 
     an.prefix      = j["prefix"].toString();
     an.suffix      = j["suffix"].toString();

@@ -72,7 +72,12 @@ void CopyCommand::teardownLivePreviewTargets(cad::Sketch* sketch, const QStringL
     if (!sketch || targets.isEmpty()) return;
     for (const QString& uuid : targets)
         sketch->removeGeometry(uuid);
-    Q_EMIT sketch->rebuildRequested();
+    // ⚠️ 效能修正：removeGeometry() 自己在每次呼叫結尾就已經 emit 一次
+    // rebuildRequested()（見 Sketch::removeGeometry()），迴圈跑完後這裡
+    // 又再手動 emit 一次，是這 N+1 次裡最後那個多出來的重複；先移除，
+    // 若要徹底解決「刪 N 個幾何觸發 N 次完整 rebuild」，需要另外提供
+    // 批次刪除的 API（一次迴圈只 emit 一次），這裡先不動 removeGeometry()
+    // 本身的行為以免影響其他呼叫端。
 }
 
 } // namespace command

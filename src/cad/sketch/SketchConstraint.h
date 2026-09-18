@@ -144,12 +144,41 @@ struct SketchConstraint {
     QList<GeomRef> refs;   ///< 參與約束的幾何參考（1~3個）
     double         value = 0.0;  ///< 尺寸約束的目標值（求值後的快取）
     double         value2 = 0.0; ///< 第二數值（CoordinateDim 的 Y 值）
+
+    // ── 第 17 項回報：X/Y 軸、原點參考幾何的 Fixed 約束用（防止漂移）──────
+    // 一般 Fixed 約束（使用者手動下的「固定」）語意上就是「鎖在使用者
+    // 目前擺放的位置」，求解器用的是「每次求解開始時的當下座標」當
+    // snapshot，這是正確、預期中的行為。但 X 軸／Y 軸／原點這幾個由
+    // Sketch::xAxisGeomUuid()/yAxisGeomUuid()/originPointUuid() 自動產生
+    // 的參考幾何，理論上应該永遠釘死在設計座標（例如原點永遠是
+    // (0,0)），不該受這種「重新取樣」影響——否則多次求解下來，
+    // SVD／Tikhonov 阻尼等數值誤差會逐次累積，讓這些理論上不動的參考
+    // 幾何實際上慢慢飄移。fixedAbsolute=true 時，ConstraintSolver 改用
+    // value/value2 當成永久不變的絕對座標，不管求解過程中座標飄了多少，
+    // 下一次求解都會鎖回同一個絕對值。
+    bool           fixedAbsolute = false;
     QString        paramExpr;    ///< 原始參數表達式（如 "width"、"width*2"）
     bool           driving = true;  ///< driving=true：約束驅動幾何；false：量測模式
     // Phase 3B 新增欄位
     DistanceMode    distMode = DistanceMode::PointToPoint;  ///< 距離子類型
     double          dimLineOffsetX = 0.0;  ///< 尺寸線偏移 X（草圖平面座標）
     double          dimLineOffsetY = 0.0;  ///< 尺寸線偏移 Y
+
+    // ── 第 10 項回報的後續需求：「翻轉方向」設定後要能記住/存檔 ──────────
+    // FixedDistance 用：記住上次求解收斂時的「哪一側」，取代每次求解都
+    // 從當下幾何位置現算（那樣沒辦法跨越「翻轉方向」按鈕的操作、也没辦法
+    // 撐過距離值經過/接近 0 的瞬間——見 ConstraintSolver.cpp 的
+    // FixedDistanceEquation::lockReference() 說明）。
+    // PointToLine/LineToLine 用 distSideSign（+1.0／-1.0）；PointToPoint
+    // 用 distSideDirX/Y（單位方向向量）。全部為 0.0 表示「尚未鎖定過」，
+    // 這種情況才會退回用當下幾何位置現算。
+    // ⚠️ 對於 implicitOf 非空的隱含約束（GDIM 尺寸），這三個欄位只是
+    // 「這次執行期間」的工作副本；真正的存檔來源是對應
+    // SketchAnnotation 的同名欄位，見 SketchAnnotation::toImplicitConstraint()
+    // /Sketch::solveConstraints() 尾端的同步說明。
+    double          distSideSign = 0.0;
+    double          distSideDirX = 0.0;
+    double          distSideDirY = 0.0;
 
     // ── GDIM v2 Phase 1 ──────────────────────────────────────────────────
     /// 非空時，表示這是由某個 SketchAnnotation（uuid == implicitOf）

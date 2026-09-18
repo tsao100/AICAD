@@ -215,6 +215,11 @@ public:
 
     /// ✅ Task E: 啟動 PlaceDimLine 模式，設定用於計算偏移的錨點（兩端點中心，草圖平面座標）
     void beginPlaceDimLine(const QVector2D& anchorPos2D);
+    /// PlaceDimLine 模式下確認尺寸線位置的共用邏輯。mousePressEvent() 的
+    /// 一般點擊、以及 mouseDoubleClickEvent() 因 Qt 雙擊事件合成而收到的
+    /// 「偽雙擊」都會呼叫這裡，見 mouseDoubleClickEvent() 的說明（第 14
+    /// 項回報：GDIM 確認尺寸線位置有時需要點兩次）。
+    void confirmDimLinePlacement(const QPoint& screenPos);
 
     /// GDIM: 草圖平面座標 → 螢幕像素座標
     QPoint planeToScreen(const QVector2D& planePt) const;
@@ -841,11 +846,19 @@ private:
     // ── 尺寸線行內數值編輯（雙擊觸發）────────────────────────────────────────
     /// 雙擊尺寸線數值時呼叫：於該標籤畫面座標處顯示行內編輯欄，預填目前的
     /// 數值/表達式文字。Enter 或滑鼠右鍵確認、ESC 取消。
+    /// ⚠️ 自第 8 項回報修正後，mouseDoubleClickEvent() 已改呼叫
+    /// openDimExpressionDialog()，不再呼叫這個函式；保留是因為移除牽涉
+    /// commitDimValueEdit()/cancelDimValueEdit()/dimValueEditCommitted 訊號/
+    /// InteractionMode::DimValueEdit 等一整組關聯狀態，範圍較大，這裡先不動。
     void startDimValueEdit(const Handle(aicad::cad::AIS_DimensionLine)& dimAIS);
     /// 確認編輯：讀取編輯欄文字，發出 dimValueEditCommitted，關閉編輯欄。
     void commitDimValueEdit();
     /// 取消編輯：不套用任何變更，直接關閉編輯欄。
     void cancelDimValueEdit();
+    /// 雙擊既有尺寸約束時呼叫：彈出 DimExpressionDialog（支援插入參考），
+    /// 取代原本的簡易行內編輯欄，實際套用走
+    /// UIManager::applyDimExpressionEdit()。
+    void openDimExpressionDialog(const Handle(aicad::cad::AIS_DimensionLine)& dimAIS);
 
     QString m_selectionFilter;
     QVector<Handle(AIS_Shape)> m_referencePlanes;  // 儲存參考平面

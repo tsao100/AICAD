@@ -198,15 +198,25 @@ void HorizontalAlignment::load(const QVector<AlignmentPoint>& points)
     }
 
     // ── Step 2: build elements ─────────────────────────────────────────────
-    // Provide dummy neighbours for the first and last keypoints.
-    AlignmentPoint dummyPrev, dummyNext;
+    // Provide a dummy predecessor only for the very first keypoint (there is
+    // genuinely no m_pts[-1]). The final keypoint m_pts[n-1] IS a real,
+    // always-valid point (n >= 2 here) — it must NOT be replaced by a dummy
+    // when it's used as "next" for the last element (i = n-2): that keypoint
+    // carries essential data for the last element (e.g. a forward spiral's
+    // target radius is stored on the *next* keypoint per convention — see
+    // AlignmentQuickCalc.h). Substituting a dummy ("TT", radius=0) there
+    // silently discarded that radius, making the last element of any
+    // alignment ending in a spiral construct with radius 0 (i.e. it failed
+    // to render) — this was a real, reproducible bug affecting any
+    // alignment whose final element is a transition curve, not just ones
+    // created via AQT/ADC.
+    AlignmentPoint dummyPrev;
     dummyPrev.tsc = "TT";
-    dummyNext.tsc = "TT";
 
     for (int i = 0; i < n - 1; ++i) {
-        const AlignmentPoint& prev = (i > 0)     ? m_pts[i-1] : dummyPrev;
-        const AlignmentPoint& cur  =               m_pts[i];
-        const AlignmentPoint& next = (i < n-2)   ? m_pts[i+1] : dummyNext;
+        const AlignmentPoint& prev = (i > 0) ? m_pts[i-1] : dummyPrev;
+        const AlignmentPoint& cur  = m_pts[i];
+        const AlignmentPoint& next = m_pts[i+1];   // always a real, valid keypoint
 
         // Skip zero-length elements (degenerate keypoints)
         if (cur.length < kTol) continue;
