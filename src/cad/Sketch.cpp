@@ -9,6 +9,7 @@
 #include "PlaneManager.h"
 #include "sketch/SketchLoopFinder.h"
 #include "sketch/SketchPointAIS.h"
+#include "sketch/SketchGeom2DMath.h"
 #include <gp_Ax3.hxx>
 
 #include <QDebug>
@@ -1625,12 +1626,86 @@ SketchConstraint* Sketch::findConstraint(const QString& uuid)
     return nullptr;
 }
 
+std::optional<double> Sketch::previewAngleValueForOffset(const SketchConstraint* c,
+                                                          double offsetX, double offsetY) const
+{
+    if (!c) return std::nullopt;
+    if (c->type != ConstraintType::FixedAngle && c->type != ConstraintType::FixedAngleDim)
+        return std::nullopt;
+    if (c->refs.size() < 2) return std::nullopt;
+    auto* lineA = dynamic_cast<SketchLine*>(findGeometry(c->refs[0].geomUuid));
+    auto* lineB = dynamic_cast<SketchLine*>(findGeometry(c->refs[1].geomUuid));
+    if (!lineA || !lineB) return std::nullopt;
+    QVector2D dirA = (lineA->end - lineA->start).normalized();
+    QVector2D dirB = (lineB->end - lineB->start).normalized();
+    QVector2D offset(static_cast<float>(offsetX), static_cast<float>(offsetY));
+    return geom2d::angleSectorValue(dirA, dirB, offset);
+}
+
+bool Sketch::previewConstraintDimValue(const QString& uuid, double offsetX, double offsetY)
+{
+    // ★ 新增（第 11 項回報：拖曳「既有」角度標註時，數值要比照 hover 預覽
+    //   一樣即時更新，不要等放開滑鼠才變——CadView::dimLineDragging 這個
+    //   訊號在拖曳過程中每次滑鼠移動都會發，之前只接去單純的
+    //   ConstraintOverlayManager::updateDimLine()（只搬位置，不碰數值），
+    //   數值只有在 dimLineDragFinished（放開滑鼠）才透過
+    //   updateConstraintDimOffset() 重算一次——這中間拖曳的過程，畫面上
+    //   弧的位置雖然跟著滑鼠即時移動，但標籤文字的數字其實是舊的，直到
+    //   放開才跳一次，跟建立新標註時「滑鼠移到哪，數字就即時跟著換」的
+    //   體驗不一致。
+    //
+    //   這個函式只做「輕量」預覽：只更新 SketchConstraint::value（讓
+    //   labelText() 讀到新數字），不呼叫 solveConstraints()（拖曳中每次
+    //   滑鼠移動都真的重新解一次幾何太重，而且線的實際位置本來就不該在
+    //   放開滑鼠前被移動——跟建立時的 hover 預覽只是「預覽數值」、不會
+    //   真的移動任何幾何是同一個道理）、也不同步 SketchAnnotation／
+    //   paramExpr（那些是「確定套用」才需要處理的持久化細節，見
+    //   updateConstraintDimOffset() 的完整說明）。真正落地生根、觸發求解
+    //   跟存檔同步，還是要靠放開滑鼠時呼叫的 updateConstraintDimOffset()。
+    SketchConstraint* c = findConstraint(uuid);
+    if (!c) return false;
+    if (c->type != ConstraintType::FixedAngle && c->type != ConstraintType::FixedAngleDim)
+        return false;   // 非角度型別：拖曳不改變「量測的是什麼」，不需要預覽數值
+    if (auto v = previewAngleValueForOffset(c, offsetX, offsetY))
+        c->value = *v;
+    return true;
+}
+
 bool Sketch::updateConstraintDimOffset(const QString& uuid, double offsetX, double offsetY)
 {
     SketchConstraint* c = findConstraint(uuid);
     if (!c) return false;
     c->dimLineOffsetX = offsetX;
     c->dimLineOffsetY = offsetY;
+
+    // ★ 修正（第 7 項回報：角度約束拖到不同位置時，值應該跟著調整才
+    //   對——原本這裡只更新了 dimLineOffsetX/Y，位置變了、畫面上的弧也
+    //   跟著移動，但約束實際要求解算的角度值完全沒變，變成「畫的位置」
+    //   跟「真正在約束的角度」不一致）。角度是特例：對一般距離/座標尺寸
+    //   而言，拖曳只是重新擺放標籤位置，不影響「量測的是什麼」；但兩條
+    //   線交叉會分出 4 個扇區，量測的可能是夾角本身、也可能是補角，拖到
+    //   不同扇區代表使用者想量測的目標本來就不一樣，不能只搬標籤不改值。
+    //   用 previewAngleValueForOffset()（跟上面 previewConstraintDimValue()
+    //   共用同一份，也是跟 GeneralDimCommand 建立時同一套
+    //   geom2d::angleSectorValue() 邏輯，見該函式說明）依新的偏移方向重新
+    //   判斷該用夾角還是補角。
+    if (c->type == ConstraintType::FixedAngle || c->type == ConstraintType::FixedAngleDim) {
+        if (auto v = previewAngleValueForOffset(c, offsetX, offsetY)) {
+            c->value = *v;
+            c->paramExpr.clear();
+            // 同步 SketchAnnotation，理由跟下面「第 9 項」那段一致：
+            // 隱含約束在任何重新生成的時機（存檔重載、標註重新 add）
+            // 都會被 SketchAnnotation::value/paramExpr 覆蓋回去，這裡
+            // 剛算好、剛拖出來的新角度不同步寫回的話會悄悄被還原。
+            // makeAngleDim() 的 angleRad 參數本來就是弧度，跟 c->value
+            // 單位一致，不需要再轉換。
+            if (SketchAnnotation* ann = findAnnotation(uuid)) {
+                ann->value = *v;
+                ann->paramExpr.clear();
+            }
+        }
+    }
+
     // ⚠️ 修正（第 9 項回報：尺寸約束移動調整後，位置沒有存檔）：
     // GDIM 尺寸線對應的是 SketchAnnotation 產生的「隱含約束」，兩者刻意
     // 共用同一個 uuid（見 SketchAnnotation::toImplicitConstraint()：
@@ -1646,7 +1721,12 @@ bool Sketch::updateConstraintDimOffset(const QString& uuid, double offsetX, doub
     // 產生隱含約束，覆蓋掉這裡剛改好的值）——正是回報的現象。
     if (SketchAnnotation* ann = findAnnotation(uuid))
         ann->dimLineOffset = QVector2D(offsetX, offsetY);
-    // 不重新 solve，不觸發 rebuild — overlay 由呼叫端 (UIManager) 已即時更新
+    // ★ 修正：搬動尺寸約束只是調整它的位置／重新判斷該標哪個角度值，不用
+    // 再觸發 solveConstraints()——跟其他型別的尺寸線拖曳（純粹重新擺放
+    // 標籤位置）待遇一致，不應該因為拖了角度標註就連帶讓兩條線的實際幾何
+    // 跟著轉動。上面已經把新的目標角度寫進 c->value（供下一次真正求解時
+    // 使用）並同步進 SketchAnnotation（供存檔／重載使用），這裡不需要、
+    // 也不應該立刻叫求解器把幾何轉到新角度。
     return true;
 }
 

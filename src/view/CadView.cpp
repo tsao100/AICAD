@@ -4462,6 +4462,10 @@ void CadView::openDimExpressionDialog(const Handle(aicad::cad::AIS_DimensionLine
     QString currentExpr;
     if (con->type == cad::ConstraintType::CoordinateDim) {
         currentExpr = QString("%1,%2").arg(con->value).arg(con->value2);
+    } else if (con->type == cad::ConstraintType::Chamfer) {
+        // Chamfer 跟 CoordinateDim 一樣是雙值約束（D1、D2），比照同一種
+        // "值1,值2" 預填格式，讓使用者可以直接輸入 "25,10" 一次改兩個值。
+        currentExpr = QString("%1,%2").arg(con->value).arg(con->value2);
     } else if (!con->paramExpr.isEmpty() &&
                sk->parameterStore() && sk->parameterStore()->hasLocal(con->paramExpr)) {
         autoParamName = con->paramExpr;

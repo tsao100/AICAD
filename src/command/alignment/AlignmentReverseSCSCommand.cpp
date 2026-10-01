@@ -11,8 +11,11 @@
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
 #include "core/EventBus.h"
+#include "core/DocumentManager.h"
+#include "cad/Document.h"
 #include "railway/AlignmentDocument.h"
 #include "ui/AlignmentReverseSCSCalcDialog.h"
+#include "ui/UIManager.h"
 #include "view/CadView.h"   // CadView : public QWidget — 供 static_cast(context.cadView) 使用
 
 #include <QDebug>
@@ -24,6 +27,33 @@ using aicad::railway::SpiralType;
 
 namespace aicad {
 namespace command {
+
+namespace {
+/**
+ * @brief 需求 10：把 @p alignDoc 目前的求解結果同步寫回它所屬的那條
+ *        tcl->horizontal()（權威資料）。與 AlignmentFixTangentCommand.cpp
+ *        內同名函式邏輯相同，各自保留一份，詳見該處註解。
+ */
+void syncAlignmentDocToOwningTcl(railway::AlignmentDocument* alignDoc)
+{
+    if (!alignDoc) return;
+    auto* uiMgr = core::Application::instance()->uiManager();
+    if (!uiMgr) return;
+    const QString tclId = uiMgr->tclAlignmentDocs().key(alignDoc, QString());
+    if (tclId.isEmpty()) return;
+    auto* doc = core::Application::instance()->documentManager()->currentDocument();
+    if (!doc) return;
+    auto* tcl = doc->findTrackCenterLine(tclId);
+    if (!tcl) return;
+    const railway::HorizontalAlignment* ha = alignDoc->horizontal()->result();
+    if (!ha || ha->isEmpty()) return;
+    tcl->setAldHorizontalImport(ha->rawPoints());
+    tcl->loadHorizontal(ha->rawPoints());
+    doc->setModified(true);
+    // 需求 15／16：同 AlignmentDrawChainCommand，主動確保這條線立刻畫出來。
+    uiMgr->ensureTclDisplayed(tclId);
+}
+} // namespace
 
 // ────────────────────────────────────────────────────────────────────────────
 //  Constructor
@@ -526,6 +556,7 @@ void AlignmentReverseSCSCommand::commitRSCS()
     }
 
     m_alignDoc->horizontal()->solve();   // emit changed() → AlignmentRenderer::refresh()
+    syncAlignmentDocToOwningTcl(m_alignDoc);   // 需求 10：立即同步回權威 tcl
 
     outputMessage(
         QString("Reverse SCS+SCS #%1  tangents(%2→%3)  R1=%4 m  L1=%5 m[%6]  "

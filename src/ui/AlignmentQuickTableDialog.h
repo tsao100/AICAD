@@ -32,7 +32,10 @@
  * 元素鏈)；本對話框中該欄可自由編輯——輸入可解析為數字者視為圓弧半徑，
  * 否則視為緩和曲線類型 token（大小寫不拘，未知 token 視為 "SPIRAL"）。
  * 除第一列（起點）外，所有列的所有輸入欄位皆可自由編輯（本對話框的用途
- * 正是要讓使用者從零鍵入或修改這些資料）。
+ * 正是要讓使用者從零鍵入或修改這些資料）；另外，「目前最後一列」的
+ * Easting/Northing/方位角也開放編輯（需求 14）——按「計算」後這三欄預設
+ * 顯示正算出的終點座標／方位角，使用者可直接改成想要的「目標點」，再按
+ * 「調整」（緊接在「計算」按鈕右側）套用，見 onAdjustToTarget()。
  *
  * 兩種使用模式
  * ────────────
@@ -116,6 +119,12 @@ private Q_SLOTS:
     void onCalculate();
     void onCellChanged(QTableWidgetItem* item);
     void onAccept();
+    /** 需求 5／8／14：依「表格最後一列」目前的 E／N／方位角（使用者可直接
+     *  在該列輸入想要的目標點，預設值＝上次計算出的終點）與目前「計算」
+     *  結果的差值，調整起始方位角、已輸入的各段「直線」長度，重算至最
+     *  接近目標點座標與方位角（原本在 ADC 對話框內的「調整」按鈕功能，
+     *  改移到本對話框，緊接在「計算」按鈕右側）。 */
+    void onAdjustToTarget();
 
 private:
     void buildUi(bool editMode);
@@ -128,10 +137,19 @@ private:
     /** 將 computeQuickAlignmentTable() 的結果寫回表格的唯讀計算結果欄。 */
     void showComputedResults(const QVector<railway::AlignmentPoint>& pts);
 
+    /** 需求 14：維持「目前最後一列」的 E／N／方位角可編輯（供輸入調整目標
+     *  點），其餘中間列（row 0 除外）維持唯讀；列數變動後（新增／刪除列、
+     *  載入既有資料）都要重新呼叫一次。 */
+    void updateTargetRowEditability();
+
     QLineEdit*           m_nameEdit    = nullptr;
     HAlignTableWidget*   m_table       = nullptr;
     QLabel*              m_statusLabel = nullptr;
     QPushButton*         m_okButton    = nullptr;
+
+    // ── 需求 5／8／14：調整至目標點（原 ADC 對話框內的「調整」按鈕；
+    //    目標 E／N／方位角改為直接輸入表格最後一列，不再用獨立欄位）───────
+    QPushButton* m_adjustButton = nullptr;
 
     QVector<railway::AlignmentPoint> m_computed;  ///< 最近一次成功計算的結果（TM2）
     bool m_resultValid = false;  ///< m_computed 是否仍與目前表格輸入一致（尚未被編輯打髒）

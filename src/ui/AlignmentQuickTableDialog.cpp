@@ -8,6 +8,7 @@
 #include "HAlignTableWidget.h"
 
 #include "railway/AlignmentQuickCalc.h"
+#include "railway/RailwayAlignmentElement.h"   // AlignmentElement::normalise()
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -114,7 +115,7 @@ public:
     }
 
     void setModelData(QWidget* editor, QAbstractItemModel* model,
-                       const QModelIndex& index) const override
+                      const QModelIndex& index) const override
     {
         if (auto* combo = qobject_cast<QComboBox*>(editor))
             model->setData(index, combo->currentText(), Qt::EditRole);
@@ -127,7 +128,7 @@ QTableWidgetItem* makeItem(const QString& text, bool editable, bool computedStyl
     if (!editable)
         item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     item->setBackground(QBrush(computedStyle ? QColor(242, 242, 242)
-                                              : QColor(255, 255, 210)));
+                                             : QColor(255, 255, 210)));
     return item;
 }
 
@@ -146,7 +147,7 @@ QString radiusCurveTypeToText(const AlignmentPoint& p)
     const QChar depart = (p.tsc.size() >= 2) ? p.tsc[1] : QLatin1Char('T');
     if (depart == QLatin1Char('C')) {
         if (std::abs(p.radius) > 1e-9)
-            return QString::number(p.radius, 'f', 4);
+            return QString::number(p.radius, 'f', 5);
         return QString();   // 理論上不會發生：圓弧列應該要有半徑
     }
     if (depart == QLatin1Char('S'))
@@ -210,6 +211,7 @@ AlignmentQuickTableDialog::AlignmentQuickTableDialog(QWidget* parent)
     // 預設兩列：起點（可完整輸入）＋一個切線列，方便使用者直接上手。
     appendRow(QStringLiteral("TT"), /*isFirst=*/true);
     appendRow(QStringLiteral("TT"), /*isFirst=*/false);
+    updateTargetRowEditability();
 }
 
 AlignmentQuickTableDialog::AlignmentQuickTableDialog(
@@ -228,6 +230,7 @@ AlignmentQuickTableDialog::AlignmentQuickTableDialog(
         appendRow(QStringLiteral("TT"), /*isFirst=*/true);
         appendRow(QStringLiteral("TT"), /*isFirst=*/false);
     }
+    updateTargetRowEditability();
 }
 
 void AlignmentQuickTableDialog::buildUi(bool editMode)
@@ -280,7 +283,7 @@ void AlignmentQuickTableDialog::buildUi(bool editMode)
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setSelectionBehavior(QAbstractItemView::SelectItems);
     m_table->setEditTriggers(QAbstractItemView::DoubleClicked |
-                              QAbstractItemView::EditKeyPressed);
+                             QAbstractItemView::EditKeyPressed);
     m_table->setAlternatingRowColors(true);
     m_table->setFirstBetweenColumn(kFirstBetweenCol);
 
@@ -298,13 +301,13 @@ void AlignmentQuickTableDialog::buildUi(bool editMode)
     // 「曲線類型/半徑」欄額外套用可下拉選取緩和曲線類型的專用委派（見
     // RadiusCurveTypeDelegate），取代一般的 BetweenPointDelegate。
     m_table->setItemDelegateForColumn(kColRadiusCurveType,
-                                       new RadiusCurveTypeDelegate(m_table));
+                                      new RadiusCurveTypeDelegate(m_table));
 
     connect(m_table, &QTableWidget::itemChanged,
             this, &AlignmentQuickTableDialog::onCellChanged);
     mainLayout->addWidget(m_table);
 
-    // ── 列操作／計算 ─────────────────────────────────────────────────────
+    // ── 列操作／計算／調整 ───────────────────────────────────────────────
     auto* rowBar = new QHBoxLayout();
     auto* addBtn  = new QPushButton(tr("新增列"), this);
     auto* delBtn  = new QPushButton(tr("刪除末列"), this);
@@ -315,6 +318,21 @@ void AlignmentQuickTableDialog::buildUi(bool editMode)
     rowBar->addWidget(addBtn);
     rowBar->addWidget(delBtn);
     rowBar->addWidget(calcBtn);
+
+    // 需求 14：「調整」緊接在「計算」右邊；目標 E／N／方位角改為直接輸入
+    // 表格「最後一列」的對應欄位（按「計算」後預設顯示正算出的終點，可
+    // 直接改成想要的目標值），不再用獨立欄位——見 updateTargetRowEditability()。
+    m_adjustButton = new QPushButton(tr("調整"), this);
+    m_adjustButton->setToolTip(
+        tr("需先按「計算」成功一次。直接在表格最後一列輸入想要的目標點\n"
+           "E／N／方位角（預設＝計算出的終點），按「調整」：把起始方位角\n"
+           "調整到終點方位角剛好等於目標方位角（精確解），再把剩餘的位置\n"
+           "誤差依比例分配到已輸入的直線段長度上（圓弧／緩和曲線的半徑與\n"
+           "長度不變）。"));
+    connect(m_adjustButton, &QPushButton::clicked,
+            this, &AlignmentQuickTableDialog::onAdjustToTarget);
+    rowBar->addWidget(m_adjustButton);
+
     rowBar->addStretch(1);
     rowBar->addWidget(new QLabel(tr("（表格支援 Ctrl+C/X/V 複製剪下貼上、Delete 清除）"), this));
     mainLayout->addLayout(rowBar);
@@ -375,14 +393,14 @@ void AlignmentQuickTableDialog::loadFromPoints(const QVector<AlignmentPoint>& pt
         appendRow(p.tsc, isFirst);
         m_populating = true;   // appendRow() 內部結尾會清 false，這裡重新鎖住到函式結束
 
-        m_table->item(row, kColE)->setText(QString::number(p.easting, 'f', 4));
-        m_table->item(row, kColN)->setText(QString::number(p.northing, 'f', 4));
-        m_table->item(row, kColChainage)->setText(QString::number(p.chainage, 'f', 4));
-        m_table->item(row, kColContChainage)->setText(QString::number(p.contChainage, 'f', 4));
+        m_table->item(row, kColE)->setText(QString::number(p.easting, 'f', 5));
+        m_table->item(row, kColN)->setText(QString::number(p.northing, 'f', 5));
+        m_table->item(row, kColChainage)->setText(QString::number(p.chainage, 'f', 5));
+        m_table->item(row, kColContChainage)->setText(QString::number(p.contChainage, 'f', 5));
         m_table->item(row, kColAzimuth)->setText(azimuthToDMS(p.azimuth));
 
         m_table->item(row, kColLength)->setText(
-            p.length > 0.0 ? QString::number(p.length, 'f', 4) : QString());
+            p.length > 0.0 ? QString::number(p.length, 'f', 5) : QString());
         m_table->item(row, kColRadiusCurveType)->setText(radiusCurveTypeToText(p));
         m_table->item(row, kColCurveNo)->setText(p.circularCurveNo);
         m_table->item(row, kColCant)->setText(QString::number(p.cant, 'f', 3));
@@ -390,8 +408,8 @@ void AlignmentQuickTableDialog::loadFromPoints(const QVector<AlignmentPoint>& pt
         m_table->item(row, kColSpeedLimit)->setText(QString::number(p.speedLimit, 'f', 3));
         m_table->item(row, kColText1)->setText(p.text1);
         m_table->item(row, kColText2)->setText(p.text2);
-        m_table->item(row, kColReal1)->setText(QString::number(p.real1, 'f', 4));
-        m_table->item(row, kColReal2)->setText(QString::number(p.real2, 'f', 4));
+        m_table->item(row, kColReal1)->setText(QString::number(p.real1, 'f', 5));
+        m_table->item(row, kColReal2)->setText(QString::number(p.real2, 'f', 5));
     }
     m_populating = false;
 
@@ -401,12 +419,35 @@ void AlignmentQuickTableDialog::loadFromPoints(const QVector<AlignmentPoint>& pt
     m_resultValid = true;
     m_okButton->setEnabled(true);
     m_statusLabel->setText(tr("已載入既有線形，共 %1 個關鍵點。修改後請重新按「計算」。")
-                                .arg(pts.size()));
+                               .arg(pts.size()));
+}
+
+void AlignmentQuickTableDialog::updateTargetRowEditability()
+{
+    // 需求 14：row 0（起點）一律可編輯，不受本函式影響；「目前最後一列」
+    // 的 E／N／方位角也開放編輯，供直接輸入調整目標點；其餘中間列維持
+    // 唯讀（計算結果）。每次列數變動都要重新呼叫，因為「哪一列是最後一
+    // 列」會改變。
+    const int rows = m_table->rowCount();
+    for (int row = 1; row < rows; ++row) {
+        const bool editableHere = (row == rows - 1);
+        for (int col : {kColE, kColN, kColAzimuth}) {
+            QTableWidgetItem* it = m_table->item(row, col);
+            if (!it) continue;
+            Qt::ItemFlags f = it->flags();
+            if (editableHere) f |= Qt::ItemIsEditable;
+            else               f &= ~Qt::ItemIsEditable;
+            it->setFlags(f);
+            it->setBackground(QBrush(editableHere ? QColor(255, 255, 210)
+                                                  : QColor(242, 242, 242)));
+        }
+    }
 }
 
 void AlignmentQuickTableDialog::onAddRow()
 {
     appendRow(QStringLiteral("TT"), false);
+    updateTargetRowEditability();
     m_resultValid = false;
     m_okButton->setEnabled(false);
     m_statusLabel->clear();
@@ -419,6 +460,7 @@ void AlignmentQuickTableDialog::onRemoveRow()
         return;
     }
     m_table->removeRow(m_table->rowCount() - 1);
+    updateTargetRowEditability();
     m_resultValid = false;
     m_okButton->setEnabled(false);
     m_statusLabel->clear();
@@ -545,10 +587,10 @@ void AlignmentQuickTableDialog::showComputedResults(const QVector<AlignmentPoint
         m_table->item(0, kColAzimuth)->setText(azimuthToDMS(pts[0].azimuth));
     for (int row = 1; row < pts.size() && row < m_table->rowCount(); ++row) {
         const AlignmentPoint& p = pts[row];
-        m_table->item(row, kColE)->setText(QString::number(p.easting, 'f', 4));
-        m_table->item(row, kColN)->setText(QString::number(p.northing, 'f', 4));
-        m_table->item(row, kColChainage)->setText(QString::number(p.chainage, 'f', 4));
-        m_table->item(row, kColContChainage)->setText(QString::number(p.contChainage, 'f', 4));
+        m_table->item(row, kColE)->setText(QString::number(p.easting, 'f', 5));
+        m_table->item(row, kColN)->setText(QString::number(p.northing, 'f', 5));
+        m_table->item(row, kColChainage)->setText(QString::number(p.chainage, 'f', 5));
+        m_table->item(row, kColContChainage)->setText(QString::number(p.contChainage, 'f', 5));
         m_table->item(row, kColAzimuth)->setText(azimuthToDMS(p.azimuth));
     }
     m_populating = false;
@@ -570,6 +612,142 @@ void AlignmentQuickTableDialog::onAccept()
         return;
     }
     accept();
+}
+
+// ============================================================================
+//  需求 5／8：調整至目標點（原本在 ADC 對話框內，改移到本對話框）
+// ============================================================================
+
+void AlignmentQuickTableDialog::onAdjustToTarget()
+{
+    if (!m_resultValid || m_computed.size() < 2) {
+        m_statusLabel->setText(tr("請先按「計算」成功一次，才能調整至目標點。"));
+        return;
+    }
+
+    // 需求 14：目標 E／N／方位角直接讀「表格最後一列」目前的內容——按
+    // 「計算」後這三欄預設就是正算出的終點（此時 Δ=0，調整等於沒有效果，
+    // 天然對應「不需要調整」的情形）；使用者可直接改成想要的目標值再按
+    // 「調整」。
+    const int lastRow = m_table->rowCount() - 1;
+    if (lastRow < 1) {
+        m_statusLabel->setText(tr("表格列數不足，無法調整。"));
+        return;
+    }
+    bool okE = false, okN = false;
+    const double targetE = m_table->item(lastRow, kColE)->text().toDouble(&okE);
+    const double targetN = m_table->item(lastRow, kColN)->text().toDouble(&okN);
+    double targetAz = 0.0;
+    const bool okAz = parseAzimuthInput(m_table->item(lastRow, kColAzimuth)->text(), targetAz);
+    if (!okE || !okN || !okAz) {
+        m_statusLabel->setText(tr("請在表格最後一列輸入目標點的 E、N、方位角。"));
+        return;
+    }
+
+    // 在副本上運算，失敗時不影響 m_computed／表格。
+    QVector<AlignmentPoint> seg = m_computed;
+
+    // ── 步驟 1：調整起始方位角（精確解）───────────────────────────────────
+    {
+        const double deltaAz = AlignmentElement::normalise(targetAz - seg.last().azimuth);
+        seg[0].azimuth = AlignmentElement::normalise(seg[0].azimuth + deltaAz);
+        QString err;
+        if (!computeQuickAlignmentTable(seg, &err)) {
+            m_statusLabel->setText(tr("調整起始方位角後重新正算失敗：%1").arg(err));
+            return;
+        }
+    }
+
+    // ── 步驟 2：把位置誤差分配到已輸入的「直線」段長度上 ────────────────────
+    // 依「加權最小範數」解——等同於依各段長度比例分配閉合差的羅盤法則
+    // （Compass Rule）之一般化版本。只調整直線（tsc[1]=='T'）段的長度；
+    // 圓弧／緩和曲線的半徑與長度維持原輸入不變。
+    struct TangentLeg { int idx; double azimuth; double length; };
+    QVector<TangentLeg> legs;
+    for (int i = 0; i + 1 < seg.size(); ++i) {
+        const QChar depart = (seg[i].tsc.size() >= 2) ? QChar(seg[i].tsc[1]) : QChar(QLatin1Char('T'));
+        if (depart == QLatin1Char('T') && seg[i].length > 1e-6)
+            legs.push_back({i, seg[i].azimuth, seg[i].length});
+    }
+
+    const double eE = targetE - seg.last().easting;
+    const double eN = targetN - seg.last().northing;
+    const double posError = std::hypot(eE, eN);
+
+    QString posResultMsg;
+    if (posError < 1e-6) {
+        posResultMsg = tr("位置已對齊目標點，無需調整長度。");
+    } else if (legs.isEmpty()) {
+        posResultMsg = tr("目前沒有可調整長度的直線段，位置誤差 %1 無法消除。")
+                           .arg(posError, 0, 'f', 5);
+    } else {
+        double Mxx = 0.0, Mxy = 0.0, Myy = 0.0;
+        for (const TangentLeg& leg : legs) {
+            const double s = std::sin(leg.azimuth), c = std::cos(leg.azimuth);
+            const double w = leg.length;   // 權重＝目前長度（羅盤法則慣例）
+            Mxx += w * s * s;
+            Mxy += w * s * c;
+            Myy += w * c * c;
+        }
+        const double det = Mxx * Myy - Mxy * Mxy;
+        if (std::abs(det) < 1e-9) {
+            // 所有直線段方向都平行（或僅一段）：退化為單純投影，垂直於該
+            // 方向的誤差分量無法消除。
+            const TangentLeg& leg = legs.first();
+            const double s = std::sin(leg.azimuth), c = std::cos(leg.azimuth);
+            const double dL = eE * s + eN * c;
+            seg[leg.idx].length = std::max(0.001, leg.length + dL);
+            const double residual = std::abs(eE * c - eN * s);
+            posResultMsg = tr("已輸入的直線段方向平行（或僅一段），只能沿其方向調整"
+                              "長度，垂直方向仍殘留誤差 %1。")
+                               .arg(residual, 0, 'f', 5);
+        } else {
+            const double invXX =  Myy / det, invXY = -Mxy / det, invYY =  Mxx / det;
+            const double lamE = invXX * eE + invXY * eN;
+            const double lamN = invXY * eE + invYY * eN;
+            for (const TangentLeg& leg : legs) {
+                const double s = std::sin(leg.azimuth), c = std::cos(leg.azimuth);
+                const double w = leg.length;
+                const double dL = w * (s * lamE + c * lamN);
+                seg[leg.idx].length = std::max(0.001, leg.length + dL);
+            }
+            posResultMsg = tr("已依 %1 段直線的長度比例分配位置誤差 %2。")
+                               .arg(legs.size())
+                               .arg(posError, 0, 'f', 5);
+        }
+
+        QString err;
+        if (!computeQuickAlignmentTable(seg, &err)) {
+            m_statusLabel->setText(tr("調整直線長度後重新正算失敗：%1").arg(err));
+            return;
+        }
+    }
+
+    // ── 套用結果：寫回表格輸入欄（起點方位角＋各直線段長度），並比照
+    // onCalculate() 的方式更新其餘唯讀顯示欄（含最後一列，改顯示調整後
+    // 實際到達的座標／方位角，供與剛才輸入的目標值比對）／m_computed／
+    // 確定按鈕狀態 ──────────────────────────────────────────────────────
+    m_populating = true;
+    m_table->item(0, kColAzimuth)->setText(azimuthToDMS(seg[0].azimuth));
+    for (const TangentLeg& leg : legs)
+        m_table->item(leg.idx, kColLength)->setText(QString::number(seg[leg.idx].length, 'f', 5));
+    m_populating = false;
+
+    m_computed    = seg;
+    m_resultValid = true;
+    m_okButton->setEnabled(true);
+    showComputedResults(seg);
+
+    const double finalE = seg.last().easting - targetE;
+    const double finalN = seg.last().northing - targetN;
+    const double finalPosErr = std::hypot(finalE, finalN);
+    const double finalAzErr = std::abs(AlignmentElement::normalise(seg.last().azimuth - targetAz));
+
+    m_statusLabel->setText(
+        tr("%1 調整後：位置誤差 %2，方位角誤差 %3")
+            .arg(posResultMsg)
+            .arg(finalPosErr, 0, 'f', 5)
+            .arg(azimuthToDMS(finalAzErr)));
 }
 
 } // namespace ui

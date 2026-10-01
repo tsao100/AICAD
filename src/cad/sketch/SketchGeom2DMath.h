@@ -94,6 +94,28 @@ double normalizeAngle(double angleRad);
  */
 bool angleInSweep(double angleRad, double startRad, double endRad);
 
+/**
+ * @brief 兩線（方向 dirA、dirB，皆已正規化的單位向量）夾角標註，給定「標籤/
+ *        游標相對交點(apex)的偏移方向」offset，回傳該偏移落在哪個扇區所對
+ *        應的夾角（弧度，範圍 0..π）。
+ *
+ * 兩條「線」（不是射線）在 apex 交叉，把平面分成 4 個扇區：對角的兩個扇區
+ * 角度相同（同樣是 ang），相鄰的兩個扇區互為補角（π-ang）。這裡把 dirA、
+ * -dirA、dirB、-dirB 這 4 條射線的角度排序，找出 offset 方向落在哪兩條相
+ * 鄰射線之間，再比較該扇區大小比較接近 ang 還是 π-ang，回傳對應的值——
+ * 這樣「使用者點在哪、拖到哪」跟「標註的數值該是夾角還是補角」永遠一致。
+ *
+ * 用於角度標註的建立（GeneralDimCommand::measureCurrentValue()）與拖曳既
+ * 有標註重新定位（Sketch::updateConstraintDimOffset()）兩處——只維護這一
+ * 份，避免兩處各自重算、彼此不同步（2026-09 曾因為兩份重複邏輯不同步，
+ * 讓「拖到中間」與「拖到兩邊」算出不一致的結果）。
+ *
+ * @return offset 太接近零向量（無法判斷方向）時回傳 std::nullopt，呼叫端
+ *         應維持原本的值，不要覆寫。
+ */
+std::optional<double> angleSectorValue(const QVector2D& dirA, const QVector2D& dirB,
+                                       const QVector2D& offset);
+
 } // namespace geom2d
 } // namespace cad
 } // namespace aicad

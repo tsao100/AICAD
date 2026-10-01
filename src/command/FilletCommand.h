@@ -21,14 +21,12 @@
  * 約束處理：
  *   - 若選取的兩線交點原本就有明確的 Coincident 約束，filletAt() 內部會
  *     在套用圓角前自動偵測並移除（見 TrimExtendHelper.h 該函式說明）。
- *   - 圓角套用成功後，這裡會疊加：
- *       • Coincident × 2：line1 端點 ↔ 弧起點、line2 端點 ↔ 弧終點
- *         （filletAt() 內部把弧的起訖點建成獨立的新點，而非直接重用兩條
- *         線的端點 UUID，就是為了讓這裡能疊加明確、可編輯/可刪除的約束）
- *       • Tangent × 2：弧 ↔ line1、弧 ↔ line2
- *       • FixedRadius × 1：弧的半徑 = 使用者指定值
- *     半徑為 0（無插入弧）時，不加 Tangent／FixedRadius；此時
- *     filletAt() 內部已經另外補上一條 Coincident 約束把兩線端點接起來。
+ *   - 圓角套用成功後，實際疊加 Coincident×2／Tangent×2／FixedRadius×1
+ *     （半徑 0 時只有 filletAt() 內部補的那條 Coincident，不另外疊加
+ *     Tangent／FixedRadius）的邏輯由 TrimExtendHelper::addFilletCornerConstraints()
+ *     負責——抽成獨立函式是為了讓它可重用、可單獨測試，也一併補上原本
+ *     這裡缺少的「新約束與既有約束衝突時整批回滾」處理，見該函式文件
+ *     說明。這裡只呼叫它並依回傳值印出成功/警告訊息。
  */
 #pragma once
 

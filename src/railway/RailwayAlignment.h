@@ -387,6 +387,19 @@ public:
     bool vAlignVisible() const { return m_vAlignVisible; }
     void setVAlignVisible(bool v) { m_vAlignVisible = v; Q_EMIT dataChanged(); }
 
+    // ── 元素鏈同步（需求 1／7）───────────────────────────────────────────
+    //
+    // 是否允許「元素鏈」功能（AlignmentDocument／EditableElement 的
+    // seedFromRawPoints()＋solve() 重建、以及把重建結果整批寫回
+    // horizontal() 的動作）在這條線上運作。預設關閉：關閉時，本線的
+    // horizontal()／rawPoints() 是唯一權威資料來源，不會被任何重建過程
+    // 覆寫，藉此保護 ADC／AQT／FT／FC 加入的線元不被元素鏈重建誤判、
+    // 靜默吃掉（見 AlignmentDataTableDialog、UIManager 等處對這個旗標的
+    // 使用）。使用者需要本線的 grip 拖曳互動編輯功能時，才在此線的
+    // 右鍵選單開啟。逐線路獨立設定並隨檔案存檔（見 toJson()/fromJson()）。
+    bool elementChainSyncEnabled() const { return m_elementChainSyncEnabled; }
+    void setElementChainSyncEnabled(bool v) { m_elementChainSyncEnabled = v; Q_EMIT dataChanged(); }
+
     HorizontalAlignment* horizontal() const { return m_h; }
     VerticalAlignment*   vertical()   const { return m_v; }
 
@@ -505,6 +518,7 @@ private:
 
     bool                 m_hAlignVisible = false;  ///< 3D view visibility
     bool                 m_vAlignVisible = false;  ///< profile dock visibility
+    bool                 m_elementChainSyncEnabled = false;  ///< 見 elementChainSyncEnabled()
 
     QVector<SpacingRule> m_spacingRules;
     double               m_preDistance = 25.0;

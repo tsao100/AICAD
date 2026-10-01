@@ -179,6 +179,37 @@ bool angleInSweep(double angleRad, double startRad, double endRad)
     return a >= s - kAngleEps || a <= e + kAngleEps;
 }
 
+std::optional<double> angleSectorValue(const QVector2D& dirA, const QVector2D& dirB,
+                                       const QVector2D& offset)
+{
+    if (offset.lengthSquared() < 1e-6f) return std::nullopt;
+
+    const double dot   = static_cast<double>(QVector2D::dotProduct(dirA, dirB));
+    const double cross = static_cast<double>(dirA.x() * dirB.y() - dirA.y() * dirB.x());
+    const double ang   = std::atan2(std::abs(cross), dot);  // 0..π，夾角本身
+
+    double rays[4] = {
+        normalizeAngle(std::atan2(static_cast<double>(dirA.y()),  static_cast<double>(dirA.x()))),
+        normalizeAngle(std::atan2(static_cast<double>(-dirA.y()), static_cast<double>(-dirA.x()))),
+        normalizeAngle(std::atan2(static_cast<double>(dirB.y()),  static_cast<double>(dirB.x()))),
+        normalizeAngle(std::atan2(static_cast<double>(-dirB.y()), static_cast<double>(-dirB.x())))
+    };
+    std::sort(std::begin(rays), std::end(rays));
+
+    const double angM = normalizeAngle(std::atan2(static_cast<double>(offset.y()),
+                                                    static_cast<double>(offset.x())));
+    double sectorSize = (rays[0] + kTwoPi) - rays[3];   // 預設：繞回第一段
+    for (int i = 0; i < 3; ++i) {
+        if (angM >= rays[i] && angM < rays[i + 1]) {
+            sectorSize = rays[i + 1] - rays[i];
+            break;
+        }
+    }
+    // 該扇區大小比較接近 ang 還是 π-ang，決定回傳夾角本身還是補角。
+    return (std::abs(sectorSize - ang) > std::abs(sectorSize - (M_PI - ang)))
+           ? (M_PI - ang) : ang;
+}
+
 } // namespace geom2d
 } // namespace cad
 } // namespace aicad

@@ -341,6 +341,30 @@ void ConstraintOverlayManager::updateDimLine(const QString& uuid,
 
     dimAIS->setDimLineOffset(newOffsetX, newOffsetY);
 
+    // ★ 修正（第 11 項回報：測試後發現拖曳角度標註時數值完全沒有更新，
+    //   即使 Sketch::previewConstraintDimValue()／updateConstraintDimOffset()
+    //   都已經把 Sketch 裡那份 SketchConstraint::value 算對、改對了）：
+    //   AIS_DimensionLine 內部的 m_constraint 是「值拷貝」（見
+    //   DimensionLineAIS.h），不是指向 Sketch 那份的參照——這個 AIS 物件
+    //   建立當下複製了一份約束資料，之後 Sketch 端怎麼改，這份副本都不會
+    //   跟著變；RecomputePrsOnly() 只是重新跑 Compute()，讀的是 AIS 自己
+    //   那份副本、不會重新去 Sketch 拿。過去這條路徑沒被發現是因為：一般
+    //   尺寸值改變一定伴隨 solveConstraints() → markDirty() → 整個
+    //   ConstraintOverlayManager 重建（新建 AIS 物件、拿到新副本）；但這
+    //   次刻意「不觸發 solver」（拖曳只是調整位置＋重算角度值，見使用者
+    //   的要求），沒有這個重建流程，AIS 自己的副本就永遠停在舊值。
+    //   這裡在重繪之前，把 Sketch 端最新的 value 明確同步進來——
+    //   previewConstraintDimValue()／updateConstraintDimOffset() 一定要
+    //   在呼叫 updateDimLine() 之前先把 Sketch 那份改好（UIManager.cpp／
+    //   SketchGripProvider.cpp 兩個呼叫端都已經是這個順序）。
+    if (m_sketch) {
+        if (const SketchConstraint* c = m_sketch->findConstraint(uuid)) {
+            if (c->type == ConstraintType::FixedAngle ||
+                c->type == ConstraintType::FixedAngleDim)
+                dimAIS->setConstraintValue(c->value);
+        }
+    }
+
     if (!m_ctx.IsNull()) {
         // RecomputePrsOnly 觸發 Compute()，重新填入 m_labelRegions（新位置）；
         // RecomputeSelectionOnly 再觸發 ComputeSelection()，依新的 m_labelRegions

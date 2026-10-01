@@ -1166,29 +1166,27 @@ FilletResult filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QStri
     return result;
 }
 
-bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line2Uuid,
+ChamferResult chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line2Uuid,
               double dist1, double dist2,
               const QVector2D& clickPt1, const QVector2D& clickPt2)
 {
-    if (dist1 < 0.0 || dist2 < 0.0) return false;
+    ChamferResult result;
+    if (dist1 < 0.0 || dist2 < 0.0) return result;
 
     auto setupOpt = prepareFilletChamfer(sketch, line1Uuid, line2Uuid, clickPt1, clickPt2);
-    if (!setupOpt) return false;
+    if (!setupOpt) return result;
     const FilletChamferSetup& s = *setupOpt;
+    result.line1PointUuid = s.line1PointUuid;
+    result.line2PointUuid = s.line2PointUuid;
+    result.removedExistingCoincident = s.removedExistingCoincident;
 
-    // ── 先清掉舊的重合約束（若有）───────────────────────────────────────
-    // line1/line2 的兩個近角端點若本來就是「兩個獨立的 SketchPoint、靠一條
-    // Coincident 約束綁在同一位置」（例如由 Sketch::addLineChainGeom() 畫出
-    // 的相連線段、或使用者手動下過 COINCIDENT 指令），倒角要把這兩個端點
-    // 分別搬到不同的倒角落點——如果不先移除這條舊約束，稍後
-    // sketch->solveConstraints() 會依約束把兩點拉回同一點，等於當場抵消
-    // 倒角結果。若兩點本來就是同一個 SketchPoint（共用點，非約束關係），
-    // prepareFilletChamfer() 內的 unshareCornerPointIfNeeded() 已經處理過，
-    // 這裡查不到約束，findCoincidentConstraint() 回傳空字串、safely no-op。
-    const QString staleCoincUuid =
-        findCoincidentConstraint(sketch, s.line1PointUuid, s.line2PointUuid);
-    if (!staleCoincUuid.isEmpty())
-        sketch->removeConstraint(staleCoincUuid);
+    // ⚠️ 2026-09 清理：這裡原本還有一段對 s.line1PointUuid/s.line2PointUuid
+    // 再查一次、再移除一次 Coincident 的程式碼——但 prepareFilletChamfer()
+    // 內部早就做過完全相同的查找＋移除（見該函式與 s.removedExistingCoincident
+    // 的說明），這裡的第二次查找只會永遠查到空字串，是死碼。留著還有隱性
+    // 風險：萬一哪天兩邊查找邏輯不同步、這裡真的查到東西並移除，
+    // s.removedExistingCoincident 不會反映這次移除，回滾時就不會補回去。
+    // 直接刪掉，只信任 prepareFilletChamfer() 那一份。
 
     if (dist1 <= 1e-9 && dist2 <= 1e-9) {
         // 兩個倒角距離都是 0：退化為單純延伸相交，不插入倒角線。
@@ -1203,11 +1201,22 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
                                      GeomRef(s.line2PointUuid, GeomHandle::WholeGeom));
 
         sketch->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
-        return true;
+        result.success = true;
+        return result;
     }
 
     const QVector2D chamferPt1 = s.intersection + s.dir1 * float(dist1);
     const QVector2D chamferPt2 = s.intersection + s.dir2 * float(dist2);
+
+    // ★ 2026-09 追加：回滾要用的「原始位置」快照。必須在下面兩行
+    // movePoint() 之前就拍下來——s.line1->start/end 這兩個快取欄位到這裡
+    // 為止都還沒被這次 chamferAt() 呼叫動過，正是使用者倒角前的原始座標。
+    // 見下方 !ok 分支的完整說明：先前的版本只回滾約束跟角落標記點，沒把
+    // 這兩個點的位置、也沒把新建的倒角線復原，導致 D1/D2 衝突（例如這個
+    // 角落被相鄰的 fillet Tangent 約束卡住、根本沒有可行解）時，留下一段
+    // 沒有任何約束在管、位置也錯誤的孤兒幾何，殃及共用點的相鄰 fillet。
+    const QVector2D origP1 = (s.line1PointUuid == s.line1->startUuid) ? s.line1->start : s.line1->end;
+    const QVector2D origP2 = (s.line2PointUuid == s.line2->startUuid) ? s.line2->start : s.line2->end;
 
     // ── （2026-09）暫時固定遠端點的做法已移除 ───────────────────────────
     // 下面會對交點 p1 加 PointOnCurve(line1)/(line2) 共線約束（見下方長篇
@@ -1244,134 +1253,83 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
                                                 GeomRole::Normal, /*emitSignals=*/false);
 
     if (!newUuid.isEmpty()) {
-        // 自動加上「交點」與尺寸約束，讓 D1、D2 之後仍各自保有意義——
-        // 而不是只鎖住整條倒角線的長度：
-        //
-        //   1. 把兩線交點也建立成真正的 SketchPoint（沿用
-        //      unshareCornerPointIfNeeded() 同一種 Origin::Intersection，
-        //      渲染成依約束求解狀態變色的小圖示，不會被誤認成一般端點）。
-        //   2. D1、D2 各自表示成「交點 → chamferPt1／chamferPt2」的
-        //      FixedDistance 約束（距離為 0 的那一側改用 Coincident 直接
-        //      釘死，理由見下方 (a)）：兩條距離＋交點初始座標本身就設在
-        //      正確的交點位置，數學上剛好唯一決定交點座標，不需要再額外
-        //      靠其他方程式輔助。
-        //
-        // ⚠️ 這裡「曾經」刻意不對交點加 PointOnCurve(line1)/(line2) 去讓它與
-        //    兩線「共線」——2026-09 已依需求改回加上（見下方 FixedDistance/
-        //    Coincident 之後那段），這裡把當初不加的理由完整留著，是因為
-        //    它描述的是 ConstraintSolver 一個尚未修好、跟這個決定無關的
-        //    既有限制，加回 PointOnCurve 後這個風險依然存在，留著才知道
-        //    症狀重現時要去哪裡查：
-        //
-        //    PointOnCurveEquation 的方程式是 (P-Start)×(End-Start)=0，
-        //    Start／End 指的是 line1（或 line2）目前的兩個端點——也就是
-        //    說，這條約束不只牽動交點本身，還會把 line1／line2「還沒被
-        //    倒角碰到的那一個遠端點」也一起拉進同一條方程式的自由變數。
-        //    如果 line1、line2 在倒角之前完全沒有任何其他約束（例如使用
-        //    者剛畫好兩條單純相交的線就直接下 CHAMFER，不像矩形那樣還有
-        //    重合／水平／垂直把四個角都釘死）——那兩條線的遠端點就是完全
-        //    自由的變數，PointOnCurve 對「交點＋line1 的 Start/End」這 6
-        //    個未知數只提供 1 條方程式，數學上有極大的零空間（rank
-        //    deficient）。理論上，只要交點、line1、line2 的初始座標本來就
-        //    已經精確共線（本來就是事實，交點是用 line1∩line2 算出來
-        //    的），殘差應該是 0、Newton 法第一輪就該直接收斂、完全不需要
-        //    移動任何東西；但實測發現：一旦系統存在這種真正的（不是「病
-        //    態」而是「精確」）秩虧，ConstraintSolver::solveLinearLS() 用
-        //    來處理病態方程組的平滑阻尼（見該函式註解、σ/(σ²+λ)公式）反而
-        //    會把 SVD 分解出來、理論上該是恰好 0、但受浮點誤差影響變成
-        //    「極小但不為 0」的奇異值，當成「還有一點點資訊的病態方向」
-        //    去放大處理，而不是正確地判斷成「完全冗餘、應忽略」——結果就
-        //    是浮點誤差等級（1e-5～1e-7）的極小初始殘差，被這個非線性放大
-        //    效應（σ 越接近 0、放大倍率 1/σ 越誇張）硬生生轉成使用者看得
-        //    到的「點線位置整個跑掉」的巨大誤差。矩形四個角測試「結果正
-        //    確」，並不是這個機制不存在，而是矩形的重合／水平／垂直約束
-        //    已經把每個自由度都釘死、系統根本沒有零空間可以被放大，所以
-        //    沒有觸發同一個問題。
-        //
-        //    這是 ConstraintSolver 這個共用求解器對「精確秩虧」處理不夠
-        //    穩健的既有限制，不是單靠 chamferAt() 這個呼叫端能安全解決
-        //    的——選擇更保守、已證實穩健的作法：交點的座標只靠三角函數
-        //    算好的 s.intersection 決定、只用「與 line1PointUuid／
-        //    line2PointUuid 的距離＝D1／D2」這兩條方程式記錄 D1/D2 的意
-        //    義，不加 PointOnCurve（詳見下方最終決定的完整說明）。
-        //
-        //    ConstraintSolver::solveLinearLS() 的平滑阻尼仍然照之前的改法
-        //    維持「相對比例／絕對下限」取大——這是全 App 共用求解器的
-        //    一般性強化，對其他約束組合仍然有幫助，只是不足以讓
-        //    PointOnCurve 這種「跟 line1/line2 遠端點共用未知數」的約束在
-        //    這裡安全使用，所以下面改回不加。
-        const QString xUuid = sketch->addPoint(s.intersection, SketchPoint::Origin::Intersection);
+        // ★ 2026-09 移除：先前這裡會額外建立一個「角落」可視標記點
+        //    （Origin::Intersection，只在建立當下用 s.intersection 定位一次，
+        //    刻意不參與求解）。實測發現這個設計本身就有問題：使用者之後
+        //    移動/編輯任一條線，這個標記點的座標完全不會跟著更新（這是
+        //    設計上的刻意取捨，不是 bug），畫面上就會出現一個停在「舊」
+        //    交點位置、跟兩條線目前實際交點對不上的點——反而造成混淆，
+        //    看起來像是哪裡算錯了。這個點從頭到尾只是裝飾用的點選/顯示
+        //    輔助，D1/D2 這個「活」的關係完全是靠下面的
+        //    ConstraintType::Chamfer 約束直接參照 line1Uuid/line2Uuid 維持
+        //    的，跟這個標記點有沒有存在完全無關——拿掉它不影響任何功能，
+        //    只是不再讓使用者看到一個會過期、誤導人的點。需要用交點座標
+        //    的地方（例如下面算尺寸線方向）直接用區域變數 s.intersection
+        //    即可，不需要真的建立成一個 SketchPoint。
 
+        // ChamferEquation 需要知道 line1PointUuid/line2PointUuid 在各自線上
+        // 是 Start 還是 End，才能反查「另一端」(A1/A2) 來推導虛擬交點。
+        const GeomHandle h1 = (s.line1->startUuid == s.line1PointUuid) ? GeomHandle::Start : GeomHandle::End;
+        const GeomHandle h2 = (s.line2->startUuid == s.line2PointUuid) ? GeomHandle::Start : GeomHandle::End;
+
+        // ★ 2026-09：改用單一一條 ConstraintType::Chamfer（見
+        //    SketchConstraint.h 該型別／ConstraintSolver.h 的 ChamferEquation
+        //    說明），取代先前 FixedDistance×2（D1=0 或 D2=0 時退化成
+        //    Coincident）+ PointOnCurve×2 這 4 條各自獨立、彼此看不出關聯
+        //    的通用約束——讓求解器（以及約束清單 UI、undo、刪除操作）把
+        //    這整個倒角關係辨識成「一個 Chamfer」，而不是幾條事後看不出彼
+        //    此關聯的獨立約束。D1=0（或 D2=0）不需要再特別切到 Coincident
+        //    分支：ChamferEquation 的殘差公式在 D=0 時就是「trim 點與虛擬
+        //    交點重合」，本來就是同一條方程式的自然特例。
+        //
+        //    ⚠️ 這不表示 ConstraintSolver 對「line1/line2 遠端點完全自由」
+        //    這種精確秩虧場景的結構性風險已經解除——ChamferEquation 仍然
+        //    需要靠兩線的「另一端點」推導虛擬交點，數學上無法迴避這個耦
+        //    合。詳見 chamferAt() 上方（TrimExtendHelper.h）的完整說明與
+        //    退回舊行為的作法。
         QStringList addedConstraintUuids;
-        // ★ 新增：solve=false——CHAMFER 一次要加 2～4 條約束（交點座標本身
-        // 就是靠這些約束共同決定的，中途任何一條加完就馬上單獨拿去解，
-        // 用的是「這批約束還沒加齊」的不完整系統，不但白算，用不完整方程
-        // 組解出來的中間過渡狀態也可能離最終正確解更遠，讓後面補齊約束
-        // 之後那次正式求解要多繞一段路才收斂。全部加完、資訊完整後只在
-        // 最後（下面 `sketch->solveConstraints()`）解一次，比照
-        // Sketch::removeMany() 對批次刪除「只重繪一次」的同一個原則。
-        auto addOrTrack = [&](const SketchConstraint& c) -> bool {
+        auto addOrTrack = [&](const SketchConstraint& c, QString& outUuid) -> bool {
             const QString cu = sketch->addConstraint(c, /*solve=*/false);
             if (cu.isEmpty()) return false;
             addedConstraintUuids.append(cu);
+            outUuid = cu;
             return true;
         };
 
-        bool ok = true;
-        if (dist1 > 1e-9) {
-            ok = addOrTrack(SketchConstraint::makeFixedDistance(
-                GeomRef(xUuid, GeomHandle::WholeGeom),
-                GeomRef(s.line1PointUuid, GeomHandle::WholeGeom), dist1));
-        } else {
-            // dist1（或 dist2，下同）＝0：這一側等同「沒有被裁切」，端點
-            // 本來就該與交點是同一個位置，直接 Coincident 釘死，不留給
-            // 距離方程式間接猜（避免留下兩個只靠方程式間接耦合、可能解出
-            // 錯誤分支的重合點，見先前 crash 修正的說明）。
-            ok = addOrTrack(SketchConstraint::makeCoincident(
-                GeomRef(xUuid, GeomHandle::WholeGeom),
-                GeomRef(s.line1PointUuid, GeomHandle::WholeGeom)));
-        }
-        if (ok) {
-            if (dist2 > 1e-9) {
-                ok = addOrTrack(SketchConstraint::makeFixedDistance(
-                    GeomRef(xUuid, GeomHandle::WholeGeom),
-                    GeomRef(s.line2PointUuid, GeomHandle::WholeGeom), dist2));
-            } else {
-                ok = addOrTrack(SketchConstraint::makeCoincident(
-                    GeomRef(xUuid, GeomHandle::WholeGeom),
-                    GeomRef(s.line2PointUuid, GeomHandle::WholeGeom)));
-            }
-        }
+        bool ok = false;
+        {
+            // ★ 修正（實測 2lines.aicad 兩條單純相交的線，明明有解，
+            //    solveConstraints() 卻回報 Conflict）：refs[0]/refs[1] 必須
+            //    是「線」的 UUID（line1Uuid/line2Uuid），不能是
+            //    s.line1PointUuid/s.line2PointUuid 這兩個「點」的 UUID——
+            //    ChamferEquation::resolveChamferGeom() 靠 handle=Start/End
+            //    去查「這條線的另一端點」，前提是 refs[*].geomUuid 解析出
+            //    來的 GeomVarLayout 是線的 layout（4 個值：x1,y1,x2,y2）。
+            //    如果傳的是點的 UUID，該點的 layout 只有 2 個值
+            //    （x,y），GeomVarLayout::indexFor(GeomHandle::End) 算出來
+            //    的 offset+2 會讀到相鄰、完全無關的另一個變數，
+            //    ChamferEquation 就會拿著這筆垃圾資料算殘差、怎麼疊代都
+            //    收斂不了，被 solveConstraints() 誤判成 Conflict——這正是
+            //    「明明有解卻顯示無解」的真正原因，跟平行、距離都無關。
+            SketchConstraint chamferConstraint = SketchConstraint::makeChamfer(
+                GeomRef(line1Uuid, h1), GeomRef(line2Uuid, h2),
+                dist1, dist2);
 
-        // ★ 2026-09（最終決定）：交點 p1（xUuid）不再加 PointOnCurve
-        //    （共線）約束——參考 FilletCommand 的作法：filletAt() 完全不
-        //    透過疊代求解器去「解出」切點位置，純粹用三角函數算好
-        //    tangent1/tangent2/midPt 之後直接 movePoint()／addArcGeom()，
-        //    从来不會讓求解器去牽動 line1/line2 的端點。
-        //
-        //    這裡曾經嘗試加上 PointOnCurve(p1, line1)/(p1, line2)，讓 p1
-        //    之後如果使用者拖動 line1／line2 也能跟著重新解算成正確的新
-        //    交點；上面那段長篇註解也試著從根源修好 ConstraintSolver 的
-        //    平滑阻尼（相對比例／絕對下限取大）。但實測結果證實：即使有
-        //    這個修正，PointOnCurve 的方程式本質上跟 line1/line2「自己的
-        //    兩個端點」共用同一組未知數——不是只牽動 p1，是連 line1/line2
-        //    完全自由的遠端點都會被同一個 Newton 疊代一起解，一旦系統存在
-        //    上面描述的那種精確秩虧，最終解出來的位置就可能是「殘差一樣
-        //    是 0，但遠端點被搬到別的地方」這種數學上同樣合法、但使用者
-        //    完全不要的解——實測看到的正是三條線位置全部跑掉，且因為
-        //    solveConstraints() 判定衝突觸發下面的整批回退，交點與約束反
-        //    而完全沒有顯示出來（回退會刪掉約束與 xUuid，但 movePoint()
-        //    對 line1PointUuid/line2PointUuid 的搬動不屬於「約束」，不會
-        //    被這個回退復原，才會出現「點/約束不見了，但線的位置還是跑
-        //    掉」這種混合症狀）。
-        //
-        //    比照 fillet 的哲學改回保守作法：p1 的座標完全交給三角函數
-        //    算好的 s.intersection 決定（已經是精確值，不需要、也不應該
-        //    再讓疊代求解器去「重新推導」一次），只用 FixedDistance 把
-        //    D1／D2 的意義記錄下來給使用者看／給尺寸標註用。代價是使用者
-        //    之後如果直接拖動 line1／line2，p1 不會自動跟著重新變成新的
-        //    交點——這點跟 fillet 目前的圓角弧行為一致（圓角弧的切點同樣
-        //    不會因為拖動原本的線就自動重新计算），不是這裡獨有的限制。
+            // ★ 修正（實測 1.aicad 的 Chamfer 約束存檔 dimOffX/Y 都是 0，
+            //    尺寸線位置不正確）：比照 filletAt() 的 arcMidDir 設定半徑
+            //    尺寸箭頭方向的做法——這裡沒有現成的弧可以取「圓心→中點」
+            //    方向，改用「交點 → 新倒角線中點」當作尺寸線該畫的方向，
+            //    同樣是視覺上最自然、尺寸線會沿著倒角線本身畫出去的位置。
+            //    makeChamfer() 建出來的 dimLineOffsetX/Y 預設是 0，不設定
+            //    的話畫的時候會退回 DimensionLineAIS 的預設方向（X 軸），
+            //    跟倒角線實際的方向、位置對不上。
+            QVector2D dimDir = (chamferPt1 + chamferPt2) * 0.5f - s.intersection;
+            if (dimDir.lengthSquared() > 1e-12f) dimDir.normalize();
+            chamferConstraint.dimLineOffsetX = dimDir.x();
+            chamferConstraint.dimLineOffsetY = dimDir.y();
+
+            ok = addOrTrack(chamferConstraint, result.chamferConstraintUuid);
+        }
 
         // ★ 上面所有 addOrTrack() 都用 solve=false 跳過了中間的求解，這裡
         // 是這一整批約束加完後「唯一」的一次 solveConstraints()——用完整
@@ -1388,12 +1346,45 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
         if (!ok) {
             for (auto it = addedConstraintUuids.rbegin(); it != addedConstraintUuids.rend(); ++it)
                 sketch->removeConstraint(*it);
-            sketch->removeGeometry(xUuid);
+
+            // ★ 2026-09 修正：先前這裡只回滾「這個 if 區塊裡新加的約束」跟
+            // 角落標記點，漏了在這之前就已經做、且不屬於
+            // addedConstraintUuids 的三件事——實測（見使用者回報的
+            // 1withChamfer.aicad）證實：漏了任何一件都會在這個角落留下
+            // 一段沒有約束管、位置又是錯的孤兒幾何，下一次整體求解時殃及
+            // 共用點的相鄰幾何（例如相鄰的 fillet 弧跟著跳掉）：
+            //   1. movePoint() 已經把 line1PointUuid/line2PointUuid 搬到
+            //      chamferPt1/chamferPt2──搬回 origP1/origP2。
+            //   2. addLineGeom() 已經建好新的倒角線 newUuid，且它的端點就
+            //      是 line1PointUuid/line2PointUuid 本身（reuseStart/
+            //      reuseEnd，見上方說明）──這條線本身也要整條刪掉，不能
+            //      只留著不管。
+            //   3. 若這個角落原本有明確的 Coincident 約束
+            //      （removedExistingCoincident），已經在
+            //      prepareFilletChamfer() 裡被移除──失敗時要補回去，否則
+            //      這個角落從「銳角」變成「完全沒有約束連著的兩個獨立端
+            //      點」。
+            sketch->removeGeometry(newUuid);
+            sketch->movePoint(s.line1PointUuid, origP1);
+            sketch->movePoint(s.line2PointUuid, origP2);
+            if (s.removedExistingCoincident) {
+                sketch->constrainCoincident(GeomRef(s.line1PointUuid, GeomHandle::WholeGeom),
+                                             GeomRef(s.line2PointUuid, GeomHandle::WholeGeom));
+            }
+            sketch->solveConstraints();
+
+            // 約束整批回滾、newUuid 也刪掉了，這個 UUID 已經不再指向 sketch
+            // 裡任何有效的東西，不能留著誤導呼叫端——與下面
+            // result.success 維持預設的 false 一致。
+            result.chamferConstraintUuid.clear();
+        } else {
+            result.success = true;
+            result.newLineUuid = newUuid;
         }
     } else {
         // addLineGeom() 理論上一定會回傳非空 UUID（見上方呼叫處），這裡只
         // 是防禦性地保留一次求解，確保萬一真的走到這裡，sketch 狀態仍然
-        // 一致——正常情況下不會執行到這個分支。
+        // 一致——正常情況下不會執行到這個分支。result 維持 success=false。
         sketch->solveConstraints();
     }
 
@@ -1405,7 +1396,84 @@ bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& lin
     // 內部已透過 markDirty() emit 過，重複 emit 只會讓 Document::rebuildFeature()
     // 多跑一次。
     sketch->solveConstraints();
-    return !newUuid.isEmpty();
+    return result;
+}
+
+bool addFilletCornerConstraints(cad::Sketch* sketch, const FilletResult& r,
+                                const QString& line1Uuid, const QString& line2Uuid,
+                                double radius)
+{
+    if (!sketch || !r.success) return false;
+
+    if (r.arcUuid.isEmpty()) {
+        // 半徑 = 0（無插入弧）：filletAt() 內部已經另外補上一條 Coincident
+        // 約束把兩線端點接起來，這裡不需要再做任何事。
+        return true;
+    }
+
+    // 半徑 > 0：疊加 Coincident × 2（line 端點 ↔ 弧端點）、Tangent × 2
+    // （弧 ↔ 各線）、FixedRadius × 1（見 FilletCommand.h 檔頭「約束處理」
+    // 說明；filletAt() 內部已把弧的起訖點建成獨立新點，就是為了讓這裡能
+    // 疊加明確、可編輯/可刪除的約束）。
+    //
+    // ★ 全部用 solve=false 先加完整批，最後只解一次——理由與 chamferAt()
+    // 內部批次加約束的原則一致（見該函式說明），也讓下面的「整批回滾」
+    // 判斷有完整、一致的 addedConstraintUuids 可用。
+    QStringList addedConstraintUuids;
+    auto addOrTrack = [&](const SketchConstraint& c) -> bool {
+        const QString cu = sketch->addConstraint(c, /*solve=*/false);
+        if (cu.isEmpty()) return false;
+        addedConstraintUuids.append(cu);
+        return true;
+    };
+
+    bool ok = addOrTrack(SketchConstraint::makeCoincident(
+        GeomRef(r.line1PointUuid, GeomHandle::WholeGeom),
+        GeomRef(r.arcStartUuid,   GeomHandle::WholeGeom)));
+    if (ok) ok = addOrTrack(SketchConstraint::makeCoincident(
+        GeomRef(r.line2PointUuid, GeomHandle::WholeGeom),
+        GeomRef(r.arcEndUuid,     GeomHandle::WholeGeom)));
+
+    // ⚠️ makeTangent(geomA, geomB) 對應到 ConstraintSolver.cpp 的
+    // TangentEquation，該方程式寫死假設 refs[0]＝線、refs[1]＝圓/弧
+    // （dist(center,line)=r，見該處註解），GeomVarLayout::indexFor() 又是
+    // 純粹依 handle 名稱查表、不檢查實際幾何型別——參數順序一旦寫反（弧在
+    // 前、線在後），會把線的區域變數硬當成圓心/半徑去讀，讀到超出該線實
+    // 際配置範圍的 index，導致 QVector 越界崩潰。這裡務必是「線在前、弧
+    // 在後」。
+    if (ok) ok = addOrTrack(SketchConstraint::makeTangent(line1Uuid, r.arcUuid));
+    if (ok) ok = addOrTrack(SketchConstraint::makeTangent(line2Uuid, r.arcUuid));
+
+    if (ok) {
+        // 半徑尺寸箭頭畫在弧的中點方向（見 filletAt() 的 arcMidDir 說明），
+        // 而不是預設的草圖 X 軸方向——makeFixedRadius() 回傳的是一般化的
+        // 約束，dimLineOffsetX/Y 預設 0，畫的時候會退回 X 軸方向，所以
+        // 這裡建構後、加進 sketch 之前先設定好。
+        SketchConstraint radiusConstraint = SketchConstraint::makeFixedRadius(r.arcUuid, radius);
+        radiusConstraint.dimLineOffsetX = r.arcMidDir.x();
+        radiusConstraint.dimLineOffsetY = r.arcMidDir.y();
+        const QString cu = sketch->addConstraint(radiusConstraint, /*solve=*/false);
+        ok = !cu.isEmpty();
+        if (ok) addedConstraintUuids.append(cu);
+    }
+
+    // ★ 修正（原本 FilletCommand.cpp 內嵌版本缺少的檢查）：這批 5 條約束
+    // 若與 line1/line2 原本就有的約束衝突（例如某條線已被 FixedLength
+    // 釘死在別處），舊版直接呼叫 solveConstraints() 後不看回傳結果，把
+    // 衝突/退化的約束整批留在 sketch 裡，使用者拿不到任何回饋也無法自動
+    // 復原。這裡比照 chamferAt() 既有的「整批加、失敗就整批退回」模式。
+    if (ok) {
+        SolveResult r2 = sketch->solveConstraints();
+        ok = (r2.status != SolveStatus::Conflict);
+    }
+
+    if (!ok) {
+        for (auto it = addedConstraintUuids.rbegin(); it != addedConstraintUuids.rend(); ++it)
+            sketch->removeConstraint(*it);
+        sketch->solveConstraints();
+    }
+
+    return ok;
 }
 
 OffsetResult offsetAt(cad::Sketch* sketch, const QString& curveUuid,

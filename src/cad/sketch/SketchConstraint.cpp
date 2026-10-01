@@ -2,6 +2,7 @@
 #include "../../core/ParameterStore.h"
 #include "../Sketch.h"
 #include <QJsonArray>
+#include <cmath>
 
 namespace aicad::cad {
 
@@ -162,6 +163,7 @@ bool SketchConstraint::isDimensional() const {
     case ConstraintType::FixedArcLength:
     case ConstraintType::CoordinateDim:
     case ConstraintType::Slope:
+    case ConstraintType::Chamfer:
         return true;
     default:
         return false;
@@ -172,7 +174,26 @@ bool SketchConstraint::evaluateValue(const aicad::core::ParameterStore* store) {
     if (paramExpr.isEmpty()) return true;
     if (!store) return false;
     auto [ok, v] = store->evaluate(paramExpr);
-    if (ok) value = v;
+    if (ok) {
+        // ★ 修正（實測回報：角度約束的值在再次 Solve 後會改變，例如 136
+        //   變成 7792.23——7792.23÷136 恰好等於 180/π，不是巧合）：
+        //   GeneralDimCommand::commitDimension() 幫角度型別（FixedAngle／
+        //   FixedAngleDim）自動命名參數時，刻意用「使用者看到的單位」
+        //   （度）去註冊 ParameterStore 裡的定義（跟手動輸入 paramExpr 時
+        //   的慣例一致，見該處說明）；但 value 這個欄位系統其他每個地方
+        //   都假設是弧度（ConstraintCommands.cpp 的 applyDimensionEdit()／
+        //   EditConCommand::execute() 兩處編輯路徑都正確做了
+        //   *M_PI/180.0 轉換）。這個函式是 solveWithStore() 對「所有
+        //   paramExpr 非空的尺寸約束」重新求值時唯一會呼叫到的地方——
+        //   driving 的角度約束幾乎必定有自動命名的 paramExpr，於是每次
+        //   Solve 都會把 store 算出來的「度」原封不動塞進「應該是弧度」
+        //   的 value，把正確的弧度值直接覆寫成一個以度為單位、但被當成
+        //   弧度使用的錯誤數字——下次顯示成度數時再乘一次 180/π，就是
+        //   使用者看到的暴增值。
+        const bool isAngleType = (type == ConstraintType::FixedAngleDim ||
+                                   type == ConstraintType::FixedAngle);
+        value = isAngleType ? (v * M_PI / 180.0) : v;
+    }
     return ok;
 }
 
@@ -214,6 +235,7 @@ int SketchConstraint::dofConsumed() const {
     case ConstraintType::FixedArcLength:  return 1;
     case ConstraintType::CoordinateDim:   return 2;
     case ConstraintType::Slope:           return 1;  // 消耗線的方向 DOF（同 Horizontal/Vertical/FixedAngleDim）
+    case ConstraintType::Chamfer:         return 2;  // 2 條方程式，見 ConstraintType::Chamfer 註解
     default: return 0;
     }
 }
@@ -318,6 +340,20 @@ SketchConstraint SketchConstraint::makeCoordinateDim(const GeomRef& point, doubl
 SketchConstraint SketchConstraint::makeSlope(const QString& lineUuid, double slope) {
     SketchConstraint c; c.type = ConstraintType::Slope; c.value = slope;
     c.refs = { GeomRef(lineUuid, GeomHandle::Curve) }; return c;
+}
+
+SketchConstraint SketchConstraint::makeChamfer(const GeomRef& line1Ref, const GeomRef& line2Ref,
+                                               double d1, double d2) {
+    // line1Ref/line2Ref 的 geomUuid 必須是「線」的 UUID、handle 必須是
+    // GeomHandle::Start 或 End（選裁切端點是哪一端）——不能是裁切端點本身
+    // 那個 SketchPoint 的 UUID，也不能是 WholeGeom／Curve。ChamferEquation
+    // 要靠這個 handle 反查「同一條線上的另一個端點」，見 SketchConstraint.h
+    // 這個工廠方法上方的完整說明（含一個真實踩過的 bug案例）。呼叫端見
+    // TrimExtendHelper.cpp::chamferAt()。
+    SketchConstraint c; c.type = ConstraintType::Chamfer;
+    c.value = d1; c.value2 = d2;
+    c.refs = { line1Ref, line2Ref };
+    return c;
 }
 
 } // namespace aicad::cad

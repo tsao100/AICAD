@@ -216,6 +216,100 @@ void TangentEquation::jacobian(const QVector<double>& v, int r0,
     }
 }
 
+// ── Chamfer：兩線倒角 — 見 ConstraintSolver.h 類別註解 ──────────────────
+namespace {
+inline GeomHandle chamferOppositeHandle(GeomHandle h) {
+    return (h == GeomHandle::Start) ? GeomHandle::End : GeomHandle::Start;
+}
+struct ChamferGeom {
+    bool ok = false;
+    double ax1, ay1, px1, py1;   // line1: 遠端點 A1、裁切端點 P1
+    double ax2, ay2, px2, py2;   // line2: 遠端點 A2、裁切端點 P2
+    int p1Idx = -1, p2Idx = -1;  // P1/P2 在全域變數向量裡的 index（x 分量；y = idx+1）
+};
+ChamferGeom resolveChamferGeom(const SketchConstraint& c,
+                                const QHash<QString, GeomVarLayout>& layout,
+                                const QVector<double>& v)
+{
+    ChamferGeom g;
+    auto it1 = layout.find(c.refs[0].geomUuid);
+    auto it2 = layout.find(c.refs[1].geomUuid);
+    if (it1 == layout.end() || it2 == layout.end()) return g;
+    const GeomHandle h1 = c.refs[0].handle, h2 = c.refs[1].handle;
+    const int p1 = it1->indexFor(h1);
+    const int a1 = it1->indexFor(chamferOppositeHandle(h1));
+    const int p2 = it2->indexFor(h2);
+    const int a2 = it2->indexFor(chamferOppositeHandle(h2));
+    if (p1 < 0 || a1 < 0 || p2 < 0 || a2 < 0) return g;
+    g.px1 = v[p1]; g.py1 = v[p1+1]; g.ax1 = v[a1]; g.ay1 = v[a1+1];
+    g.px2 = v[p2]; g.py2 = v[p2+1]; g.ax2 = v[a2]; g.ay2 = v[a2+1];
+    g.p1Idx = p1; g.p2Idx = p2;
+    g.ok = true;
+    return g;
+}
+} // namespace
+
+void ChamferEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
+    const auto& c = constraint();
+    const ChamferGeom g = resolveChamferGeom(c, layout(), v);
+    if (!g.ok) { out[0] = out[1] = 0.0; return; }
+
+    const double d1x = g.px1 - g.ax1, d1y = g.py1 - g.ay1;   // line1 方向（A1→P1）
+    const double d2x = g.px2 - g.ax2, d2y = g.py2 - g.ay2;   // line2 方向（A2→P2）
+    const double len1 = qSqrt(d1x*d1x + d1y*d1y);
+    const double len2 = qSqrt(d2x*d2x + d2y*d2y);
+    const double denom = d1x*d2y - d1y*d2x;   // cross(dir1,dir2)：0 表平行
+    if (len1 < 1e-10 || len2 < 1e-10 || qAbs(denom) < 1e-10) {
+        out[0] = out[1] = 0.0;   // 退化：優雅不施力，不除以 0
+        return;
+    }
+
+    // t：從 A1 沿 dir1 走到交點 C 的參數（C = A1 + t*dir1）
+    const double ex = g.ax2 - g.ax1, ey = g.ay2 - g.ay1;
+    const double t = (ex*d2y - ey*d2x) / denom;
+    const double cx = g.ax1 + t*d1x, cy = g.ay1 + t*d1y;
+
+    const double u1x = d1x/len1, u1y = d1y/len1;
+    const double u2x = d2x/len2, u2y = d2y/len2;
+
+    out[0] = ((cx - g.px1)*u1x + (cy - g.py1)*u1y) - c.value;    // D1
+    out[1] = ((cx - g.px2)*u2x + (cy - g.py2)*u2y) - c.value2;   // D2
+}
+
+void ChamferEquation::jacobian(const QVector<double>& v, int r0,
+                               QVector<QVector<double>>& J) const {
+    // ★ 關鍵：只對 P1、P2（裁切端點）做數值微分，A1、A2（line1/line2「另
+    // 一端」的遠端點）對應的欄位刻意留 0（呼叫端 buildEquations() 已把整個
+    // J 矩陣初始化成 0，這裡不寫的欄位就是 0，不需要另外歸零）。
+    //
+    // evaluate() 算殘差時仍然照舊用「當下」A1/A2 的座標去推導虛擬交點 C——
+    // 這條方程式本身沒有變；只是明確告訴 Newton 法「這條方程式只能靠移動
+    // P1/P2 來滿足，不准動 A1/A2」。數學上這是合理的：A1/A2 只是拿來算
+    // 交點的參考值，不是這條約束真正要決定的未知數——line1/line2 的遠端
+    // 點該不該動、動多少，應該完全交給「其他」有牽涉到它們的約束方程式
+    // 決定，不該被這條倒角方程式間接影響。
+    //
+    // 效果：P1、P2 這 2×2 子系統在一般情形下滿秩、良態，不再需要仰賴
+    // solveLinearLS() 的 λ 阻尼去處理「A1/A2 完全自由」時的零空間——那個
+    // 零空間在這條方程式的層級直接被消掉了，不是機率上不動，是結構上
+    // 不會動。見 SketchConstraint.h 的 ConstraintType::Chamfer 與
+    // chamferAt()（TrimExtendHelper.h）文件裡對這個修法的完整討論。
+    const auto& c = constraint();
+    const ChamferGeom g = resolveChamferGeom(c, layout(), v);
+    if (!g.ok) return;   // evaluate() 這次也會回傳 0 殘差，雅可比留 0 沒有影響
+
+    const double h = 1e-7;
+    QVector<double> Fp(2), Fm(2), vp = v, vm = v;
+    const int idx[4] = { g.p1Idx, g.p1Idx+1, g.p2Idx, g.p2Idx+1 };
+    for (int i : idx) {
+        vp[i] = v[i]+h; vm[i] = v[i]-h;
+        evaluate(vp, Fp); evaluate(vm, Fm);
+        J[r0][i]   = (Fp[0]-Fm[0])/(2*h);
+        J[r0+1][i] = (Fp[1]-Fm[1])/(2*h);
+        vp[i] = v[i]; vm[i] = v[i];
+    }
+}
+
 // ── Concentric：F = [cx_a-cx_b, cy_a-cy_b] ──────────────────────────────
 void ConcentricEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     auto itA = layout().find(constraint().refs[0].geomUuid);
@@ -916,10 +1010,45 @@ void FixedAngleDimEquation::evaluate(const QVector<double>& v, QVector<double>& 
     // indexFor(Start/End) 解析（與 HorizontalEquation/ParallelEquation 等其他
     // 線段類約束方程式一致），否則會存取到 v[-1] 等越界索引而觸發
     // QVector::operator[] 的 assert crash。
-    int ax1 = itA->indexFor(GeomHandle::Start), ay1 = ax1 + 1;
-    int ax2 = itA->indexFor(GeomHandle::End),   ay2 = ax2 + 1;
-    int bx1 = itB->indexFor(GeomHandle::Start), by1 = bx1 + 1;
-    int bx2 = itB->indexFor(GeomHandle::End),   by2 = bx2 + 1;
+    int ax1r = itA->indexFor(GeomHandle::Start), ay1r = ax1r + 1;
+    int ax2r = itA->indexFor(GeomHandle::End),   ay2r = ax2r + 1;
+    int bx1r = itB->indexFor(GeomHandle::Start), by1r = bx1r + 1;
+    int bx2r = itB->indexFor(GeomHandle::End),   by2r = bx2r + 1;
+
+    // ★ 修正（實測回報：角度約束輸入 60 度，解算後數值沒變，但兩條線的
+    //   實際夾角卻變成 120 度）：下面原本直接用 dxA=v[ax2]-v[ax1]（也就是
+    //   line 的 Start→End 方向，使用者畫線時的任意順序）去算 dot，並要求
+    //   dot=cos(value)。這條方程式本身沒錯，錯在「dirA、dirB 該用哪個方向
+    //   代表這條線」——兩線的夾角，視覺上該用「從交點/角落往外指」的方向
+    //   去比較，而不是各自畫線時剛好的 Start→End 方向。如果 line1 畫的時
+    //   候 Start 端剛好在角落、line2 卻是 End 端在角落（很常見，取決於使
+    //   用者畫線順序，兩者互不相關），dirA、dirB 一個指向外、一個指向
+    //   內，算出來的 dot 對應的是「一條線指向外、另一條指向內」那個夾
+    //   角——剛好是視覺上夾角的補角。cos(60°)≠cos(120°)，方程式忠實地把
+    //   dot 解到 cos(60°)，但因為兩線方向定義不一致，視覺上看到的角度
+    //   反而變成 120°。
+    //
+    //   修法：先判斷兩線的 4 個端點組合（Start-Start／Start-End／
+    //   End-Start／End-End）裡哪一組距離最近——那一組就是兩線實際相接的
+    //   「角落」，把 ax1/ax2（bx1/bx2 同理）重新指派成「角落端＝起點、遠
+    //   端＝終點」，之後 dxA=v[ax2]-v[ax1] 算出來的方向就固定是「從角落
+    //   指向外」，兩條線用同一套方向定義，不再受使用者畫線時 Start/End
+    //   順序影響。evaluate()／jacobian() 兩處都要做同樣的重新指派，兩邊
+    //   在同一次疊代裡用的是同一個 v，結果一定一致。
+    const double dSS = std::hypot(v[bx1r]-v[ax1r], v[by1r]-v[ay1r]);
+    const double dSE = std::hypot(v[bx2r]-v[ax1r], v[by2r]-v[ay1r]);
+    const double dES = std::hypot(v[bx1r]-v[ax2r], v[by1r]-v[ay2r]);
+    const double dEE = std::hypot(v[bx2r]-v[ax2r], v[by2r]-v[ay2r]);
+    bool aStartIsCorner, bStartIsCorner;
+    if (dSS <= dSE && dSS <= dES && dSS <= dEE)      { aStartIsCorner = true;  bStartIsCorner = true;  }
+    else if (dSE <= dES && dSE <= dEE)                { aStartIsCorner = true;  bStartIsCorner = false; }
+    else if (dES <= dEE)                              { aStartIsCorner = false; bStartIsCorner = true;  }
+    else                                               { aStartIsCorner = false; bStartIsCorner = false; }
+
+    const int ax1 = aStartIsCorner ? ax1r : ax2r, ay1 = ax1 + 1;
+    const int ax2 = aStartIsCorner ? ax2r : ax1r, ay2 = ax2 + 1;
+    const int bx1 = bStartIsCorner ? bx1r : bx2r, by1 = bx1 + 1;
+    const int bx2 = bStartIsCorner ? bx2r : bx1r, by2 = bx2 + 1;
 
     double dxA = v[ax2] - v[ax1], dyA = v[ay2] - v[ay1];
     double dxB = v[bx2] - v[bx1], dyB = v[by2] - v[by1];
@@ -943,10 +1072,27 @@ void FixedAngleDimEquation::jacobian(const QVector<double>& v, int r0,
     if (itA == layout().end() || itB == layout().end()) return;
 
     // 同上：改用 indexFor(Start/End) 正確解析共用 SketchPoint DOF 的情況。
-    int ax1 = itA->indexFor(GeomHandle::Start), ay1 = ax1 + 1;
-    int ax2 = itA->indexFor(GeomHandle::End),   ay2 = ax2 + 1;
-    int bx1 = itB->indexFor(GeomHandle::Start), by1 = bx1 + 1;
-    int bx2 = itB->indexFor(GeomHandle::End),   by2 = bx2 + 1;
+    int ax1r = itA->indexFor(GeomHandle::Start), ay1r = ax1r + 1;
+    int ax2r = itA->indexFor(GeomHandle::End),   ay2r = ax2r + 1;
+    int bx1r = itB->indexFor(GeomHandle::Start), by1r = bx1r + 1;
+    int bx2r = itB->indexFor(GeomHandle::End),   by2r = bx2r + 1;
+
+    // 跟 evaluate() 用同一套「角落端重新指派」邏輯，見該處完整說明——兩邊
+    // 用同一個 v，算出來的角落端判斷一定一致。
+    const double dSS = std::hypot(v[bx1r]-v[ax1r], v[by1r]-v[ay1r]);
+    const double dSE = std::hypot(v[bx2r]-v[ax1r], v[by2r]-v[ay1r]);
+    const double dES = std::hypot(v[bx1r]-v[ax2r], v[by1r]-v[ay2r]);
+    const double dEE = std::hypot(v[bx2r]-v[ax2r], v[by2r]-v[ay2r]);
+    bool aStartIsCorner, bStartIsCorner;
+    if (dSS <= dSE && dSS <= dES && dSS <= dEE)      { aStartIsCorner = true;  bStartIsCorner = true;  }
+    else if (dSE <= dES && dSE <= dEE)                { aStartIsCorner = true;  bStartIsCorner = false; }
+    else if (dES <= dEE)                              { aStartIsCorner = false; bStartIsCorner = true;  }
+    else                                               { aStartIsCorner = false; bStartIsCorner = false; }
+
+    const int ax1 = aStartIsCorner ? ax1r : ax2r, ay1 = ax1 + 1;
+    const int ax2 = aStartIsCorner ? ax2r : ax1r, ay2 = ax2 + 1;
+    const int bx1 = bStartIsCorner ? bx1r : bx2r, by1 = bx1 + 1;
+    const int bx2 = bStartIsCorner ? bx2r : bx1r, by2 = bx2 + 1;
 
     double dxA = v[ax2]-v[ax1], dyA = v[ay2]-v[ay1];
     double dxB = v[bx2]-v[bx1], dyB = v[by2]-v[by1];
@@ -1397,6 +1543,7 @@ QList<ConstraintEquation*> ConstraintSolver::buildEquations(
         case ConstraintType::Parallel:      eq = new ParallelEquation(c, &layout);      break;
         case ConstraintType::Perpendicular: eq = new PerpendicularEquation(c, &layout); break;
         case ConstraintType::Tangent:       eq = new TangentEquation(c, &layout);       break;
+        case ConstraintType::Chamfer:       eq = new ChamferEquation(c, &layout);       break;
         case ConstraintType::Concentric:    eq = new ConcentricEquation(c, &layout);    break;
         case ConstraintType::FixedDistance: eq = new FixedDistanceEquation(c, &layout, vars); break;
         case ConstraintType::EqualLength:   eq = new EqualLengthEquation(c, &layout);   break;
@@ -1551,12 +1698,48 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
     int n = J[0].size();
     if (n == 0) return false;
 
-    Eigen::MatrixXd A(m, n);
+    // ★ 2026-09 追加：精確全 0 欄位直接從線性系統剔除，不交給 SVD 處理。
+    //
+    //    背景（見 ChamferEquation::jacobian() 的說明）：像 Chamfer 這種
+    //    方程式，只對「該由它決定」的未知數（裁切端點 P1/P2）填雅可比，
+    //    刻意把「僅供參考、不該被這條方程式牽動」的未知數（line1/line2
+    //    的遠端點 A1/A2）對應欄位留 0。如果 A1/A2 剛好也沒有被系統裡任何
+    //    其他方程式碰到，它們在整個疊起來的 J 矩陣裡就是精確的全 0 欄。
+    //
+    //    理論上，全 0 欄天生就該落在 SVD 零空間、對應奇異值精確為 0，
+    //    Tikhonov 阻尼公式 σ/(σ²+λ) 在 σ=0 時算出來也精確是 0——但這只
+    //    在「SVD 選出來的零空間基底剛好對齊座標軸」時成立。當零空間維度
+    //    不只 1（例如同時有好幾個自由端點），BDCSVD 選出的正交基底不保
+    //    證對齊，浮點誤差可能讓本該精確為 0 的方向「漏」一點
+    //    點修正量到這些全 0 欄的座標上（實測量級約 1e-6，遠小於修法前，
+    //    但不是精確的 0）。
+    //
+    //    直接把這些欄位從矩陣裡剔除、只對「真的可能被牽動」的欄位做 SVD，
+    //    可以從代數結構上保證：這些變數的 dx 就是字面上的 0.0，不需要
+    //    依賴 SVD 零空間基底的選擇。這與「這條方程式不該影響它」的設計
+    //    意圖完全一致，也讓 kRegAbsoluteSigma 的下限只需要處理「真正病
+    //    態但非全 0」的方向，不用再兼顧「全 0 欄不小心被算出微小非 0」
+    //    這種其實不該出現的邊界情況。
+    QVector<int> activeCols;
+    activeCols.reserve(n);
+    for (int j = 0; j < n; ++j) {
+        bool allZero = true;
+        for (int i = 0; i < m; ++i) {
+            if (J[i][j] != 0.0) { allZero = false; break; }
+        }
+        if (!allZero) activeCols.append(j);
+    }
+
+    dx.fill(0.0, n);   // 全 0 欄的變數維持字面上的 0.0，不進線性系統
+    if (activeCols.isEmpty()) return true;   // J 整個矩陣全 0：沒有任何方向可修正
+
+    const int nActive = activeCols.size();
+    Eigen::MatrixXd A(m, nActive);
     Eigen::VectorXd b(m);
     for (int i = 0; i < m; ++i) {
         b(i) = -F[i];
-        for (int j = 0; j < n; ++j)
-            A(i, j) = J[i][j];
+        for (int jj = 0; jj < nActive; ++jj)
+            A(i, jj) = J[i][activeCols[jj]];
     }
 
     // ── 修正：以 Levenberg-Marquardt 風格的平滑阻尼取代硬性 SVD 截斷門檻──
@@ -1606,8 +1789,7 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
 
     const double sigmaMax = sv(0);   // BDCSVD 回傳的奇異值已由大到小排序
     if (sigmaMax <= 0.0) {
-        dx.fill(0.0, n);
-        return true;   // J 全 0：沒有任何方向可修正
+        return true;   // 篩選後剩下的欄仍然全 0：沒有任何方向可修正（dx 已在上面填好 0.0）
     }
     const double lambdaRelative = (kRegRelativeSigma * sigmaMax) * (kRegRelativeSigma * sigmaMax);
     const double lambdaAbsolute = kRegAbsoluteSigma * kRegAbsoluteSigma;
@@ -1621,8 +1803,9 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
     }
     const Eigen::VectorXd x = svd.matrixV() * filtered;
 
-    dx.resize(n);
-    for (int j = 0; j < n; ++j) dx[j] = x(j);
+    // 只把解出來的值填回「有參與這次線性系統」的那幾欄；被剔除的全 0 欄
+    // 維持函式一開始就設好的 0.0，不會被下面這段覆寫到。
+    for (int jj = 0; jj < nActive; ++jj) dx[activeCols[jj]] = x(jj);
     return true;
 }
 

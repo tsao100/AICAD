@@ -11,12 +11,49 @@
 #include "command/alignment/AlignmentFixTangentCommand.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
+#include "core/DocumentManager.h"
+#include "cad/Document.h"
+#include "ui/UIManager.h"
 #include <QDebug>
 
 using namespace aicad::core;
 
 namespace aicad {
 namespace command {
+
+namespace {
+/**
+ * @brief 需求 10：把 @p alignDoc 目前的求解結果，同步寫回它所屬的那條
+ *        tcl->horizontal()（權威資料），讓 FT/FC 加入的元素立即成為
+ *        「唯一一套 Alignment data」的一部分，而不是只留在暫存、其他
+ *        命令（例如 ADC）需要靠 fallback 才讀得到的 AlignmentDocument
+ *        裡（見 AlignmentDrawChainCommand::resolveExistingPoints() 對同一
+ *        問題的說明）。比照 AlignmentQuickTableCommand／ImportAldCommand
+ *        的既定慣例，同時呼叫 setAldHorizontalImport() 把這批資料標記為
+ *        權威來源（供 getXYZForCalc() 等「優先讀 ALD import」的查詢使用）。
+ *        找不到對應的 tcl（理論上不會發生，因為 AlignmentDocument 一律
+ *        由某條既有 tcl 建立）時安靜略過，不影響指令繼續執行。
+ */
+void syncAlignmentDocToOwningTcl(railway::AlignmentDocument* alignDoc)
+{
+    if (!alignDoc) return;
+    auto* uiMgr = core::Application::instance()->uiManager();
+    if (!uiMgr) return;
+    const QString tclId = uiMgr->tclAlignmentDocs().key(alignDoc, QString());
+    if (tclId.isEmpty()) return;
+    auto* doc = core::Application::instance()->documentManager()->currentDocument();
+    if (!doc) return;
+    auto* tcl = doc->findTrackCenterLine(tclId);
+    if (!tcl) return;
+    const railway::HorizontalAlignment* ha = alignDoc->horizontal()->result();
+    if (!ha || ha->isEmpty()) return;
+    tcl->setAldHorizontalImport(ha->rawPoints());
+    tcl->loadHorizontal(ha->rawPoints());
+    doc->setModified(true);
+    // 需求 15／16：同 AlignmentDrawChainCommand，主動確保這條線立刻畫出來。
+    uiMgr->ensureTclDisplayed(tclId);
+}
+} // namespace
 
 AlignmentFixTangentCommand::AlignmentFixTangentCommand(QObject* parent)
     : Command("alignmentfixtangent", "Add Fixed Tangent", parent)
@@ -93,6 +130,7 @@ void AlignmentFixTangentCommand::handlePointAcquired(const QPointF& point)
     // ── Second click: commit segment ──────────────────────────────────
     int idx = m_alignDoc->horizontal()->addFixedTangent(m_startPoint, point);
     m_alignDoc->horizontal()->solve();   // changed() → AlignmentRenderer::refresh()
+    syncAlignmentDocToOwningTcl(m_alignDoc);   // 需求 10：立即同步回權威 tcl
 
     outputMessage(QString("Fixed Tangent #%1  (%2,%3) → (%4,%5)")
                       .arg(idx)

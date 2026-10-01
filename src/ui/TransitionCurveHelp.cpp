@@ -45,15 +45,36 @@ QString TransitionCurveHelp::locateHelpFile()
 {
     // 候選路徑順序比照 Application.cpp 載入 menu.txt 的既有慣例：
     // 目前工作目錄 → 上層目錄（開發時常見的 build/ 子目錄執行情境）→
-    // 原始碼目錄（in-source build）→ applicationDirPath()（安裝後的
-    // 執行檔所在目錄）。找到第一個實際存在的檔案就採用。
+    // 原始碼目錄（in-source build）→ PROJECT_SOURCE_DIR（.pro 檔所在的
+    // 原始碼目錄，見下方說明）→ applicationDirPath()（安裝後的執行檔
+    // 所在目錄）。找到第一個實際存在的檔案就採用。
+    //
+    // 根本原因（Windows 下按鈕沒反應）：help/ 與 web/vendor/ 這兩個資料夾
+    // 目前並未在 AICAD.pro 的建置流程中被複製到輸出目錄（只有 menu.txt
+    // 有對應的 copydata / QMAKE_POST_LINK 複製步驟），上面四個候選路徑
+    // 全部仰賴「執行檔的工作目錄／所在目錄」剛好跟原始碼目錄同層或相鄰。
+    // 在 Linux 上 Jack 是直接在原始碼目錄做 in-source build 並執行，
+    // 工作目錄本來就等於原始碼目錄，candidate 1（"help/..."）剛好命中；
+    // 但 Qt Creator＋MSVC 在 Windows 上預設是 shadow build（執行檔在另一
+    // 個跟原始碼樹不同層的 build-xxx-Debug/ 目錄下），上面四個候選路徑
+    // 沒有一個能命中，locateHelpFile() 回傳空字串，show() 於是彈出「Help
+    // file not found」訊息框——按鈕本身其實有反應，只是每次都找不到檔案。
+    // PROJECT_SOURCE_DIR 是 AICAD.pro 裡已經有的編譯期巨集（.pro 檔自身
+    // 所在目錄，開發機上不論是否 shadow build 都固定指向原始碼樹，
+    // Application.cpp 載入 Draw/1.aicad 用的正是同一個巨集），加進候選
+    // 清單後不論工作目錄為何、也不需要改建置腳本，就能在兩個平台上都
+    // 找到檔案；仍保留 applicationDirPath() 作為最後一個候選，日後若把
+    // help/web 兩個資料夾納入安裝包、與執行檔部署在一起，也能正常運作。
     static const char* kRelPath = "help/TransitionCurveLiteratureReferences.md";
-    const QStringList candidates = {
+    QStringList candidates = {
         QString::fromLatin1(kRelPath),
         QStringLiteral("../%1").arg(kRelPath),
         QStringLiteral("../../%1").arg(kRelPath),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/%1").arg(kRelPath),
     };
+#ifdef PROJECT_SOURCE_DIR
+    candidates << QString::fromLatin1(PROJECT_SOURCE_DIR) + QStringLiteral("/%1").arg(kRelPath);
+#endif
+    candidates << QCoreApplication::applicationDirPath() + QStringLiteral("/%1").arg(kRelPath);
     for (const QString& path : candidates) {
         if (QFileInfo::exists(path))
             return path;
@@ -63,16 +84,20 @@ QString TransitionCurveHelp::locateHelpFile()
 
 QString TransitionCurveHelp::locateVendorDir()
 {
-    // 與 locateHelpFile() 相同的候選路徑順序；多檢查 marked.min.js 與
-    // mathjax/tex-svg.js 兩個檔案都存在，避免只部署了一半的 vendor 資料夾
-    // 被誤判為「找到了」卻在載入時才失敗。
+    // 與 locateHelpFile() 相同的候選路徑順序（含 PROJECT_SOURCE_DIR，
+    // 理由同上）；多檢查 marked.min.js 與 mathjax/tex-svg.js 兩個檔案都
+    // 存在，避免只部署了一半的 vendor 資料夾被誤判為「找到了」卻在載入
+    // 時才失敗。
     static const char* kRelDir = "web/vendor";
-    const QStringList candidates = {
+    QStringList candidates = {
         QString::fromLatin1(kRelDir),
         QStringLiteral("../%1").arg(kRelDir),
         QStringLiteral("../../%1").arg(kRelDir),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/%1").arg(kRelDir),
     };
+#ifdef PROJECT_SOURCE_DIR
+    candidates << QString::fromLatin1(PROJECT_SOURCE_DIR) + QStringLiteral("/%1").arg(kRelDir);
+#endif
+    candidates << QCoreApplication::applicationDirPath() + QStringLiteral("/%1").arg(kRelDir);
     for (const QString& dir : candidates) {
         if (QFileInfo::exists(dir + QStringLiteral("/marked.min.js"))
             && QFileInfo::exists(dir + QStringLiteral("/mathjax/tex-svg.js")))
@@ -215,9 +240,18 @@ void TransitionCurveHelp::showInBrowser(QWidget* parent, const QString& markdown
 <title>Transition Curve Literature References</title>
 <style>
   body { font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
-         margin: 24px auto; max-width: 900px; line-height: 1.55; }
-  table { border-collapse: collapse; margin: 8px 0; }
-  td, th { border: 1px solid #ccc; padding: 4px 10px; text-align: left; }
+         margin: 24px 32px; max-width: none; line-height: 1.55; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; table-layout: fixed; }
+  td, th { border: 1px solid #ccc; padding: 4px 10px; text-align: left; overflow-wrap: break-word; vertical-align: top; }
+  /* 公式速查表（本文件裡唯一一張 6 欄表格）最後兩欄是 x(L)/y(L) 泰勒展開式，
+     公式明顯比其他欄位長，加寬並讓兩欄等寬；table-layout:fixed 下用
+     nth-child 鎖定這兩欄的欄寬，其餘欄位平分剩餘寬度。本文件其餘表格
+     （如對照總表）欄數較少，選不到第 5、6 欄，不受影響。單一儲存格若仍
+     容不下極長的展開式，讓該格自己橫向捲動，不擠壓相鄰欄位或撐開整個
+     表格。 */
+  td:nth-child(5), th:nth-child(5),
+  td:nth-child(6), th:nth-child(6) { width: 24%; }
+  td:nth-child(5), td:nth-child(6) { overflow-x: auto; }
   code { background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
   h1, h2 { border-bottom: 1px solid #ddd; padding-bottom: 4px; }
 </style>

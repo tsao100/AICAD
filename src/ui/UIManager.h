@@ -268,6 +268,28 @@ public:
      */
     void invalidateTclAlignmentDocument(const QString& tclId);
 
+    /**
+     * @brief 需求 15／16：供命令層（ALIGNMENTQUICKTABLE／ALIGNMENTDRAWCHAIN／
+     *        FT／FC／AS…）在直接改寫某條 TrackCenterLine 的 raw points
+     *        （tcl->loadHorizontal()）之後呼叫，確保這條線在 3D 視圖裡
+     *        「立刻」看得到最新結果，不必等使用者剛好又做了某件會重新
+     *        setHorizontalAlignment()+refresh() 的事（例如打開「線形資料
+     *        表」）。
+     *
+     *        背景：這條線的 per-TCL AlignmentRenderer 原本只在使用者主動
+     *        切換樹狀圖眼睛圖示、或打開編輯線形／線形資料表時才會被建立
+     *        並顯示；若使用者從沒做過這些操作就直接用 ADC／FT／FC 等指令
+     *        在一條全新的線上畫東西，畫完當下根本沒有任何 renderer 物件
+     *        存在，自然什麼都不會畫出來——不是「沒有刷新」，是「連該建立
+     *        的 renderer 都還沒建立」。本函式在 renderer 不存在時主動建立
+     *        （預設可見），並持續訂閱 tcl->dataChanged() 以便之後的寫入
+     *        自動刷新（與 railway.halign-visibility-changed 分支的既有作法
+     *        一致）；renderer 已存在時（不論目前是 raw 模式還是使用者正在
+     *        編輯的 AlignmentDocument 即時模式）只單純呼叫一次 refresh()，
+     *        不強制切換模式，避免打斷使用者正在進行中的編輯畫面。
+     */
+    void ensureTclDisplayed(const QString& tclId);
+
     /// Railway 資料夾「3D Alignment」彙總顯示（可能為 nullptr，直到第一次
     /// eyeOpen 觸發建立）。
     view::Railway3DAlignmentRenderer* railway3DRenderer() const;

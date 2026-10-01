@@ -134,6 +134,15 @@ QString AIS_DimensionLine::labelText() const {
         // 與 DimPreviewOverlay 的預覽格式一致：(X,Y)（value=X, value2=Y）
         base = QString("(%1,%2)").arg(v, 0, 'f', 2).arg(m_constraint.value2, 0, 'f', 2);
         break;
+    case ConstraintType::Chamfer:
+        // ★ 2026-09 修正：先前落到下面的 default，只顯示 value（D1），
+        // value2（D2）完全沒有顯示出來——D1≠D2（不等距倒角）時使用者只
+        // 看得到一半的資訊。ConstraintType::Chamfer 的兩個值本來就是
+        // D1、D2 各自沿 line1/line2 的裁切距離，用 "D1 x D2" 這種常見
+        // CAD 慣例格式，不套用 CoordinateDim 的 "(x,y)" 格式（語意不同，
+        // 容易被誤讀成座標）。
+        base = QString("%1 x %2").arg(v, 0, 'f', 2).arg(m_constraint.value2, 0, 'f', 2);
+        break;
     default:
         base = QString::number(v, 'f', 2);
         break;

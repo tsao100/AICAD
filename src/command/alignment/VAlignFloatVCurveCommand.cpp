@@ -6,12 +6,43 @@
 #include "command/alignment/VAlignFloatVCurveCommand.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
+#include "core/DocumentManager.h"
+#include "cad/Document.h"
+#include "railway/AlignmentDocument.h"
+#include "ui/UIManager.h"
 #include <QDebug>
 
 using namespace aicad::core;
 
 namespace aicad {
 namespace command {
+
+namespace {
+/**
+ * @brief 需求 10：把 @p alignDoc 目前的縱斷面求解結果同步寫回它所屬的那條
+ *        tcl->vertical()（權威資料）——橫向線形（見
+ *        AlignmentFixTangentCommand.cpp 內同名函式）已有的問題在縱斷面同樣
+ *        存在：本命令只寫入 context.alignmentDoc，從未呼叫
+ *        tcl->loadVertical()，若使用者接著沒有透過 VAlignEditorDockWidget
+ *        觸發 writeBackToTcl()，這裡加入的 VIP 就只留在暫存文件裡。
+ */
+void syncVerticalDocToOwningTcl(railway::AlignmentDocument* alignDoc)
+{
+    if (!alignDoc) return;
+    auto* uiMgr = core::Application::instance()->uiManager();
+    if (!uiMgr) return;
+    const QString tclId = uiMgr->tclAlignmentDocs().key(alignDoc, QString());
+    if (tclId.isEmpty()) return;
+    auto* doc = core::Application::instance()->documentManager()->currentDocument();
+    if (!doc) return;
+    auto* tcl = doc->findTrackCenterLine(tclId);
+    if (!tcl) return;
+    const railway::VerticalAlignment* va = alignDoc->vertical()->result();
+    if (!va || va->isEmpty()) return;
+    tcl->loadVertical(va->points());
+    doc->setModified(true);
+}
+} // namespace
 
 VAlignFloatVCurveCommand::VAlignFloatVCurveCommand(QObject* parent)
     : Command("valignfloatvcurve", "Add VIP with Vertical Curve (K value)", parent)
@@ -128,6 +159,7 @@ void VAlignFloatVCurveCommand::onLvcSet(double lvc)
     // 直接以 lvc 新增，不走 setKValue
     m_newIdx = m_alignDoc->vertical()->addVip(m_pendingCh, m_pendingEl, lvc);
     m_alignDoc->vertical()->solve();
+    syncVerticalDocToOwningTcl(m_alignDoc);   // 需求 10：立即同步回權威 tcl
 
     outputMessage(QString("VIP #%1  CH=%2  EL=%3  LVC=%4 m")
                       .arg(m_newIdx + 1)
@@ -191,6 +223,7 @@ void VAlignFloatVCurveCommand::commitVip(double K, double /*lvcDirect*/)
     }
 
     va->solve();
+    syncVerticalDocToOwningTcl(m_alignDoc);   // 需求 10：立即同步回權威 tcl
 
     outputMessage(QString("VIP #%1  CH=%2  EL=%3  K=%4")
                       .arg(m_newIdx + 1)

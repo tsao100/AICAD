@@ -162,47 +162,32 @@ void FilletCommand::onGeomPicked(const QVariant& payload)
         trimext::filletAt(sk, line1Uuid, uuid, m_radius, m_clickPt1, clickPt);
 
     if (r.success) {
-        s_lastRadius = m_radius;  // 記住這次的半徑，供下次執行 FILLET 帶入
+        // 實際疊加 Coincident/Tangent/FixedRadius 約束（半徑 0 的退化情形
+        // 內部直接回傳 true、不做任何事）的邏輯已抽成
+        // trimext::addFilletCornerConstraints()，見該函式文件說明——除了
+        // 讓這段變成可重用、可單獨測試的單元，也一併修正了原本這裡缺少
+        // 的 Conflict 檢查/回滾。
+        const bool constraintsOk =
+            trimext::addFilletCornerConstraints(sk, r, line1Uuid, uuid, m_radius);
 
-        if (!r.arcUuid.isEmpty()) {
-            // 半徑 > 0：疊加 Coincident × 2（line 端點 ↔ 弧端點）、
-            // Tangent × 2（弧 ↔ 各線）、FixedRadius × 1（見 FilletCommand.h
-            // 檔頭「約束處理」說明；filletAt() 內部已把弧的起訖點建成獨立
-            // 新點，就是為了讓這裡能疊加明確、可編輯/可刪除的約束）。
-            sk->addConstraint(SketchConstraint::makeCoincident(
-                GeomRef(r.line1PointUuid, GeomHandle::WholeGeom),
-                GeomRef(r.arcStartUuid,   GeomHandle::WholeGeom)));
-            sk->addConstraint(SketchConstraint::makeCoincident(
-                GeomRef(r.line2PointUuid, GeomHandle::WholeGeom),
-                GeomRef(r.arcEndUuid,     GeomHandle::WholeGeom)));
-            // ⚠️ makeTangent(geomA, geomB) 對應到 ConstraintSolver.cpp 的
-            // TangentEquation，該方程式寫死假設 refs[0]＝線、refs[1]＝圓/弧
-            // （dist(center,line)=r，見該處註解），GeomVarLayout::indexFor()
-            // 又是純粹依 handle 名稱查表、不檢查實際幾何型別——參數順序一旦
-            // 寫反（弧在前、線在後），會把線的區域變數硬當成圓心/半徑去讀，
-            // 讀到超出該線實際配置範圍的 index，導致 QVector 越界崩潰。
-            // 這裡務必是「線在前、弧在後」。
-            sk->addConstraint(SketchConstraint::makeTangent(line1Uuid, r.arcUuid));
-            sk->addConstraint(SketchConstraint::makeTangent(uuid,      r.arcUuid));
-
-            // 半徑尺寸箭頭畫在弧的中點方向（見 filletAt() 的 arcMidDir 說明），
-            // 而不是預設的草圖 X 軸方向——makeFixedRadius() 回傳的是一般化的
-            // 約束，dimLineOffsetX/Y 預設 0，畫的時候會退回 X 軸方向，所以
-            // 這裡建構後、加進 sketch 之前先設定好。
-            SketchConstraint radiusConstraint = SketchConstraint::makeFixedRadius(r.arcUuid, m_radius);
-            radiusConstraint.dimLineOffsetX = r.arcMidDir.x();
-            radiusConstraint.dimLineOffsetY = r.arcMidDir.y();
-            sk->addConstraint(radiusConstraint);
-            sk->solveConstraints();   // ⚠️ 效能修正：內部已透過 markDirty() emit 過 rebuildRequested()，不再重複 emit（避免 Document::rebuildFeature() 多跑一次）
-        }
-        // 半徑 = 0（無插入弧）：filletAt() 內部已經另外補上一條 Coincident
-        // 約束把兩線端點接起來，這裡不需要再做任何事。
-
-        if (cmdMgr) {
-            const QString note = r.removedExistingCoincident
-                ? " (removed pre-existing coincident constraint at the corner)"
-                : "";
-            cmdMgr->printSuccess(QString("✅ Filleted (R=%1)%2.").arg(m_radius).arg(note));
+        if (constraintsOk) {
+            s_lastRadius = m_radius;  // 記住這次的半徑，供下次執行 FILLET 帶入
+            if (cmdMgr) {
+                const QString note = r.removedExistingCoincident
+                    ? " (removed pre-existing coincident constraint at the corner)"
+                    : "";
+                cmdMgr->printSuccess(QString("✅ Filleted (R=%1)%2.").arg(m_radius).arg(note));
+            }
+        } else if (cmdMgr) {
+            // 圓角本身的幾何（弧、切點）已經成功套用（r.success==true），
+            // 只是事後要疊加的約束跟 line1/line2 原本既有的約束衝突，已在
+            // addFilletCornerConstraints() 內整批回滾——幾何仍保留在
+            // filletAt() 移動後的位置（與 chamferAt() 衝突時的既有行為
+            // 一致，見該函式回傳值說明），這裡只需要提示使用者。
+            cmdMgr->printWarning(
+                "⚠️  Fillet geometry applied, but its constraints conflict with "
+                "existing constraints on the selected lines; the constraints were "
+                "not added.");
         }
     } else {
         if (cmdMgr) cmdMgr->printWarning(

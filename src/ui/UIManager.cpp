@@ -935,6 +935,20 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     r->setVisible(true);
                     r->refresh();
 
+                    // 需求 15：ADC／FT／FC／AS 等指令寫入 tcl->loadHorizontal()
+                    // 後，畫面沒有自動更新，要等到使用者剛好又做了某件會重新
+                    // 呼叫 r->refresh() 的事（例如打開「線形資料表」）才看得到
+                    // ——因為這裡先前只在「眼睛圖示切換」當下做了一次性的
+                    // setHorizontalAlignment()+refresh()，之後 tcl->horizontal()
+                    // 再怎麼變都沒有任何東西通知這個 renderer。比照
+                    // Railway3DAlignmentRenderer::showAll() 的既有作法，訂閱
+                    // tcl->dataChanged()（TrackCenterLine 建構子已把
+                    // horizontal()/vertical() 的 dataChanged() 轉發到這裡），
+                    // 只要這條線还在「顯示」狀態，資料一變就自動 refresh()。
+                    // Qt::UniqueConnection 避免眼睛圖示重複切換時疊加訂閱。
+                    connect(tcl, &railway::TrackCenterLine::dataChanged,
+                            r, &view::AlignmentRenderer::refresh, Qt::UniqueConnection);
+
                     // ✅ 修正：比照 valign-visibility-changed 分支，顯示水平線形時
                     // 也要 get-or-create 這條 TCL 的 AlignmentDocument 並設為 active
                     // ——先前這裡完全沒有碰 d->alignmentDoc，導致單靠「顯示水平線
@@ -959,6 +973,10 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     setActiveAlignmentDoc(aDoc);  // track active
                 } else {
                     r->setVisible(false);
+                    // 隱藏時解除訂閱，避免這條線之後的資料變更持續觸發一個
+                    // 使用者看不到的 renderer 重繪（純屬效能考量，非必要）。
+                    disconnect(tcl, &railway::TrackCenterLine::dataChanged,
+                               r, &view::AlignmentRenderer::refresh);
                 }
             });
 
@@ -2223,7 +2241,18 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     // 重新求解意外覆寫。使用者若在「線形資料表」內實際編輯
                     // （拖曳 grip、改欄位），仍會透過既有的 changed()／
                     // dataCommitted 機制正常同步回 tcl，不受此處影響。
-                    r->setAlignment(aDoc->horizontal());
+                    // ── 需求 7：元素鏈同步關閉時，renderer 一律顯示權威的
+                    // tcl->horizontal()，不要切換到 AlignmentDocument 重建
+                    // 模式——避免在編輯期間短暫顯示可能失準的重建結果（也是
+                    // 「都不要再有自動產生元素鏈的情形」的一部分：關閉時，
+                    // 這條線的顯示完全不經過元素鏈）。開啟時才維持原本即時
+                    // 預覽的行為。aDoc 本身仍會照常 seed／solve（AS/FC/FT
+                    // 等命令仍需要它才能正確接續既有線元），只是不會用它
+                    // 的結果來畫圖，也不會寫回 tcl（見下方 changed() handler）。
+                    if (tcl->elementChainSyncEnabled())
+                        r->setAlignment(aDoc->horizontal());
+                    else
+                        r->setHorizontalAlignment(tcl->horizontal());
                     r->setVisible(true);
                     r->refresh();
 
@@ -2316,7 +2345,13 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
                         d->tclRenderers.insert(tclId, r);
                     }
-                    r->setAlignment(aDoc->horizontal());
+                    // ── 需求 7：見上方 editAlignmentRequested 分支同樣的說明——
+                    // 元素鏈同步關閉時，renderer 顯示權威的 tcl->horizontal()，
+                    // 不切換到 AlignmentDocument 重建模式。
+                    if (tcl->elementChainSyncEnabled())
+                        r->setAlignment(aDoc->horizontal());
+                    else
+                        r->setHorizontalAlignment(tcl->horizontal());
                     r->refresh();
 
                     qDebug() << "[UIManager] Opening AlignmentDataTableDialog:"
@@ -2334,17 +2369,28 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     connect(aDoc->horizontal(),
                             &railway::HorizontalAlignmentEdit::changed,
                             connKeeper,
-                            [r, aDoc, tcl, doc]() {
-                                // 同步 solver 結果到 TCL rawPoints（供其他消費者使用），
-                                // 並保留既有輔助欄位（見 mergeAuxiliaryFields() 註解）。
-                                const railway::HorizontalAlignment* ha =
-                                    aDoc->horizontal()->result();
-                                if (ha && !ha->isEmpty()) {
-                                    QVector<railway::AlignmentPoint> merged = ha->rawPoints();
-                                    railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
-                                    tcl->loadHorizontal(merged);
+                            [r, aDoc, tcl, doc, dlg]() {
+                                // 元素鏈同步開關（需求：讓使用者自行決定 on/off，見
+                                // AlignmentDataTableDialog::elementChainSyncEnabled()
+                                // 的完整說明）：預設關閉，略過下面這段「整批覆寫」，
+                                // 避免元素鏈重建（seedFromRawPoints()／solveSCS()）在
+                                // 誤判時把 ADC／AQT 產生的緩和曲線等既有資料永久蓋掉
+                                // （吃掉）。使用者主動開啟時才把 solver 結果同步回
+                                // tcl，讓本對話框內的拖曳/欄位編輯持久化。
+                                if (dlg && dlg->elementChainSyncEnabled()) {
+                                    // 同步 solver 結果到 TCL rawPoints（供其他消費者使用），
+                                    // 並保留既有輔助欄位（見 mergeAuxiliaryFields() 註解）。
+                                    const railway::HorizontalAlignment* ha =
+                                        aDoc->horizontal()->result();
+                                    if (ha && !ha->isEmpty()) {
+                                        QVector<railway::AlignmentPoint> merged = ha->rawPoints();
+                                        railway::mergeAuxiliaryFields(merged, tcl->horizontal()->rawPoints());
+                                        tcl->loadHorizontal(merged);
+                                    }
                                 }
                                 // renderer 已設為 AlignmentDocument 模式，直接刷新
+                                // （即時 3D 預覽；未開啟同步時仍可看到編輯結果，只是
+                                // 不會寫回 tcl，關閉對話框後會回到原本的權威資料）。
                                 if (r) r->refresh();
                                 doc->setModified(true);
                             });
@@ -3287,6 +3333,20 @@ void UIManager::setupSketchPanel()
     // ── 拖曳現有尺寸線（即時更新偏移）─────────────────────────────────────────
     connect(d->cadView, &view::CadView::dimLineDragging,
             this, [this](const QString& uuid, double ox, double oy) {
+        // ★ 新增（第 11 項：拖曳既有角度標註時，數值應該比照建立時的
+        //   hover 預覽即時更新，不要等放開滑鼠才變）：輕量預覽（只更新
+        //   SketchConstraint::value 供顯示，不 solve、不動任何幾何、不寫
+        //   入 SketchAnnotation），非角度型別內部直接回傳 false 不做事。
+        //   真正落地生根仍在下面 dimLineDragFinished 呼叫的
+        //   updateConstraintDimOffset()。
+        //
+        //   ⚠️ 順序：一定要先更新數值、再呼叫 updateDimLine()——後者內部
+        //   會觸發 AIS 物件的 RecomputePrsOnly() 重繪標籤文字，讀的是
+        //   「呼叫當下」的 SketchConstraint::value；如果順序反過來，這一
+        //   次重繪讀到的還是上一格的舊值，要等下一次滑鼠移動事件才會補
+        //   上，畫面上會感覺數字慢半拍，不是真正的「即時」。
+        if (Sketch* sk = currentActiveSketch())
+            sk->previewConstraintDimValue(uuid, ox, oy);
         if (d->sketchPanel && d->sketchPanel->overlay())
             d->sketchPanel->overlay()->updateDimLine(uuid, ox, oy);
     });
@@ -3799,6 +3859,32 @@ void UIManager::invalidateTclAlignmentDocument(const QString& tclId)
         d->alignmentDoc = nullptr;
 
     aDoc->deleteLater();
+}
+
+void UIManager::ensureTclDisplayed(const QString& tclId)
+{
+    auto* docMgr = core::Application::instance()->documentManager();
+    auto* doc    = docMgr ? docMgr->currentDocument() : nullptr;
+    if (!doc) return;
+
+    auto* tcl = doc->findTrackCenterLine(tclId);
+    if (!tcl) return;
+
+    view::AlignmentRenderer* r = d->tclRenderers.value(tclId, nullptr);
+    if (!r) {
+        // 需求 15／16：這條線從未被任何操作（眼睛圖示、編輯線形、線形
+        // 資料表…）建立過 renderer——不是「沒刷新」，是根本沒有 renderer
+        // 可以刷新。在這裡主動建立一個、預設可見，並比照
+        // railway.halign-visibility-changed 分支訂閱 tcl->dataChanged()，
+        // 讓之後任何寫入都會自動刷新，不必再回頭依賴其他功能碰巧觸發。
+        r = new view::AlignmentRenderer(d->cadView, d->mainWindow);
+        d->tclRenderers.insert(tclId, r);
+        r->setHorizontalAlignment(tcl->horizontal());
+        r->setVisible(true);
+        connect(tcl, &railway::TrackCenterLine::dataChanged,
+                r, &view::AlignmentRenderer::refresh, Qt::UniqueConnection);
+    }
+    r->refresh();
 }
 
 view::Railway3DAlignmentRenderer* UIManager::railway3DRenderer() const

@@ -59,6 +59,27 @@ public:
                                        QWidget* parent = nullptr);
     ~AlignmentDataTableDialog() override = default;
 
+    /**
+     * @brief 「元素鏈同步」是否啟用（需求 1／7：讓使用者自行決定 on/off；
+     *        設定位置在 TrackCenterLine 於樹狀圖的右鍵選單，預設關閉）。
+     *
+     * 背景：本對話框編輯（拖曳 grip、改欄位）時，UIManager 會監聽
+     * m_doc->horizontal() 的 changed() 訊號，用 solver 重新求解、比對出的
+     * EditableElement 鏈（seedFromRawPoints()／solveSCS() 的重建結果）
+     * 整批覆寫回 m_tcl->horizontal() 的稠密關鍵點——這對「同步使用者在
+     * 本對話框內做的編輯」是必要的，但這套模式比對／重建邏輯在某些線元
+     * 序列組合下可能誤判（例如 ADC／AQT 產生的緩和曲線），把重建版寫回
+     * 會永久覆蓋掉原本正確的資料，外觀上就像「新加入的元素被元素鏈的功能
+     * 吃掉」（沒有畫出來，資料表也讀不到，因為連權威資料都已被覆寫）。
+     *
+     * 關閉本選項時（預設），UIManager 端會略過該筆整批覆寫（3D 預覽仍會
+     * 即時刷新，但不會寫回 m_tcl），藉此保護既有資料不被重建版誤蓋；
+     * 代價是本對話框內對元素的編輯不會持久化。開關本身存在
+     * railway::TrackCenterLine（見該類別 elementChainSyncEnabled()），
+     * 逐線路獨立設定、隨檔案存檔，需要時在樹狀圖右鍵選單開啟。
+     */
+    bool elementChainSyncEnabled() const;
+
 Q_SIGNALS:
     /** 任一儲存格編輯並成功套用後發出，供外部（UIManager）整體刷新。 */
     void dataCommitted();

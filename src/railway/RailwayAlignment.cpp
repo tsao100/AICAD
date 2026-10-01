@@ -970,6 +970,7 @@ QJsonObject TrackCenterLine::toJson() const
     o["name"]           = m_name;
     o["hAlignVisible"]  = m_hAlignVisible;
     o["vAlignVisible"]  = m_vAlignVisible;
+    o["elementChainSyncEnabled"] = m_elementChainSyncEnabled;
     o["horizontal"] = m_h->toJson();
     o["vertical"]   = m_v->toJson();
     // 只在真的有 ALD 匯入資料時才寫出，讓沒有用到本功能的舊檔/新建線路
@@ -985,6 +986,8 @@ bool TrackCenterLine::fromJson(const QJsonObject& j)
     setName(j["name"].toString(m_name));
     m_hAlignVisible = j["hAlignVisible"].toBool(false);
     m_vAlignVisible = j["vAlignVisible"].toBool(false);
+    // 預設關閉（需求 7）：舊檔沒有這個欄位時，一律視為關閉。
+    m_elementChainSyncEnabled = j["elementChainSyncEnabled"].toBool(false);
 
     if (!m_h->fromJson(j["horizontal"].toObject()))
         return false;

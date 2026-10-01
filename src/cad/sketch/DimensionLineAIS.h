@@ -61,6 +61,18 @@ public:
 
     const QString& constraintUuid() const { return m_constraint.uuid; }
 
+    /// ★ 新增（第 11 項回報：拖曳角度標註時數值完全沒有即時更新——根本
+    ///   原因是 m_constraint 是值拷貝，不是指向 Sketch 裡那份
+    ///   SketchConstraint 的參照／指標；Sketch::previewConstraintDimValue()／
+    ///   updateConstraintDimOffset() 改的是 Sketch 自己那份，這個 AIS 物件
+    ///   自己持有的 m_constraint 副本完全不會跟著變，RecomputePrsOnly()
+    ///   重繪時讀到的還是建立當下的舊值。要在不整個重建 AIS 物件（那需要
+    ///   完整 rebuild，代價比單純調整尺寸線位置大得多）的前提下即時反映
+    ///   新數值，需要一個明確的 setter 讓呼叫端把新值同步進來）：只更新
+    ///   m_constraint.value，不動其他欄位；呼叫端仍需自行接著呼叫
+    ///   RecomputePrsOnly() 才會真的重繪。
+    void setConstraintValue(double v) { m_constraint.value = v; }
+
     /// 明確設定兩個參考點（供 FixedDistance 端點 handle 使用）
     void    setRefPositions(const QVector2D& p1, const QVector2D& p2);
 

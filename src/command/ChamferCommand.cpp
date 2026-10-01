@@ -335,7 +335,9 @@ void ChamferCommand::onGeomPicked2D(const QVariant& payload)
         return;
     }
 
-    const bool ok = trimext::chamferAt(sk, m_line1Uuid, uuid, m_dist1, m_dist2, m_clickPt1, clickPt);
+    const trimext::ChamferResult r =
+        trimext::chamferAt(sk, m_line1Uuid, uuid, m_dist1, m_dist2, m_clickPt1, clickPt);
+    const bool ok = r.success;
     if (cmdMgr) {
         if (ok)
             cmdMgr->printSuccess(

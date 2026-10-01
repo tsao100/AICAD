@@ -197,6 +197,31 @@ public:
     explicit HAlignTableWidget(QWidget* parent = nullptr) : QTableWidget(parent) {}
 
 protected:
+    /** 見共用元件版（src/ui/HAlignTableWidget.cpp）的同名函式：需求 11，
+     *  最後一段（row = rows-1）沒有對應的「點位間」儲存格，點到那塊不存在
+     *  的半格時回傳無效 index，不要選取／進入編輯。 */
+    QModelIndex indexAt(const QPoint& pos) const override
+    {
+        const QModelIndex idx = QTableWidget::indexAt(pos);
+        if (!idx.isValid())
+            return idx;
+
+        const int cols = columnCount();
+        if (kFirstBetweenCol < 0 || kFirstBetweenCol >= cols || idx.column() < kFirstBetweenCol)
+            return idx;
+
+        const QRect cellRect = visualRect(idx);
+        const bool inUpperHalf = pos.y() < cellRect.center().y();
+        int targetRow = idx.row();
+        if (inUpperHalf && idx.row() > 0)
+            targetRow = idx.row() - 1;
+
+        if (targetRow >= rowCount() - 1)
+            return QModelIndex();
+
+        return model()->index(targetRow, idx.column());
+    }
+
     void paintEvent(QPaintEvent* event) override
     {
         QTableWidget::paintEvent(event);
@@ -210,7 +235,9 @@ protected:
 
         // ── 手動繪製「點位間」欄位的背景 + 文字（下移半列高）───────────────
         // 直接在此處繪製，不透過 delegate/裁切機制，文字才能完整顯示。
-        for (int row = 0; row < rows; ++row) {
+        // 需求 11：右側「點位間」表格本應比左側「點位」表格少一列——最後
+        // 一個點之後沒有下一點，不存在那一段線元，只畫到 row < rows-1。
+        for (int row = 0; row < rows - 1; ++row) {
             for (int c = kFirstBetweenCol; c < cols; ++c) {
                 QTableWidgetItem* it = item(row, c);
                 if (!it) continue;
@@ -218,9 +245,18 @@ protected:
                 QRect r = visualItemRect(it);
                 r.translate(0, r.height() / 2);
 
-                painter.fillRect(r, it->background());
+                // 同 HAlignTableWidget（共用元件版）的修正：delegate 完全
+                // 不繪製，所以選取高亮從未被畫出來，看起來像跑到背景後面；
+                // 這裡改成依選取狀態自行決定填色。
+                const QModelIndex idx = model() ? model()->index(row, c) : QModelIndex();
+                const bool selected = idx.isValid() && selectionModel()
+                                       && selectionModel()->isSelected(idx);
+
+                painter.fillRect(r, selected ? palette().highlight()
+                                              : it->background());
                 if (!it->text().isEmpty()) {
-                    painter.setPen(Qt::black);
+                    painter.setPen(selected ? palette().color(QPalette::HighlightedText)
+                                             : Qt::black);
                     painter.setFont(it->font());
                     painter.drawText(r.adjusted(4, 0, -4, 0),
                                       Qt::AlignLeft | Qt::AlignVCenter, it->text());
@@ -251,7 +287,8 @@ protected:
         }
 
         // ── 點位間欄位：下移半列高的格線（首尾各少畫半格，最後一列不延伸）──
-        for (int row = 0; row < rows; ++row) {
+        // 需求 11：與上方內容繪製同理，只畫到 row < rows-1。
+        for (int row = 0; row < rows - 1; ++row) {
             const int y = rowViewportPosition(row) + rowHeight(row) / 2;
             painter.drawLine(betweenX, y, rightX, y);
         }
@@ -345,6 +382,11 @@ AlignmentDataTableDialog::AlignmentDataTableDialog(AlignmentDocument* doc,
 void AlignmentDataTableDialog::buildUi()
 {
     auto* mainLayout = new QVBoxLayout(this);
+
+    // 「元素鏈同步」開關已移到 TrackCenterLine 在特徵樹狀圖的右鍵選單
+    // （需求 7），逐線路獨立設定並隨檔案存檔，見
+    // railway::TrackCenterLine::elementChainSyncEnabled()／
+    // FeatureBrowser::onCustomContextMenu()。這裡不再放置獨立開關。
 
     m_tabs = new QTabWidget(this);
     mainLayout->addWidget(m_tabs);
@@ -797,6 +839,11 @@ void AlignmentDataTableDialog::onHCellDoubleClicked(int row, int col)
         m_hTable->visualItemRect(m_hTable->item(row, col)).center());
     menu->exec(cellCenter);
     menu->deleteLater();
+}
+
+bool AlignmentDataTableDialog::elementChainSyncEnabled() const
+{
+    return m_tcl && m_tcl->elementChainSyncEnabled();
 }
 
 void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)

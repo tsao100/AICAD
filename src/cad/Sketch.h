@@ -453,8 +453,16 @@ public:
     SketchConstraint* findConstraint(const QString& uuid);
     QList<SketchConstraint*> constraintsOf(const QString& geomUuid);
     void removeConstraintsOf(const QString& geomUuid);
-    /// 僅更新尺寸線偏移，不重新求解（拖曳尺寸線時輕量更新）
+    /// 更新尺寸線偏移（拖曳放開滑鼠、確認位置時呼叫）；一般型別只搬位置、
+    /// 不重新求解，角度型別（FixedAngle/FixedAngleDim）額外重算 value 並
+    /// 重新求解一次——見該函式內完整說明。
     bool updateConstraintDimOffset(const QString& uuid, double offsetX, double offsetY);
+    /// 拖曳「進行中」的輕量數值預覽（第 11 項）：只更新角度型別的
+    /// SketchConstraint::value（讓 labelText() 顯示新數字），不搬
+    /// dimLineOffsetX/Y、不 solve、不同步 SketchAnnotation——比照建立新
+    /// 標註時 hover 預覽的即時感，真正落地仍要靠放開滑鼠時的
+    /// updateConstraintDimOffset()。非角度型別直接回傳 false（不需要）。
+    bool previewConstraintDimValue(const QString& uuid, double offsetX, double offsetY);
 
     /// 第 10 項回報的後續需求：讓使用者手動切換 FixedDistance 約束求解
     /// 的「哪一側」。做法是把約束的其中一個參考幾何反射到目前的另一側
@@ -603,6 +611,14 @@ private:
     Plane* resolveStandardPlane(const QString& planeName);
     Plane* reconstructPlaneFromJson(const QJsonObject& planeJson,
                                     const QString& hint = QString());
+
+    /// updateConstraintDimOffset()／previewConstraintDimValue() 共用：給定
+    /// 角度型別約束 c 與新的尺寸線偏移，回傳該偏移對應扇區的角度值（弧
+    /// 度）；c 不是角度型別、找不到對應的兩條線、或偏移太接近零向量（無
+    /// 法判斷方向）時回傳 std::nullopt，呼叫端應維持原本的值不覆寫。
+    std::optional<double> previewAngleValueForOffset(const SketchConstraint* c,
+                                                      double offsetX, double offsetY) const;
+
 
     // Phase 0B：從舊格式 JSON 遷移
     void migrateFromLegacyFormat(const QJsonObject& json);

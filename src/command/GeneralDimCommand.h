@@ -82,7 +82,7 @@ private:
     /// 目前預覽/已鎖定的型別是否要用補角（180°－夾角）。相交兩線的夾角型別
     /// 在 WaitDimPlace 階段依滑鼠落在角平分線的哪一側動態切換（無選單版
     /// 第 B 組第 16 項）。
-    bool                 m_useSupplementAngle = false;
+    mutable bool         m_useSupplementAngle = false;
 
     /// 目前這筆標註是從「單幾何流程」（Anchored 第 2 次點擊同時定型定位，
     /// 直接跳進 WaitValue）還是「雙幾何流程」（經過 WaitDimPlace 第 3 次

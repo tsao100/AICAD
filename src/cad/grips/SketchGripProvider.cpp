@@ -3,6 +3,7 @@
 #include "../Plane.h"
 #include "../sketch/ConstraintOverlayManager.h"
 #include "../sketch/DimensionLineAIS.h"
+#include "../sketch/SketchGeom2DMath.h"
 #include <QtMath>
 #include <QDebug>
 #include <GC_MakeArcOfCircle.hxx>
@@ -443,7 +444,13 @@ QVector<GripPoint> SketchGripProvider::gripsForConstraint(
         con->type == ConstraintType::FixedRadius   ||
         con->type == ConstraintType::FixedX        ||
         con->type == ConstraintType::FixedY        ||
-        con->type == ConstraintType::FixedAngleDim;
+        con->type == ConstraintType::FixedAngleDim ||
+        con->type == ConstraintType::FixedAngle;   // ★ 修正：先前漏了這個型別，
+                                                    //   跟 FixedAngleDim 是同一
+                                                    //   件事（兩線夾角），沒有
+                                                    //   理由排除在外——漏掉的
+                                                    //   結果是這個型別的角度標
+                                                    //   註完全沒有 Grip 可拖。
     if (!isDim) return grips;
 
     // 取得尺寸線 AIS 物件，從中取錨點位置
@@ -462,12 +469,32 @@ QVector<GripPoint> SketchGripProvider::gripsForConstraint(
         QVector2D newPlanePt = m_sketch->plane()->toPlane(
             QVector3D(np.X(), np.Y(), np.Z()));
 
-        // 計算中心點（兩 ref 的中點，用於計算偏移量）
+        // 計算中心點：一般尺寸型別用「兩 ref 的中點」；角度型別必須用兩線
+        // 的真正交點（apex），不能沿用中點定義——GeomRef::resolvePosition()
+        // 對 Line 型別的 ref 只認 Start/End，角度用的 refs 是整條線（handle
+        // 不是 Start/End），resolvePosition() 會退回線段的起點，「兩線起點
+        // 的中點」通常離兩線真正的交點很遠。跟
+        // GeneralDimCommand::angleApex2D()／AIS_DimensionLine::drawAngleDim()
+        // 用同一套交點公式（geom2d::lineLineIntersect），確保這裡拖曳算出
+        // 來的偏移方向，跟畫面上實際顯示、跟建立當下算的是同一個基準點，
+        // 不會出現「拖到另一側，夾角/補角卻沒有跟著切換」的不一致
+        // （這正是第 8 項回報的症狀——中心點錯了，offset 方向就跟著錯，
+        // 靠 offset 方向判斷落在哪個扇區自然也跟著錯）。
         QVector2D p1, p2;
         if (!c->refs.isEmpty())
             p1 = c->refs[0].resolvePosition(m_sketch);
         p2 = (c->refs.size() > 1) ? c->refs[1].resolvePosition(m_sketch) : p1;
-        QVector2D center = (p1 + p2) * 0.5f;
+        QVector2D center = (p1 + p2) * 0.5f;  // 保底值：非角度型別，或角度但線不存在/平行時使用
+        if ((c->type == ConstraintType::FixedAngle || c->type == ConstraintType::FixedAngleDim)
+            && c->refs.size() >= 2) {
+            auto* lineA = dynamic_cast<SketchLine*>(m_sketch->findGeometry(c->refs[0].geomUuid));
+            auto* lineB = dynamic_cast<SketchLine*>(m_sketch->findGeometry(c->refs[1].geomUuid));
+            if (lineA && lineB) {
+                if (auto apex = geom2d::lineLineIntersect(lineA->start, lineA->end,
+                                                           lineB->start, lineB->end))
+                    center = *apex;
+            }
+        }
 
         // 將新位置轉換為相對偏移量並儲存
         const double offsetX = static_cast<double>(newPlanePt.x() - center.x());

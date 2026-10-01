@@ -238,6 +238,42 @@ bool applyDimensionEdit(Sketch* sk,
         }
     }
 
+    // Chamfer：支援 "D1,D2" 逗號分隔格式，比照上面 CoordinateDim 的 "x,y"。
+    if (con->type == ConstraintType::Chamfer && newExpr.contains(',')) {
+        QStringList parts = newExpr.split(',');
+        if (parts.size() == 2) {
+            bool ok1, ok2;
+            double d1 = parts[0].trimmed().toDouble(&ok1);
+            double d2 = parts[1].trimmed().toDouble(&ok2);
+            if (!ok1 || !ok2) {
+                if (cmdMgr)
+                    cmdMgr->printError(
+                        QString("Invalid chamfer format: '%1' (expected D1,D2)").arg(newExpr));
+                return false;
+            }
+            if (d1 < 0.0 || d2 < 0.0) {
+                if (cmdMgr)
+                    cmdMgr->printError("Chamfer distances must be non-negative.");
+                return false;
+            }
+            con->value  = d1;
+            con->value2 = d2;
+            con->paramExpr.clear();
+            // ⚠️ Chamfer 是直接用 Sketch::addConstraint() 加進去的一般約束
+            // （見 TrimExtendHelper.cpp::chamferAt()），不是 GDIM 那種由
+            // SketchAnnotation 隱含約束驅動的類型——不需要像上面 CoordinateDim
+            // 那樣額外同步 SketchAnnotation，這裡改完 SketchConstraint::value/
+            // value2 就是唯一真相來源，不會被任何隱含約束重新生成覆蓋回去。
+            SolveResult result = sk->solveConstraints();
+            if (cmdMgr) {
+                cmdMgr->printSuccess(
+                    QString("✅ Chamfer updated: D1=%1, D2=%2. Solved.").arg(d1).arg(d2));
+                reportSolveResult(result, cmdMgr);
+            }
+            return true;
+        }
+    }
+
     bool isNumber;
     double newValue = newExpr.toDouble(&isNumber);
     if (!isNumber) {
@@ -1071,6 +1107,30 @@ CommandResult EditConCommand::execute(const CommandContext& ctx)
                 SolveResult result = sk->solveConstraints();
                 cmdMgr->printSuccess(
                     QString("✅ CoordinateDim updated: X=%1, Y=%2. Solved.").arg(x).arg(y));
+                reportSolveResult(result, cmdMgr);
+                triggerOverlayRebuild(app);
+                return CommandResult::Success();
+            }
+        }
+
+        // Chamfer：支援 "D1,D2" 逗號分隔格式，比照上面 CoordinateDim 的 "x,y"。
+        if (con->type == ConstraintType::Chamfer && newExpr.contains(',')) {
+            QStringList parts = newExpr.split(',');
+            if (parts.size() == 2) {
+                bool ok1, ok2;
+                double d1 = parts[0].trimmed().toDouble(&ok1);
+                double d2 = parts[1].trimmed().toDouble(&ok2);
+                if (!ok1 || !ok2)
+                    return CommandResult::Failure(
+                        QString("Invalid chamfer format: '%1' (expected D1,D2)").arg(newExpr));
+                if (d1 < 0.0 || d2 < 0.0)
+                    return CommandResult::Failure("Chamfer distances must be non-negative.");
+                con->value  = d1;
+                con->value2 = d2;
+                con->paramExpr.clear();
+                SolveResult result = sk->solveConstraints();
+                cmdMgr->printSuccess(
+                    QString("✅ Chamfer updated: D1=%1, D2=%2. Solved.").arg(d1).arg(d2));
                 reportSolveResult(result, cmdMgr);
                 triggerOverlayRebuild(app);
                 return CommandResult::Success();

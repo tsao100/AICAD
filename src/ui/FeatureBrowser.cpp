@@ -7,6 +7,7 @@
 
 #include "core/EventBus.h"
 #include "core/Application.h"
+#include "core/DocumentManager.h"
 #include "cad/Feature.h"
 #include "FeatureBrowser.h"
 #include "FeatureTreeItem.h"
@@ -509,6 +510,32 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
         QAction* actQuickTable = menu.addAction(tr("以 AQT 編輯..."));
         connect(actQuickTable, &QAction::triggered, this, [this, itemId] {
             Q_EMIT editWithQuickTableRequested(itemId);
+        });
+
+        menu.addSeparator();
+
+        // ── 元素鏈同步（需求 7）：逐線路獨立開關，預設關閉 ──────────────────
+        // 見 railway::TrackCenterLine::elementChainSyncEnabled() 的完整說明。
+        bool syncEnabled = false;
+        if (auto* d = core::Application::instance()->documentManager()->currentDocument()) {
+            if (auto* tcl = d->findTrackCenterLine(itemId))
+                syncEnabled = tcl->elementChainSyncEnabled();
+        }
+        QAction* actSync = menu.addAction(tr("元素鏈同步"));
+        actSync->setCheckable(true);
+        actSync->setChecked(syncEnabled);
+        actSync->setToolTip(
+            tr("關閉（預設）：保護本線的線元資料不被元素鏈重建覆寫，"
+               "但「線形資料表」對話框內拖曳 grip／編輯欄位不會寫回。\n"
+               "開啟：允許本線使用元素鏈重建與即時編輯寫回，"
+               "但在少數線元組合下，重建可能誤判而覆蓋掉其他既有元素。"));
+        connect(actSync, &QAction::toggled, this, [itemId](bool checked) {
+            if (auto* d2 = core::Application::instance()->documentManager()->currentDocument()) {
+                if (auto* tcl2 = d2->findTrackCenterLine(itemId)) {
+                    tcl2->setElementChainSyncEnabled(checked);
+                    d2->setModified(true);
+                }
+            }
         });
 
         menu.addSeparator();

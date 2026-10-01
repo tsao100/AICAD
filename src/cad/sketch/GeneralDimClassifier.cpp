@@ -208,12 +208,31 @@ GeneralDimClassifier::inferPair(const GeomRef& a, const GeomRef& b,
     // ── 依 Constraint/關係推論（優先於下面逐一比對幾何型別的規則）───────────
     // 重合的兩點不提供距離；同心的兩個圓/弧「中心距」沒有意義（＝0），
     // 交給呼叫端 fallback 回單幾何的 R/D 預覽（見 GeneralDimCommand）。
-    switch (GeometryRelationshipAnalyzer::analyze(a, b, sketch)) {
-    case GeomRelationship::Coincident:
-    case GeomRelationship::Concentric:
-        return std::nullopt;
-    default:
-        break;
+    //
+    // ★ 修正（第 12 項回報：兩線有一點重合時，選其中一線再 hover 到另一條
+    //   線，沒有出現角度預覽；實測用真實 .aicad 檔確認）：使用者用「重合」
+    //   指令把兩條線的端點接起來時，存下來的 Coincident 約束 refs 是
+    //   「線的 uuid ＋ Start/End handle」（不是獨立 SketchPoint 的 uuid），
+    //   GeometryRelationshipAnalyzer::analyze() 開頭的
+    //   hasConstraintBetween(a.geomUuid, b.geomUuid, Coincident) 是純 uuid
+    //   比對，就會把「兩條整線」誤判成 Coincident 關係，這裡於是直接回傳
+    //   nullopt，永遠走不到後面的「線＋線 → 夾角」規則。
+    //   「兩條整線其中一端重合」不代表這兩條線本身無法標註夾角——恰恰
+    //   相反，兩線共用一個頂點正是最典型的夾角標註情境。所以整線＋整線
+    //   （a、b 都是 WholeGeom 的 Line）時不套用 Coincident 排除；其餘
+    //   （點＋點重合、圓/弧同心）維持原本行為。
+    const bool bothWholeLines =
+        geomA && geomB &&
+        geomA->type == SketchGeometryType::Line && a.handle == GeomHandle::WholeGeom &&
+        geomB->type == SketchGeometryType::Line && b.handle == GeomHandle::WholeGeom;
+    if (!bothWholeLines) {
+        switch (GeometryRelationshipAnalyzer::analyze(a, b, sketch)) {
+        case GeomRelationship::Coincident:
+        case GeomRelationship::Concentric:
+            return std::nullopt;
+        default:
+            break;
+        }
     }
 
     const bool aIsWholeLine   = geomA && geomA->type == SketchGeometryType::Line

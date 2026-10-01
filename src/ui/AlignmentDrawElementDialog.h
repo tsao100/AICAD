@@ -1,51 +1,61 @@
 /**
  * @file AlignmentDrawElementDialog.h
- * @brief 「接續目前線形，逐段加入直線／曲線／緩和曲線組」對話框 —
- *        ALIGNMENTDRAWCHAIN（alias: ADC）用。
+ * @brief 「設計一段線元（直線／曲線／緩和曲線組），套用到既有線形端點」
+ *        對話框 — ALIGNMENTDRAWCHAIN（alias: ADC）用。
  *
- * 介面分成三個獨立區塊（比照使用者提供的 Excel VBA 表單：ComboBox1=緩和
- * 曲線類型、TextBox1=長度、TextBox2=端點半徑，三個 CommandButton 分別對應
- * 「加緩和曲線」「續接下一圓弧」「續接下一直線」），使用者可反覆點選任一
- * 區塊的「加入」按鈕，逐段從目前端點往下延伸；每加入一段，「目前端點」與
- * 已加入線元列表即時更新，可「復原上一段」；全部加完後按「完成」結束。
+ * 介面分成三個獨立區塊（直線／曲線／緩和曲線組），每個區塊各自有一個
+ * 「繪製」按鈕——填好該區塊的欄位、按下該區塊的「繪製」，就直接把
+ * 「這一段」線元的定義關閉本對話框並回傳（accept()），不會停留在對話框
+ * 內等待再加下一段、也沒有另外的「完成」按鈕。呼叫端
+ * （AlignmentDrawChainCommand）收到後才進入「選物件→直接繪製結果」的
+ * 連續流程（見該類別說明）。
  *
- *   1. 【直線區】長度 → 加入一段切線。
- *   2. 【曲線區】半徑＋長度 → 加入一段圓弧（半徑帶號，正負號慣例與既有
- *      指令一致）。曲率不要求與目前狀態連續（允許複合曲線）。
+ *   1. 【直線區】長度 → 一段切線。
+ *   2. 【曲線區】半徑＋長度 → 一段圓弧（半徑帶號，正負號慣例與既有指令
+ *      一致）。曲率不要求與目前狀態連續（允許複合曲線）。
  *   3. 【緩和曲線區（二段）】緩和曲線類型＋入緩和曲線長度＋圓弧半徑
  *      （留白＝無限大＝直線）＋圓弧長度（可為 0）＋出緩和曲線長度
- *      （可為 0）→ 一次加入 1～3 個新關鍵點，銜接「目前曲率」與「圓弧
- *      半徑欄代表的曲率」：
- *        - 目前在切線（曲率 0）：圓弧半徑欄必須填實際半徑（不可留白，
- *          留白代表直線，切線接直線沒有意義，請改用直線區）——正向緩和
- *          曲線 0→R，可選中間圓弧（維持 R），可選出緩和曲線 R→0（回到
- *          切線）。
- *        - 目前在圓弧上（曲率 R0）：圓弧半徑欄只能留白（代表銜接回
- *          切線）——反向緩和曲線 R0→0，可選中間直線段，可選出緩和曲線
- *          0→R0（回到原本的 R0，例如在既有曲線中間插入一小段直線再
- *          接回原曲線）。不支援轉去另一個「不同、非 0」的半徑（複合曲線
- *          Egg），這類需求請改用 ALIGNMENTQUICKTABLE。
- *      無論從哪一端開始，「出緩和曲線」一律回到「這次操作開始前」的曲率，
- *      邏輯完全對稱。
+ *      （可為 0）。
  *
- * ADC 的編輯對象固定為「目前作用中的 Alignment」（由
- * AlignmentDrawChainCommand 透過點選既有線形起點／終點決定，見該類別
- * 說明），本對話框開啟時已知目前作用中線路的名稱與其完整關鍵點序列
- * （TM2 座標）。使用者可從既有關鍵點清單中選擇要「接續」的點位（預設為
- * 最後一點）；若不是最後一點，代表該點之後原有的關鍵點將被取代。
+ * 需求 20：緩和曲線組不再要求使用者預先宣告「起點曲率」——這個值本質上
+ * 就是「選取哪個既有端點」決定的（曲線的半徑與左右彎都是既有幾何的一部
+ * 分，不該由使用者重新用文字打一次，打錯了緩和曲線的形狀就真的是錯的：
+ * 這和直線／曲線不同，緩和曲線的形狀無法靠剛體變換／事後修正）。因此
+ * 本對話框不再收集「起點半徑」，緩和曲線組按「繪製」時只驗證欄位本身的
+ * 基本合理性（長度需為正、半徑格式須可解析），並不在此計算實際幾何——
+ * 而是把參數（transitionGroupParams()）交給呼叫端，等使用者選取了真正
+ * 要接續的端點、知道該點「以選取為準」的真實曲率後，才由
+ * AlignmentDrawChainCommand 直接算出實際座標（見該類別
+ * buildTransitionGroupAt() 的說明）。直線／曲線兩區塊不受影響：它們的
+ * 幾何本來就與起點曲率無關，仍然在對話框內立即算好（resultPoints()），
+ * 呼叫端只需剛體變換套用。
  *
- * 座標系統：與 AlignmentQuickTableDialog 一致——全程在 TM2（Global）座標下
- * 顯示與計算，TM2 ↔ Local 的轉換由呼叫端（AlignmentDrawChainCommand）在
- * 跨越 TrackCenterLine／OCCT 邊界前後各做一次。
+ * 緩和曲線組銜接規則（curvatureIn＝選取端點的實際曲率）：
+ *   - curvatureIn＝0（切線）：圓弧半徑欄必須填實際半徑（不可留白，留白
+ *     代表直線，切線接直線沒有意義，請改用直線區）——正向緩和曲線
+ *     0→R，可選中間圓弧（維持 R），可選出緩和曲線 R→0（回到切線）。
+ *   - curvatureIn≠0（圓弧上）：圓弧半徑欄留白代表銜接回切線——反向緩和
+ *     曲線 curvatureIn→0，可選中間直線段，可選出緩和曲線 0→curvatureIn
+ *     （回到原本的曲率）；圓弧半徑欄填入另一個不同的有限半徑 R1，則視為
+ *     蛋形（Egg）複合曲線 curvatureIn→R1（改用
+ *     railway::EggTransitionElement 求解，與 AlignmentElementFactory::
+ *     createSpiral() 的 Egg(CC) 分支、AS 指令的 ACA 模式共用同一套公式）
+ *     ——可選中間圓弧（維持 R1）、可選出緩和曲線接回 curvatureIn（或再接
+ *     到另一個半徑，同樣以蛋形處理）。
+ *
+ * 直線／曲線兩區塊 resultPoints() 回傳的序列第一點是佔位用的基準點（不
+ * 代表真實位置），真正的「相對錨點」是第二點（座標固定為原點）；呼叫端
+ * 套用時應以此第二點為基準做剛體變換，其後各點依序平移／旋轉即可。
  *
  * @see railway::computeForwardSpiralEndpoint(), railway::computeReversedSpiralEndpoint()
- * @see railway::curvatureAtPoint()
+ * @see railway::EggTransitionElement
  * @see AlignmentDrawChainCommand
  * @author AICAD Team
  */
 #pragma once
 
 #include <QDialog>
+#include <QString>
 #include <QVector>
 
 #include "railway/RailwayAlignment.h"   // AlignmentPoint
@@ -55,7 +65,6 @@ class QLineEdit;
 class QLabel;
 class QGroupBox;
 class QPushButton;
-class QListWidget;
 
 namespace aicad {
 namespace ui {
@@ -65,69 +74,72 @@ class AlignmentDrawElementDialog : public QDialog
     Q_OBJECT
 
 public:
-    /**
-     * @param tclName            目前作用中線路的名稱，僅供顯示。
-     * @param existingPointsTM2  該線路目前完整的關鍵點序列（TM2 座標）。
-     */
-    AlignmentDrawElementDialog(const QString& tclName,
-                                const QVector<railway::AlignmentPoint>& existingPointsTM2,
-                                QWidget* parent = nullptr);
+    explicit AlignmentDrawElementDialog(QWidget* parent = nullptr);
     ~AlignmentDrawElementDialog() override = default;
 
     /**
-     * @brief 按「完成」關閉（Accepted）後：完整的新關鍵點序列（TM2 座標），
-     *        = 選取點（含）之前的既有關鍵點 + 逐段加入的新關鍵點，已可
-     *        直接交給 tcl->loadHorizontal()（轉回 Local 之後）。
+     * @brief 直線／曲線區適用：這一段線元的相對關鍵點序列——[0]=佔位基準
+     *        點、[1]=原點錨點、[2..]=正算出的新關鍵點，供呼叫端做剛體
+     *        變換後套用。緩和曲線組（isTransitionGroup()==true）時固定
+     *        回傳只含 [基準點, 原點錨點] 的 2 點陣列，實際幾何請改用
+     *        transitionGroupParams()（見上方檔案說明）。
      */
     const QVector<railway::AlignmentPoint>& resultPoints() const { return m_points; }
 
+    /** 這次「繪製」是否為緩和曲線組。 */
+    bool isTransitionGroup() const { return m_isTransitionGroup; }
+
+    /** 緩和曲線組的原始輸入參數（需求 20：不含起點曲率——由呼叫端在選取
+     *  端點後代入真實曲率，見 AlignmentDrawChainCommand::
+     *  buildTransitionGroupAt()）。只在 isTransitionGroup()==true 時有效。 */
+    struct TransitionGroupParams {
+        QString family;                  ///< 緩和曲線類型 token（kSpiralTokens 之一）
+        double  spiralInLength   = 0.0;
+        bool    targetIsInfinite = true; ///< 圓弧半徑留白＝目標曲率 0（切線）
+        double  targetRadius     = 0.0;  ///< targetIsInfinite 為 false 時才有意義（有號）
+        double  curveLength      = 0.0;  ///< 中間圓弧／直線段長度，可為 0
+        double  spiralOutLength  = 0.0;  ///< 出緩和曲線長度，可為 0
+    };
+    TransitionGroupParams transitionGroupParams() const { return m_transParams; }
+
+protected:
+    /** 需求 18：QDialog 的通用結束入口，涵蓋三個「繪製」按鈕（accept）與
+     *  「取消」／Esc／叉關閉（reject）所有路徑——在這裡統一儲存目前欄位值
+     *  到 QSettings，之後不論用哪個管道關閉都會存到，不用在每個按鈕處理
+     *  常式裡各自呼叫一次。 */
+    void done(int result) override;
+
 private Q_SLOTS:
-    void onStartPointChanged(int index);
-    void onAddTangent();
-    void onAddCurve();
-    void onAddTransitionGroup();
-    void onUndoLast();
-    void onFinish();
+    void onDrawTangent();
+    void onDrawCurve();
+    void onDrawTransitionGroup();
 
 private:
-    void buildUi(const QString& tclName);
-    void refreshStartPointCombo(const QString& tclName);
-    void refreshCurrentStateLabel();
-    void refreshSegmentList();
-    /** 更新「緩和曲線區」的提示文字（依目前曲率狀態說明圓弧半徑欄的
-     *  填法）；不再停用整個區塊——需求：起點在圓弧上時也要能使用。 */
-    void refreshTransitionGroupAvailability();
+    void buildUi();
+    /** 把 m_points 初始化成 [佔位基準點, 原點錨點]（皆固定在原點，見
+     *  上方檔案說明——不再需要使用者宣告起點曲率）。 */
+    void setupAnchor();
 
-    /** 目前端點（m_points 最後一點）所在曲率；0 = 位於切線。 */
-    double currentCurvature() const;
+    /** 需求 18：對話框打開後，把上次關閉前存的各欄位值（QSettings）載入
+     *  回控制項；找不到值（第一次使用）時保留 buildUi() 給的預設值。 */
+    void loadSettings();
+    /** 需求 18：對話框關閉前（見 done()），把目前各欄位值存進 QSettings，
+     *  供下次打開時 loadSettings() 還原。 */
+    void saveSettings() const;
 
     /**
      * @brief 把「一段」新線元附加到 m_points 尾端：mutates m_points.last()
      *        的 tsc[1]／length／radius／curveType，再 push_back 正算出的
-     *        新端點（暫定收尾字元 'T'，若後續再接線元會被覆寫）。
+     *        新端點（收尾字元固定 'T'）。
      * @return 失敗時回傳錯誤訊息（非空）；成功回傳空字串。
      */
     QString appendTangentSegment(double length);
     QString appendCurveSegment(double radius, double length);
 
-    /**
-     * @brief 加入緩和曲線組（1～3 個新關鍵點），見標頭「緩和曲線區」說明。
-     * @param curveRadius 圓弧半徑；傳入 0（對應 UI 上的「留白」）代表
-     *                    無限大（直線）。
-     * @return 失敗時回傳錯誤訊息（非空）；成功回傳空字串。
-     */
-    QString appendTransitionGroup(const QString& curveType, double spiralInLength,
-                                   double curveRadius, double curveLength,
-                                   double spiralOutLength);
+    QVector<railway::AlignmentPoint> m_points;   ///< [0]=佔位基準點, [1..]=直線/曲線區用
 
-    QVector<railway::AlignmentPoint> m_points;       ///< 既有關鍵點 + 已加入的新關鍵點
-    QVector<double> m_radiusHistory;                 ///< 與 m_points 對齊：各點所在曲率
-    QVector<int> m_checkpoints;                      ///< 每次「加入」前的 m_points.size()，供復原
-
-    int m_existingCount = 0;   ///< 建構時既有關鍵點數量（起點列表只列這些點）
-
-    QComboBox*   m_startPointCombo = nullptr;
-    QLabel*      m_startInfoLabel  = nullptr;
+    bool                   m_isTransitionGroup = false;
+    TransitionGroupParams  m_transParams;
 
     // 直線區
     QGroupBox*   m_tangentGroup      = nullptr;
@@ -145,12 +157,8 @@ private:
     QLineEdit*   m_transCurveRadiusEdit = nullptr;
     QLineEdit*   m_transCurveLengthEdit = nullptr;
     QLineEdit*   m_transOutLengthEdit   = nullptr;
-    QLabel*      m_transHint            = nullptr;
 
-    QListWidget* m_segmentList   = nullptr;
     QLabel*      m_statusLabel   = nullptr;
-    QPushButton* m_undoButton    = nullptr;
-    QPushButton* m_finishButton  = nullptr;
 };
 
 } // namespace ui

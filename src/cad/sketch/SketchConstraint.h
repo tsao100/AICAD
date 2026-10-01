@@ -89,6 +89,21 @@ enum class ConstraintType {
     FixedVertDist,      ///< 兩點垂直距離 = value
     FixedArcLength,     ///< 圓弧弧長 = value
     CoordinateDim,      ///< 點相對原點的 (x, y) 座標尺寸（消耗 2 DOF）
+
+    // ── 衍生幾何（角落特徵） ───────────────────────────────────
+    Chamfer,            ///< 兩線倒角（消耗 2 DOF）。refs[0]=line1 的裁切端點
+                         ///< （GeomHandle::Start 或 End，即被倒角移動到的那個
+                         ///< 端點）、refs[1]=line2 的裁切端點（同理）；
+                         ///< value=D1（line1 側裁切距離）、value2=D2（line2
+                         ///< 側）。方程式見 ConstraintSolver.h 的
+                         ///< ChamferEquation 類別說明——用 line1/line2「另一
+                         ///< 端點」與裁切端點共同推導虛擬交點，讓 D1/D2 相對
+                         ///< 「兩線目前即時位置」成立，而不是相對建立當下算
+                         ///< 好、之後寫死的座標。取代舊版
+                         ///< FixedDistance(交點,裁切點)+PointOnCurve(交點,線)
+                         ///< 的 4 方程式組合——少 2 條方程式、也讓求解器把它
+                         ///< 辨識成一個具名的「Chamfer」語意單位，而不是幾條
+                         ///< 各自獨立、事後看不出彼此關聯的通用約束。
 };
 
 inline size_t qHash(const aicad::cad::ConstraintType &key, size_t seed = 0) noexcept {
@@ -231,6 +246,17 @@ struct SketchConstraint {
     static SketchConstraint makeFixedArcLength (const QString& arcUuid, double len);
     static SketchConstraint makeCoordinateDim  (const GeomRef& point, double x, double y);
     static SketchConstraint makeSlope          (const QString& lineUuid, double slope);
+
+    // 衍生幾何（角落特徵）工廠方法
+    // ⚠️ line1Ref/line2Ref 的 geomUuid 必須是「線」的 UUID（handle=Start
+    //    或 End 選裁切端點是哪一端），不能是裁切端點本身那個 SketchPoint
+    //    的 UUID——GeomVarLayout::indexFor() 對點的 2 值 layout 呼叫
+    //    indexFor(End) 會算出 offset+2，讀到不相關的變數，讓
+    //    ChamferEquation 算出垃圾殘差、被 solveConstraints() 誤判成
+    //    Conflict（真實案例：TrimExtendHelper.cpp::chamferAt() 曾經傳錯
+    //    成點的 UUID，導致兩條單純相交、明明有解的線被判定無解）。
+    static SketchConstraint makeChamfer(const GeomRef& line1Ref, const GeomRef& line2Ref,
+                                        double d1, double d2);
 
     // DOF 消耗量（用於 under/over 約束檢查）
     int dofConsumed() const;

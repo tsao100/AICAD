@@ -7,6 +7,7 @@
 #include "../core/EventBus.h"
 #include "../core/ParameterStore.h"
 #include "../cad/Sketch.h"
+#include "../cad/sketch/SketchGeom2DMath.h"
 #include "../ui/UIManager.h"
 #include "../view/CadView.h"
 #include <QMetaObject>
@@ -88,21 +89,48 @@ static double pointToLineDistance(const QVector2D& P,
 /// 第二選 handle 正規化：當第一選（anchor）是整條幾何（WholeGeom），
 /// 第二選若是同一類型幾何但 OSnap 吸附到端點（handle = Start/End），
 /// 強制改為 WholeGeom，確保 GeneralDimClassifier::inferPair() 走到正確分支。
-static void normalizeSecondRef(const cad::GeomRef& first, cad::GeomRef& second,
+static void normalizeSecondRef(cad::GeomRef& first, cad::GeomRef& second,
                                 const cad::Sketch* sk)
 {
     if (!sk) return;
     auto* geomFirst  = sk->findGeometry(first.geomUuid);
     auto* geomSecond = sk->findGeometry(second.geomUuid);
-    const bool firstIsWhole =
-        geomFirst && first.handle == GeomHandle::WholeGeom;
+    const bool firstIsGeom =
+        geomFirst &&
+        (geomFirst->type == SketchGeometryType::Line ||
+         geomFirst->type == SketchGeometryType::Arc  ||
+         geomFirst->type == SketchGeometryType::Circle);
     const bool secondIsGeom =
         geomSecond &&
         (geomSecond->type == SketchGeometryType::Line ||
          geomSecond->type == SketchGeometryType::Arc  ||
          geomSecond->type == SketchGeometryType::Circle);
-    if (firstIsWhole && secondIsGeom && second.handle != GeomHandle::WholeGeom)
-        second = GeomRef(second.geomUuid, GeomHandle::WholeGeom);
+    const bool firstIsWhole  = firstIsGeom  && first.handle  == GeomHandle::WholeGeom;
+    const bool secondIsWhole = secondIsGeom && second.handle == GeomHandle::WholeGeom;
+
+    // ★ 修正（第 12 項回報：兩線在一點重合，選其中一線後 hover 到另一條線
+    //   應該也要出現角度尺寸預覽，但沒有）：先前只有「first 已經明確是
+    //   WholeGeom」時才把 second 正規化成 WholeGeom——但兩線共用同一個端
+    //   點（很常見，用 LINE 指令連續畫出相接的兩段線本來就是同一個
+    //   SketchPoint）時，OCCT 拾取／hover 在靠近那個共用端點的地方，
+    //   很容易連 first（使用者選的「第一條線」）自己都被拾取成
+    //   Start/End handle，不是 WholeGeom——firstIsWhole 這個條件就不成
+    //   立，second 也就永遠不會被正規化，兩者都停在「點」的 handle 上。
+    //   inferPair() 對「點＋線」的規則（第 308／314 行）因此把這個配對
+    //   誤判成「點到線垂距」，不是使用者真正想要的「兩線夾角」——這正是
+    //   角度預覽消失的原因。
+    //
+    //   改成對稱判斷：只要 first、second 都是 Line/Arc/Circle（不是獨立
+    //   點、不是圓心以外的東西），且兩者不是同一個 handle 指向同一個真正
+    //   的點（sameAsAnchor 由呼叫端另外檢查，這裡不重複判斷"是否為同一
+    //   點"），就把兩者的 handle 都正規化成 WholeGeom——不管哪一個先被
+    //   使用者選取。這樣「兩線共用端點、無論先選哪一條、滑鼠在哪個端點
+    //   附近」都能穩定分類成線＋線，交給後面的平行/相交/夾角規則決定，
+    //   不會被「其中一端剛好被拾取成端點 handle」這種拾取細節誤導。
+    if (firstIsGeom && secondIsGeom) {
+        if (!firstIsWhole)  first  = GeomRef(first.geomUuid,  GeomHandle::WholeGeom);
+        if (!secondIsWhole) second = GeomRef(second.geomUuid, GeomHandle::WholeGeom);
+    }
 }
 
 /// ⚠️ 修正：草圖平面參考幾何（X 軸／Y 軸／原點）需能參與 GDIM 約束
@@ -287,11 +315,31 @@ double GeneralDimCommand::measureCurrentValue() const {
         if (!lineA || !lineB) return 0.0;
         QVector2D dirA = (lineA->end - lineA->start).normalized();
         QVector2D dirB = (lineB->end - lineB->start).normalized();
+
+        // ★ 修正（實測回報：拖到兩線夾出的兩個「邊」扇區時數值正確，但拖
+        //   到「中間」——也就是按 Enter 沿用量測值，沒有明顯拖曳動作——
+        //   數值卻標反，例如應該是 140° 卻標成 40°、應該是 30° 卻標成
+        //   150°）：「該用夾角還是補角」的判斷已經收斂進
+        //   geom2d::angleSectorValue()（見 SketchGeom2DMath.h 該函式說
+        //   明），用「當下」的 m_dimOffsetX/Y 現算，不再依賴另一個地方
+        //   非同步寫回的 m_useSupplementAngle——同一份邏輯也供
+        //   Sketch::updateConstraintDimOffset() 共用（拖曳「既有」角度標
+        //   註時一併重算數值，見該處說明），確保建立當下與事後拖曳兩種
+        //   情境算出來的數值永遠一致。
+        QVector2D offset(static_cast<float>(m_dimOffsetX), static_cast<float>(m_dimOffsetY));
         double dot   = static_cast<double>(QVector2D::dotProduct(dirA, dirB));
         double cross = static_cast<double>(dirA.x() * dirB.y() - dirA.y() * dirB.x());
-        double ang   = std::atan2(std::abs(cross), dot);  // 0..π
-        if (m_useSupplementAngle) ang = M_PI - ang;        // 補角
-        return ang;  // 弧度
+        double ang   = std::atan2(std::abs(cross), dot);  // 0..π，夾角本身
+        if (auto v = geom2d::angleSectorValue(dirA, dirB, offset)) {
+            // 其他地方（例如重新編輯既有約束時的 inf->useSupplementAngle）
+            // 還會讀 m_useSupplementAngle 這個旗標，這裡跟著同步更新，不
+            // 只是回傳數值——用「回傳值比較接近 ang 還是 π-ang」判斷，比
+            // 重新推導 atan2 更直接、不會有額外的浮點誤差來源。
+            m_useSupplementAngle = std::abs(*v - ang) > std::abs(*v - (M_PI - ang));
+            return *v;  // 弧度
+        }
+        // offset 太接近零向量，無法判斷落在哪個扇區：退回夾角本身。
+        return ang;
     }
     default:
         return 0.0;
@@ -442,70 +490,14 @@ void GeneralDimCommand::subscribePreview() {
                     }
                 }
 
-                // ── 夾角型別：依滑鼠落在兩線交叉出的 4 個扇區中的哪一個，
-                // 動態切換 夾角／補角 ──────────────────────────────────────
-                // （無選單版第 B 組第 16 項：「移動決定角度標註弧的半徑與象限」）
-                // 型別本身在點擊第二條線時就已鎖定（見 lockPairGeom），這裡只
-                // 調整 useSupplementAngle，不再像舊版那樣於拖曳中重新判斷型別。
-                //
-                // ⚠️ 舊版用「offset 是否在角平分線同一側」的一條線（垂直於
-                // 平分線）粗略二分整個平面，只能大致分成「偏向夾角」／
-                // 「偏向補角」兩半，分界線跟兩線本身的位置對不齊，靠近
-                // dirA/dirB 邊界時容易分類錯——而且用來畫角弧的
-                // DimPreviewOverlay／AIS_DimensionLine::drawAngleDim 兩處，
-                // 各自改用「精確 4 扇區」判斷滑鼠落在哪個扇區來決定畫哪一段
-                // 弧之後，這裡若還用粗略二分，算出來的 m_useSupplementAngle
-                // （決定標籤顯示的角度數值）就可能跟實際畫出來的扇區對不
-                // 上——即使弧的「位置」已經修好，數值卻可能還是夾角/補角
-                // 標反。改成跟畫弧同一套精確判斷：算出滑鼠落在哪個扇區，
-                // 再看該扇區大小是 ang（夾角本身）還是 π-ang（補角）。
-                if (m_type == cad::ConstraintType::FixedAngleDim && m_refs.size() >= 2) {
-                    auto* sk = activeSketch();
-                    if (sk) {
-                        auto* geomA = sk->findGeometry(m_refs[0].geomUuid);
-                        auto* geomB = sk->findGeometry(m_refs[1].geomUuid);
-                        auto* lineA = dynamic_cast<const cad::SketchLine*>(geomA);
-                        auto* lineB = dynamic_cast<const cad::SketchLine*>(geomB);
-                        if (lineA && lineB) {
-                            QVector2D dirA = (lineA->end - lineA->start).normalized();
-                            QVector2D dirB = (lineB->end - lineB->start).normalized();
-
-                            QVector2D offset(static_cast<float>(m_dimOffsetX),
-                                             static_cast<float>(m_dimOffsetY));
-                            if (offset.lengthSquared() > 1e-6f) {
-                                double dot   = static_cast<double>(QVector2D::dotProduct(dirA, dirB));
-                                double cross = static_cast<double>(dirA.x() * dirB.y() - dirA.y() * dirB.x());
-                                double ang   = std::atan2(std::abs(cross), dot);  // 0..π，夾角本身
-
-                                auto norm2pi = [](double a) {
-                                    while (a < 0.0)        a += 2.0 * M_PI;
-                                    while (a >= 2.0 * M_PI) a -= 2.0 * M_PI;
-                                    return a;
-                                };
-                                double rays[4] = {
-                                    norm2pi(std::atan2(static_cast<double>(dirA.y()),  static_cast<double>(dirA.x()))),
-                                    norm2pi(std::atan2(static_cast<double>(-dirA.y()), static_cast<double>(-dirA.x()))),
-                                    norm2pi(std::atan2(static_cast<double>(dirB.y()),  static_cast<double>(dirB.x()))),
-                                    norm2pi(std::atan2(static_cast<double>(-dirB.y()), static_cast<double>(-dirB.x())))
-                                };
-                                std::sort(std::begin(rays), std::end(rays));
-
-                                double angM = norm2pi(std::atan2(static_cast<double>(offset.y()),
-                                                                  static_cast<double>(offset.x())));
-                                double sectorSize = (rays[0] + 2.0 * M_PI) - rays[3]; // 預設：繞回第一段
-                                for (int i = 0; i < 3; ++i) {
-                                    if (angM >= rays[i] && angM < rays[i + 1]) {
-                                        sectorSize = rays[i + 1] - rays[i];
-                                        break;
-                                    }
-                                }
-                                // 該扇區大小比較接近 ang 還是 π-ang，決定是否用補角
-                                m_useSupplementAngle =
-                                    std::abs(sectorSize - ang) > std::abs(sectorSize - (M_PI - ang));
-                            }
-                        }
-                    }
-                }
+                // ── 夾角型別：m_useSupplementAngle 的「該用夾角還是補角」
+                // 判斷已經整併進 measureCurrentValue() 內部（見該處
+                // 2026-09 修正說明）——每次呼叫都用當下的 m_dimOffsetX/Y
+                // 現算，不再需要在這裡另外維護一份重複的判斷邏輯。維持兩
+                // 份邏輯分開，正是先前「拖到中間標錯」那個 bug 的根源
+                // （這裡跟 measureCurrentValue() 各自依賴不同時間點的
+                // m_dimOffsetX/Y，兩邊算出來的 m_useSupplementAngle 不保證
+                // 同步）。下面呼叫 measureCurrentValue() 時就會自動算好。
 
                 m_measuredValue = measureCurrentValue();
                 pushPreview(m_refs, m_type, m_distMode);
@@ -748,7 +740,7 @@ void GeneralDimCommand::onGeomHover(const QVariant& payload)
 
     if (m_state == State::Anchored) {
         if (!sk || m_refs.isEmpty()) return;
-        const GeomRef anchor = m_anchorRef;
+        GeomRef anchor = m_anchorRef;
 
         // 見 m_stickyPairedRef 註解：先用「目前 hover 到的東西」更新/清除
         // sticky 候選，但分類本身一律用 sticky 候選（若有）+ 目前滑鼠位置，
@@ -948,7 +940,7 @@ void GeneralDimCommand::onGeomPicked(const QVariant& payload)
     }
 
     // ── Anchored：這是第 2 次點擊 ────────────────────────────────────────────
-    const GeomRef anchor = m_anchorRef;
+    GeomRef anchor = m_anchorRef;
 
     if (!uuid.isEmpty() && sk) {
         GeomRef secondRef(uuid, static_cast<GeomHandle>(handle));

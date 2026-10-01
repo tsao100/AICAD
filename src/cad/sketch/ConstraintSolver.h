@@ -153,6 +153,32 @@ public:
     void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
 };
 
+/// Chamfer：兩線倒角，見 SketchConstraint.h 的 ConstraintType::Chamfer 註解。
+/// refs[0]=line1 的裁切端點 P1（handle=Start/End）、refs[1]=line2 的裁切
+/// 端點 P2（同理）；value=D1、value2=D2。
+///
+/// 設 A1＝line1「另一個」端點（同一條線上、跟 P1 相對的那一端，透過
+/// GeomVarLayout::indexFor() 反查對側 handle 取得）、A2 同理對應 line2。
+/// C＝line(A1,P1) 與 line(A2,P2) 兩條無限延伸線的虛擬交點（不需要另外
+/// 建立成一個真正的 SketchPoint）。
+///   F0 = dot(C-P1, unit(P1-A1)) - D1
+///   F1 = dot(C-P2, unit(P2-A2)) - D2
+/// 兩線接近平行（無交點）或某一側端點重合（方向向量長度 0）時優雅退化：
+/// 殘差設為 0（該次疊代對這條約束不施力），與 TangentEquation 對
+/// len<1e-10 的處理方式一致，避免除以 0 或 NaN 污染整個 Newton 步驟。
+///
+/// 雅可比只對 P1、P2 做數值微分（中央差分），A1、A2 對應欄位刻意留 0——
+/// 明確告訴 Newton 法「這條方程式只能靠移動 P1/P2 滿足，不准動 A1/A2」，
+/// 讓這條方程式貢獻的子系統維持滿秩，從根本上排除「A1/A2 完全自由時
+/// 被浮點雜訊放大」的秩虧風險，細節見 ConstraintSolver.cpp 的實作註解。
+class ChamferEquation : public ConstraintEquation {
+public:
+    using ConstraintEquation::ConstraintEquation;
+    int  equationCount() const override { return 2; }
+    void evaluate(const QVector<double>& vars, QVector<double>& out) const override;
+    void jacobian(const QVector<double>& vars, int row0, QVector<QVector<double>>&) const override;
+};
+
 class ConcentricEquation : public ConstraintEquation {
 public:
     using ConstraintEquation::ConstraintEquation;

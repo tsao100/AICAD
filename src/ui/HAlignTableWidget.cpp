@@ -46,9 +46,17 @@ QModelIndex HAlignTableWidget::indexAt(const QPoint& pos) const
 
     const QRect cellRect = visualRect(idx);
     const bool inUpperHalf = pos.y() < cellRect.center().y();
+    int targetRow = idx.row();
     if (inUpperHalf && idx.row() > 0)
-        return model()->index(idx.row() - 1, idx.column());
-    return idx;
+        targetRow = idx.row() - 1;
+
+    // 需求 11：最後一段（row = rows-1 → 不存在的下一點）沒有對應的「點位
+    // 間」儲存格，右側表格本就該比左側少一列；點到這塊不存在的半格時
+    // 回傳無效 index，不要選取／進入編輯。
+    if (targetRow >= rowCount() - 1)
+        return QModelIndex();
+
+    return model()->index(targetRow, idx.column());
 }
 
 /*
@@ -84,7 +92,10 @@ void HAlignTableWidget::paintEvent(QPaintEvent* event)
     QPainter painter(viewport());
 
     // ── 手動繪製「點位間」欄位的背景 + 文字（下移半列高）───────────────
-    for (int row = 0; row < rows; ++row) {
+    // 需求 11：右側「點位間」表格本應比左側「點位」表格少一列——最後一
+    // 個點（row = rows-1）之後沒有下一點，不存在那一段線元，不該多畫出
+    // 一格。故只畫到 row < rows-1（rows<=1 時完全不畫，正確）。
+    for (int row = 0; row < rows - 1; ++row) {
         for (int c = firstBetween; c < cols; ++c) {
             QTableWidgetItem* it = item(row, c);
             if (!it) continue;
@@ -92,9 +103,21 @@ void HAlignTableWidget::paintEvent(QPaintEvent* event)
             QRect r = visualItemRect(it);
             r.translate(0, r.height() / 2);
 
-            painter.fillRect(r, it->background());
+            // 選取高亮修正：這欄的可見內容整體下移半列高，但選取狀態的
+            // 高亮底色原本是由 base view／delegate 在「未位移」的格子位置
+            // 畫的，而 BetweenPointDelegate::paint() 刻意什麼都不畫（避免
+            // 裁切殘影），等於整段高亮從沒被畫出來——不是位置偏差，是
+            // 完全消失，看起來像「跑到背景後面」。這裡改成自行依選取狀態
+            // 決定填色，讓高亮跟著下移後的可見範圍一起畫出來。
+            const QModelIndex idx = model() ? model()->index(row, c) : QModelIndex();
+            const bool selected = idx.isValid() && selectionModel()
+                                   && selectionModel()->isSelected(idx);
+
+            painter.fillRect(r, selected ? palette().highlight()
+                                          : it->background());
             if (!it->text().isEmpty()) {
-                painter.setPen(Qt::black);
+                painter.setPen(selected ? palette().color(QPalette::HighlightedText)
+                                         : Qt::black);
                 painter.setFont(it->font());
                 painter.drawText(r.adjusted(4, 0, -4, 0),
                                   Qt::AlignLeft | Qt::AlignVCenter, it->text());
@@ -125,8 +148,10 @@ void HAlignTableWidget::paintEvent(QPaintEvent* event)
     }
 
     // ── 點位間欄位：下移半列高的格線（首尾各少畫半格，最後一列不延伸）──
+    // 需求 11：與上方內容繪製同理，最後一段不存在，格線也只畫到
+    // row < rows-1，讓右側表格的格線本身就比左側少一列高。
     if (firstBetween < cols) {
-        for (int row = 0; row < rows; ++row) {
+        for (int row = 0; row < rows - 1; ++row) {
             const int y = rowViewportPosition(row) + rowHeight(row) / 2;
             painter.drawLine(betweenX, y, rightX, y);
         }

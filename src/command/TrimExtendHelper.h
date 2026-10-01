@@ -163,6 +163,62 @@ FilletResult filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QStri
                       double radius, const QVector2D& clickPt1, const QVector2D& clickPt2);
 
 /**
+ * @brief FILLET 完成後，疊加讓 D=radius 之後仍保有意義、且使用者可在束制
+ *        清單編輯/刪除的約束（Coincident×2 + Tangent×2 + FixedRadius×1；
+ *        半徑 0 的退化情形 arcUuid 為空，這裡不需要再做任何事，直接回傳
+ *        true）。
+ *
+ * 原本這段邏輯內嵌在 FilletCommand::onGeomPicked2D() 裡；抽成這個獨立函式
+ * 有兩個目的：
+ *   1. 讓「FILLET 角落約束」成為一個有名字、可重用、可單獨測試的單元
+ *      （呼應 chamferAt() 已經是自我完備的一個單元，不需要呼叫端另外
+ *      補約束——這裡讓 fillet 補齊到相同的封裝程度）。
+ *   2. 修正一個既有缺陷：舊版 FilletCommand 內嵌的版本呼叫
+ *      sketch->solveConstraints() 後沒有檢查 SolveResult——若這批新約束
+ *      與 line1/line2 原本就有的約束衝突（例如某條線已被 FixedLength
+ *      釘死在別處），solveConstraints() 會回報 Conflict，但已經
+ *      addConstraint() 加進去的 5 條約束仍留在 sketch 裡，讓使用者卡在
+ *      一個衝突/退化狀態，卻沒有任何回饋或復原。這裡比照 chamferAt()
+ *      既有的「整批加、失敗就整批退回」模式修正。
+ *
+ * @param r         filletAt() 的回傳值（radius>0 時 arcUuid 必須非空，
+ *                  否則直接回傳 false，不做任何事）。
+ * @param line1Uuid/line2Uuid 與呼叫 filletAt() 時相同的兩條線 UUID
+ *                  （用於 Tangent 約束；務必「線在前、弧在後」，見下方
+ *                  實作裡的 ⚠️ 說明）。
+ * @param radius    與呼叫 filletAt() 時相同的半徑值。
+ * @return false 表示新約束與既有約束衝突，已整批復原（sketch 狀態與呼叫
+ *         前一致，line1PointUuid/line2PointUuid 的座標仍是 filletAt() 移動
+ *         後的結果——這點與 filletAt() 本身失敗時不同，呼叫端若要完全復原
+ *         幾何位置需另外處理，目前 FilletCommand 的作法是照舊提示失敗，
+ *         不做幾何回滾，與失敗前的既有行為一致）。
+ */
+bool addFilletCornerConstraints(cad::Sketch* sketch, const FilletResult& r,
+                                const QString& line1Uuid, const QString& line2Uuid,
+                                double radius);
+
+/**
+ * @brief CHAMFER 的執行結果，回傳額外的 UUID 供呼叫端（ChamferCommand）
+ *        做後續編輯/選取/undo 顯示用——與 FilletResult 的角色對稱（見該
+ *        結構的說明）；差異在於 chamferAt() 本身就是自我完備的一個單元，
+ *        建立 chamfer 所需的約束（交點座標記錄 D1/D2 用的 FixedDistance／
+ *        Coincident）已經在 chamferAt() 內部加好，這裡的欄位單純是「事後
+ *        還想知道這個 chamfer 由哪些幾何/約束組成」時用，不需要再呼叫任何
+ *        額外函式。
+ */
+struct ChamferResult {
+    bool    success = false;   ///< true 表示已成功套用（含 D1=D2=0 的退化情形）
+    QString newLineUuid;       ///< 新插入的倒角線 UUID；D1=D2=0（無插入線）時為空
+    QString line1PointUuid;    ///< line1 被移動到倒角點/交點的那個端點
+    QString line2PointUuid;    ///< line2 被移動到倒角點/交點的那個端點
+    QString chamferConstraintUuid; ///< 記錄 D1/D2 的 ConstraintType::Chamfer 約束 UUID
+                                ///< （單一一條、消耗 2 DOF——見 SketchConstraint.h
+                                ///< 該型別的說明；取代舊版 FixedDistance×2 +
+                                ///< PointOnCurve×2 的 4 條約束組合）
+    bool    removedExistingCoincident = false;  ///< true 表示兩線交點原本就有 Coincident 約束，已在套用倒角前移除
+};
+
+/**
  * @brief CHAMFER：在兩條直線之間插入一條倒角線。
  *
  * MVP 範圍限制與 filletAt() 相同（只支援兩條直線）。
@@ -170,8 +226,30 @@ FilletResult filletAt(cad::Sketch* sketch, const QString& line1Uuid, const QStri
  * @param dist1/dist2 各自從交點沿線退回的倒角距離（可不同，對應
  *                    AutoCAD 的不等距倒角）。兩者皆為 0 時退化為單純
  *                    延伸相交，不插入倒角線。
+ * @return 見 ChamferResult 說明；success=false 表示兩線平行/共線、其中一個
+ *         不是直線、距離為負值，或新約束與既有約束衝突（已整批復原）。
+ *
+ * D1/D2 現在由一條 ConstraintType::Chamfer 約束（見 SketchConstraint.h 該
+ * 型別／ConstraintSolver.h 的 ChamferEquation 說明）相對「line1/line2 目前
+ * 即時位置」求解，不是倒角當下算好、之後寫死的座標——之後使用者拖動
+ * line1 或 line2 完全自由的遠端點，這個倒角原則上會自動重新解算成新的
+ * 交點/裁切位置。
+ *
+ * 這是 2026-09 重新啟用的即時跟隨行為（先前一度因懷疑
+ * ConstraintSolver::solveLinearLS() 對「精確秩虧」方程組的既有限制而改回
+ * 保守的純三角函數作法，見本函式實作內保留的完整歷史說明）。這次改用
+ * 單一一條具名的 Chamfer 約束（取代舊版 FixedDistance×2 + PointOnCurve×2
+ * 那 4 條各自獨立、彼此看不出關聯的通用約束），並進一步在
+ * ChamferEquation::jacobian() 裡只對 P1/P2（裁切端點）做微分、A1/A2
+ * （line1/line2 的遠端點）對應欄位刻意留 0——結構上排除了這條方程式把
+ * A1/A2 捲進同一個最小平方問題零空間的可能性，不再只是「賭 λ 阻尼夠
+ * 穩健」。理論上這應該已經解決秩虧風險的根源，但**仍然建議在會觸發最壞
+ * 情況的場景（兩條完全沒有其他約束、單純相交的線）實際 build 測試**，
+ * 確認沒有其他沒設想到的副作用。若真的重現「點/線位置跑掉」的症狀，把
+ * `chamferAt()` 內建立約束那段改回呼叫 `makeFixedDistance`/`makeCoincident`
+ * （不加 `makeChamfer`）即可退回不會即時跟隨、但已知穩健的舊行為。
  */
-bool chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line2Uuid,
+ChamferResult chamferAt(cad::Sketch* sketch, const QString& line1Uuid, const QString& line2Uuid,
               double dist1, double dist2,
               const QVector2D& clickPt1, const QVector2D& clickPt2);
 
