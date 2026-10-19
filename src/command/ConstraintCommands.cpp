@@ -446,26 +446,26 @@ QString CoincidentCommand::applyConstraint(Sketch* s, const QStringList& args) c
         u2 = args[1];
     }
 
-    // 若兩個都是 WholeGeom（純 UUID 選取，沒有明確端點），
-    // 找最近端點對，避免永遠只配對 start-start。
-    if (h1 == GeomHandle::WholeGeom && h2 == GeomHandle::WholeGeom) {
+    // 只要有一邊是 WholeGeom（純 UUID 選取，沒有明確端點），就找最近端點對，
+    // 避免永遠只配對 start-start；另一邊若已有明確 handle（例如 center）則固定
+    // 用該 handle，只替 WholeGeom 的那一邊搜尋。
+    if (h1 == GeomHandle::WholeGeom || h2 == GeomHandle::WholeGeom) {
         const SketchGeometry* gA = s->findGeometry(u1);
         const SketchGeometry* gB = s->findGeometry(u2);
         if (gA && gB) {
-            auto endpoints = [](const SketchGeometry* g)
-                -> QVector<QPair<QVector2D, GeomHandle>> {
-                QVector<QPair<QVector2D, GeomHandle>> pts;
-                if (g->type == SketchGeometryType::Point) {
-                    if (!g->points.isEmpty())
-                        pts.append({g->points[0], GeomHandle::WholeGeom});
-                } else if (!g->points.isEmpty()) {
-                    pts.append({g->points.front(), GeomHandle::Start});
-                    if (g->points.size() > 1)
-                        pts.append({g->points.back(), GeomHandle::End});
-                }
-                return pts;
+            // 控制點用 Sketch::coincidentCandidates()：弧/圓的 Center 取真正的
+            // 圓心位置（舊版誤用 points.front()，弧的 Center 永遠等於 Start）。
+            auto ptsA = s->coincidentCandidates(u1);
+            auto ptsB = s->coincidentCandidates(u2);
+            auto restrictTo = [](QVector<QPair<QVector2D, GeomHandle>>& pts,
+                                 GeomHandle h) {
+                if (h == GeomHandle::WholeGeom) return;
+                QVector<QPair<QVector2D, GeomHandle>> only;
+                for (const auto& p : pts) if (p.second == h) only.append(p);
+                if (!only.isEmpty()) pts = only;
             };
-            auto ptsA = endpoints(gA), ptsB = endpoints(gB);
+            restrictTo(ptsA, h1);
+            restrictTo(ptsB, h2);
             float best = std::numeric_limits<float>::max();
             for (auto& [pa, ha] : ptsA)
                 for (auto& [pb, hb] : ptsB) {

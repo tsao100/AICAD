@@ -10,6 +10,7 @@
 #include <QMessageBox>
 
 #include "core/Application.h"
+#include "core/SafeApplication.h"
 #include "ui/UIManager.h"         // ✅ Add this include
 #include "scripting/LispEngine.h"
 #include "scripting/LispBindings.h"
@@ -33,7 +34,7 @@ int main(int argc, char **argv) {
 #endif
 
     // 建立 Qt 應用程式
-    QApplication qapp(argc, argv);
+    aicad::core::SafeApplication qapp(argc, argv);
     
     // 設定應用程式資訊
     qapp.setOrganizationName("AICAD Team");

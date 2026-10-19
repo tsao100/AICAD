@@ -311,20 +311,28 @@ void ChamferEquation::jacobian(const QVector<double>& v, int r0,
 }
 
 // ── Concentric：F = [cx_a-cx_b, cy_a-cy_b] ──────────────────────────────
+// ⚠️ 修正：舊版直接用 itA->offset / itB->offset 當圓心 index。但圓心與
+// SketchPoint 共用 DOF 的 Circle（dof==1）其 offset 指向的是「半徑」，不是
+// cx；一律改走 indexFor(GeomHandle::Center)，由 GeomVarLayout 統一決定圓心
+// 實際對應的變數（Arc：offset+0；共用圓心的 Circle：startOffset）。
 void ConcentricEquation::evaluate(const QVector<double>& v, QVector<double>& out) const {
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()){out[0]=out[1]=0;return;}
-    out[0] = v[itA->offset] - v[itB->offset];
-    out[1] = v[itA->offset+1] - v[itB->offset+1];
+    const int ia = itA->indexFor(GeomHandle::Center);
+    const int ib = itB->indexFor(GeomHandle::Center);
+    out[0] = v[ia]   - v[ib];
+    out[1] = v[ia+1] - v[ib+1];
 }
 void ConcentricEquation::jacobian(const QVector<double>&, int r0,
                                   QVector<QVector<double>>& J) const {
     auto itA = layout().find(constraint().refs[0].geomUuid);
     auto itB = layout().find(constraint().refs[1].geomUuid);
     if (itA==layout().end()||itB==layout().end()) return;
-    J[r0][itA->offset]=1;   J[r0+1][itA->offset+1]=1;
-    J[r0][itB->offset]=-1;  J[r0+1][itB->offset+1]=-1;
+    const int ia = itA->indexFor(GeomHandle::Center);
+    const int ib = itB->indexFor(GeomHandle::Center);
+    J[r0][ia]=1;   J[r0+1][ia+1]=1;
+    J[r0][ib]=-1;  J[r0+1][ib+1]=-1;
 }
 
 // ── FixedDistance：F = [dist(a,b) - value] ──────────────────────────────
@@ -1185,9 +1193,78 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
     vars.clear();
     layout.clear();
 
+    // ── Arc 打包 lambda（Pass 1b 與 Pass 2 共用）─────────────────────────
+    // 版面：vars << cx << cy << r；Start/End 共用 startUuid/endUuid 的
+    // SketchPoint DOF（見下方原有的修正歷程說明）。
+    auto packArc = [&](const SketchArc* a, GeomVarLayout& vl) {
+        double cx = 0.0, cy = 0.0, r = 1.0, t0 = 0.0, t1 = M_PI;
+        gp_Pnt startPt(1.0, 0.0, 0.0), endPt(-1.0, 0.0, 0.0);
+        if (!a->curve.IsNull()) {
+            auto baseCircle = Handle(Geom_Circle)::DownCast(a->curve->BasisCurve());
+            if (!baseCircle.IsNull()) {
+                gp_Pnt c = baseCircle->Location();
+                cx = c.X(); cy = c.Y();
+                r  = baseCircle->Radius();
+                t0 = a->curve->FirstParameter();
+                t1 = a->curve->LastParameter();
+                startPt = a->curve->Value(t0);
+                endPt   = a->curve->Value(t1);
+            }
+        }
+        vars << cx << cy << r;
+        vl.dof      = 3;
+        vl.refSweep = t1 - t0;   // 僅作分支參考，不進 vars
+
+        auto itS = layout.find(a->startUuid);
+        if (itS != layout.end()) {
+            vl.startOffset = itS->offset;          // 共用 startUuid 的 SketchPoint DOF
+        } else {
+            // Fallback：找不到獨立 SketchPoint（理論上不應發生，
+            // Sketch::addArcGeom 一定會建立/重用），退化為 Arc 自己
+            // 額外配置 2 個局部 DOF，避免落回 offset+0（誤成 Center）。
+            vl.startOffset = vars.size();
+            vars << startPt.X() << startPt.Y();
+            vl.dof += 2;
+        }
+
+        auto itE = layout.find(a->endUuid);
+        if (itE != layout.end()) {
+            vl.endOffset = itE->offset;             // 共用 endUuid 的 SketchPoint DOF
+        } else {
+            vl.endOffset = vars.size();
+            vars << endPt.X() << endPt.Y();
+            vl.dof += 2;
+        }
+    };
+
+    // ── Pass 0：決定哪些「弧圓心 SketchPoint」改與弧共用 DOF ───────────────
+    // ⚠️ 修正（重合選不到弧圓心、弧圓心不跟著尺寸約束動）：舊版弧自己有一組
+    // (cx,cy) 變數，而 centerUuid 對應的圓心 SketchPoint 另有一組獨立變數，兩
+    // 者在求解中毫無關聯——約束（重合/距離/座標尺寸…）若指向圓心 SketchPoint
+    // （點選畫面上的圓心點就是這種 ref），只會移動那個點的變數；求解結束後
+    // unpackVariables() 又用弧的 (cx,cy) 把圓心點「寫回舊位置」，於是約束看起
+    // 來完全沒作用。這裡讓圓心 SketchPoint 直接「別名」到弧的 (cx,cy) 變數：
+    // 同一組變數，無論約束指向弧的 Center handle 或圓心 SketchPoint 都作用在
+    // 同一處。若多個弧共用同一個圓心點，只有第一個弧認領，其餘維持各自變數。
+    QHash<QString, QString> arcCenterClaim;   // 圓心 SketchPoint UUID → 認領的弧 UUID
+    {
+        QSet<QString> pointUuids;
+        for (const SketchGeometry* g : geoms)
+            if (g->type == SketchGeometryType::Point) pointUuids.insert(g->uuid);
+        for (const SketchGeometry* g : geoms) {
+            if (g->type != SketchGeometryType::Arc) continue;
+            const auto* a = static_cast<const SketchArc*>(g);
+            if (a->centerUuid.isEmpty() || !pointUuids.contains(a->centerUuid)) continue;
+            if (a->centerUuid == a->startUuid || a->centerUuid == a->endUuid) continue;
+            if (arcCenterClaim.contains(a->centerUuid)) continue;
+            arcCenterClaim.insert(a->centerUuid, a->uuid);
+        }
+    }
+
     // ── Pass 1：先把所有 SketchPoint 打包（建立 UUID→offset 對應）────────────
     for (const SketchGeometry* g : geoms) {
         if (g->type != SketchGeometryType::Point) continue;
+        if (arcCenterClaim.contains(g->uuid)) continue;   // 由 Pass 1b 與弧共用變數
         const auto* pt = static_cast<const SketchPoint*>(g);
         GeomVarLayout vl;
         vl.offset  = vars.size();
@@ -1197,9 +1274,28 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
         layout[g->uuid] = vl;
     }
 
+    // ── Pass 1b：先打包「認領圓心點」的弧，並讓圓心 SketchPoint 別名到 (cx,cy) ─
+    // 必須在 Pass 2 之前：共用同一圓心點的 Circle 在 Pass 2 才會查 layout。
+    for (const SketchGeometry* g : geoms) {
+        if (g->type != SketchGeometryType::Arc) continue;
+        const auto* a = static_cast<const SketchArc*>(g);
+        if (arcCenterClaim.value(a->centerUuid) != g->uuid) continue;   // 非認領者留給 Pass 2
+        GeomVarLayout vl;
+        vl.offset = vars.size();
+        packArc(a, vl);
+        layout[g->uuid] = vl;
+
+        GeomVarLayout pl;
+        pl.offset  = vl.offset;   // 與弧的 cx 同一個 index
+        pl.dof     = 2;           // (cx, cy)：Fixed 約束 snapshot 用
+        pl.isPoint = true;
+        layout[a->centerUuid] = pl;
+    }
+
     // ── Pass 2：打包非 SketchPoint 幾何，SketchLine 端點共用 SketchPoint DOF ─
     for (const SketchGeometry* g : geoms) {
         if (g->type == SketchGeometryType::Point) continue;  // 已處理
+        if (layout.contains(g->uuid)) continue;              // Pass 1b 已打包的弧
         GeomVarLayout vl;
         vl.offset = vars.size();
         switch (g->type) {
@@ -1254,45 +1350,7 @@ void ConstraintSolver::packVariables(const QList<SketchGeometry*>& geoms,
             // PointOnCircleEquation）取代三角函數版本，t0/t1 完全不進入
             // 求解變數（只在 unpackVariables() 求解結束後用角度差的方式
             // 一次性重建，不受此問題影響），從根本上消除這個病態來源。
-            const auto* a = static_cast<const SketchArc*>(g);
-            double cx = 0.0, cy = 0.0, r = 1.0, t0 = 0.0, t1 = M_PI;
-            gp_Pnt startPt(1.0, 0.0, 0.0), endPt(-1.0, 0.0, 0.0);
-            if (!a->curve.IsNull()) {
-                auto baseCircle = Handle(Geom_Circle)::DownCast(a->curve->BasisCurve());
-                if (!baseCircle.IsNull()) {
-                    gp_Pnt c = baseCircle->Location();
-                    cx = c.X(); cy = c.Y();
-                    r  = baseCircle->Radius();
-                    t0 = a->curve->FirstParameter();
-                    t1 = a->curve->LastParameter();
-                    startPt = a->curve->Value(t0);
-                    endPt   = a->curve->Value(t1);
-                }
-            }
-            vars << cx << cy << r;
-            vl.dof      = 3;
-            vl.refSweep = t1 - t0;   // 僅作分支參考，不進 vars
-
-            auto itS = layout.find(a->startUuid);
-            if (itS != layout.end()) {
-                vl.startOffset = itS->offset;          // 共用 startUuid 的 SketchPoint DOF
-            } else {
-                // Fallback：找不到獨立 SketchPoint（理論上不應發生，
-                // Sketch::addArcGeom 一定會建立/重用），退化為 Arc 自己
-                // 額外配置 2 個局部 DOF，避免落回 offset+0（誤成 Center）。
-                vl.startOffset = vars.size();
-                vars << startPt.X() << startPt.Y();
-                vl.dof += 2;
-            }
-
-            auto itE = layout.find(a->endUuid);
-            if (itE != layout.end()) {
-                vl.endOffset = itE->offset;             // 共用 endUuid 的 SketchPoint DOF
-            } else {
-                vl.endOffset = vars.size();
-                vars << endPt.X() << endPt.Y();
-                vl.dof += 2;
-            }
+            packArc(static_cast<const SketchArc*>(g), vl);
             break;
         }
         case SketchGeometryType::Ellipse: {
@@ -1936,6 +1994,8 @@ int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
     // 收集所有被 SketchLine/Arc/Circle 引用的 SketchPoint UUID
     // 這些 SketchPoint 的 DOF 已被曲線「共用」，不再重複計算
     QSet<QString> sharedPointUuids;
+    int extraArcCenterDof = 0;
+    QSet<QString> arcClaimedCenters;
     for (const SketchGeometry* g : geoms) {
         if (g->type == SketchGeometryType::Line) {
             const auto* l = static_cast<const SketchLine*>(g);
@@ -1951,6 +2011,17 @@ int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
             const auto* a = static_cast<const SketchArc*>(g);
             if (pointUuids.contains(a->startUuid)) sharedPointUuids.insert(a->startUuid);
             if (pointUuids.contains(a->endUuid))   sharedPointUuids.insert(a->endUuid);
+            // 圓心 SketchPoint 與弧共用 (cx,cy)（見 packVariables Pass 0）：
+            // 第一個認領的弧涵蓋圓心點的 2 DOF，其餘共用同點的弧各自多 2 DOF。
+            if (!a->centerUuid.isEmpty() && pointUuids.contains(a->centerUuid)
+                && a->centerUuid != a->startUuid && a->centerUuid != a->endUuid) {
+                if (!arcClaimedCenters.contains(a->centerUuid)) {
+                    arcClaimedCenters.insert(a->centerUuid);   // 認領者
+                    sharedPointUuids.insert(a->centerUuid);
+                } else {
+                    extraArcCenterDof += 2;                    // 非認領者
+                }
+            }
         }
     }
 
@@ -1985,6 +2056,7 @@ int ConstraintSolver::computeDOF(const QList<SketchGeometry*>& geoms,
         default: totalDOF += g->points.size() * 2; break;
         }
     }
+    totalDOF += extraArcCenterDof;
     int consumed = 0;
     for (const SketchConstraint& c : constraints)
         if (c.driving) consumed += qMin(c.dofConsumed(), totalDOF - consumed);

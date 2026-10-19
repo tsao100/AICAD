@@ -365,6 +365,7 @@ SOURCES += \
     src/ui/AlignmentDrawElementDialog.cpp \
     src/ui/CompoundChainCalcDialog.cpp \
     src/ui/ProfileArrayStationTableDialog.cpp \
+    src/ui/ProfileArraySegmentTableDialog.cpp \
     src/ui/ParameterPanel.cpp \
     src/ui/PropertyPanel.cpp \
     src/ui/SketchPanel.cpp \
@@ -553,6 +554,7 @@ HEADERS += \
     src/ui/AlignmentDrawElementDialog.h \
     src/ui/CompoundChainCalcDialog.h \
     src/ui/ProfileArrayStationTableDialog.h \
+    src/ui/ProfileArraySegmentTableDialog.h \
     src/ui/ParameterPanel.h \
     src/ui/PropertyPanel.h \
     src/ui/SketchPanel.h \

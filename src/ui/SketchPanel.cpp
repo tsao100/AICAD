@@ -802,25 +802,21 @@ void SketchPanel::onConstraintReadyFromSession(
                 if (cmdMgr) cmdMgr->printError("COI: 找不到對應幾何元素");
                 return;
             }
-            // 收集各自端點
-            auto endpoints = [](const cad::SketchGeometry* g)
-                -> QVector<QPair<QVector2D, GH>> {
-                QVector<QPair<QVector2D, GH>> pts;
-                if (g->type == cad::SketchGeometryType::Point) {
-                    if (!g->points.isEmpty())
-                        pts.append({g->points[0], GH::WholeGeom});
-                } else if (!g->points.isEmpty()) {
-                    pts.append({g->points.front(), GH::Start});
-                    if (g->points.size() > 1)
-                        pts.append({g->points.back(), GH::End});
-                    if (g->type == cad::SketchGeometryType::Circle ||
-                        g->type == cad::SketchGeometryType::Arc)
-                        pts.append({g->points[0], GH::Center});
-                }
-                return pts;
+            // 收集各自的控制點（弧/圓的 Center 用真正的圓心位置，見
+            // Sketch::coincidentCandidates() 的說明）
+            auto ptsA = m_sketch->coincidentCandidates(uuid0);
+            auto ptsB = m_sketch->coincidentCandidates(uuid1);
+            // 只有一邊帶明確 handle（例如 OSnap 吸到弧圓心、另一邊點的是線身）
+            // 時，帶 handle 的那一邊必須固定用該 handle，不能被「最近端點對」
+            // 搜尋蓋掉——否則使用者明明選了圓心，最後卻配到起點。
+            auto restrictTo = [](QVector<QPair<QVector2D, GH>>& pts, GH h, bool has) {
+                if (!has) return;
+                QVector<QPair<QVector2D, GH>> only;
+                for (const auto& p : pts) if (p.second == h) only.append(p);
+                if (!only.isEmpty()) pts = only;
             };
-            auto ptsA = endpoints(gA);
-            auto ptsB = endpoints(gB);
+            restrictTo(ptsA, resolvedRefs[0].handle, aHasHandle);
+            restrictTo(ptsB, resolvedRefs.size() > 1 ? resolvedRefs[1].handle : GH::WholeGeom, bHasHandle);
             GH hA = GH::Start, hB = GH::Start;
             float best = std::numeric_limits<float>::max();
             for (auto& [pa, ha] : ptsA) {

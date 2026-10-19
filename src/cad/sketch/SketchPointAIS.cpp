@@ -6,6 +6,7 @@
 #include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_AspectMarker3d.hxx>
 #include <Graphic3d_Group.hxx>
+#include <Graphic3d_TransformPers.hxx>
 #include <Quantity_Color.hxx>
 #include <Select3D_SensitivePoint.hxx>
 #include <SelectMgr_EntityOwner.hxx>
@@ -23,11 +24,29 @@ SketchPointAIS::SketchPointAIS(const SketchPoint* pt, const gp_Ax3& sketchPlane)
     , m_status(SolveStatus::UnderConstrained)
 {
     SetInfiniteState(Standard_False);
+    applyZoomPersistence();
+}
+
+bool SketchPointAIS::usesSymbol() const
+{
+    return !(m_origin == SketchPoint::Origin::Endpoint ||
+             m_origin == SketchPoint::Origin::Explicit ||
+             m_origin == SketchPoint::Origin::Intersection);
+}
+
+void SketchPointAIS::applyZoomPersistence()
+{
+    // 第 16 項回報：圓弧圓心的「+」原本以世界座標 1.5 單位繪製，視圖縮到約 5600
+    // 單位時只剩不到 1 像素，看不到。與端點圓點（像素 marker）一樣固定螢幕大小：
+    // 整個符號掛 ZoomPers，座標改為「相對錨點的像素位移」。
+    if (!usesSymbol()) return;
+    SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, m_pos3D));
 }
 
 void SketchPointAIS::updatePosition(const QVector2D& newPos)
 {
     m_pos3D = toWorld(newPos);
+    applyZoomPersistence();   // 錨點隨點位移動
     SetToUpdate();
 }
 
@@ -74,11 +93,11 @@ void SketchPointAIS::Compute(const Handle(PrsMgr_PresentationManager)& /*pm*/,
     default:                            color = Quantity_Color(Quantity_NOC_CYAN1);  break;
     }
 
-    // ── 大小（半邊長，mm） ──
+    // ── 大小（半邊長，螢幕像素；第 16 項起不再是世界座標 mm） ──
     double halfSize;
     switch (m_origin) {
-    case SketchPoint::Origin::Center:   halfSize = 1.5; break;
-    default:                            halfSize = 1.0; break;
+    case SketchPoint::Origin::Center:   halfSize = 6.0; break;
+    default:                            halfSize = 4.0; break;
     }
 
     drawSymbol(prs, color, halfSize);
@@ -110,7 +129,8 @@ void SketchPointAIS::drawSymbol(const Handle(Prs3d_Presentation)& prs,
         new Graphic3d_AspectLine3d(color, Aspect_TOL_SOLID, 1.5f);
     grp->SetGroupPrimitivesAspect(aspect);
 
-    gp_Pnt p = m_pos3D;
+    // 第 16 項：ZoomPers 下座標是「相對錨點」，所以從原點出發（錨點＝m_pos3D）
+    gp_Pnt p(0.0, 0.0, 0.0);
     gp_Dir xDir = m_plane.XDirection();
     gp_Dir yDir = m_plane.YDirection();
 
@@ -152,7 +172,9 @@ void SketchPointAIS::ComputeSelection(const Handle(SelectMgr_Selection)& sel,
 {
     // Sensitivity 6 > 曲線典型 3，確保點優先被 snap 到
     Handle(SelectMgr_EntityOwner) owner = new SelectMgr_EntityOwner(this, 6);
-    Handle(Select3D_SensitivePoint) pt  = new Select3D_SensitivePoint(owner, m_pos3D);
+    // ZoomPers 的符號型點：選取點同樣是相對錨點（原點＝錨點本身）
+    Handle(Select3D_SensitivePoint) pt  =
+        new Select3D_SensitivePoint(owner, usesSymbol() ? gp_Pnt(0.0, 0.0, 0.0) : m_pos3D);
     sel->Add(pt);
 }
 

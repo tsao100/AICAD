@@ -55,7 +55,12 @@ private:
     /// 草圖平面 2D 座標 → 世界座標
     gp_Pnt toWorld(const QVector2D& pos2D) const;
 
-    /// 依 origin 繪製符號（加號/菱形，模型空間，會隨縮放改變大小）
+    /// 第 16 項：是否為「符號型」點（Center 等，非 Endpoint/Explicit/Intersection 的圓點）
+    bool usesSymbol() const;
+    /// 符號型點整體套 Graphic3d_TMF_ZoomPers（錨點＝點位置），符號改以螢幕像素為單位
+    void applyZoomPersistence();
+
+    /// 依 origin 繪製符號（加號/菱形；第 16 項起單位為螢幕像素、相對錨點，不隨縮放改變大小）
     void drawSymbol(const Handle(Prs3d_Presentation)& prs,
                     const Quantity_Color& color,
                     double halfSize) const;

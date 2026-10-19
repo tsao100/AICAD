@@ -312,8 +312,32 @@ void CreateProfileArrayCommand::createArray()
         return;
     }
 
-    cad::AlignedProfileArray* arr = doc->createAlignedProfileArray(
-        master, m_tcl, m_start, m_end, m_interval);
+    // 每次輸入 = 分段表格的一列：
+    //   同一條 TCL 上已有沿線陣列 → 把這次輸入「加成一段」到該陣列（表格多一列）；
+    //   沒有 → 建立新陣列（第一段 Seg1）。
+    cad::AlignedProfileArray* arr = nullptr;
+    for (cad::Feature* f : doc->features()) {
+        auto* cand = qobject_cast<cad::AlignedProfileArray*>(f);
+        if (cand && cand->trackCenterLine() == m_tcl) arr = cand;   // 取最後建立的
+    }
+
+    QString segName;
+    if (arr) {
+        cad::ProfileArraySegment seg;
+        seg.name      = arr->uniqueSegmentName();
+        seg.start     = m_start;
+        seg.end       = m_end;
+        seg.interval  = m_interval;
+        seg.profileId = master->id();
+        segName       = seg.name;
+
+        QList<cad::ProfileArraySegment> segs = arr->segments();
+        segs.append(seg);
+        arr->commitSegments(segs, arr->extraColumns());
+    } else {
+        arr = doc->createAlignedProfileArray(master, m_tcl, m_start, m_end, m_interval);
+        segName = (arr && !arr->segments().isEmpty()) ? arr->segments().first().name : QString();
+    }
 
     if (!arr) {
         complete(CommandResult::Failure("Failed to create profile array"));
@@ -324,8 +348,14 @@ void CreateProfileArrayCommand::createArray()
         return;
     }
 
-    // 依需求：陣列建立成功後立即放樣成實體。
-    cad::ProfileLoftSolid* loft = doc->createProfileLoftSolid(arr);
+    // 放樣：該陣列已有 Loft 就沿用（它會隨陣列 shapeChanged 自動重建）；沒有才建立。
+    cad::ProfileLoftSolid* loft = nullptr;
+    for (cad::Feature* f : doc->features()) {
+        auto* cand = qobject_cast<cad::ProfileLoftSolid*>(f);
+        if (cand && cand->sourceArray() == arr) { loft = cand; break; }
+    }
+    if (!loft)
+        loft = doc->createProfileLoftSolid(arr);
     if (!loft) {
         complete(CommandResult::Failure(
             "Profile array created but loft failed to start"));
@@ -333,7 +363,7 @@ void CreateProfileArrayCommand::createArray()
     }
     if (!loft->errorMessage().isEmpty()) {
         complete(CommandResult::Failure(
-            QString("Profile array created (%1 stations) but loft failed: %2")
+            QString("Profile array updated (%1 stations) but loft failed: %2")
                 .arg(arr->stationCount())
                 .arg(loft->errorMessage())));
         return;
@@ -346,12 +376,15 @@ void CreateProfileArrayCommand::createArray()
     }
 
     complete(CommandResult::Success(
-        QString("Profile array created and lofted: %1 station(s) from %2 to %3 m "
-                "(interval %4 m) -> %5")
-            .arg(arr->stationCount())
+        QString("Segment '%1' (%2 -> %3 m, interval %4 m) added to %5: "
+                "%6 segment(s), %7 station(s) in total -> %8")
+            .arg(segName)
             .arg(m_start, 0, 'f', 3)
             .arg(m_end,   0, 'f', 3)
             .arg(m_interval, 0, 'f', 3)
+            .arg(arr->name())
+            .arg(arr->segmentCount())
+            .arg(arr->stationCount())
             .arg(loft->name())));
 }
 
@@ -374,7 +407,8 @@ EditProfileArrayCommand::EditProfileArrayCommand(QObject* parent)
 QString EditProfileArrayCommand::getUsage() const
 {
     return "EDITPROFILEARRAY <featureId> <startChainage> <endChainage> <interval>\n"
-           "Change the range/interval of an existing profile array and rebuild it.";
+           "Change the range/interval of the FIRST segment of an existing profile array and\n"
+           "rebuild it. (Use the profile array's segment table to edit other segments.)";
 }
 
 CommandResult EditProfileArrayCommand::execute(const CommandContext& context)

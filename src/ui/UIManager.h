@@ -165,6 +165,12 @@ public:
      */
     void applyDimExpressionEdit(const QString& constraintUuid, const QString& newExpr);
 
+    /// 第 11/13 項：設定約束（幾何約束或尺寸約束）的啟用條件公式。solveNow=true
+    /// 時立即重新求解並重繪；尺寸對話框會先呼叫 solveNow=false，接著由
+    /// applyDimExpressionEdit() 的求解一併生效。
+    void applyConstraintEnableExpr(const QString& constraintUuid,
+                                   const QString& expr, bool solveNow = true);
+
     /**
      * @brief 啟動幾何約束互動選取模式
      *
@@ -374,6 +380,11 @@ private:
 
     osnap::OSnapToolbar* m_snapToolbar = nullptr;
     cad::Sketch* m_currentActiveSketch = nullptr;
+
+    /// 第 6 項回報：由「編輯草圖」（FeatureBrowser 右鍵選單）進入時為 true——
+    /// onSketchEditStarted() 不縮放全部，改還原前次視圖。新建草圖
+    /// （sketch.created）維持原行為（空草圖 fitAll）。每次進入後立即清除。
+    bool m_restorePreviousViewOnEdit = false;
 
     void setupSketchPanel();
     void applyConstraintToSketch(cad::Sketch* sketch,

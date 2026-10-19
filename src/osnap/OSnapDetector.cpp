@@ -574,6 +574,31 @@ void OSnapDetector::detectCenters(
             c.sourceAIS   = aisObj;
             c.screenDist   = screenDistance(view, center, mouseX, mouseY);
             c.isValid     = true;
+
+            // ⚠️ 修正（重合選不到弧/圓的圓心）：這裡原本完全沒有填 geomUuid／
+            // geomHandle，Center 鎖點吸到之後 CadView::handlePointInput 拿到的是空
+            // uuid，只好退回「偵測到的整條幾何（WholeGeom）」，約束就變成對
+            // 整條弧套用、而不是對圓心。比照 detectEndpoints() 的做法，用圓心的
+            // 3D 座標回查草圖中的弧/圓，填入 geomUuid + GeomHandle::Center。
+            if (m_activeSketch) {
+                constexpr double tol = 1e-4;
+                for (const cad::SketchGeometry* g : m_activeSketch->geometriesRef()) {
+                    if (!g) continue;
+                    if (g->type != cad::SketchGeometryType::Arc &&
+                        g->type != cad::SketchGeometryType::Circle &&
+                        g->type != cad::SketchGeometryType::Ellipse) continue;
+                    const QVector2D cp = cad::GeomRef(g->uuid, cad::GeomHandle::Center)
+                                             .resolvePosition(m_activeSketch);
+                    const QVector3D w3 = m_activeSketch->plane()
+                        ? m_activeSketch->plane()->toWorld(cp.x(), cp.y())
+                        : QVector3D(cp.x(), cp.y(), 0);
+                    if (gp_Pnt(w3.x(), w3.y(), w3.z()).Distance(center) < tol) {
+                        c.geomUuid   = g->uuid;
+                        c.geomHandle = static_cast<int>(cad::GeomHandle::Center);
+                        break;
+                    }
+                }
+            }
             out.append(c);
         }
     }

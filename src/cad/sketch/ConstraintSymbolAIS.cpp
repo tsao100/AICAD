@@ -4,6 +4,7 @@
 #include <Graphic3d_ArrayOfPolylines.hxx>
 #include <Graphic3d_ArrayOfPoints.hxx>
 #include <Graphic3d_Group.hxx>
+#include <Graphic3d_TransformPers.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <Prs3d_TextAspect.hxx>
@@ -31,6 +32,7 @@ AIS_ConstraintSymbol::AIS_ConstraintSymbol(
     , m_status(status)
 {
     m_symbolPos = computeSymbolPos();
+    applyZoomPersistence();
     // ✅ 修正：約束符號是位置固定的小圖標，不是真正的「無限」物件
     // （無限物件應該是貫穿整個場景的軸線之類）。原本誤設為
     // Standard_True，導致 OCCT 在 View 的 Z-clip 範圍尚未涵蓋這個
@@ -52,6 +54,17 @@ void AIS_ConstraintSymbol::Update(
     m_geoms      = geoms;
     m_status     = status;
     m_symbolPos  = computeSymbolPos();
+    applyZoomPersistence();   // 錨點隨幾何移動而改變
+}
+
+void AIS_ConstraintSymbol::applyZoomPersistence()
+{
+    // 第 4 項回報：約束記號要像 sketch point 一樣保持螢幕大小，不隨縮放改變。
+    // 舊版符號形狀以世界座標 3 mm 繪製，視圖放大 → 符號跟著變大、縮小 → 變小
+    // 到看不見。SketchPoint 能固定大小是因為用 Graphic3d_AspectMarker3d（像素
+    // 單位），但約束符號是由線段組成的形狀，無法用單一 marker 表示，所以改用
+    // 整體 ZoomPers：形狀改以像素為單位定義（見 kSymbolSize），錨點取幾何中心。
+    SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_ZoomPers, m_anchor));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,14 +83,15 @@ gp_Pnt AIS_ConstraintSymbol::computeSymbolPos() const {
         }
     }
 
-    // 偏移 symbol 避免重疊在幾何上（此偏移量是「草圖平面局部座標」，
-    // 不可與世界座標混用 — 見 localToWorld() 註解）
-    constexpr float offset = 5.0f;
-    m_symbolPosLocal = gp_Pnt(mid.x() + offset, mid.y() + offset, 0.0);
+    // m_symbolPosLocal 現在只記「幾何中心」（草圖平面局部座標）；符號相對中心
+    // 的偏移（避免與幾何重疊）改在 localToWorld() 內以「像素」加入，才會與符號
+    // 本身一起維持固定螢幕大小——若偏移仍用 mm，放大後符號會離幾何越來越遠。
+    m_symbolPosLocal = gp_Pnt(mid.x(), mid.y(), 0.0);
 
-    gp_Pnt pos = m_symbolPosLocal;
-    pos.Transform(m_sketchToWorld);
-    return pos;
+    m_anchor = m_symbolPosLocal;
+    m_anchor.Transform(m_sketchToWorld);
+
+    return localToWorld(0.0, 0.0);   // 含像素偏移的符號中心（供選取用）
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,8 +106,20 @@ gp_Pnt AIS_ConstraintSymbol::computeSymbolPos() const {
 // 再透過 m_sketchToWorld 轉成世界座標，這樣符號自然會跟著草圖平面旋轉。
 // ─────────────────────────────────────────────────────────────────────────────
 gp_Pnt AIS_ConstraintSymbol::localToWorld(double du, double dv) const {
-    gp_Pnt p(m_symbolPosLocal.X() + du, m_symbolPosLocal.Y() + dv, 0.0);
-    p.Transform(m_sketchToWorld);
+    // ⚠️ 第 16 項回報（縮到約 5600 單位時約束符號看不到）的根因：
+    // OCCT 的 Graphic3d_TMF_ZoomPers 把物件座標當成「相對於錨點」：實際矩陣為
+    //   世界座標 = 錨點 + 縮放比例 × 物件座標
+    // （縮放比例 = 每像素對應的世界單位；見 Graphic3d_TransformPers）。
+    // 第 4 項我卻傳入「絕對世界座標」（含草圖原點平移與幾何中心），結果符號被
+    // 額外推移了「縮放比例 × 絕對座標」——放大時比例小、偏差不明顯，縮到約
+    // 5600 單位時比例大，符號就跑到畫面外。
+    // 正確做法：只給「相對錨點的像素位移」，並且只套用草圖平面的旋轉（不含平移），
+    // 錨點（m_anchor＝幾何中心的世界座標）已經負責定位。
+    // 第 9 項：偏移改讀約束內存的值（使用者拖放後存檔），沒拖過才用預設。
+    gp_Pnt p(symbolOffsetX() + du, symbolOffsetY() + dv, 0.0);
+    gp_Trsf rotOnly = m_sketchToWorld;
+    rotOnly.SetTranslationPart(gp_Vec(0.0, 0.0, 0.0));
+    p.Transform(rotOnly);
     return p;
 }
 
@@ -102,7 +128,8 @@ gp_Pnt AIS_ConstraintSymbol::localToWorld(double du, double dv) const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 Quantity_Color AIS_ConstraintSymbol::symbolColor() const {
-    if (!m_constraint.driving)
+    // 第 11 項：driving=false（量測）或被啟用條件停用 → 灰色
+    if (!m_constraint.driving || m_constraint.conditionOff)
         return Quantity_Color(Quantity_NOC_GRAY60);
     switch (m_status) {
     case SolveStatus::FullyConstrained:  return Quantity_Color(Quantity_NOC_GREEN3);

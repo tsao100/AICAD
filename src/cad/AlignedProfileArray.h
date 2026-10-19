@@ -20,6 +20,10 @@
 #include <QVector>
 #include <QSet>
 #include <QPointer>
+#include <QMap>
+#include <QHash>
+#include <QStringList>
+#include <utility>
 #include <TopoDS_Wire.hxx>
 
 namespace aicad {
@@ -31,6 +35,27 @@ namespace cad {
 class Sketch;
 class Plane;
 class SketchInstance;
+
+/**
+ * @brief 沿線陣列的一「段」輸入資料（分段表格的一列）。
+ *
+ * 每次輸入（PROFILEARRAY 命令一次、或在表格新增一列）= 一段：
+ * 在 [start, end] 以 interval 為間距佈置 `profileId` 指定的斷面草圖。
+ */
+struct ProfileArraySegment {
+    QString name;                  ///< 段名稱（陣列內唯一）
+    double  start    = 0.0;        ///< 起點里程 [m]
+    double  end      = 0.0;        ///< 終點里程 [m]
+    double  interval = 20.0;       ///< 測站間距 [m]
+    QString profileId;             ///< 使用的 profile = master Sketch 的 feature id
+    bool    hasThick = false;      ///< false = 不覆寫（沿用 profile 內 Thick 參數的預設值）
+    double  thick    = 0.0;        ///< Thick 參數（hasThick 時才有效）
+    bool    hasW     = false;      ///< false = 不覆寫（沿用 profile 內 w 參數的預設值）
+    double  w        = 0.0;        ///< w 參數（步道位置；hasW 時才有效）
+    /// 自訂欄位：profile 內「參數名 → 值」。缺 = 空白 = 不覆寫。
+    /// 有值時優先於 TCL 的 cant/H（例如自訂欄位名為 cant，即可針對本段指定 cant）。
+    QMap<QString, double> extra;
+};
 
 /**
  * @brief 沿線斷面草圖陣列（FeatureType::Pattern）。
@@ -64,10 +89,28 @@ public:
     QString                    trackCenterLineId() const;
 
     /** 起訖樁號與間距（皆為 [m]）。呼叫後需自行呼叫 rebuild() 生效。 */
+    // ── 分段資料（表格的資料來源）────────────────────────────────────────
+    QList<ProfileArraySegment> segments() const { return m_segments; }
+    int                        segmentCount() const { return m_segments.size(); }
+    QStringList                extraColumns() const { return m_extraColumns; }
+
+    /// 只更新資料，不重建。
+    void setSegments(const QList<ProfileArraySegment>& segs, const QStringList& extraColumns);
+
+    /**
+     * @brief 更新資料並立即重建（含更新依賴圖、master 訊號連線、畫面刷新）。
+     * @return rebuild 是否成功；失敗原因見 errorMessage()。
+     */
+    bool commitSegments(const QList<ProfileArraySegment>& segs, const QStringList& extraColumns);
+
+    /// 產生陣列內尚未使用的段名稱（Seg1、Seg2 …）。
+    QString uniqueSegmentName(const QString& base = QStringLiteral("Seg")) const;
+
+    // ── 舊版單段介面（相容：只作用於第一段；沒有任何段時會先建立一段）──────
     void   setRange(double startChainage, double endChainage, double interval);
-    double startChainage() const { return m_startChainage; }
-    double endChainage()   const { return m_endChainage; }
-    double interval()      const { return m_interval; }
+    double startChainage() const;   ///< 所有段的最小起點
+    double endChainage()   const;   ///< 所有段的最大終點
+    double interval()      const;   ///< 第一段的間距
 
     /**
      * @brief master 草圖座標單位 → TrackCenterLine 座標單位（通常是 m）的
@@ -105,6 +148,8 @@ public:
      *        唯讀站位資料表使用。
      */
     QVector<double> stationChainages() const;
+    /// 與 instances()/stationWireLoops() 同順序：各測站所屬的段索引（供分段放樣）。
+    QVector<int>    stationSegmentIndices() const { return m_stationSeg; }
 
     // ── 序列化：只存參照 id／範圍／間距，不存子 instance、不存 cant/H ────
     QJsonObject toJson()  const override;
@@ -117,25 +162,32 @@ public:
 
 private:
     void clearInstances();
-    QVector<double> computeStations() const;
+    struct StationRef { double p; int seg; };
+    QVector<StationRef> computeStationRefs() const;
+    QVector<double>     computeStations() const;
+    Sketch*             resolveProfile(const ProfileArraySegment& seg) const;
+    void                syncMasterConnections();
 
-    QPointer<Sketch>                   m_master;
+    /// 本站要寫入 SketchInstance override 的參數（名稱, 值）。
+    /// 目前：cant、H。Thick 的資料來源日後提供，屆時只需在此加一行。
+    QVector<std::pair<QString, double>> stationParameters(double p, const ProfileArraySegment& seg) const;
+
+    /// master 草圖內容（幾何點、約束值/運算式、整條參數作用域鏈的運算式）的指紋。
+    /// 指紋不變 ⇒ 各站 2D 解可重用；改變 ⇒ 全部重新求解。
+    static quint64 masterFingerprint(Sketch* master);
+
     QPointer<railway::TrackCenterLine> m_tcl;
-
-    double m_startChainage = 0.0;
-    double m_endChainage   = 0.0;
-    double m_interval      = 20.0;
-
-    /// master 草圖(mm) → TrackCenterLine(m) 的縮放係數；預設 1/1000。
+    QList<ProfileArraySegment>         m_segments;
+    QStringList                        m_extraColumns;
     double m_masterUnitScale = 0.001;
 
-    QList<QPointer<SketchInstance>> m_instances;  ///< 依樁號順序排列
+    QList<QPointer<SketchInstance>> m_instances;  ///< 依測站順序排列（先依段、再依里程）
     QList<QPointer<Plane>>          m_planes;     ///< 與 m_instances 一一對應
+    QVector<int>                    m_stationSeg; ///< 與 m_instances 一一對應：所屬段索引
 
     QMetaObject::Connection m_tclDataChangedConn;
-    QMetaObject::Connection m_masterRebuildConn;
-
-    QString m_pendingMasterSketchId;
+    QHash<Sketch*, QMetaObject::Connection> m_masterConns;   ///< 各 profile 的 shapeChanged 連線
+    QHash<QString, quint64> m_lastMasterFp;                  ///< profile id → 上次重建時的指紋
     QString m_pendingTclId;
 };
 

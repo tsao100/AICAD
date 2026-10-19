@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QSet>
 #include <TopoDS_Wire.hxx>
+#include <gp_Pnt.hxx>
 #include <AIS_Shape.hxx>
 
 namespace aicad::cad {
@@ -54,6 +55,51 @@ public:
      */
     void   setScale(double scale) { m_scale = scale; }
     double scale() const { return m_scale; }
+
+    // ── 雙精度放置座標系 ────────────────────────────────────────────────
+    /**
+     * @brief 放置座標系（double）。
+     *
+     * Plane 以 float QVector3D 儲存原點，座標在 1e5 m 量級（例如 TM2 本地座標
+     * 30882, 113652）時解析度只有約 4~8 mm，而斷面本身只有幾十 mm，會造成
+     * 肉眼可見的頂點抖動與變形。設定 frame 後，wire 一律以這組雙精度座標系
+     * 建立，Plane 只作為 UI 顯示／相容用途。
+     *   世界座標 = origin + X * u + Y * v     （u,v 為 master 草圖座標 × scale）
+     */
+    struct PlacementFrame {
+        double ox = 0, oy = 0, oz = 0;   ///< 原點
+        double xx = 1, xy = 0, xz = 0;   ///< X 軸（單位向量）
+        double yx = 0, yy = 1, yz = 0;   ///< Y 軸（單位向量）
+        bool   valid = false;
+    };
+    void setFrame(const PlacementFrame& f) { m_frame = f; m_frame.valid = true; }
+    const PlacementFrame& frame() const { return m_frame; }
+
+    /**
+     * @brief 由外部（AlignedProfileArray）統一驅動重建。
+     *
+     * true 時：master 重建、instance store 參數變動、Document 相依傳播所觸發的
+     * 自動 rebuild() 一律略過（直接回傳 true），改由擁有者呼叫 rebuildWith()。
+     * 否則同一次陣列重建中，每個測站會被 master 訊號、參數重算訊號、相依傳播、
+     * 陣列自己各解算一次。
+     */
+    void setExternallyDriven(bool on) { m_externallyDriven = on; }
+    bool externallyDriven() const { return m_externallyDriven; }
+
+    /**
+     * @brief 以「參數簽章」為鍵的快速重建。
+     * @param signature     本站 override 參數值的簽章（相同簽章 ⇒ 相同 2D 解）
+     * @param donor         已用相同簽章求解過的另一站（可為 nullptr）；有的話
+     *                      直接複製其解，不再求解。
+     * @param forceResolve  master 改變時為 true：忽略既有解，一律重新求解。
+     *
+     * 簽章與上次相同且非 force → 只重建 3D wire（只有放置位置變了）。
+     * 呼叫端須先設定好 instance store 的 override 與 setFrame()。
+     */
+    bool rebuildWith(const QString& signature,
+                     const SketchInstance* donor,
+                     bool forceResolve);
+    QString solveSignature() const { return m_solveSig; }
 
     // ── Instance ParameterStore（本地覆寫）──────────────────────────────
     /**
@@ -140,8 +186,14 @@ private:
 
     /// 將求解後的 2D 幾何在 m_plane 的座標系下建立 3D Wires
     QList<TopoDS_Wire> buildWires(
-        const QList<SketchGeometry*>& geoms,
-        Plane* plane) const;
+        const QList<SketchGeometry*>& geoms) const;
+
+    /// (u,v)=已乘 scale 的草圖座標 → 世界座標（優先使用雙精度 frame）
+    gp_Pnt toWorld(double u, double v) const;
+
+    bool solveFromMaster();                       ///< 深拷貝 master + 求值 + 求解（含失敗退回）
+    bool adoptSolution(const SketchInstance& d);  ///< 複製 donor 已求解的幾何
+    bool buildShape();                            ///< 由 m_geomClones 建 wire / compound
 
     Sketch*                         m_master        = nullptr;
     Plane*                          m_plane         = nullptr;
@@ -157,6 +209,9 @@ private:
     /// master 幾何 UUID → 本副本 clone 幾何 UUID 的映射（rebuild() 時填入），
     /// 供 orderedWireFrom() 換算「master 起點 UUID」用。
     QHash<QString, QString>         m_uuidRemap;
+    PlacementFrame                  m_frame;
+    bool                            m_externallyDriven = false;
+    QString                         m_solveSig;   ///< 目前 m_geomClones 對應的參數簽章（空 = 未知）
 
     QMetaObject::Connection         m_masterRebuildConn;
     QMetaObject::Connection         m_masterDestroyConn;

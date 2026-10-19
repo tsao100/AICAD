@@ -473,6 +473,11 @@ public:
     // AlignedProfileArray).
 
     QVector3D getXYZForCalc     (double p, double w = 0.0)        const;
+    /// 雙精度版本：getXYZForCalc() 回傳 float QVector3D，座標在 1e5 m 量級時解析度
+    /// 只有約 4~8 mm，對 mm 級的斷面（沿線陣列）會造成肉眼可見的變形。
+    /// 需要精確位置時（SketchInstance 放置）請用這兩個。
+    QPointF   getXYForCalc      (double p, double w = 0.0)        const;
+    double    getElevationForCalc(double p)                       const;
     double    getAzimuthForCalc (double p)                        const;
     double    getSlopeForCalc   (double p)                        const;
     double    getCantForCalc    (double p, bool signed_ = true)   const;

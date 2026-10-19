@@ -1050,6 +1050,17 @@ QVector3D TrackCenterLine::getXYZForCalc(double p, double w) const
             static_cast<float>(v->getElevation(p)) };
 }
 
+QPointF TrackCenterLine::getXYForCalc(double p, double w) const
+{
+    const HorizontalAlignment* h = hasAldHorizontalImport() ? m_hAld : m_h;
+    return h->getXY(p, w);
+}
+
+double TrackCenterLine::getElevationForCalc(double p) const
+{
+    return (hasAldVerticalImport() ? m_vAld : m_v)->getElevation(p);
+}
+
 double TrackCenterLine::getAzimuthForCalc(double p) const
 {
     return (hasAldHorizontalImport() ? m_hAld : m_h)->getAzimuth(p);

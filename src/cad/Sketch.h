@@ -18,6 +18,7 @@
 #include <optional>
 #include <QVector>
 #include <QVector2D>
+#include <QPair>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QUuid>
@@ -473,6 +474,33 @@ public:
     /// FixedDistance 時回傳 false（no-op）。
     bool flipDistanceSide(const QString& uuid);
 
+    /// 第 8 項：草圖 eyeClose（隱藏／結束編輯）當下的相機視圖，隨草圖存檔。
+    /// 重開檔後 eyeOpen、或再次「編輯草圖」時還原；空 = 沒記錄過。
+    QJsonObject viewState() const { return m_viewState; }
+    void setViewState(const QJsonObject& st) { m_viewState = st; }
+
+    /// 第 9 項：記下幾何約束符號被拖放後的位置（像素偏移，見
+    /// SketchConstraint::symbolOffsetX）。只改顯示位置：不求解、不 markDirty，
+    /// 與 updateConstraintDimOffset() 對尺寸線的處理一致；會隨約束存檔。
+    bool setConstraintSymbolOffset(const QString& uuid, double offsetX, double offsetY);
+
+    /// 第 11 項：設定約束的啟用條件公式（空字串＝永遠啟用）。只改設定並立即重算
+    /// 該約束的 conditionOff；呼叫端接著 solveConstraints() 讓結果生效。
+    bool setConstraintEnableExpr(const QString& uuid, const QString& expr);
+
+    /// 第 11 項：依各約束的 enableExpr 重新計算 conditionOff（用 parameterStore()
+    /// 求值）。回傳是否有任何約束的啟用狀態改變。每次求解前自動呼叫。
+    bool updateConstraintConditions();
+
+    /// 重合（Coincident）約束可選的「控制點」清單，座標透過
+    /// GeomRef::resolvePosition() 取得實際點位（不是 points[] 的取樣值）：
+    ///   Point → WholeGeom；Line → Start/End；Arc → Start/End/Center；
+    ///   Circle/Ellipse → Center。
+    /// ⚠️ 舊版呼叫端自行用 g->points.front()/points[0] 當作圓/弧的 Center：
+    /// 弧的 points[0] 其實是「起點」，圓則根本沒有 points，結果 Center 候選的
+    /// 位置等於 Start（永遠輸給 Start）或根本不存在，所以重合選不到圓心。
+    QVector<QPair<QVector2D, GeomHandle>> coincidentCandidates(const QString& geomUuid) const;
+
     // ==================== 標註管理（GDIM v2 Phase 1）====================
     // SketchAnnotation 是「標註」的唯一對外資料來源（GeneralDimClassifier /
     // GeneralDimCommand / AnnotationAIS 家族皆應改用這組 API，而非直接操作
@@ -511,6 +539,12 @@ public:
     bool computeDistanceSide(const SketchConstraint& c,
                              double& sign, double& dirX, double& dirY) const;
 
+    /// 第 3 項回報：求解「之前」呼叫——對尚未記住方向/側邊的 FixedDistance
+    /// 約束，以目前幾何鎖定一次（並同步到 SketchAnnotation）。已鎖定的不會被
+    /// 改寫，所以尺寸值變負再變回正時，方向能自然恢復；只有
+    /// flipDistanceSide() 會明確改變它。
+    void lockDistanceSides();
+
     /**
      * @brief GDIM v2 Phase 6：重複尺寸偵測
      *
@@ -547,7 +581,15 @@ public:
     // ── 草圖平面參考幾何（X 軸 / Y 軸 / 原點）─────────────────────────────
     // 這些幾何在第一次呼叫時 lazy-init，屬於 Fixed 參考幾何（不可移動）。
     // AIS 層用 "sketch_xaxis:<id>" 等 UUID 顯示；約束解析時用這裡的真實 UUID。
-    QString xAxisGeomUuid();    ///< Sketch 內 X 軸 SketchLine 的 UUID
+    /// 第 14 項：X 軸／Y 軸／原點「基準幾何」。它們不是存在 m_geometries 的真實
+    /// 幾何——不顯示、不存檔、不可選取，也不會產生任何建構線；只是讓約束能以
+    /// 幾何 UUID（"datum:xaxis" 等固定代號）引用草圖座標軸的常數替身。
+    /// findGeometry()/point() 對這些代號回傳內部的常數物件，求解時由
+    /// appendDatumSolveInputs() 連同「釘死位置」的 Fixed 約束一起加進求解輸入，
+    /// 所以約束照常運算，但軸永遠不會被拉動。
+    static bool isDatumUuid(const QString& uuid) { return uuid.startsWith(QLatin1String("datum:")); }
+
+    QString xAxisGeomUuid();    ///< 固定代號 "datum:xaxis"（不建立任何幾何）
     QString yAxisGeomUuid();    ///< Sketch 內 Y 軸 SketchLine 的 UUID
     QString originPointUuid();  ///< Sketch 內原點 SketchPoint 的 UUID
     QString constrainDistance(const GeomRef& a, const GeomRef& b, double dist);
@@ -649,6 +691,9 @@ private:
     QList<TopoDS_Wire> m_wires;
     QList<Handle(AIS_InteractiveObject)> m_aisShapes;
     QList<QString>            m_aisShapeUuids;
+    /// 第 11 項：目前生效（未被條件停用）的約束，供求解／DOF 計算使用。
+    QList<SketchConstraint> activeConstraints() const;
+    QJsonObject               m_viewState;   ///< 第 8 項：eyeClose 時的相機視圖（存檔）
     /**
      * @brief Content fingerprint of each geometry, index-aligned with
      *        m_aisShapes/m_aisShapeUuids, used by rebuildShapesOnly() to
@@ -683,9 +728,16 @@ private:
     bool m_suppressRebuiltSignal = false;
 
     // 草圖平面參考幾何 UUID（lazy-init，初次存取時建立）
-    QString m_xAxisGeomUuid;
-    QString m_yAxisGeomUuid;
-    QString m_originPointUuid;
+    // 第 14 項：座標軸基準幾何（常數替身，擁有所有權；不在 m_geometries、不存檔）
+    QList<SketchGeometry*> m_datumGeoms;
+    void initDatumGeometry();
+    void resetDatumGeometry();                       ///< 求解前把替身回到標準位置
+    bool usesDatum() const;                          ///< 有約束引用基準幾何嗎
+    void appendDatumSolveInputs(QList<SketchGeometry*>& geoms,
+                                QList<SketchConstraint>& cons) const;
+    /// 舊檔遷移：把舊版 lazy 建立、存進檔案的軸線/原點幾何搬走，約束與標註的
+    /// 引用改指向基準代號。fromJson() 內部使用。
+    void migrateLegacyAxisGeometry(const QJsonObject& json);
 
     void applyConstructionStyle(Handle(AIS_Shape)& shape, GeomRole role);
 };

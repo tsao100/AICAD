@@ -369,7 +369,7 @@ bool Document::load(const QString& fileName) {
             }
             if (!m_trackCenterLines.isEmpty()) {
                 Q_EMIT trackCenterLinesChanged();
-                Q_EMIT treeStructureChanged();
+                emitTreeStructureChanged();
             }
         }
 
@@ -463,7 +463,7 @@ bool Document::load(const QString& fileName) {
 
         // ✅ 載入完成後：重建 tree items 並通知所有監聽者
         rebuildFeatureTreeItems();
-        Q_EMIT treeStructureChanged();
+        emitTreeStructureChanged();
 
         qDebug() << "[Document] Loaded successfully," << m_features.size() << "features";
         return true;
@@ -539,7 +539,8 @@ void Document::rebuildFeatureTreeItems() {
             treeItem.type = ui::ItemType::Extrude;
         } else if (auto* arr = qobject_cast<AlignedProfileArray*>(feature)) {
             treeItem.type = ui::ItemType::Pattern;
-            treeItem.name = QString("%1 (%2 stations)").arg(arr->name()).arg(arr->stationCount());
+            treeItem.name = QString("%1 (%2 segments, %3 stations)")
+                                .arg(arr->name()).arg(arr->segmentCount()).arg(arr->stationCount());
         } else if (qobject_cast<ProfileLoftSolid*>(feature)) {
             treeItem.type = ui::ItemType::Loft;
         } else if (qobject_cast<SketchInstance*>(feature)) {
@@ -650,7 +651,7 @@ void Document::removeFeature(Feature* feature) {
     setModified(true);
     Q_EMIT featureRemoved();
     Q_EMIT featureCountChanged(m_features.size());
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 }
 
 void Document::clearFeatures() {
@@ -737,7 +738,7 @@ Sketch* Document::createSketch(Plane* plane, const QString& name) {
 
     m_treeItems.append(sketchItem);
 
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 
     qDebug() << "[Document] Sketch created:" << sketchName;
     return sketch;
@@ -747,7 +748,8 @@ SketchInstance* Document::createSketchInstance(
         Sketch* master,
         Plane* plane,
         const QHash<QString, double>& overrides,
-        const QString& name)
+        const QString& name,
+        bool rebuildNow)
 {
     if (!master) {
         qWarning() << "[Document] createSketchInstance: master is null";
@@ -784,9 +786,12 @@ SketchInstance* Document::createSketchInstance(
     item.selectable = true;
     item.data       = QVariant::fromValue(static_cast<QObject*>(inst));
     m_treeItems.append(item);
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 
-    inst->rebuild();
+    // rebuildNow=false：呼叫端（例如 AlignedProfileArray）緊接著會自己以正確的
+    // 參數／放置座標系建構，這裡先 rebuild 一次只是白白多解算一次。
+    if (rebuildNow)
+        inst->rebuild();
 
     qDebug() << "[Document] SketchInstance created:" << inst->name()
              << "from master:" << master->name();
@@ -837,7 +842,7 @@ AlignedProfileArray* Document::createAlignedProfileArray(
     m_treeItems.append(item);
 
     rebuildFeature(arr);
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 
     qDebug() << "[Document] AlignedProfileArray created:" << arr->name()
              << "stations:" << arr->stationCount();
@@ -872,7 +877,7 @@ ProfileLoftSolid* Document::createProfileLoftSolid(
     m_treeItems.append(item);
 
     rebuildFeature(loft);
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 
     qDebug() << "[Document] ProfileLoftSolid created:" << loft->name();
     return loft;
@@ -921,7 +926,7 @@ ChamferSolid* Document::createChamferSolid(
     m_treeItems.append(item);
 
     rebuildFeature(cf);
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 
     if (cf->hasError()) {
         qWarning() << "[Document] ChamferSolid created with error:" << cf->name()
@@ -978,7 +983,7 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
         }
     }
 
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 
     qDebug() << "[Document] Extrude created:" << extrudeName;
     return extrude;
@@ -1501,7 +1506,7 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
         else if (refType == ReferenceGeometryType::YZPlane)
             setReferenceGeometryVisible(ReferenceGeometryType::LabelYZ, visible);
 
-        Q_EMIT treeStructureChanged();  // ✅ sync checkbox
+        emitTreeStructureChanged();  // ✅ sync checkbox
         return;
     }
 
@@ -1570,7 +1575,7 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
             rdata["visible"] = visible;
             bus->publish("railway.railway3d-visibility-changed", rdata);
 
-            Q_EMIT treeStructureChanged();
+            emitTreeStructureChanged();
             return;
         }
 
@@ -1588,7 +1593,7 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
                 vdata["tclId"]   = tclId;
                 vdata["visible"] = visible;
                 bus->publish("railway.valign-visibility-changed", vdata);
-                Q_EMIT treeStructureChanged();
+                emitTreeStructureChanged();
             }
             return;
         }
@@ -1603,7 +1608,7 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
             vdata["tclId"]   = tcl->id();
             vdata["visible"] = visible;
             bus->publish("railway.halign-visibility-changed", vdata);
-            Q_EMIT treeStructureChanged();
+            emitTreeStructureChanged();
             return;
         }
         qWarning() << "[Document] onVisibilityChanged: item not found:" << itemId;
@@ -1618,14 +1623,14 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
         else
             sketch->eraseFromContext(m_aisContext);
 
-        Q_EMIT treeStructureChanged();  // ✅ sync checkbox
+        emitTreeStructureChanged();  // ✅ sync checkbox
         return;
     }
 
     // ✅ 對非 Sketch feature（Extrude 等），通知 CadView 重繪
     //    CadView::displayAllFeatures 會讀取 feature->isVisible() 決定是否顯示
     Q_EMIT featureShapeUpdated(feature);
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 
 }
 
@@ -1634,7 +1639,7 @@ void Document::initializeOrigin(const Handle(AIS_InteractiveContext)& context) {
     initializeReferenceGeometry(context);
     createOriginFolderItems();
 
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
 }
 
 void Document::createOriginFolderItems() {
@@ -1708,7 +1713,7 @@ void Document::setTreeItemParent(const QString& itemId, const QString& newParent
     for (ui::FeatureTreeItem& item : m_treeItems) {
         if (item.id == itemId) {
             item.parentId = newParentId;
-            Q_EMIT treeStructureChanged();
+            emitTreeStructureChanged();
             return;
         }
     }
@@ -1718,7 +1723,7 @@ void Document::setTreeItemName(const QString& itemId, const QString& newName) {
     for (ui::FeatureTreeItem& item : m_treeItems) {
         if (item.id == itemId) {
             item.name = newName;
-            Q_EMIT treeStructureChanged();
+            emitTreeStructureChanged();
             return;
         }
     }
@@ -1773,7 +1778,7 @@ railway::TrackCenterLine* Document::addTrackCenterLine(const QString& name)
     m_trackCenterLines.append(tcl);
     setModified(true);
     Q_EMIT trackCenterLinesChanged();
-    Q_EMIT treeStructureChanged();
+    emitTreeStructureChanged();
     return tcl;
 }
 
@@ -1785,7 +1790,7 @@ void Document::removeTrackCenterLine(const QString& id)
             tcl->deleteLater();
             setModified(true);
             Q_EMIT trackCenterLinesChanged();
-            Q_EMIT treeStructureChanged();
+            emitTreeStructureChanged();
             return;
         }
     }
@@ -1799,6 +1804,34 @@ railway::TrackCenterLine* Document::findTrackCenterLine(const QString& id) const
     }
     return nullptr;
 }
+
+void Document::refreshFeatureDependencies(Feature* feature) {
+    if (!feature) return;
+    const QString id = feature->id();
+
+    const QSet<QString> dependants = m_depGraph.dependantsOf(id);   // 誰依賴我：保留
+    m_depGraph.removeNode(id);
+    m_depGraph.ensureNode(id);
+    for (const QString& depId : feature->featureDependencies())
+        m_depGraph.addDependency(id, depId);
+    for (const QString& d : dependants)
+        m_depGraph.addDependency(d, id);
+}
+
+void Document::beginTreeBatch() { ++m_treeBatchDepth; }
+
+void Document::endTreeBatch() {
+    if (m_treeBatchDepth > 0 && --m_treeBatchDepth == 0 && m_treeBatchPending) {
+        m_treeBatchPending = false;
+        Q_EMIT treeStructureChanged();
+    }
+}
+
+void Document::emitTreeStructureChanged() {
+    if (m_treeBatchDepth > 0) { m_treeBatchPending = true; return; }
+    Q_EMIT treeStructureChanged();
+}
+
 
 } // namespace cad
 } // namespace aicad

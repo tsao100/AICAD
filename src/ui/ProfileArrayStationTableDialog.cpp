@@ -20,24 +20,24 @@ ProfileArrayStationTableDialog::ProfileArrayStationTableDialog(
 {
     setWindowTitle(tr("Station Table — %1")
         .arg(m_array ? m_array->name() : QString()));
-    resize(560, 420);
+    resize(640, 420);
 
     auto* layout = new QVBoxLayout(this);
 
     auto* info = new QLabel(this);
     info->setText(m_array
-        ? tr("%1 station(s), chainage %2 → %3 m, interval %4 m")
+        ? tr("%1 segment(s), %2 station(s), chainage %3 → %4 m")
+              .arg(m_array->segmentCount())
               .arg(m_array->stationCount())
               .arg(m_array->startChainage(), 0, 'f', 3)
               .arg(m_array->endChainage(),   0, 'f', 3)
-              .arg(m_array->interval(),      0, 'f', 3)
         : tr("No profile array"));
     layout->addWidget(info);
 
     m_table = new QTableWidget(this);
-    m_table->setColumnCount(5);
+    m_table->setColumnCount(6);
     m_table->setHorizontalHeaderLabels({
-        tr("#"), tr("Chainage [m]"), tr("Cant [mm]"),
+        tr("#"), tr("Segment"), tr("Chainage [m]"), tr("Cant [mm]"),
         tr("H [m]"), tr("Azimuth [deg]") });
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->verticalHeader()->setVisible(false);
@@ -57,6 +57,8 @@ void ProfileArrayStationTableDialog::populateTable() {
     if (!m_array) return;
 
     const QVector<double> stations = m_array->stationChainages();
+    const QVector<int> segIdx = m_array->stationSegmentIndices();
+    const QList<cad::ProfileArraySegment> segs = m_array->segments();
     railway::TrackCenterLine* tcl = m_array->trackCenterLine();
 
     m_table->setRowCount(stations.size());
@@ -70,7 +72,9 @@ void ProfileArrayStationTableDialog::populateTable() {
         };
 
         m_table->setItem(row, 0, makeItem(QString::number(row)));
-        m_table->setItem(row, 1, makeItem(QString::number(p, 'f', 3)));
+        const int si = (row < segIdx.size()) ? segIdx[row] : -1;
+        m_table->setItem(row, 1, makeItem(si >= 0 && si < segs.size() ? segs[si].name : tr("—")));
+        m_table->setItem(row, 2, makeItem(QString::number(p, 'f', 3)));
 
         if (tcl) {
             // 與 AlignedProfileArray 實際計算所用資料來源保持一致（優先 ALD
@@ -78,11 +82,11 @@ void ProfileArrayStationTableDialog::populateTable() {
             const double cant = tcl->getCantForCalc(p);
             const double h    = tcl->getAppliedHForCalc(p);
             const double az   = tcl->getAzimuthForCalc(p) * 180.0 / M_PI;
-            m_table->setItem(row, 2, makeItem(QString::number(cant, 'f', 2)));
-            m_table->setItem(row, 3, makeItem(QString::number(h,    'f', 3)));
-            m_table->setItem(row, 4, makeItem(QString::number(az,   'f', 3)));
+            m_table->setItem(row, 3, makeItem(QString::number(cant, 'f', 2)));
+            m_table->setItem(row, 4, makeItem(QString::number(h,    'f', 3)));
+            m_table->setItem(row, 5, makeItem(QString::number(az,   'f', 3)));
         } else {
-            for (int col = 2; col <= 4; ++col)
+            for (int col = 3; col <= 5; ++col)
                 m_table->setItem(row, col, makeItem(tr("—")));
         }
     }

@@ -55,6 +55,9 @@ public:
      */
     void updateDimLine(const QString& constraintUuid, double newOffsetX, double newOffsetY);
 
+    /// 第 9 項：約束符號被拖放後，依 Sketch 內最新的偏移重繪該符號。
+    void refreshSymbol(const QString& constraintUuid);
+
     /**
      * 取得指定約束的尺寸線 AIS 物件（供 GripProvider 使用）
      */

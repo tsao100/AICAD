@@ -6,8 +6,11 @@
  */
 
 #include "CadView.h"
+#include <Standard_Failure.hxx>
 #include "DimPreviewOverlay.h"
 #include <limits>
+#include <Geom_Circle.hxx>
+#include <Geom_TrimmedCurve.hxx>
 #include "InputJig.h"
 #include "InputJigOverlay.h"
 #include "RubberBand.h"
@@ -292,6 +295,16 @@ public:
     QPoint                dragDimStartScreen; ///< 拖曳起始的螢幕座標（供 click vs drag 門檻判斷）
     double               dragDimBaseOffsetX = 0.0;  ///< 拖曳前的舊偏移 X
     double               dragDimBaseOffsetY = 0.0;  ///< 拖曳前的舊偏移 Y
+
+    // ── 第 9 項：幾何約束符號拖放狀態 ────────────────────────────────────────
+    QString              dragSymUuid;
+    Handle(aicad::cad::AIS_ConstraintSymbol) dragSymAIS;
+    QVector2D            dragSymStartMouse;   ///< 起始草圖平面座標（mm）
+    QPoint               dragSymStartScreen;
+    double               dragSymBaseX = 0.0;  ///< 拖曳前的舊偏移（像素）
+    double               dragSymBaseY = 0.0;
+    double               dragSymPxPerMm = 1.0;///< 拖曳起始時的「每 mm 幾個像素」
+    QString              hoverSymUuid;        ///< 目前懸停中的約束符號
 
     // ── 尺寸線行內數值編輯狀態（雙擊觸發）────────────────────────────────────
     DimValueLineEdit*    dimValueEditor = nullptr;   ///< 編輯欄 widget（nullptr = 未編輯中）
@@ -772,6 +785,10 @@ void CadView::initializeViewer() {
                            if (auto* sketch = qobject_cast<cad::Sketch*>(feature)) {
 
                                if (!visible) {
+                                   // ⚠️ 第 8 項回報：記下 eyeClose 當下的視圖（隨草圖存檔），
+                                   // 必須在任何會動到相機的處理之前。
+                                   sketch->setViewState(saveViewState());
+
                                    // ✅ 順序非常重要：
                                    // ① 先 detach grips（釋放對 AIS handles 的參考）
                                    d->gripManager->detach();
@@ -805,6 +822,13 @@ void CadView::initializeViewer() {
                                    connect(sketch, &cad::Sketch::rebuilt,
                                            this, &CadView::onSketchRebuilt,
                                            Qt::UniqueConnection);
+
+                                   // ⚠️ 第 8 項回報：eyeOpen → 視圖還原成 eyeClose（存檔）
+                                   // 當時的樣子，含關檔再開檔之後。編輯草圖中不處理
+                                   // （進入編輯有自己的還原流程）；沒記錄過（新草圖）不動。
+                                   if (d->mode != InteractionMode::Sketching &&
+                                       !sketch->viewState().isEmpty())
+                                       restoreViewState(sketch->viewState());
                                }
 
                            } else if (!feature->shape().IsNull()) {
@@ -1525,39 +1549,93 @@ std::optional<QPair<QString, int>> CadView::gdimInteriorHitTest(const QVector2D&
                : nullptr;
     if (!sk) return std::nullopt;
 
-    // 取「距圓心距離 ÷ 半徑」最小者（最貼近感應核心），合理處理巢狀圓/弧的情況。
-    // 半徑 <= 0（退化幾何）一律略過。
-    bool     found = false;
-    double   bestRatio = std::numeric_limits<double>::max();
-    QString  bestUuid;
+    // ⚠️ 修正（第 12 項回報：GDIM 半徑約束的 hover 偵測範圍太大，影響到其他尺寸
+    // 約束的偵測）。舊版把「整個圓盤內部」（距圓心 < 半徑）都當成命中該圓/弧：
+    //   (1) 圓內任何位置都會被這個補足測試認領——包含圓內其他尺寸標註的數值、
+    //       符號所在位置，OCCT 偵測到的是尺寸物件（不在 aisToGeomUuid 內，
+    //       geomUuid 仍為空）就掉進這裡，hover 被圓/弧搶走，其他尺寸約束
+    //       根本偵測不到；
+    //   (2) 弧的「整個圓盤」（包含弧以外的整個圓）也命中。
+    // 現在改成只涵蓋「圓/弧曲線本身的內外側各一條帶狀範圍」（約 kBandPx 像素，
+    // 弧還要落在弧的角度範圍內），並且游標若已經停在尺寸標註/約束符號上，
+    // 完全不做這個補足測試，把偵測權讓給它們。
+    if (!d->context.IsNull() && d->context->HasDetected()) {
+        Handle(AIS_InteractiveObject) det = d->context->DetectedInteractive();
+        if (!det.IsNull() &&
+            (!Handle(aicad::cad::AIS_DimensionLine)::DownCast(det).IsNull() ||
+             !Handle(aicad::cad::AIS_ConstraintSymbol)::DownCast(det).IsNull()))
+            return std::nullopt;
+    }
+
+    // 帶寬單位是螢幕像素：以目前縮放換算成草圖平面的 mm（正交投影，水平相鄰
+    // 兩像素的平面距離）。
+    constexpr double kBandPx = 14.0;
+    const QVector2D p0 = screenToPlane(QPoint(0, 0));
+    const QVector2D p1 = screenToPlane(QPoint(1, 0));
+    const double mmPerPx = static_cast<double>((p1 - p0).length());
+    const double tol = (mmPerPx > 1e-12 ? mmPerPx : 1.0) * kBandPx;
+
+    constexpr double kTwoPi = 6.283185307179586;
+    auto normAngle = [&](double a) {          // → [0, 2π)
+        a = std::fmod(a, kTwoPi);
+        return a < 0.0 ? a + kTwoPi : a;
+    };
+
+    // 取「到曲線的距離」最小者（且 <= tol），合理處理巢狀/相鄰圓弧。
+    bool    found    = false;
+    double  bestDist = std::numeric_limits<double>::max();
+    QString bestUuid;
 
     for (cad::SketchGeometry* geom : sk->geometriesRef()) {
         if (!geom) continue;
 
+        double dist = std::numeric_limits<double>::max();
+
         if (geom->type == cad::SketchGeometryType::Circle) {
             auto* circ = dynamic_cast<const cad::SketchCircle*>(geom);
             if (!circ || circ->radius <= 0.0) continue;
-            double dist  = static_cast<double>((planePt - circ->center).length());
-            double ratio = dist / circ->radius;
-            // 只在「圓內部」（distance < radius）才視為命中——圓外側已由既有
-            // OCCT 邊界曲線偵測（靠近邊界時）涵蓋，此處只補足內部空白區域。
-            if (ratio < 1.0 && ratio < bestRatio) {
-                bestRatio = ratio; bestUuid = geom->uuid; found = true;
-            }
+            const double dc = static_cast<double>((planePt - circ->center).length());
+            dist = std::abs(dc - circ->radius);          // 內外側對稱：到圓周的距離
         } else if (geom->type == cad::SketchGeometryType::Arc) {
-            cad::GeomRef centerRef(geom->uuid, cad::GeomHandle::Center);
-            cad::GeomRef startRef(geom->uuid, cad::GeomHandle::Start);
-            QVector2D center = centerRef.resolvePosition(sk);
-            QVector2D start  = startRef.resolvePosition(sk);
-            double radius = static_cast<double>((start - center).length());
+            const auto* arc = dynamic_cast<const cad::SketchArc*>(geom);
+            if (!arc) continue;
+            const QVector2D center = cad::GeomRef(geom->uuid, cad::GeomHandle::Center).resolvePosition(sk);
+            const QVector2D start  = cad::GeomRef(geom->uuid, cad::GeomHandle::Start ).resolvePosition(sk);
+            const QVector2D end    = cad::GeomRef(geom->uuid, cad::GeomHandle::End   ).resolvePosition(sk);
+            const double radius = static_cast<double>((start - center).length());
             if (radius <= 0.0) continue;
-            double dist  = static_cast<double>((planePt - center).length());
-            double ratio = dist / radius;
-            // 「遊標貼近弧圓心」——同樣只補足 OCCT 偵測不到的「圓心附近但遠離
-            // 實際弧線曲線」這塊空白（見無選單版第 1 節表格第 2 列）。
-            if (ratio < 1.0 && ratio < bestRatio) {
-                bestRatio = ratio; bestUuid = geom->uuid; found = true;
+
+            // 弧的掃過方向：Geom_TrimmedCurve 永遠沿基圓的正方向從 first 走到 last；
+            // 基圓軸與草圖平面法向同向 → 草圖平面內為逆時針，否則為順時針。
+            bool ccw = true;
+            if (!arc->curve.IsNull() && sk->plane()) {
+                if (auto circ = Handle(Geom_Circle)::DownCast(arc->curve->BasisCurve())) {
+                    const QVector3D n = sk->plane()->normal();
+                    const gp_Dir ax = circ->Axis().Direction();
+                    ccw = (ax.X()*n.x() + ax.Y()*n.y() + ax.Z()*n.z()) >= 0.0;
+                }
             }
+            const double aS = std::atan2(start.y() - center.y(), start.x() - center.x());
+            const double aE = std::atan2(end.y()   - center.y(), end.x()   - center.x());
+            const double from = ccw ? aS : aE;     // 順時針弧＝從終點逆時針掃到起點
+            const double to   = ccw ? aE : aS;
+            double span = normAngle(to - from);
+            if (span < 1e-9) span = kTwoPi;        // 起訖同點視為整圓
+
+            const double ap = std::atan2(planePt.y() - center.y(), planePt.x() - center.x());
+            const double dc = static_cast<double>((planePt - center).length());
+            if (normAngle(ap - from) <= span) {
+                dist = std::abs(dc - radius);      // 在弧的角度範圍內：到弧線的距離
+            } else {                               // 角度範圍外：只可能貼近兩端點
+                dist = std::min(static_cast<double>((planePt - start).length()),
+                                static_cast<double>((planePt - end).length()));
+            }
+        } else {
+            continue;
+        }
+
+        if (dist <= tol && dist < bestDist) {
+            bestDist = dist; bestUuid = geom->uuid; found = true;
         }
     }
 
@@ -1875,11 +1953,18 @@ QJsonObject CadView::saveViewState() const {
     d->view->At(xa, ya, za);
     Standard_Real xu, yu, zu;
     d->view->Up(xu, yu, zu);
+    // 投影方向（SetProj 吃的那個向量：由 at 指向 eye）。
+    // ⚠️ 正投影相機的 eye 與 at 在實務上常常「完全重合」（舊版存檔的
+    //    CurbPlinth/FlatPlinth.aicad 裡 eye == at，逐位元相同），此時光靠
+    //    eye/at 無法還原視線方向；所以另存 proj，還原時以 proj 為準。
+    Standard_Real xp = 0, yp = 0, zp = 0;
+    d->view->Proj(xp, yp, zp);
     Standard_Real scale = d->view->Scale();
 
     state["eyeX"] = xe; state["eyeY"] = ye; state["eyeZ"] = ze;
     state["atX"]  = xa; state["atY"]  = ya; state["atZ"]  = za;
     state["upX"]  = xu; state["upY"]  = yu; state["upZ"]  = zu;
+    state["projX"] = xp; state["projY"] = yp; state["projZ"] = zp;
     state["scale"] = scale;
     state["viewType"] = static_cast<int>(d->viewType);
     return state;
@@ -1888,10 +1973,108 @@ QJsonObject CadView::saveViewState() const {
 void CadView::restoreViewState(const QJsonObject& state) {
     if (d->view.IsNull() || state.isEmpty()) return;
 
-    d->view->SetEye(state["eyeX"].toDouble(), state["eyeY"].toDouble(), state["eyeZ"].toDouble());
-    d->view->SetAt (state["atX"].toDouble(),  state["atY"].toDouble(),  state["atZ"].toDouble());
-    d->view->SetUp (state["upX"].toDouble(),  state["upY"].toDouble(),  state["upZ"].toDouble());
-    d->view->SetScale(state["scale"].toDouble(1.0));
+    // ⚠️ 當機根因：舊版依序呼叫 SetEye(eye) → SetAt(at)。存檔的 eye 與 at 相同
+    //    （正投影相機的 eye==at），SetAt() 會把「中心點」移到與「眼睛」重合的
+    //    位置，視線方向變成零向量；OCCT 在 V3d_View／Graphic3d_Camera 內部
+    //    丟出 Standard_DomainError。這個函式是由 QTimer::singleShot 的 lambda
+    //    呼叫（沒有任何 try/catch），例外一路穿出 Qt 事件迴圈 →
+    //    "terminate called after throwing an instance of 'Standard_DomainError'"。
+    //
+    //    現在：① 完全不用 SetEye；② 方向以 proj（或 eye-at，且長度夠大時）為準，
+    //    退化時保留目前方向；③ up 與方向平行時改用安全的 up；④ 全部資料先驗證
+    //    是有限值；⑤ 整段 try/catch，任何 OCCT 例外都只記錄不當掉。
+    auto finite3 = [](double x, double y, double z) {
+        return std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
+    };
+
+    // 第 7 項（Firefox）：存檔的 viewType 也要還原，否則 updateProjection() 之類
+    // 依 viewType 重算投影的流程會把相機重設成預設視角。
+    if (state.contains("viewType"))
+        d->viewType = static_cast<ViewType>(state["viewType"].toInt(static_cast<int>(d->viewType)));
+
+    try {
+        const double ax = state["atX"].toDouble(), ay = state["atY"].toDouble(),
+                     az = state["atZ"].toDouble();
+        const double scale = state["scale"].toDouble(1.0);
+
+        // ── 投影方向 ──
+        gp_Vec proj(0, 0, 0);
+        if (state.contains("projX")) {
+            proj = gp_Vec(state["projX"].toDouble(), state["projY"].toDouble(),
+                          state["projZ"].toDouble());
+        }
+        if (proj.Magnitude() < 1e-9) {      // 舊版存檔：退回 eye - at
+            proj = gp_Vec(state["eyeX"].toDouble() - ax,
+                          state["eyeY"].toDouble() - ay,
+                          state["eyeZ"].toDouble() - az);
+        }
+        if (proj.Magnitude() < 1e-9 || !finite3(proj.X(), proj.Y(), proj.Z())) {
+            // 方向資訊遺失：依存檔的 viewType 還原標準視角；再不行就保留目前方向。
+            switch (static_cast<ViewType>(state["viewType"].toInt(-1))) {
+            case ViewType::Top:    proj = gp_Vec(0, 0,  1); break;
+            case ViewType::Bottom: proj = gp_Vec(0, 0, -1); break;
+            case ViewType::Front:  proj = gp_Vec(0, -1, 0); break;
+            case ViewType::Back:   proj = gp_Vec(0,  1, 0); break;
+            case ViewType::Right:  proj = gp_Vec(1,  0, 0); break;
+            case ViewType::Left:   proj = gp_Vec(-1, 0, 0); break;
+            default: {
+                Standard_Real cx, cy, cz;
+                d->view->Proj(cx, cy, cz);
+                proj = gp_Vec(cx, cy, cz);
+                break;
+            }
+            }
+        }
+        if (proj.Magnitude() < 1e-9) return;   // 連目前方向都不可用 → 放棄還原
+        proj.Normalize();
+
+        // ── up：不可與方向平行 ──
+        gp_Vec up(state["upX"].toDouble(), state["upY"].toDouble(), state["upZ"].toDouble());
+        if (up.Magnitude() < 1e-9 || !finite3(up.X(), up.Y(), up.Z()) ||
+            up.Crossed(proj).Magnitude() < 1e-6 * up.Magnitude()) {
+            up = (std::abs(proj.Z()) > 0.99) ? gp_Vec(0, 1, 0) : gp_Vec(0, 0, 1);
+        }
+
+        if (!finite3(ax, ay, az)) return;
+
+        d->view->SetProj(proj.X(), proj.Y(), proj.Z());
+        d->view->SetUp(up.X(), up.Y(), up.Z());
+        d->view->SetAt(ax, ay, az);   // 方向已先確定；SetAt 只平移中心，不會碰方向
+        if (std::isfinite(scale) && scale > 1e-12)
+            d->view->SetScale(scale);
+        d->view->ZFitAll();
+        if (d->grid && d->gridEnabled)
+            d->grid->update();   // 第 7 項（Firefox）：刷新格線涵蓋範圍
+        d->view->Redraw();
+        update();
+    } catch (const Standard_Failure& e) {
+        qWarning() << "[CadView] restoreViewState failed (OCCT):" << e.GetMessageString();
+    } catch (const std::exception& e) {
+        qWarning() << "[CadView] restoreViewState failed:" << e.what();
+    }
+}
+
+void CadView::restoreViewFraming(const QJsonObject& state) {
+    if (d->view.IsNull() || state.isEmpty()) return;
+
+    // 以「平移 eye 與 at 同樣的向量」把視野中心移到存檔的 at，相機朝向不變
+    // （SetAt 單獨呼叫會改變視線方向，破壞已對齊的草圖平面視角）。
+    Standard_Real ex, ey, ez, ax, ay, az, ux, uy, uz;
+    d->view->Eye(ex, ey, ez);
+    d->view->At(ax, ay, az);
+    d->view->Up(ux, uy, uz);
+    const double dx = state["atX"].toDouble(ax) - ax;
+    const double dy = state["atY"].toDouble(ay) - ay;
+    const double dz = state["atZ"].toDouble(az) - az;
+    d->view->SetEye(ex + dx, ey + dy, ez + dz);
+    d->view->SetAt (ax + dx, ay + dy, az + dz);
+    d->view->SetUp (ux, uy, uz);
+    d->view->SetScale(state["scale"].toDouble(d->view->Scale()));
+    d->view->ZFitAll();
+
+    if (d->grid && d->gridEnabled)
+        d->grid->update();
+
     d->view->Redraw();
     update();
 }
@@ -3548,6 +3731,34 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         }
     }
 
+    // ── 第 9 項：幾何約束符號拖放偵測（比照上面的尺寸線）────────────────────
+    if (event->button() == Qt::LeftButton &&
+        (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::Idle))
+    {
+        auto* cmdMgrS = Application::instance()->commandManager();
+        if ((!cmdMgrS || !cmdMgrS->hasActiveCommand()) && d->context->HasDetected()) {
+            Handle(aicad::cad::AIS_ConstraintSymbol) symAIS =
+                Handle(aicad::cad::AIS_ConstraintSymbol)::DownCast(d->context->DetectedInteractive());
+            if (!symAIS.IsNull()) {
+                d->dragSymUuid        = symAIS->constraintUuid();
+                d->dragSymAIS         = symAIS;
+                d->dragSymStartMouse  = screenToPlane(event->pos());
+                d->dragSymStartScreen = event->pos();
+                d->dragSymBaseX       = symAIS->symbolOffsetX();
+                d->dragSymBaseY       = symAIS->symbolOffsetY();
+                // 符號偏移單位是螢幕像素：量測目前縮放下 1 px 對應幾個 mm
+                const QVector2D a = screenToPlane(event->pos());
+                const QVector2D b = screenToPlane(event->pos() + QPoint(1, 0));
+                const double mmPerPx = (b - a).length();
+                d->dragSymPxPerMm = mmPerPx > 1e-12 ? 1.0 / mmPerPx : 1.0;
+                setMode(InteractionMode::SymbolDrag);
+                setCursor(Qt::SizeAllCursor);
+                event->accept();
+                return;
+            }
+        }
+    }
+
     // 在現有的左鍵 Sketching 處理之前插入（緊接在 snap 判斷之前）：
 
     if (event->button() == Qt::LeftButton &&
@@ -3887,6 +4098,20 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
+    // 第 9 項：懸停到約束符號 → 通知外部高亮其關聯幾何（離開時送空字串）
+    {
+        QString hoverSym;
+        if (!d->context.IsNull() && d->context->HasDetected()) {
+            Handle(aicad::cad::AIS_ConstraintSymbol) hs =
+                Handle(aicad::cad::AIS_ConstraintSymbol)::DownCast(d->context->DetectedInteractive());
+            if (!hs.IsNull()) hoverSym = hs->constraintUuid();
+        }
+        if (hoverSym != d->hoverSymUuid) {
+            d->hoverSymUuid = hoverSym;
+            Q_EMIT constraintSymbolHovered(hoverSym);
+        }
+    }
+
     // 更新懸停偵測
     if (!d->context.IsNull() && !d->view.IsNull() && !gripActive) {
         //d->context->MoveTo(xp, yp, d->view, Standard_True);\n
@@ -3900,7 +4125,7 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
                     Handle(aicad::cad::AIS_DimensionLine)::DownCast(detected);
                 auto* cmdMgr3 = Application::instance()->commandManager();
                 bool noCmd = !cmdMgr3 || !cmdMgr3->hasActiveCommand();
-                if (!dimDet.IsNull() && noCmd &&
+                if ((!dimDet.IsNull() || !d->hoverSymUuid.isEmpty()) && noCmd &&
                     (d->mode == InteractionMode::Sketching || d->mode == InteractionMode::Idle))
                     setCursor(Qt::SizeAllCursor);
                 else
@@ -3920,6 +4145,14 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
         double newOffX = d->dragDimBaseOffsetX + delta.x();
         double newOffY = d->dragDimBaseOffsetY + delta.y();
         Q_EMIT dimLineDragging(d->dragDimUuid, newOffX, newOffY);
+        event->accept();
+        return;
+    }
+
+    // ── 第 9 項：約束符號拖放中：即時發送像素偏移 ───────────────────────────
+    if (d->mode == InteractionMode::SymbolDrag && !d->dragSymUuid.isEmpty()) {
+        const QVector2D delta = (screenToPlane(event->pos()) - d->dragSymStartMouse) * float(d->dragSymPxPerMm);
+        Q_EMIT symbolDragging(d->dragSymUuid, d->dragSymBaseX + delta.x(), d->dragSymBaseY + delta.y());
         event->accept();
         return;
     }
@@ -4311,6 +4544,30 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
         return;
     }
 
+    // ── 第 9 項：約束符號拖放結束 ───────────────────────────────────────────
+    if (event->button() == Qt::LeftButton &&
+        d->mode == InteractionMode::SymbolDrag && !d->dragSymUuid.isEmpty())
+    {
+        const QPoint screenDelta = event->pos() - d->dragSymStartScreen;
+        if (screenDelta.manhattanLength() < kBoxSelectDragThreshold) {
+            // 單純點擊：維持原本行為＝選取該符號
+            if (!d->dragSymAIS.IsNull() && !d->context.IsNull()) {
+                const bool additive = (event->modifiers() & Qt::ShiftModifier);
+                if (!additive) d->context->ClearSelected(Standard_False);
+                d->context->AddOrRemoveSelected(d->dragSymAIS, Standard_True);
+            }
+        } else {
+            const QVector2D delta = (screenToPlane(event->pos()) - d->dragSymStartMouse) * float(d->dragSymPxPerMm);
+            Q_EMIT symbolDragFinished(d->dragSymUuid, d->dragSymBaseX + delta.x(), d->dragSymBaseY + delta.y());
+        }
+        d->dragSymUuid.clear();
+        d->dragSymAIS.Nullify();
+        unsetCursor();
+        setMode(InteractionMode::Sketching);
+        event->accept();
+        return;
+    }
+
     // ✅ FIX: 中間鍵放開 → 結束 pan
     if (event->button() == Qt::MiddleButton) {
         d->middleButtonPressed = false;
@@ -4428,6 +4685,20 @@ void CadView::mouseDoubleClickEvent(QMouseEvent* event) {
             return;
         }
     }
+    // 第 11 項：雙擊幾何約束符號 → 通知 UIManager 開啟「啟用條件」編輯。
+    // 第一次點擊已由 mousePress/Release 處理成「選取」（見 SymbolDrag 區塊），
+    // 這裡接手第二次點擊，兩者互不干擾。
+    if (!hasActiveCmd && event->button() == Qt::LeftButton &&
+        !d->context.IsNull() && d->context->HasDetected())
+    {
+        Handle(aicad::cad::AIS_ConstraintSymbol) symAIS =
+            Handle(aicad::cad::AIS_ConstraintSymbol)::DownCast(d->context->DetectedInteractive());
+        if (!symAIS.IsNull()) {
+            Q_EMIT constraintSymbolDoubleClicked(symAIS->constraintUuid());
+            event->accept();
+            return;
+        }
+    }
     QWidget::mouseDoubleClickEvent(event);
 }
 
@@ -4481,6 +4752,12 @@ void CadView::openDimExpressionDialog(const Handle(aicad::cad::AIS_DimensionLine
             this, [](const QString& constraintUuid, const QString& newExpr) {
         if (auto* uiMgr = core::Application::instance()->uiManager())
             uiMgr->applyDimExpressionEdit(constraintUuid, newExpr);
+    });
+    // 第 13 項：啟用條件公式（先於 expressionAccepted 發出，之後的求解才會帶入）
+    connect(dlg, &aicad::ui::DimExpressionDialog::enableExprAccepted,
+            this, [](const QString& constraintUuid, const QString& expr, bool solveNow) {
+        if (auto* uiMgr = core::Application::instance()->uiManager())
+            uiMgr->applyConstraintEnableExpr(constraintUuid, expr, solveNow);
     });
     // ⚠️ 新增（第 10 項回報的後續需求）：對話框的「翻轉方向」按鈕只負責
     // 發出訊號，實際套用交給這裡呼叫 Sketch::flipDistanceSide()。

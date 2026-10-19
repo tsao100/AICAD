@@ -120,6 +120,10 @@ struct SketchAnnotation {
     double          value2 = 0.0;       ///< 第二數值（Coordinate 的 Y 值）
     QString         paramExpr;          ///< 原始參數表達式
 
+    /// 第 13 項：尺寸的啟用條件公式（如 "H>0"），空＝永遠啟用。隱含約束不會被
+    /// 序列化，所以真正的存檔來源在這裡；toImplicitConstraint() 會帶進約束。
+    QString         enableExpr;
+
     bool            driving = true;     ///< true=驅動幾何（會產生隱含約束）；false=僅量測顯示
 
     DistanceMode    distMode = DistanceMode::PointToPoint;

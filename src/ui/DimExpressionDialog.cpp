@@ -11,6 +11,7 @@
 #include <QFont>
 #include <QCloseEvent>
 #include <QKeyEvent>
+#include <QMessageBox>
 
 namespace aicad::ui {
 
@@ -61,6 +62,21 @@ DimExpressionDialog::DimExpressionDialog(cad::Sketch* sk,
     m_hintLabel->setWordWrap(true);
     m_hintLabel->setStyleSheet("color: gray; font-size: 11px;");
     mainLayout->addWidget(m_hintLabel);
+
+    // ── 第 13 項：啟用條件公式（如 H>0、H<=0；結果為真才啟用此尺寸約束）──────
+    {
+        auto* enRow = new QHBoxLayout();
+        auto* enLabel = new QLabel(tr("啟用條件"), this);
+        enRow->addWidget(enLabel);
+        if (m_sketch) {
+            if (auto* c = m_sketch->findConstraint(constraintUuid))
+                m_origEnableExpr = c->enableExpr;
+        }
+        m_enableEdit = new QLineEdit(m_origEnableExpr, this);
+        m_enableEdit->setPlaceholderText(tr("留空＝永遠啟用，例如 H>0 或 H<=0 && W>5"));
+        enRow->addWidget(m_enableEdit, /*stretch=*/1);
+        mainLayout->addLayout(enRow);
+    }
 
     // ⚠️ 新增（第 10 項回報的後續需求）：距離類尺寸（FixedDistance——GDIM
     // 一般距離標註對應的隱含約束）現在求解時，「哪一側」是鎖定在求解開始
@@ -153,7 +169,30 @@ void DimExpressionDialog::onDimensionRefPicked(const QString& refConstraintUuid)
 void DimExpressionDialog::onAccept()
 {
     const QString expr = m_exprEdit->text().trimmed();
-    if (expr.isEmpty()) { onReject(); return; }
+    const QString enableExpr = m_enableEdit ? m_enableEdit->text().trimmed() : QString();
+
+    // 第 13 項：啟用條件有改且非空時先驗證能否求值；不能求值時此尺寸會維持啟用，
+    // 先問使用者要不要照樣套用，避免打錯參數名卻以為已經設好條件。
+    if (enableExpr != m_origEnableExpr && !enableExpr.isEmpty() && m_sketch) {
+        auto* store = m_sketch->parameterStore();
+        const bool ok = store && store->evaluateCondition(enableExpr).first;
+        if (!ok) {
+            const auto btn = QMessageBox::question(
+                this, tr("公式無法求值"),
+                tr("「%1」目前無法求值（參數未定義或語法錯誤）。\n"
+                   "無法求值時此尺寸約束會維持啟用。仍要套用嗎？").arg(enableExpr),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (btn != QMessageBox::Yes) return;   // 留在對話框讓使用者修改
+        }
+    }
+
+    if (enableExpr != m_origEnableExpr)   // 先套用啟用狀態；沒有數值運算式時由接收端自行求解
+        Q_EMIT enableExprAccepted(m_constraintUuid, enableExpr, /*solveNow=*/expr.isEmpty());
+
+    if (expr.isEmpty()) {
+        if (enableExpr != m_origEnableExpr) { accept(); return; }
+        onReject(); return;
+    }
     Q_EMIT expressionAccepted(m_constraintUuid, expr);
     accept();
 }

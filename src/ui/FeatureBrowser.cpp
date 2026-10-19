@@ -557,7 +557,7 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
     // ── AlignedProfileArray（Step 8：唯讀站位資料表）───────────────────────
     if (itemType == ItemType::Pattern) {
         QMenu menu(this);
-        QAction* actTable = menu.addAction(tr("站位資料表 (Station Table)"));
+        QAction* actTable = menu.addAction(tr("分段資料表 (Segment Table)…"));
         connect(actTable, &QAction::triggered, this, [this, itemId] {
             Q_EMIT showProfileArrayTableRequested(itemId);
         });

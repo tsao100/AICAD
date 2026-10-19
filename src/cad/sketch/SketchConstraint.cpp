@@ -197,6 +197,19 @@ bool SketchConstraint::evaluateValue(const aicad::core::ParameterStore* store) {
     return ok;
 }
 
+bool SketchConstraint::evaluateValue(const aicad::core::ParameterScope& scope) {
+    if (paramExpr.isEmpty()) return true;
+    auto [ok, v] = scope.evaluate(paramExpr);
+    if (ok) {
+        // 角度型別：參數以「度」註冊、value 以「弧度」儲存——換算理由見上一個
+        // 多載（ParameterStore 版）的詳細說明，兩者語意必須一致。
+        const bool isAngleType = (type == ConstraintType::FixedAngleDim ||
+                                   type == ConstraintType::FixedAngle);
+        value = isAngleType ? (v * M_PI / 180.0) : v;
+    }
+    return ok;
+}
+
 int SketchConstraint::dofConsumed() const {
     switch (type) {
     case ConstraintType::Coincident:      return 2;
@@ -252,6 +265,12 @@ QJsonObject SketchConstraint::toJson() const {
     o["dimOffX"]   = dimLineOffsetX;
     o["dimOffY"]   = dimLineOffsetY;
     if (fixedAbsolute) o["fixedAbsolute"] = true;
+    if (!enableExpr.isEmpty()) o["enableExpr"] = enableExpr;   // 第 11 項
+    // 第 9 項：約束符號被使用者拖放過才存（舊檔/未拖放的檔案內容不變）
+    if (hasSymbolOffset) {
+        o["symOffX"] = symbolOffsetX;
+        o["symOffY"] = symbolOffsetY;
+    }
     // 第 10 項回報後續需求：只有非隱含（implicitOf 為空，即非 GDIM 標註
     // 產生）的 FixedDistance 約束才需要在這裡存這三個欄位——隱含約束
     // 本來就不會被序列化進來（見上方 implicitOf 判斷），它的「哪一側」
@@ -280,6 +299,12 @@ SketchConstraint SketchConstraint::fromJson(const QJsonObject& j) {
     c.dimLineOffsetX = j["dimOffX"].toDouble(0.0);
     c.dimLineOffsetY = j["dimOffY"].toDouble(0.0);
     c.fixedAbsolute  = j["fixedAbsolute"].toBool(false);
+    c.enableExpr     = j["enableExpr"].toString();             // 第 11 項
+    if (j.contains("symOffX") && j.contains("symOffY")) {
+        c.hasSymbolOffset = true;
+        c.symbolOffsetX   = j["symOffX"].toDouble(0.0);
+        c.symbolOffsetY   = j["symOffY"].toDouble(0.0);
+    }
     c.distSideSign   = j["distSideSign"].toDouble(0.0);
     c.distSideDirX   = j["distSideDirX"].toDouble(0.0);
     c.distSideDirY   = j["distSideDirY"].toDouble(0.0);

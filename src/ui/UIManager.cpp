@@ -87,6 +87,7 @@
 #include "cad/ConstraintPickSession.h"  // Point-pick for dimension constraints
 #include "ui/AlignmentDataTableDialog.h"  // 線形資料表對話框
 #include "ui/ProfileArrayStationTableDialog.h"  // Step 8：站位資料表對話框
+#include "ui/ProfileArraySegmentTableDialog.h"  // 分段資料表（可編輯）
 #include "cad/AlignedProfileArray.h"
 
 using namespace aicad::core;
@@ -153,6 +154,12 @@ public:
 
     /// Per-TCL AlignmentDocument instances (key = tcl->id())
     QHash<QString, railway::AlignmentDocument*> tclAlignmentDocs;
+
+    /// 第 9 項：hover 約束符號時被連動高亮的幾何 AIS（離開時 Unhilight）。
+    QList<Handle(AIS_InteractiveObject)> symbolHoverHighlighted;
+
+    /// 第 7 項回報：開檔後等待還原的存檔視圖；displayAllFeatures() 完成後套用。
+    QJsonObject pendingOpenViewState;
 
     /// Per-TCL renderers for 3D visibility (key = tcl->id())
     QHash<QString, view::AlignmentRenderer*> tclRenderers;
@@ -425,6 +432,11 @@ void UIManager::initGripSystem()
     if (d->cadView) {
         connect(d->cadView, &view::CadView::featuresRedisplayed,
                 this, [this]() {
+            // 第 7 項回報：開檔後 displayAllFeatures() 完成 → 套用存檔視圖（一次）
+            if (!d->pendingOpenViewState.isEmpty()) {
+                d->cadView->restoreViewState(d->pendingOpenViewState);
+                d->pendingOpenViewState = QJsonObject();
+            }
             if (!m_currentActiveSketch) return;   // 未在編輯任何 Sketch，無需處理
             reshowSketchEditOverlays(m_currentActiveSketch);
         });
@@ -809,10 +821,20 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                 if (!doc->viewState().isEmpty()) {
                                     // ✅ 有儲存的 viewState：只初始化參考幾何，不 setViewType / fitAll
                                     initializeReferenceGeometry();
-                                    // ✅ 等 displayAllFeatures 完成後再還原，用比所有 timer 更晚的時間點
-                                    QTimer::singleShot(200, this, [this, doc]() {
-                                        if (d->cadView)
-                                            d->cadView->restoreViewState(doc->viewState());
+                                    // ✅ 第 7 項回報：舊版固定等 200ms 再還原一次——檔案大、
+                                    // displayAllFeatures() 還沒做完，或 CadView 還沒就緒
+                                    // （啟動時由命令列開檔，之後 onViewReady() 又會把視圖
+                                    // 重設成等角＋fitAll），都會被後來的操作蓋掉。
+                                    // 改成：先記下要還原的視圖，在 featuresRedisplayed()
+                                    // （displayAllFeatures 完成）時套用；200ms 計時器
+                                    // 保留當後備，兩者擇先，套用後清除，不會重複。
+                                    d->pendingOpenViewState = doc->viewState();
+                                    d->cadView->restoreViewState(d->pendingOpenViewState);
+                                    QTimer::singleShot(200, this, [this]() {
+                                        if (d->cadView && !d->pendingOpenViewState.isEmpty()) {
+                                            d->cadView->restoreViewState(d->pendingOpenViewState);
+                                            d->pendingOpenViewState = QJsonObject();
+                                        }
                                     });
                                 } else {
                                     // ✅ 新文件或無 viewState：走原本流程
@@ -2108,6 +2130,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     core::Application::instance()->setActiveSketch(sketch);
                     if (d->cadView)
                         d->cadView->setMode(view::InteractionMode::Sketching);
+                    // 第 6 項回報：編輯既有草圖 → 還原前次視圖，不縮放全部
+                    m_restorePreviousViewOnEdit = true;
                     onSketchEditStarted(sketch);
                 });
 
@@ -2444,7 +2468,7 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         qWarning() << "[UIManager] showProfileArrayTableRequested: feature not found id=" << featureId;
                         return;
                     }
-                    auto* dlg = new ProfileArrayStationTableDialog(arr, d->mainWindow);
+                    auto* dlg = new ProfileArraySegmentTableDialog(arr, d->mainWindow);
                     dlg->setAttribute(Qt::WA_DeleteOnClose);
                     dlg->show();
                     dlg->raise();
@@ -3191,6 +3215,9 @@ void UIManager::setupSketchPanel()
             d->cadView->setConstraintPickActive(false);
             d->cadView->setMode(view::InteractionMode::Sketching);
         }
+        // 第 5 項回報：約束指令結束後確保軸／約束符號／SketchPoint 都還在
+        // （比照 GDIM 命令結束時的處理，見 GeneralDimCommand::cleanup）。
+        reshowSketchEditOverlays(m_currentActiveSketch);
         setStatusMessage(tr("約束已施加"));
     });
 
@@ -3209,6 +3236,8 @@ void UIManager::setupSketchPanel()
             d->cadView->setConstraintPickActive(false);
             d->cadView->setMode(view::InteractionMode::Sketching);
         }
+        // 取消/結束路徑同樣要還原（第 5 項回報）
+        reshowSketchEditOverlays(m_currentActiveSketch);
     });
     if (d->cadView) {
         connect(d->cadView, &view::CadView::geomRefPicked,
@@ -3258,14 +3287,22 @@ void UIManager::setupSketchPanel()
             if (d->gripFilter) d->gripFilter->setEnabled(!exclusiveClickMode);
             if (d->gripManager) d->gripManager->setEnabled(!exclusiveClickMode);
 
-            // 從 overlay pointAISMap（Constraint overlay 建立的點）
+            // ⚠️ 修正（第 5 項回報：重合等幾何約束指令結束後 sketch point 被隱藏）：
+            // 原本這裡在「離開 GetGeom」時把所有 SketchPointAIS Deactivate()。
+            // 幾何約束指令（COI、HOR、VER、TAN…）選完/取消後會 setMode(Sketching)
+            // 而離開 GetGeom，於是草圖點被停用——畫面上不再可選取、不再有 hover，
+            // 之後若又碰上 displayAllFeatures() 的 RemoveAll，也沒有任何一步把它
+            // 重新 Display，看起來就是「被隱藏」。這與「SketchPoint 永遠顯示＋可
+            // 選取」的設計原則（見 reshowSketchEditOverlays()）牴觸，GDIM 命令
+            // 結束時已有補丁，但其他約束指令沒有。
+            //
+            // 根本處理：SketchPoint 不再因離開 GetGeom 被 Deactivate；任何模式
+            // 切換都只會「確保顯示＋啟用」。進入 GetGeom 時本來就啟用，行為不變。
             auto* overlay = d->sketchPanel ? d->sketchPanel->overlay() : nullptr;
             if (overlay) {
                 for (auto& ais : overlay->pointAISMap()) {
-                    if (enterGetGeom)
-                        ctx->Activate(ais, 0, Standard_False);
-                    else
-                        ctx->Deactivate(ais);
+                    ctx->Display(ais, Standard_False);
+                    ctx->Activate(ais, 0, Standard_False);
                 }
             }
 
@@ -3274,10 +3311,8 @@ void UIManager::setupSketchPanel()
             if (auto* sketch = app ? app->activeSketch() : nullptr) {
                 for (const auto& obj : sketch->aisShapes()) {
                     if (Handle(aicad::cad::SketchPointAIS)::DownCast(obj)) {
-                        if (enterGetGeom)
-                            ctx->Activate(obj, 0, Standard_False);
-                        else
-                            ctx->Deactivate(obj);
+                        ctx->Display(obj, Standard_False);
+                        ctx->Activate(obj, 0, Standard_False);
                     }
                 }
             }
@@ -3349,6 +3384,93 @@ void UIManager::setupSketchPanel()
             sk->previewConstraintDimValue(uuid, ox, oy);
         if (d->sketchPanel && d->sketchPanel->overlay())
             d->sketchPanel->overlay()->updateDimLine(uuid, ox, oy);
+    });
+
+    // ── 第 9 項：幾何約束符號拖放（即時預覽＋放開存入約束，隨檔案儲存）────────
+    connect(d->cadView, &view::CadView::symbolDragging,
+            this, [this](const QString& uuid, double ox, double oy) {
+        if (Sketch* sk = currentActiveSketch())
+            sk->setConstraintSymbolOffset(uuid, ox, oy);
+        if (d->sketchPanel && d->sketchPanel->overlay())
+            d->sketchPanel->overlay()->refreshSymbol(uuid);
+    });
+    connect(d->cadView, &view::CadView::symbolDragFinished,
+            this, [this](const QString& uuid, double ox, double oy) {
+        if (Sketch* sk = currentActiveSketch())
+            sk->setConstraintSymbolOffset(uuid, ox, oy);
+        if (d->sketchPanel && d->sketchPanel->overlay())
+            d->sketchPanel->overlay()->refreshSymbol(uuid);
+    });
+
+    // ── 第 11 項：雙擊約束符號 → 編輯啟用條件公式（如 H>0、H<=0）──────────────
+    connect(d->cadView, &view::CadView::constraintSymbolDoubleClicked,
+            this, [this](const QString& uuid) {
+        Sketch* sk = currentActiveSketch();
+        SketchConstraint* con = sk ? sk->findConstraint(uuid) : nullptr;
+        if (!sk || !con) return;
+
+        const QString oldExpr = con->enableExpr;
+        bool accepted = false;
+        const QString text = QInputDialog::getText(
+            d->mainWindow ? static_cast<QWidget*>(d->mainWindow) : static_cast<QWidget*>(d->cadView),
+            tr("約束啟用條件"),
+            tr("公式結果為真（或非 0）時啟用此約束，為假時停用。\n"
+               "例如：H>0　、　H<=0　、　W>5 && H<=10\n"
+               "留空＝永遠啟用。"),
+            QLineEdit::Normal, oldExpr, &accepted);
+        if (!accepted) return;
+
+        const QString expr = text.trimmed();
+        if (expr == oldExpr) return;
+
+        if (!expr.isEmpty()) {
+            auto* store = sk->parameterStore();
+            const auto res = store ? store->evaluateCondition(expr)
+                                   : std::make_pair(false, true);
+            if (!res.first) {
+                const auto btn = QMessageBox::question(
+                    d->mainWindow ? static_cast<QWidget*>(d->mainWindow) : static_cast<QWidget*>(d->cadView),
+                    tr("公式無法求值"),
+                    tr("「%1」目前無法求值（參數未定義或語法錯誤）。\n"
+                       "無法求值時此約束會維持啟用。仍要套用嗎？").arg(expr),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (btn != QMessageBox::Yes) return;
+            }
+        }
+
+        applyConstraintEnableExpr(uuid, expr, true);
+        setStatusMessage(expr.isEmpty() ? tr("約束：永遠啟用")
+                                        : tr("約束啟用條件：%1").arg(expr));
+    });
+
+    // ── 第 9 項：Hover 約束符號 → 其關聯的幾何一起高亮 ───────────────────────
+    connect(d->cadView, &view::CadView::constraintSymbolHovered,
+            this, [this](const QString& uuid) {
+        auto ctx = d->cadView ? d->cadView->context() : Handle(AIS_InteractiveContext)();
+        if (ctx.IsNull()) return;
+
+        // 先清掉上一次的連動高亮
+        for (const auto& ais : d->symbolHoverHighlighted)
+            if (!ais.IsNull()) ctx->Unhilight(ais, Standard_False);
+        d->symbolHoverHighlighted.clear();
+
+        if (!uuid.isEmpty()) {
+            if (Sketch* sk = currentActiveSketch()) {
+                if (const SketchConstraint* c = sk->findConstraint(uuid)) {
+                    QSet<QString> geomIds;
+                    for (const auto& r : c->refs) geomIds.insert(r.geomUuid);
+                    const auto shapes = sk->aisShapes();
+                    const auto ids    = sk->aisShapeUuids();
+                    for (int i = 0; i < shapes.size() && i < ids.size(); ++i) {
+                        if (!geomIds.contains(ids[i]) || shapes[i].IsNull()) continue;
+                        ctx->HilightWithColor(shapes[i],
+                            ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic), Standard_False);
+                        d->symbolHoverHighlighted.append(shapes[i]);
+                    }
+                }
+            }
+        }
+        ctx->UpdateCurrentViewer();
     });
 
     // ── 拖曳現有尺寸線（放開確認，寫回 Sketch）────────────────────────────────
@@ -3913,6 +4035,13 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
     if (!sketch) return;
     m_currentActiveSketch = sketch;
 
+    // 第 6 項回報：進入前先記下目前相機（下面的 setTopView()/alignToPlane() 會
+    // 連帶 fitAll()）。旗標一次性：讀完立刻清除，避免影響之後的新建草圖。
+    const bool restorePrevView = m_restorePreviousViewOnEdit;
+    m_restorePreviousViewOnEdit = false;
+    const QJsonObject viewBeforeEnter =
+        (restorePrevView && d->cadView) ? d->cadView->saveViewState() : QJsonObject();
+
     auto* bus = core::Application::instance()->eventBus();
 
     // ⚠️ 崩潰工作繞道已於 2026 修正回合中集中搬到 CadView::alignToPlane()
@@ -3988,7 +4117,21 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
         d->cadView->alignToPlane(gridPlane);
 
         d->cadView->setGridEnabled(true);
-        d->cadView->fitAll();
+
+        if (restorePrevView) {
+            // ⚠️ 第 6 項回報：「編輯草圖」不應縮放全部。上面的 setTopView()/
+            // alignToPlane() 為了對齊草圖平面各自都會 fitAll()（不能省，內含防止
+            // 視角切換崩潰的步驟），這裡在最後把視圖還原：
+            //   - 有前次離開這個草圖時的相機 → 完整還原（範圍、縮放、視角）
+            //   - 沒有（例如開檔後第一次編輯）→ 維持進入前畫面上的視野中心與縮放，
+            //     只把朝向對齊草圖平面
+            if (!sketch->viewState().isEmpty())
+                d->cadView->restoreViewState(sketch->viewState());   // 已隨草圖存檔
+            else
+                d->cadView->restoreViewFraming(viewBeforeEnter);
+        } else {
+            d->cadView->fitAll();
+        }
     }
 
     // SketchPanel
@@ -4039,6 +4182,11 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
 
 void UIManager::onSketchEditEnded()
 {
+    // 第 6 項回報：記下離開時的相機，下次「編輯草圖」還原用。
+    // 必須在清除 m_currentActiveSketch 之前，且此時相機還沒被任何離開流程改動。
+    if (m_currentActiveSketch && d->cadView)
+        m_currentActiveSketch->setViewState(d->cadView->saveViewState());
+
     m_currentActiveSketch = nullptr;
 
     auto* bus = core::Application::instance()->eventBus();
@@ -4308,15 +4456,23 @@ void UIManager::onViewReady() {
 
         // 設定初始視圖
         if (d->cadView) {
-            d->cadView->setViewType(view::ViewType::Isometric);
+            if (!doc->viewState().isEmpty()) {
+                // ⚠️ 第 7 項回報：視圖就緒時文件已經載入（啟動時由命令列開檔）
+                // 且存檔含視圖狀態——不可再重設成等角＋fitAll（會蓋掉存檔視圖），
+                // 改為還原存檔視圖。
+                d->pendingOpenViewState = doc->viewState();
+                d->cadView->restoreViewState(d->pendingOpenViewState);
+            } else {
+                d->cadView->setViewType(view::ViewType::Isometric);
 
-            // 延遲一下再執行 fitAll，確保幾何已經顯示
-            QTimer::singleShot(100, [this]() {
-                if (d->cadView) {
-                    d->cadView->fitAll();
-                    qDebug() << "[UIManager] Initial view set to Isometric and fitted";
-                }
-            });
+                // 延遲一下再執行 fitAll，確保幾何已經顯示
+                QTimer::singleShot(100, [this]() {
+                    if (d->cadView) {
+                        d->cadView->fitAll();
+                        qDebug() << "[UIManager] Initial view set to Isometric and fitted";
+                    }
+                });
+            }
         }
     } else {
         qWarning() << "[UIManager] No document available for reference geometry initialization";
@@ -4486,6 +4642,19 @@ void UIManager::onCurrentDocumentChanged(cad::Document* doc) {
 cad::ConstraintPickSession* UIManager::constraintPickSession() const
 {
     return d->pickSession;
+}
+
+void UIManager::applyConstraintEnableExpr(const QString& constraintUuid,
+                                          const QString& expr, bool solveNow)
+{
+    Sketch* sk = currentActiveSketch();
+    if (!sk) return;
+    if (!sk->setConstraintEnableExpr(constraintUuid, expr)) return;
+    if (auto* dm = core::Application::instance()->documentManager())
+        if (auto* doc = dm->currentDocument()) doc->setModified(true);
+    if (!solveNow) return;
+    sk->solveConstraints();           // 依新的啟用狀態重新求解、重建符號/尺寸（灰色＝停用）
+    if (d->cadView) d->cadView->refreshView();
 }
 
 void UIManager::applyDimExpressionEdit(const QString& constraintUuid, const QString& newExpr)

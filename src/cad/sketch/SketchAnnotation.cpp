@@ -151,6 +151,7 @@ std::optional<SketchConstraint> SketchAnnotation::toImplicitConstraint() const {
     c.value       = value;
     c.value2      = value2;
     c.paramExpr   = paramExpr;
+    c.enableExpr  = enableExpr;    // 第 13 項
     c.driving     = true;
     c.distMode    = distMode;
     c.dimLineOffsetX = dimLineOffset.x();
@@ -174,6 +175,7 @@ QJsonObject SketchAnnotation::toJson() const {
     o["value"]     = value;
     o["value2"]    = value2;
     o["paramExpr"] = paramExpr;
+    if (!enableExpr.isEmpty()) o["enableExpr"] = enableExpr;   // 第 13 項
     o["driving"]   = driving;
     o["distMode"]  = static_cast<int>(distMode);
     o["dimOffX"]   = dimLineOffset.x();
@@ -214,6 +216,7 @@ SketchAnnotation SketchAnnotation::fromJson(const QJsonObject& j) {
     an.value     = j["value"].toDouble(0.0);
     an.value2    = j["value2"].toDouble(0.0);
     an.paramExpr = j["paramExpr"].toString();
+    an.enableExpr = j["enableExpr"].toString();                // 第 13 項
     an.driving   = j["driving"].toBool(true);
     an.distMode  = static_cast<DistanceMode>(j["distMode"].toInt(0));
     an.dimLineOffset = QVector2D(j["dimOffX"].toDouble(0.0), j["dimOffY"].toDouble(0.0));

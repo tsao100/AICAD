@@ -286,6 +286,19 @@ void CommandLineManager::onCommandInput(const QString& input) {
 
 void CommandLineManager::onOptionSelected(const QString& option) {
     // option 是 po.shortcut（如 "U"、"C"）
+
+    // ⚠️ 修正（第 10 項回報：NEW 的 Yes/No 選項「點選」沒有作用）：
+    // showPrompt() 會把提示文字裡的 "[Yes/No]" 解析成兩個可點選的選項 chip。
+    // 使用者「打字 y/n 再 Enter」走 processInput() → YESNO_INPUT，NEW／MIRROR
+    // 訂閱的正是這個事件；但「點 chip」走的是這裡，原本一律發布 OPTION_SELECTED，
+    // NEW／MIRROR 根本沒訂閱它，所以點了完全沒有反應。
+    // 處理方式：正在等待 YesNo 時，點選等同於輸入該選項的文字，統一走
+    // processInput()（同樣的 YESNO_INPUT 派送、等待狀態清除與世代判斷）。
+    if (m_isWaitingForInput && m_expectedInputType == InputType::YesNo) {
+        processInput(option);
+        return;
+    }
+
     auto* bus = core::Application::instance()->eventBus();
     bus->publish(Events::OPTION_SELECTED, option);
 }

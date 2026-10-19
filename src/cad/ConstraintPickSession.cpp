@@ -208,7 +208,7 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
         GeomHandle bestHandle = GeomHandle::WholeGeom;
 
         for (const SketchGeometry* g : m_sketch->geometriesRef()) {
-            if (!g || g->points.isEmpty()) continue;
+            if (!g) continue;
 
             auto check = [&](const QVector2D& p, GeomHandle h) {
                 float d = (p - planePt).length();
@@ -219,13 +219,22 @@ GeomRef ConstraintPickSession::makeRef(const QString& geomUuid,
                 }
             };
 
+            // ⚠️ 修正（重合選不到弧圓心）：舊版對圓/弧的 Center 用
+            // g->points.front() 當位置——弧的 points[0] 是「起點」、圓則根本
+            // 沒有 points（被 isEmpty() 直接跳過），所以圓心候選永遠等於起點
+            // 或不存在。改用 Sketch::coincidentCandidates()：Start/End/Center
+            // 都取真正的點位。Point 幾何維持 WholeGeom（直接引用 SketchPoint）。
+            if (g->type == SketchGeometryType::Circle ||
+                g->type == SketchGeometryType::Arc ||
+                g->type == SketchGeometryType::Ellipse) {
+                for (const auto& cand : m_sketch->coincidentCandidates(g->uuid))
+                    check(cand.first, cand.second);
+                continue;
+            }
+            if (g->points.isEmpty()) continue;
             check(g->points.front(), GeomHandle::Start);
             if (g->points.size() > 1)
                 check(g->points.back(), GeomHandle::End);
-            // 圓/弧：中心點
-            if (g->type == SketchGeometryType::Circle ||
-                g->type == SketchGeometryType::Arc)
-                check(g->points.front(), GeomHandle::Center);
         }
 
         if (!bestUuid.isEmpty())

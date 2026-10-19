@@ -85,6 +85,8 @@ Sketch::Sketch(Document* parent)
     // 建立預設 XY 平面
     createDefaultPlane();
 
+    initDatumGeometry();   // 第 14 項：座標軸基準幾何（常數替身）
+
     qDebug() << "[Sketch]" << name() << "created with plane:"
              << (m_plane ? m_plane->displayName() : "None");
 }
@@ -92,6 +94,8 @@ Sketch::Sketch(Document* parent)
 Sketch::~Sketch() {
     disconnectPlaneSignals();
     clearGeometry();
+    qDeleteAll(m_datumGeoms);
+    m_datumGeoms.clear();
     qDebug() << "[Sketch]" << name() << "destroyed";
 }
 
@@ -352,6 +356,11 @@ SketchGeometry* Sketch::findGeometry(const QString& uuid) const {
             m_uuidToGeomIndex[uuid] = i;  // refresh cache
             return m_geometries[i];
         }
+    }
+    // 第 14 項：座標軸基準幾何（"datum:..." 代號）不在 m_geometries，回傳常數替身
+    if (isDatumUuid(uuid)) {
+        for (SketchGeometry* g : m_datumGeoms)
+            if (g->uuid == uuid) return g;
     }
     return nullptr;
 }
@@ -894,6 +903,7 @@ void Sketch::applyConstructionStyle(Handle(AIS_Shape)& shape, GeomRole role) {
 
 QJsonObject Sketch::toJson() const {
     QJsonObject json = Feature::toJson();
+    if (!m_viewState.isEmpty()) json["viewState"] = m_viewState;   // 第 8 項
 
     if (m_plane) {
         json["planeId"]   = m_plane->id();
@@ -1058,19 +1068,7 @@ QJsonObject Sketch::toJson() const {
     if (m_parameterStore)
         json["parameters"] = m_parameterStore->toJson();
 
-    // ⚠️ 第 17 項回報修正：X 軸/Y 軸/原點參考幾何本身（連同鎖住它們的
-    // Fixed 約束）已經在上面的 geometries/constraints 陣列裡正常存檔，
-    // 但 xAxisGeomUuid()/yAxisGeomUuid()/originPointUuid() 用來記住
-    // 「已經建立過，不要重複建立」的快取欄位（m_xAxisGeomUuid 等）只存在
-    // Sketch 記憶體內，本身沒有被存檔。如果不額外記錄，重新載入後這幾個
-    // 快取欄位是空的，只要 GDIM 再次參考 X 軸/Y 軸/原點，就會誤判成
-    // 「還沒建立過」，又建立一組全新的軸線/原點幾何——不但留下沒人使用
-    // 的孤兒幾何，舊約束原本指向的那個軸線也不會被新建立的取代，兩者
-    // 各自獨立，容易讓人誤以為「軸線會變動」。這裡把三個快取 UUID 一併
-    // 存檔，重新載入後就能正確接續使用同一份既有的軸線/原點幾何。
-    if (!m_xAxisGeomUuid.isEmpty())   json["xAxisGeomUuid"]   = m_xAxisGeomUuid;
-    if (!m_yAxisGeomUuid.isEmpty())   json["yAxisGeomUuid"]   = m_yAxisGeomUuid;
-    if (!m_originPointUuid.isEmpty()) json["originPointUuid"] = m_originPointUuid;
+    // 第 14 項：座標軸基準幾何不再存檔（約束以 "datum:xaxis" 等固定代號引用）。
 
     return json;
 }
@@ -1079,6 +1077,7 @@ bool Sketch::fromJson(const QJsonObject& json) {
     if (!Feature::fromJson(json)) {
         return false;
     }
+    m_viewState = json["viewState"].toObject();   // 第 8 項
 
     // ✅ blockSignals 涵蓋平面解析到幾何載入全程
     blockSignals(true);
@@ -1447,28 +1446,20 @@ bool Sketch::fromJson(const QJsonObject& json) {
     if (json.contains("annotations")) {
         for (const QJsonValue& v : json["annotations"].toArray())
             m_annotations.append(SketchAnnotation::fromJson(v.toObject()));
-        // 依標註內容重新生成隱含約束（存檔時已被排除，避免與標註值不同步）
-        for (const auto& a : m_annotations)
-            addImplicitConstraint(a);
     }
+
+    // 第 14 項：舊檔含 lazy 建立的軸線/原點幾何 → 搬走並改引用基準代號。
+    // 必須在「重新生成隱含約束」之前（標註的 refs 也要一併改）。
+    migrateLegacyAxisGeometry(json);
+
+    // 依標註內容重新生成隱含約束（存檔時已被排除，避免與標註值不同步）
+    for (const auto& a : m_annotations)
+        addImplicitConstraint(a);
 
     // ✅ 還原 Sketch 自身的參數（cant、H 等），確保重新載入後參數列表正常顯示
     if (json.contains("parameters")) {
         parameterStore()->fromJson(json["parameters"].toObject());
     }
-
-    // ⚠️ 第 17 項回報修正：還原 X 軸/Y 軸/原點參考幾何的快取 UUID（見
-    // toJson() 對應位置的說明）。只有在該 UUID 對應的幾何確實還存在於
-    // m_geometries 時才採信，避免存檔格式被手動修改或損毀時，讓
-    // xAxisGeomUuid() 之後對著一個不存在的 UUID 誤判為「已建立」。
-    // 找不到就保持空字串，之後第一次真的需要時會照舊自動建立一份。
-    auto restoreCachedAxisUuid = [this, &json](const char* key) -> QString {
-        const QString uuid = json.value(key).toString();
-        return (!uuid.isEmpty() && findGeometry(uuid)) ? uuid : QString();
-    };
-    m_xAxisGeomUuid   = restoreCachedAxisUuid("xAxisGeomUuid");
-    m_yAxisGeomUuid   = restoreCachedAxisUuid("yAxisGeomUuid");
-    m_originPointUuid = restoreCachedAxisUuid("originPointUuid");
 
     blockSignals(false);
     // ✅ 載入完畢後只 emit 一次
@@ -1488,10 +1479,11 @@ bool Sketch::fromJson(const QJsonObject& json) {
 // ── 加入約束 ─────────────────────────────────────────────────────────────
 QString Sketch::addConstraint(const SketchConstraint& c, bool solve) {
     // 驗證參考的幾何是否存在
+    // 第 15 項回報：必須用 findGeometry()（含座標軸基準替身 "datum:..."）。
+    // 第 14 項改成基準幾何不在 m_geometries 後，舊的 any_of(m_geometries) 掃描找不到
+    // 它們，導致選真正的 X/Y 軸做任何約束都被判「約束加入失敗」。
     for (const GeomRef& ref : c.refs) {
-        bool found = std::any_of(m_geometries.begin(), m_geometries.end(),
-                                 [&](const SketchGeometry* g){ return g->uuid == ref.geomUuid; });
-        if (!found) {
+        if (!findGeometry(ref.geomUuid)) {
             qWarning() << "[Sketch] addConstraint: geom not found:" << ref.geomUuid;
             return {};
         }
@@ -1671,6 +1663,58 @@ bool Sketch::previewConstraintDimValue(const QString& uuid, double offsetX, doub
     return true;
 }
 
+QList<SketchConstraint> Sketch::activeConstraints() const
+{
+    QList<SketchConstraint> out;
+    out.reserve(m_constraints.size());
+    for (const SketchConstraint& c : m_constraints)
+        if (c.isActive()) out.append(c);
+    return out;
+}
+
+bool Sketch::updateConstraintConditions()
+{
+    bool changed = false;
+    const aicad::core::ParameterStore* store = parameterStore();
+    for (SketchConstraint& c : m_constraints) {
+        bool off = false;
+        if (!c.enableExpr.trimmed().isEmpty() && store) {
+            const auto [ok, enabled] = store->evaluateCondition(c.enableExpr);
+            off = ok && !enabled;          // 求值失敗 → 維持啟用（fail-safe）
+        }
+        if (off != c.conditionOff) {
+            c.conditionOff = off;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool Sketch::setConstraintEnableExpr(const QString& uuid, const QString& expr)
+{
+    SketchConstraint* c = findConstraint(uuid);
+    if (!c) return false;
+    c->enableExpr = expr.trimmed();
+    // 第 13 項：尺寸約束是從標註重新產生的隱含約束，存檔來源在標註上——同步過去，
+    // 否則重新產生約束（或存檔後重開）時公式會消失。
+    if (!c->implicitOf.isEmpty()) {
+        if (SketchAnnotation* ann = findAnnotation(c->implicitOf))
+            ann->enableExpr = c->enableExpr;
+    }
+    updateConstraintConditions();
+    return true;
+}
+
+bool Sketch::setConstraintSymbolOffset(const QString& uuid, double offsetX, double offsetY)
+{
+    SketchConstraint* c = findConstraint(uuid);
+    if (!c) return false;
+    c->hasSymbolOffset = true;
+    c->symbolOffsetX   = offsetX;
+    c->symbolOffsetY   = offsetY;
+    return true;
+}
+
 bool Sketch::updateConstraintDimOffset(const QString& uuid, double offsetX, double offsetY)
 {
     SketchConstraint* c = findConstraint(uuid);
@@ -1744,23 +1788,22 @@ bool Sketch::computeDistanceSide(const SketchConstraint& c,
         return (double(p.x()-l1.x())*d.y() - double(p.y()-l1.y())*d.x()) / outLen;
     };
 
+    // ⚠️ 修正（第 3 項回報：改尺寸就向量反向）：
+    //   (1) PointToPoint 的方向慣例必須與 FixedDistanceEquation 完全一致——
+    //       求解器用 dir = (A - B)/|A - B|，F = dir·(A - B) - value；舊版這裡
+    //       卻用 (B - A)，使「記住的方向」與求解器相反，下一次求解就把兩點
+    //       換邊，等於每改一次尺寸（或任何一次重新求解）就反向一次。
+    //   (2) ref 可能是「線＋Start/End」或「弧/圓＋Center」，不一定是獨立
+    //       SketchPoint；一律用 GeomRef::resolvePosition() 取座標，才能與求解器
+    //       （varIdx）對同一個點量測。
     switch (c.distMode) {
     case DistanceMode::PointToLine: {
-        SketchPoint* p  = point(c.refs[0].geomUuid);
         auto* ln = dynamic_cast<SketchLine*>(findGeometry(c.refs[1].geomUuid));
-        if (!p || !ln) return false;
+        if (!ln) return false;
+        const QVector2D pp = c.refs[0].resolvePosition(this);
         double len;
-        double signedDist = perpDist(p->pos, ln->start, ln->end, len);
-        // ⚠️ 修正（cant 經過 0 後，記住的翻轉方向被雜訊蓋掉）：這裡原本
-        // 檢查的是 len（參考線本身的長度，perpDist() 內部已經用它防止
-        // 除以 0），跟「這個點目前離線有多近」是兩件事。應該檢查的是
-        // signedDist（點到線的實際距離）——當尺寸目標值（例如
-        // d3=if(cant>0,0,abs(cant))）剛好是 0 或非常接近 0 時，點會被解算
-        // 到幾乎正好落在線上，這時候 signedDist 的正負號只是浮點數雜訊，
-        // 不能拿來覆寫已經記住的方向（否則使用者辛苦按過的「翻轉方向」
-        // 選擇，會在下一次尺寸值經過 0 附近時被雜訊悄悄蓋掉，變成「有時
-        // 候會自己跑掉」）。夠靠近線（<1e-6）時直接視為退化、不更新記憶，
-        // 沿用上一次記住的方向。
+        double signedDist = perpDist(pp, ln->start, ln->end, len);
+        // 夠靠近線（<1e-6）時視為退化、不更新記憶（見 lockDistanceSides()）。
         if (std::abs(signedDist) < 1e-6) return false;
         sign = (signedDist >= 0.0) ? 1.0 : -1.0;
         return true;
@@ -1771,23 +1814,95 @@ bool Sketch::computeDistanceSide(const SketchConstraint& c,
         if (!lnA || !lnB) return false;
         double len;
         double signedDist = perpDist(lnB->start, lnA->start, lnA->end, len);
-        // 同上：檢查 signedDist，不是 len。
         if (std::abs(signedDist) < 1e-6) return false;
         sign = (signedDist >= 0.0) ? 1.0 : -1.0;
         return true;
     }
     case DistanceMode::PointToPoint:
     default: {
-        SketchPoint* a = point(c.refs[0].geomUuid);
-        SketchPoint* b = point(c.refs[1].geomUuid);
-        if (!a || !b) return false;
-        QVector2D d = b->pos - a->pos;
+        const QVector2D pa = c.refs[0].resolvePosition(this);
+        const QVector2D pb = c.refs[1].resolvePosition(this);
+        QVector2D d = pa - pb;            // A - B：與 FixedDistanceEquation 同一慣例
         double len = d.length();
         if (len < 1e-9) return false;
         dirX = d.x()/len; dirY = d.y()/len;
         return true;
     }
     }
+}
+
+void Sketch::lockDistanceSides()
+{
+    // 第 3 項回報：尺寸的「兩端相對關係（向量/側邊）」只在「尚未記住」時，
+    // 以求解「之前」的幾何位置鎖定一次；之後不再因求解結果而改寫。
+    //   - 尺寸值為負 → 求解器用同一個方向把幾何放到另一側（F = dir·(A-B) - value）
+    //   - 尺寸值恢復為正 → 同一個方向，幾何自然回到原本那一側
+    // 唯一會改變方向的是使用者明確按「翻轉方向」（flipDistanceSide()）。
+    // 舊版是在「求解之後」用解出來的幾何重新量測並覆寫，導致值為負時解出的
+    // 反向幾何被記成新的方向，值再改回正數也回不去。
+    for (auto& c : m_constraints) {
+        if (c.type != ConstraintType::FixedDistance || c.refs.size() < 2) continue;
+        const bool isSignMode = (c.distMode == DistanceMode::PointToLine ||
+                                 c.distMode == DistanceMode::LineToLine);
+        const bool locked = isSignMode ? (c.distSideSign != 0.0)
+                                       : (c.distSideDirX != 0.0 || c.distSideDirY != 0.0);
+        if (locked) continue;
+
+        double sign = 0.0, dirX = 0.0, dirY = 0.0;
+        if (!computeDistanceSide(c, sign, dirX, dirY)) continue;   // 目前退化：下次再鎖
+        if (isSignMode) {
+            c.distSideSign = sign;
+        } else {
+            c.distSideDirX = dirX;
+            c.distSideDirY = dirY;
+        }
+        if (!c.implicitOf.isEmpty()) {
+            if (SketchAnnotation* ann = findAnnotation(c.implicitOf)) {
+                ann->distSideSign = c.distSideSign;
+                ann->distSideDirX = c.distSideDirX;
+                ann->distSideDirY = c.distSideDirY;
+            }
+        }
+    }
+}
+
+QVector<QPair<QVector2D, GeomHandle>> Sketch::coincidentCandidates(const QString& geomUuid) const
+{
+    QVector<QPair<QVector2D, GeomHandle>> out;
+    const SketchGeometry* g = findGeometry(geomUuid);
+    if (!g) return out;
+
+    auto add = [&](GeomHandle h) {
+        out.append({ GeomRef(geomUuid, h).resolvePosition(this), h });
+    };
+
+    switch (g->type) {
+    case SketchGeometryType::Point:
+        add(GeomHandle::WholeGeom);
+        break;
+    case SketchGeometryType::Line:
+        add(GeomHandle::Start);
+        add(GeomHandle::End);
+        break;
+    case SketchGeometryType::Arc:
+        add(GeomHandle::Start);
+        add(GeomHandle::End);
+        add(GeomHandle::Center);
+        break;
+    case SketchGeometryType::Circle:
+    case SketchGeometryType::Ellipse:
+        add(GeomHandle::Center);
+        break;
+    default:
+        // Polyline/Spline 等：沿用舊行為（首/尾點），避免改變既有流程
+        if (!g->points.isEmpty()) {
+            out.append({ g->points.front(), GeomHandle::Start });
+            if (g->points.size() > 1)
+                out.append({ g->points.back(), GeomHandle::End });
+        }
+        break;
+    }
+    return out;
 }
 
 bool Sketch::flipDistanceSide(const QString& uuid)
@@ -1813,6 +1928,21 @@ bool Sketch::flipDistanceSide(const QString& uuid)
         hasSide = computeDistanceSide(*c, curSign, curDirX, curDirY);
     }
     if (!hasSide) return false;   // 兩個參考幾何目前重合/退化，沒有方向可翻轉
+
+    // 找不到可搬動的幾何時要能還原「記住的方向」，避免只翻了記憶、幾何沒動。
+    const double oldSign = c->distSideSign;
+    const double oldDirX = c->distSideDirX, oldDirY = c->distSideDirY;
+    auto restoreSide = [&]() {
+        c->distSideSign = oldSign;
+        c->distSideDirX = oldDirX; c->distSideDirY = oldDirY;
+        if (!c->implicitOf.isEmpty()) {
+            if (SketchAnnotation* ann = findAnnotation(c->implicitOf)) {
+                ann->distSideSign = oldSign;
+                ann->distSideDirX = oldDirX;
+                ann->distSideDirY = oldDirY;
+            }
+        }
+    };
 
     if (isSignMode) c->distSideSign = -curSign;
     else            { c->distSideDirX = -curDirX; c->distSideDirY = -curDirY; }
@@ -1843,16 +1973,16 @@ bool Sketch::flipDistanceSide(const QString& uuid)
     switch (c->distMode) {
     case DistanceMode::PointToPoint: {
         // 把 refs[1] 的點對 refs[0] 的點做點對稱（距離不變，換到正對面）。
-        SketchPoint* a = point(c->refs[0].geomUuid);
-        SketchPoint* b = point(c->refs[1].geomUuid);
-        if (!a || !b) return false;
+        SketchPoint* a = point(c->refs[0].resolvedPointUuid(this));
+        SketchPoint* b = point(c->refs[1].resolvedPointUuid(this));
+        if (!a || !b) { restoreSide(); return false; }
         movePoint(b->uuid, a->pos * 2.0f - b->pos);
         break;
     }
     case DistanceMode::PointToLine: {
-        SketchPoint* p = point(c->refs[0].geomUuid);
+        SketchPoint* p = point(c->refs[0].resolvedPointUuid(this));
         auto* ln = dynamic_cast<SketchLine*>(findGeometry(c->refs[1].geomUuid));
-        if (!p || !ln) return false;
+        if (!p || !ln) { restoreSide(); return false; }
         movePoint(p->uuid, reflectAcrossLine(p->pos, ln->start, ln->end));
         break;
     }
@@ -1861,7 +1991,7 @@ bool Sketch::flipDistanceSide(const QString& uuid)
         // 相當於把線 B 整條搬到線 A 的對面，垂直間距（value）不變。
         auto* lnA = dynamic_cast<SketchLine*>(findGeometry(c->refs[0].geomUuid));
         auto* lnB = dynamic_cast<SketchLine*>(findGeometry(c->refs[1].geomUuid));
-        if (!lnA || !lnB) return false;
+        if (!lnA || !lnB) { restoreSide(); return false; }
         SketchPoint* bs = point(lnB->startUuid);
         SketchPoint* be = point(lnB->endUuid);
         if (bs) movePoint(bs->uuid, reflectAcrossLine(bs->pos, lnA->start, lnA->end));
@@ -1869,13 +1999,13 @@ bool Sketch::flipDistanceSide(const QString& uuid)
         break;
     }
     default:
+        restoreSide();
         return false;
     }
 
     // movePoint() 把幾何搬到新的一側當作這次求解的起始猜測值；上面已經
-    // 明確把「記住的哪一側」也翻轉過了，所以這裡的 solveConstraints()
-    // 會穩定收斂在使用者剛剛選的這一側，且結果會在求解完成後的同步步驟
-    // （見本函式下方 solveConstraints() 尾端的說明）繼續被記住、存檔。
+    // 明確把「記住的哪一側」也翻轉過了（並同步進 SketchAnnotation 供存檔），
+    // 所以這裡的 solveConstraints() 會穩定收斂在使用者剛剛選的這一側。
     solveConstraints();
     return true;
 }
@@ -1900,10 +2030,9 @@ void Sketch::addImplicitConstraint(const SketchAnnotation& a) {
     if (!implicit) return;   // driving==false 或 LeaderNote 等非尺寸型別
 
     // 驗證參考幾何存在，行為與 addConstraint 一致
+    // 第 15 項回報：同上，改用 findGeometry()，尺寸才能引用座標軸基準替身。
     for (const GeomRef& ref : implicit->refs) {
-        bool found = std::any_of(m_geometries.begin(), m_geometries.end(),
-                                 [&](const SketchGeometry* g){ return g->uuid == ref.geomUuid; });
-        if (!found) {
+        if (!findGeometry(ref.geomUuid)) {
             qWarning() << "[Sketch] addImplicitConstraint: geom not found:" << ref.geomUuid;
             return;
         }
@@ -2070,7 +2199,15 @@ SolveResult Sketch::solveConstraints() {
     // 用 m_geometries，兩個 solve 入口原本行為不一致也是一種隱藏的 bug）
     // 保持一致。
     auto geoms = m_geometries;
-    auto result = m_solver.solve(geoms, m_constraints, normal);
+    // 第 3 項回報：求解「之前」先把尚未記住的距離方向/側邊鎖定（見 lockDistanceSides()）。
+    lockDistanceSides();
+    // 第 11 項：依啟用條件公式決定哪些約束參與求解（被停用的不進方程式）
+    updateConstraintConditions();
+    // 第 14 項：座標軸基準替身（回到標準位置並釘死）併入求解輸入
+    resetDatumGeometry();
+    auto solveCons = activeConstraints();
+    appendDatumSolveInputs(geoms, solveCons);
+    auto result = m_solver.solve(geoms, solveCons, normal);
     Q_EMIT constraintSolved(result);
     if (result.status != SolveStatus::SolverError) {
         // unpackVariables 已同時更新：
@@ -2095,36 +2232,13 @@ SolveResult Sketch::solveConstraints() {
         // 以 SketchPoint 為單一來源，同步所有曲線座標
         syncGeometryFromPoints();
 
-        // ⚠️ 第 10 項回報後續需求：把每個 FixedDistance 約束「現在」收斂
-        // 到的哪一側/方向，寫回 distSideSign/DirX/DirY，讓下一次求解（見
-        // FixedDistanceEquation::lockReference()）優先沿用這個記住的值，
-        // 而不是每次都從當下幾何現算——這樣「翻轉方向」操作的結果、以及
-        // 剛好在距離值接近 0 的瞬間求解出來的方向，才能持續穩定下去，不
-        // 會下一次求解又被重新現算成別的結果。implicitOf 非空（GDIM 標註
-        // 產生）的隱含約束另外同步回對應的 SketchAnnotation——那裡才是
-        // 真正的存檔來源（隱含約束本身不會被序列化，見
-        // SketchConstraint.h／SketchAnnotation.h 同名欄位的說明）。
-        // 只在非退化（computeDistanceSide() 回傳 true）時才覆寫，避免用
-        // 兩個參考幾何暫時重合時算出的雜訊值，把先前記住的好值蓋掉。
-        for (auto& c : m_constraints) {
-            if (c.type != ConstraintType::FixedDistance) continue;
-            double sign = 0.0, dirX = 0.0, dirY = 0.0;
-            if (!computeDistanceSide(c, sign, dirX, dirY)) continue;
-            if (c.distMode == DistanceMode::PointToLine ||
-                c.distMode == DistanceMode::LineToLine) {
-                c.distSideSign = sign;
-            } else {
-                c.distSideDirX = dirX;
-                c.distSideDirY = dirY;
-            }
-            if (!c.implicitOf.isEmpty()) {
-                if (SketchAnnotation* ann = findAnnotation(c.implicitOf)) {
-                    ann->distSideSign = c.distSideSign;
-                    ann->distSideDirX = c.distSideDirX;
-                    ann->distSideDirY = c.distSideDirY;
-                }
-            }
-        }
+        // ⚠️ 第 3 項回報（改尺寸就向量反向）：這裡原本會把每個 FixedDistance
+        // 約束「求解後」的幾何重新量測，覆寫成新的 distSideSign/DirX/DirY。
+        // 這有兩個問題：(a) PointToPoint 的量測方向與求解器相反，每次求解都
+        // 會把方向反過來；(b) 尺寸值為負時，求解結果本來就在反方向，重新量測
+        // 會把反方向記成「新的方向」，之後值改回正數也回不到原方向。
+        // 現在方向只在求解前由 lockDistanceSides() 鎖定一次、之後只有
+        // flipDistanceSide() 會改，因此這段回寫已移除。
 
         markDirty();
         Q_EMIT geometryChanged();
@@ -2177,7 +2291,26 @@ SolveResult Sketch::solveWithStore(const aicad::core::ParameterStore* store) {
         QVector3D n = m_plane->normal();
         normal = gp_Dir(n.x(), n.y(), n.z());
     }
-    return m_solver.solve(m_geometries, m_constraints, normal);
+    lockDistanceSides();   // 與 solveConstraints() 一致：求解前鎖定尚未記住的距離方向
+    // 第 11 項：條件公式優先用呼叫端指定的 store 求值（與上面尺寸值同一個 store）
+    if (store) {
+        for (auto& c : m_constraints) {
+            bool off = false;
+            if (!c.enableExpr.trimmed().isEmpty()) {
+                const auto [ok, enabled] = store->evaluateCondition(c.enableExpr);
+                off = ok && !enabled;
+            }
+            c.conditionOff = off;
+        }
+    } else {
+        updateConstraintConditions();
+    }
+    // 第 14 項：座標軸基準替身併入求解輸入（同 solveConstraints()）
+    resetDatumGeometry();
+    auto geoms = m_geometries;
+    auto solveCons = activeConstraints();
+    appendDatumSolveInputs(geoms, solveCons);
+    return m_solver.solve(geoms, solveCons, normal);
 }
 
 int Sketch::degreesOfFreedom() const {
@@ -2185,7 +2318,10 @@ int Sketch::degreesOfFreedom() const {
     // 否則使用者看到的「DOF: X → Y」報告會低估實際自由度（建構幾何的
     // DOF 完全沒算進去），且與 solve() 內部（現在已改用 m_geometries）
     // 算出來的 dof 對不上。
-    return ConstraintSolver::computeDOF(m_geometries, m_constraints);
+    auto geoms = m_geometries;
+    auto solveCons = activeConstraints();
+    appendDatumSolveInputs(geoms, solveCons);      // 第 14 項：替身自由度與釘死約束互相抵銷
+    return ConstraintSolver::computeDOF(geoms, solveCons);
 }
 
 // ── 便捷 API ──────────────────────────────────────────────────────────────
@@ -2239,107 +2375,175 @@ QString Sketch::constrainRadius(const GeomRef& ref, double radius) {
     return addConstraint(c);
 }
 
-// ── 草圖平面參考幾何（X 軸 / Y 軸 / 原點）lazy-init ──────────────────────
-// 這三個幾何在第一次被請求時建立，以「Fixed」約束固定位置。
-// GeomRole::Construction 使它們不出現在普通幾何清單（未來可過濾）。
+// ── 草圖平面參考幾何（X 軸 / Y 軸 / 原點）：基準幾何（第 14 項）────────────
+// 舊版第一次被引用時才 lazy 建立軸線/端點幾何（GeomRole::Construction）並存檔；
+// 它們會被畫成建構線，鎖住它們的 Fixed 約束一旦遺失（例如 FST.aicad），其他約束
+// 就把「軸線」拉歪。現在完全不建立任何幾何：約束引用固定代號，求解時由程式內部
+// 提供「釘死在真正座標軸上」的常數替身（見 appendDatumSolveInputs()）。
 
-QString Sketch::xAxisGeomUuid()
+namespace {
+const QString kDatumXAxis   = QStringLiteral("datum:xaxis");
+const QString kDatumXStart  = QStringLiteral("datum:xaxis:start");
+const QString kDatumXEnd    = QStringLiteral("datum:xaxis:end");
+const QString kDatumYAxis   = QStringLiteral("datum:yaxis");
+const QString kDatumYStart  = QStringLiteral("datum:yaxis:start");
+const QString kDatumYEnd    = QStringLiteral("datum:yaxis:end");
+const QString kDatumOrigin  = QStringLiteral("datum:origin");
+
+QVector2D datumPointPos(const QString& id)
 {
-    if (!m_xAxisGeomUuid.isEmpty()) return m_xAxisGeomUuid;
+    constexpr float L = 200.0f;     // 軸線替身的長度只影響「線」的端點，不影響方向/共線等運算
+    if (id == kDatumXStart) return QVector2D(-L, 0.0f);
+    if (id == kDatumXEnd)   return QVector2D( L, 0.0f);
+    if (id == kDatumYStart) return QVector2D(0.0f, -L);
+    if (id == kDatumYEnd)   return QVector2D(0.0f,  L);
+    return QVector2D(0.0f, 0.0f);   // origin
+}
+} // namespace
 
-    const QVector2D p0(-200.0f, 0.0f);
-    const QVector2D p1( 200.0f, 0.0f);
+QString Sketch::xAxisGeomUuid()   { return kDatumXAxis; }
+QString Sketch::yAxisGeomUuid()   { return kDatumYAxis; }
+QString Sketch::originPointUuid() { return kDatumOrigin; }
 
-    auto* sp0  = new SketchPoint(p0, SketchPoint::Origin::Explicit, GeomRole::Construction);
-    auto* sp1  = new SketchPoint(p1, SketchPoint::Origin::Explicit, GeomRole::Construction);
-    auto* line = new SketchLine(p0, p1, GeomRole::Construction);
-    line->startUuid = sp0->uuid;
-    line->endUuid   = sp1->uuid;
-
-    m_geometries.append(sp0);
-    m_geometries.append(sp1);
-    m_geometries.append(line);
-
-    // Fixed 約束鎖住兩端點，使軸線不可移動
-    // ⚠️ 第 17 項回報修正：fixedAbsolute=true + value/value2 存絕對座標，
-    // 避免 ConstraintSolver 每次求解都用「當下座標」重新 snapshot，導致
-    // 累積數值誤差讓軸線慢慢飄移（見 SketchConstraint.h 說明）。
-    {
-        SketchConstraint c0;
-        c0.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        c0.type  = ConstraintType::Fixed;
-        c0.refs  = { GeomRef(sp0->uuid, GeomHandle::WholeGeom) };
-        c0.fixedAbsolute = true;
-        c0.value  = p0.x();
-        c0.value2 = p0.y();
-        m_constraints.append(c0);
-
-        SketchConstraint c1;
-        c1.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        c1.type  = ConstraintType::Fixed;
-        c1.refs  = { GeomRef(sp1->uuid, GeomHandle::WholeGeom) };
-        c1.fixedAbsolute = true;
-        c1.value  = p1.x();
-        c1.value2 = p1.y();
-        m_constraints.append(c1);
-    }
-
-    m_xAxisGeomUuid = line->uuid;
-    return m_xAxisGeomUuid;
+void Sketch::initDatumGeometry()
+{
+    auto addPt = [this](const QString& id) {
+        auto* sp = new SketchPoint(datumPointPos(id), SketchPoint::Origin::Explicit,
+                                   GeomRole::Construction);
+        sp->uuid = id;
+        m_datumGeoms.append(sp);
+    };
+    auto addLine = [this](const QString& id, const QString& s, const QString& e) {
+        auto* ln = new SketchLine(datumPointPos(s), datumPointPos(e), GeomRole::Construction);
+        ln->uuid      = id;
+        ln->startUuid = s;
+        ln->endUuid   = e;
+        m_datumGeoms.append(ln);
+    };
+    addPt(kDatumOrigin);
+    addPt(kDatumXStart); addPt(kDatumXEnd);
+    addPt(kDatumYStart); addPt(kDatumYEnd);
+    addLine(kDatumXAxis, kDatumXStart, kDatumXEnd);
+    addLine(kDatumYAxis, kDatumYStart, kDatumYEnd);
 }
 
-QString Sketch::yAxisGeomUuid()
+void Sketch::resetDatumGeometry()
 {
-    if (!m_yAxisGeomUuid.isEmpty()) return m_yAxisGeomUuid;
+    // 求解器會把替身的變數寫回（誤差極小但會累積），每次求解前拉回標準位置
+    for (SketchGeometry* g : m_datumGeoms) {
+        if (auto* sp = dynamic_cast<SketchPoint*>(g)) {
+            sp->pos = datumPointPos(sp->uuid);
+            sp->points.clear(); sp->points.append(sp->pos);
+        } else if (auto* ln = dynamic_cast<SketchLine*>(g)) {
+            ln->start = datumPointPos(ln->startUuid);
+            ln->end   = datumPointPos(ln->endUuid);
+            ln->points.clear(); ln->points.append(ln->start); ln->points.append(ln->end);
+        }
+    }
+}
 
-    const QVector2D p0(0.0f, -200.0f);
-    const QVector2D p1(0.0f,  200.0f);
+bool Sketch::usesDatum() const
+{
+    for (const SketchConstraint& c : m_constraints)
+        for (const GeomRef& r : c.refs)
+            if (isDatumUuid(r.geomUuid)) return true;
+    return false;
+}
 
-    auto* sp0  = new SketchPoint(p0, SketchPoint::Origin::Explicit, GeomRole::Construction);
-    auto* sp1  = new SketchPoint(p1, SketchPoint::Origin::Explicit, GeomRole::Construction);
-    auto* line = new SketchLine(p0, p1, GeomRole::Construction);
-    line->startUuid = sp0->uuid;
-    line->endUuid   = sp1->uuid;
-
-    m_geometries.append(sp0);
-    m_geometries.append(sp1);
-    m_geometries.append(line);
-
-    for (auto* sp : { sp0, sp1 }) {
+void Sketch::appendDatumSolveInputs(QList<SketchGeometry*>& geoms,
+                                    QList<SketchConstraint>& cons) const
+{
+    if (!usesDatum()) return;       // 沒有約束引用座標軸：求解輸入完全不變
+    for (SketchGeometry* g : m_datumGeoms) {
+        geoms.append(g);
+        if (g->type != SketchGeometryType::Point) continue;
+        // 釘死替身端點：fixedAbsolute＝絕對座標，不受求解誤差影響
         SketchConstraint c;
         c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
         c.type  = ConstraintType::Fixed;
-        c.refs  = { GeomRef(sp->uuid, GeomHandle::WholeGeom) };
+        c.refs  = { GeomRef(g->uuid, GeomHandle::WholeGeom) };
         c.fixedAbsolute = true;
-        c.value  = sp->pos.x();
-        c.value2 = sp->pos.y();
-        m_constraints.append(c);
+        const QVector2D p = datumPointPos(g->uuid);
+        c.value  = p.x();
+        c.value2 = p.y();
+        cons.append(c);
     }
-
-    m_yAxisGeomUuid = line->uuid;
-    return m_yAxisGeomUuid;
 }
 
-QString Sketch::originPointUuid()
+void Sketch::migrateLegacyAxisGeometry(const QJsonObject& json)
 {
-    if (!m_originPointUuid.isEmpty()) return m_originPointUuid;
+    const QString xId = json["xAxisGeomUuid"].toString();
+    const QString yId = json["yAxisGeomUuid"].toString();
+    const QString oId = json["originPointUuid"].toString();
+    if (xId.isEmpty() && yId.isEmpty() && oId.isEmpty()) return;
 
-    auto* sp = new SketchPoint(QVector2D(0.0f, 0.0f),
-                               SketchPoint::Origin::Explicit,
-                               GeomRole::Construction);
-    m_geometries.append(sp);
+    auto geomOf = [this](const QString& id) -> SketchGeometry* {
+        for (SketchGeometry* g : m_geometries) if (g->uuid == id) return g;
+        return nullptr;
+    };
+    // 這個點是否還被「別的」真實幾何當端點/圓心共用？共用的就不能刪。
+    auto usedByOthers = [this](const QString& ptId, const QString& exceptLineId) {
+        for (const SketchGeometry* g : m_geometries) {
+            if (g->uuid == exceptLineId) continue;
+            if (auto* l = dynamic_cast<const SketchLine*>(g))
+                if (l->startUuid == ptId || l->endUuid == ptId) return true;
+            if (auto* a = dynamic_cast<const SketchArc*>(g))
+                if (a->startUuid == ptId || a->endUuid == ptId || a->centerUuid == ptId) return true;
+            if (auto* c = dynamic_cast<const SketchCircle*>(g))
+                if (c->centerUuid == ptId) return true;
+            if (auto* e = dynamic_cast<const SketchEllipse*>(g))
+                if (e->centerUuid == ptId) return true;
+        }
+        return false;
+    };
 
-    SketchConstraint c;
-    c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    c.type  = ConstraintType::Fixed;
-    c.refs  = { GeomRef(sp->uuid, GeomHandle::WholeGeom) };
-    c.fixedAbsolute = true;
-    c.value  = 0.0;
-    c.value2 = 0.0;
-    m_constraints.append(c);
+    QHash<QString, QString> remap;      // 舊 uuid → 基準代號
+    QSet<QString>           removeIds;
 
-    m_originPointUuid = sp->uuid;
-    return m_originPointUuid;
+    auto mapAxis = [&](const QString& id, const QString& lineD,
+                       const QString& startD, const QString& endD) {
+        if (id.isEmpty()) return;
+        auto* ln = dynamic_cast<SketchLine*>(geomOf(id));
+        if (!ln) return;
+        remap[id] = lineD;  removeIds.insert(id);
+        if (!usedByOthers(ln->startUuid, id)) { remap[ln->startUuid] = startD; removeIds.insert(ln->startUuid); }
+        if (!usedByOthers(ln->endUuid,   id)) { remap[ln->endUuid]   = endD;   removeIds.insert(ln->endUuid);   }
+    };
+    mapAxis(xId, kDatumXAxis, kDatumXStart, kDatumXEnd);
+    mapAxis(yId, kDatumYAxis, kDatumYStart, kDatumYEnd);
+    if (!oId.isEmpty() && geomOf(oId) && !usedByOthers(oId, QString())) {
+        remap[oId] = kDatumOrigin;  removeIds.insert(oId);
+    }
+    if (remap.isEmpty()) return;
+
+    // 1) 約束與標註的引用改指向基準代號
+    auto fix = [&remap](GeomRef& r) {
+        auto it = remap.constFind(r.geomUuid);
+        if (it != remap.constEnd()) r.geomUuid = it.value();
+    };
+    for (SketchConstraint& c : m_constraints) for (GeomRef& r : c.refs) fix(r);
+    for (SketchAnnotation& a : m_annotations) for (GeomRef& r : a.refs) fix(r);
+
+    // 2) 舊的「釘死軸線端點」Fixed 等純基準約束不再需要（求解時由內部替身自帶）
+    for (int i = m_constraints.size() - 1; i >= 0; --i) {
+        const SketchConstraint& c = m_constraints[i];
+        if (c.refs.isEmpty() || !c.implicitOf.isEmpty()) continue;
+        bool allDatum = true;
+        for (const GeomRef& r : c.refs) if (!isDatumUuid(r.geomUuid)) { allDatum = false; break; }
+        if (allDatum) m_constraints.removeAt(i);
+    }
+
+    // 3) 把舊軸線/端點/原點幾何從資料結構中移除
+    for (int i = m_geometries.size() - 1; i >= 0; --i) {
+        if (removeIds.contains(m_geometries[i]->uuid)) {
+            delete m_geometries[i];
+            m_geometries.removeAt(i);
+        }
+    }
+    m_uuidToGeomIndex.clear();
+
+    qDebug() << "[Sketch]" << name() << "migrated legacy axis geometry:"
+             << removeIds.size() << "objects removed, refs remapped to datum";
 }
 
 // 固定某個端點的 X 座標

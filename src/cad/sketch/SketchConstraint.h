@@ -6,7 +6,7 @@
 #include <QUuid>
 
 // Forward declare to avoid circular includes
-namespace aicad::core { class ParameterStore; }
+namespace aicad::core { class ParameterStore; class ParameterScope; }
 
 // Forward declare Sketch for GeomRef methods
 namespace aicad::cad { class Sketch; }
@@ -174,10 +174,28 @@ struct SketchConstraint {
     bool           fixedAbsolute = false;
     QString        paramExpr;    ///< 原始參數表達式（如 "width"、"width*2"）
     bool           driving = true;  ///< driving=true：約束驅動幾何；false：量測模式
+
+    // ── 第 11 項：約束可因條件 enable/disable ─────────────────────────────
+    // enableExpr：啟用條件公式（如 "H>0"、"H<=0"），空字串＝永遠啟用。公式中的
+    //   參數名沿 ParameterStore 作用域鏈解析；結果為真（或非 0）才啟用。隨約束存檔。
+    // conditionOff：每次求解前依公式重新算出的「執行期」狀態（true＝目前被條件
+    //   停用）。不存檔——載入後第一次求解就會重算。公式無法求值時維持啟用
+    //   （fail-safe：寧可多一條約束，也不要因打錯字讓約束悄悄消失）。
+    QString        enableExpr;
+    bool           conditionOff = false;
+    bool           isActive() const { return !conditionOff; }
     // Phase 3B 新增欄位
     DistanceMode    distMode = DistanceMode::PointToPoint;  ///< 距離子類型
     double          dimLineOffsetX = 0.0;  ///< 尺寸線偏移 X（草圖平面座標）
     double          dimLineOffsetY = 0.0;  ///< 尺寸線偏移 Y
+
+    // ── 第 9 項回報：幾何約束符號（非尺寸）可拖放，位置要存檔/載入 ─────────
+    // 單位是「螢幕像素」（符號整體套用 ZoomPers，大小與偏移都不隨縮放改變），
+    // 座標軸是草圖平面局部 (u,v)，原點為符號所屬幾何的中心。
+    // hasSymbolOffset=false 表示使用者沒拖過，走預設偏移。
+    bool            hasSymbolOffset = false;
+    double          symbolOffsetX   = 0.0;
+    double          symbolOffsetY   = 0.0;
 
     // ── 第 10 項回報的後續需求：「翻轉方向」設定後要能記住/存檔 ──────────
     // FixedDistance 用：記住上次求解收斂時的「哪一側」，取代每次求解都
@@ -213,6 +231,13 @@ struct SketchConstraint {
      * store 內部已實作父子 fallback，呼叫者無需關心層級。
      */
     bool evaluateValue(const aicad::core::ParameterStore* store);
+
+    /**
+     * 以「已解析作用域」求值（見 core::ParameterScope）：子層覆寫值會連帶
+     * 重新推導父層的衍生參數，且整批約束共用同一個 JS 引擎。
+     * 語意（含角度度→弧度換算）與上一個多載完全相同。
+     */
+    bool evaluateValue(const aicad::core::ParameterScope& scope);
 
     SketchConstraint()
         : uuid(QUuid::createUuid().toString(QUuid::WithoutBraces))

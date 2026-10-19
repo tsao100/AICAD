@@ -236,6 +236,18 @@ static Quantity_Color dimColor(bool driving, SolveStatus s) {
 // Compute — 根據約束類型繪製尺寸線
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 第 13 項：被啟用條件停用的尺寸整體畫成灰色。Compute() 開頭依 m_constraint
+// 設定這個旗標，下面兩個 helper 供各 draw*/add* 靜態函式取色（它們不持有約束）。
+static bool s_dimConditionOff = false;
+static Quantity_Color dimLineColor() {
+    return s_dimConditionOff ? Quantity_Color(Quantity_NOC_GRAY60)
+                             : Quantity_Color(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+}
+static Quantity_Color dimTextColor() {
+    return s_dimConditionOff ? Quantity_Color(Quantity_NOC_GRAY60)
+                             : Quantity_Color(Quantity_NOC_RED);
+}
+
 void AIS_DimensionLine::Compute(
         const Handle(PrsMgr_PresentationManager)&,
         const Handle(Prs3d_Presentation)& prs,
@@ -243,6 +255,7 @@ void AIS_DimensionLine::Compute(
 {
     prs->Clear();
     m_labelRegions.clear();
+    s_dimConditionOff = m_constraint.conditionOff;   // 第 13 項
 
     switch (m_constraint.type) {
     case ConstraintType::FixedRadius:
@@ -327,7 +340,7 @@ static void addRadiusDimLine(const Handle(Prs3d_Presentation)& prs,
     if (along.Magnitude() < Precision::Confusion()) return;
     along.Normalize();
 
-    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+    Quantity_Color lineCol = dimLineColor();
     Handle(Graphic3d_Group) grp = prs->NewGroup();
     Handle(Graphic3d_AspectLine3d) asp =
         new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
@@ -358,7 +371,7 @@ static void addRadiusDimLine(const Handle(Prs3d_Presentation)& prs,
         gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
         gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
         Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
-        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(dimTextColor()));
         txtGrp->AddText(gtext);
 
         if (self) self->addLabelRegion(mid, along, label);
@@ -386,7 +399,7 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
     gp_Pnt d2 = p2.Translated(perp * offset);
 
     // 主尺寸線（綠色）
-    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+    Quantity_Color lineCol = dimLineColor();
     Handle(Graphic3d_Group) grp = prs->NewGroup();
     Handle(Graphic3d_AspectLine3d) asp =
         new Graphic3d_AspectLine3d(lineCol, Aspect_TOL_SOLID, 1.5f);
@@ -431,7 +444,7 @@ static void addDimLine(const Handle(Prs3d_Presentation)& prs,
         gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
         gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
         Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
-        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(dimTextColor()));
         txtGrp->AddText(gtext);
 
         if (self) self->addLabelRegion(mid, d1d2, label);
@@ -483,7 +496,7 @@ static void addDimLineExplicit(const Handle(Prs3d_Presentation)& prs,
         gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
         gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
         Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
-        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+        txtGrp->SetGroupPrimitivesAspect(makeTextAspect(dimTextColor()));
         txtGrp->AddText(gtext);
 
         if (self) self->addLabelRegion(mid, d1d2, label);
@@ -886,7 +899,7 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
         }
     }
 
-    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+    Quantity_Color lineCol = dimLineColor();
 
     // 角弧（20段折線）
     {
@@ -950,7 +963,7 @@ void AIS_DimensionLine::drawAngleDim(const Handle(Prs3d_Presentation)& prs) {
     gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
     gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
     Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
-    txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+    txtGrp->SetGroupPrimitivesAspect(makeTextAspect(dimTextColor()));
     txtGrp->AddText(gtext);
 
     addLabelRegion(sk_label, tangentW, lbl);
@@ -1120,7 +1133,7 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
         }
     }
 
-    Quantity_Color lineCol(0.0, 0.8, 0.0, Quantity_TOC_RGB);
+    Quantity_Color lineCol = dimLineColor();
 
     // 同心弧（30段折線）
     {
@@ -1179,7 +1192,7 @@ void AIS_DimensionLine::drawArcLengthDimension(const Handle(Prs3d_Presentation)&
     gtext->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
     gtext->SetVerticalAlignment(Graphic3d_VTA_CENTER);
     Handle(Graphic3d_Group) txtGrp = prs->NewGroup();
-    txtGrp->SetGroupPrimitivesAspect(makeTextAspect(Quantity_Color(Quantity_NOC_RED)));
+    txtGrp->SetGroupPrimitivesAspect(makeTextAspect(dimTextColor()));
     txtGrp->AddText(gtext);
 
     addLabelRegion(sk_label, tangentW, arcLbl);

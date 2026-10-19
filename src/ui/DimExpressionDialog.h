@@ -81,6 +81,15 @@ Q_SIGNALS:
      */
     void flipSideRequested(const QString& constraintUuid);
 
+    /**
+     * 第 13 項：使用者在「啟用條件」欄改了公式並按下確定時發出（先於
+     * expressionAccepted，讓接著的重新求解已經套用新的啟用狀態；solveNow=true 表示
+     * 這次沒有數值運算式要套用，需由接收端自行重新求解）。空字串＝
+     * 永遠啟用。套用由外部（UIManager）處理，理由同上。
+     */
+    void enableExprAccepted(const QString& constraintUuid, const QString& enableExpr,
+                            bool solveNow);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
 
@@ -101,6 +110,8 @@ private:
 
     QLabel*      m_titleLabel      = nullptr;
     QLineEdit*   m_exprEdit        = nullptr;
+    QLineEdit*   m_enableEdit      = nullptr;   ///< 第 13 項：啟用條件公式
+    QString      m_origEnableExpr;
     QLabel*      m_hintLabel       = nullptr;
     QPushButton* m_flipButton      = nullptr;
     QPushButton* m_okButton        = nullptr;

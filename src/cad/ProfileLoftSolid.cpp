@@ -100,28 +100,29 @@ bool ProfileLoftSolid::rebuild() {
     if (!m_array) { setError("No source profile array specified"); return false; }
 
     const QVector<QList<TopoDS_Wire>> stationLoops = m_array->stationWireLoops();
+    const QVector<int> stationSeg = m_array->stationSegmentIndices();
     if (stationLoops.size() < 2) {
         setError("Profile array needs at least 2 stations to loft");
         return false;
     }
 
-    // 每一站應該偵測到同樣數量的封閉輪廓（同一個 master 草圖 clone 出來的）。
-    // 用第一個「有輪廓」的站當作預期數量，藉此在資料本身損壞前先給出明確錯誤。
-    int loopCount = -1;
-    for (const QList<TopoDS_Wire>& loops : stationLoops) {
-        if (!loops.isEmpty()) { loopCount = loops.size(); break; }
-    }
-    if (loopCount <= 0) {
-        setError("No closed profile found in any station — cannot loft");
-        return false;
-    }
+    // 依「段」分組：同一段內的連續測站一起放樣。不同段可能是不同的 profile
+    //（拓撲不同、無法互相放樣），所以段與段之間不放樣、各自成一個實體。
+    struct Group { int seg; int first; int count; };
+    QVector<Group> groups;
     for (int s = 0; s < stationLoops.size(); ++s) {
-        if (stationLoops[s].size() != loopCount) {
-            setError(QString("Station %1 has %2 closed profile(s), expected %3 — "
-                              "cannot loft (check the master sketch for unclosed geometry)")
-                          .arg(s).arg(stationLoops[s].size()).arg(loopCount));
-            return false;
-        }
+        const int seg = (s < stationSeg.size()) ? stationSeg[s] : 0;
+        if (groups.isEmpty() || groups.last().seg != seg)
+            groups.append({ seg, s, 1 });
+        else
+            groups.last().count++;
+    }
+
+    int loftableGroups = 0;
+    for (const Group& g : groups) if (g.count >= 2) ++loftableGroups;
+    if (loftableGroups == 0) {
+        setError("No segment has at least 2 stations — cannot loft");
+        return false;
     }
 
     try {
@@ -129,90 +130,97 @@ bool ProfileLoftSolid::rebuild() {
         TopoDS_Compound compound;
         builder.MakeCompound(compound);
 
-        // ✅ 跟 compound 一起、對稱地建立「角點編號 → 縱向邊」對照表
-        //    （見 ProfileLoftSolid.h 的 loopCount()/cornerCount()/
-        //    longitudinalEdge() 說明）。用區域變數收集，只有整個 rebuild()
-        //    成功才覆寫 m_loopCornerEdges，失敗時維持舊資料跟舊 shape() 一致。
+        // 全域 loop 索引 = 依段順序串接（ChamferSolid 以此索引取角點邊）。
         QVector<QVector<TopoDS_Edge>> newLoopCornerEdges;
-        newLoopCornerEdges.reserve(loopCount);
 
-        // 每一個迴圈（例如左右兩個獨立墊塊）各自沿測站方向放樣成一個實體，
-        // 全部實體再組成一個 compound 當作本特徵的最終形狀。
-        for (int loopIdx = 0; loopIdx < loopCount; ++loopIdx) {
-            QVector<TopoDS_Wire> valid;
-            valid.reserve(stationLoops.size());
-            for (int s = 0; s < stationLoops.size(); ++s) {
-                const TopoDS_Wire& w = stationLoops[s][loopIdx];
-                if (w.IsNull()) {
-                    setError(QString("Station %1, loop %2 has no closed profile — cannot loft")
-                                  .arg(s).arg(loopIdx));
-                    return false;
-                }
-                if (!wireCoordinatesFinite(w)) {
-                    setError(QString("Station %1, loop %2 has non-finite coordinates — cannot loft")
-                                  .arg(s).arg(loopIdx));
-                    return false;
-                }
-                valid.append(w);
+        for (const Group& grp : groups) {
+            if (grp.count < 2) {
+                qWarning() << "[ProfileLoftSolid]" << name() << "segment" << grp.seg
+                           << "has only 1 station — skipped (needs >= 2 to loft).";
+                continue;
             }
 
-            // isSolid=true（封閉實體）、isRuled=false（沿站位以 spline 曲面放樣，
-            // 依規劃 §6.2/§8 決議）。isRuled=false 只是「不要用直紋面」，實際
-            // 曲面平滑度還要另外明確設定，否則預設可能仍偏向逐站分段近似：
-            // 開 SetSmoothing + 要求 C2 連續，並用弦長參數化讓斷面間的過渡更自然。
-            BRepOffsetAPI_ThruSections generator(/*isSolid=*/true, /*isRuled=*/false);
-            generator.SetSmoothing(Standard_True);
-            generator.SetContinuity(GeomAbs_C2);
-            generator.SetParType(Approx_ChordLength);
-            generator.CheckCompatibility(Standard_True);
-            for (const TopoDS_Wire& w : valid)
-                generator.AddWire(w);
-            generator.Build();
-
-            if (!generator.IsDone()) {
-                setError(QString("BRepOffsetAPI_ThruSections failed to build a solid for loop %1")
-                              .arg(loopIdx));
+            int loopCount = -1;
+            for (int s = grp.first; s < grp.first + grp.count; ++s) {
+                if (!stationLoops[s].isEmpty()) { loopCount = stationLoops[s].size(); break; }
+            }
+            if (loopCount <= 0) {
+                setError(QString("Segment %1: no closed profile found in any station — cannot loft")
+                              .arg(grp.seg));
                 return false;
             }
-            builder.Add(compound, generator.Shape());
+            for (int s = grp.first; s < grp.first + grp.count; ++s) {
+                if (stationLoops[s].size() != loopCount) {
+                    setError(QString("Station %1 (segment %2) has %3 closed profile(s), expected %4 — "
+                                      "cannot loft (check the profile sketch for unclosed geometry)")
+                                  .arg(s).arg(grp.seg).arg(stationLoops[s].size()).arg(loopCount));
+                    return false;
+                }
+            }
 
-            // ✅ 角點編號 → 縱向邊：走訪第一站（station 0）該迴圈 wire 的頂點
-            //    順序（BRepTools_WireExplorer，跟建 wire 時的線段順序一致，
-            //    見 wireCoordinatesFinite 上方的角點編號說明），對每個頂點查
-            //    generator.Generated(vertex)。已用獨立驗證程式確認：目前這組
-            //    ThruSections 設定下，每個角點都會剛好對應一條貫穿全部測站的
-            //    縱向邊（見 ProfileLoftSolid.h 對應方法的說明）。
-            QVector<TopoDS_Edge> cornerEdges;
-            for (BRepTools_WireExplorer wexp(valid.first()); wexp.More(); wexp.Next()) {
-                const TopoDS_Vertex v = wexp.CurrentVertex();
-                const TopTools_ListOfShape& gen = generator.Generated(v);
-
-                TopoDS_Edge cornerEdge;
-                if (!gen.IsEmpty()) {
-                    if (gen.Extent() != 1) {
-                        // 驗證程式在標準矩形斷面下每次都是剛好 1 條；真的遇到
-                        // 多條時保守取第一個 EDGE 型別的，並記警告方便回頭排查
-                        // 是不是遇到了驗證程式沒覆蓋到的特殊斷面拓樸。
-                        qWarning() << "[ProfileLoftSolid]" << name() << "loop" << loopIdx
-                                   << "corner" << cornerEdges.size() << ": Generated(vertex) 回傳"
-                                   << gen.Extent() << "個 shape（預期 1 個），取第一個 EDGE。";
+            for (int loopIdx = 0; loopIdx < loopCount; ++loopIdx) {
+                QVector<TopoDS_Wire> valid;
+                valid.reserve(grp.count);
+                for (int s = grp.first; s < grp.first + grp.count; ++s) {
+                    const TopoDS_Wire& w = stationLoops[s][loopIdx];
+                    if (w.IsNull()) {
+                        setError(QString("Station %1, loop %2 has no closed profile — cannot loft")
+                                      .arg(s).arg(loopIdx));
+                        return false;
                     }
-                    for (TopTools_ListIteratorOfListOfShape it(gen); it.More(); it.Next()) {
-                        if (it.Value().ShapeType() == TopAbs_EDGE) {
-                            cornerEdge = TopoDS::Edge(it.Value());
-                            break;
+                    if (!wireCoordinatesFinite(w)) {
+                        setError(QString("Station %1, loop %2 has non-finite coordinates — cannot loft")
+                                      .arg(s).arg(loopIdx));
+                        return false;
+                    }
+                    valid.append(w);
+                }
+
+                BRepOffsetAPI_ThruSections generator(/*isSolid=*/true, /*isRuled=*/false);
+                generator.SetSmoothing(Standard_True);
+                generator.SetContinuity(GeomAbs_C2);
+                generator.SetParType(Approx_ChordLength);
+                generator.CheckCompatibility(Standard_True);
+                for (const TopoDS_Wire& w : valid)
+                    generator.AddWire(w);
+                generator.Build();
+
+                if (!generator.IsDone()) {
+                    setError(QString("BRepOffsetAPI_ThruSections failed to build a solid "
+                                      "(segment %1, loop %2)").arg(grp.seg).arg(loopIdx));
+                    return false;
+                }
+                builder.Add(compound, generator.Shape());
+
+                QVector<TopoDS_Edge> cornerEdges;
+                for (BRepTools_WireExplorer wexp(valid.first()); wexp.More(); wexp.Next()) {
+                    const TopoDS_Vertex v = wexp.CurrentVertex();
+                    const TopTools_ListOfShape& gen = generator.Generated(v);
+
+                    TopoDS_Edge cornerEdge;
+                    if (!gen.IsEmpty()) {
+                        if (gen.Extent() != 1) {
+                            qWarning() << "[ProfileLoftSolid]" << name() << "segment" << grp.seg
+                                       << "loop" << loopIdx << "corner" << cornerEdges.size()
+                                       << ": Generated(vertex) returned" << gen.Extent()
+                                       << "shapes (expected 1); using the first EDGE.";
+                        }
+                        for (TopTools_ListIteratorOfListOfShape it(gen); it.More(); it.Next()) {
+                            if (it.Value().ShapeType() == TopAbs_EDGE) {
+                                cornerEdge = TopoDS::Edge(it.Value());
+                                break;
+                            }
                         }
                     }
+                    cornerEdges.append(cornerEdge);
                 }
-                // cornerEdge 可能是 Null（Generated() 查不到）——longitudinalEdge()
-                // 呼叫端一律要檢查 IsNull()，不假設一定查得到。
-                cornerEdges.append(cornerEdge);
+                newLoopCornerEdges.append(cornerEdges);
             }
-            newLoopCornerEdges.append(cornerEdges);
         }
 
         setShape(compound);
         m_loopCornerEdges = newLoopCornerEdges;
+        clearError();
         return true;
 
     } catch (const Standard_Failure& ex) {

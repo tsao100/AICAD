@@ -119,17 +119,18 @@ SolveStatus ConstraintOverlayManager::lastSolveStatus() const {
 QList<SketchGeometry*> ConstraintOverlayManager::geomsForConstraint(
         const SketchConstraint& c) const
 {
-    const QList<SketchGeometry*>* geoms = sourceGeoms();
-    if (!geoms) return {};
+    // 第 15 項回報：改用 Sketch::findGeometry()（含座標軸基準替身 "datum:..."，
+    // 它們不在 geometriesRef() 清單內）。舊版掃清單，引用座標軸的約束會少一個
+    // 幾何，符號/尺寸線就建不出來。
+    const Sketch* sk = nullptr;
+    if (m_mode == Mode::Master && m_sketch)               sk = m_sketch;
+    else if (m_mode == Mode::Instance && m_instance)      sk = m_instance->masterSketch();
+    if (!sk) return {};
 
     QList<SketchGeometry*> result;
     for (const GeomRef& ref : c.refs) {
-        for (SketchGeometry* g : *geoms) {
-            if (g && g->uuid == ref.geomUuid) {
-                result.append(g);
-                break;
-            }
-        }
+        if (SketchGeometry* g = sk->findGeometry(ref.geomUuid))
+            result.append(g);
     }
     return result;
 }
@@ -232,6 +233,15 @@ void ConstraintOverlayManager::updateSymbolFor(const SketchConstraint& c) {
         m_ctx->RecomputeSelectionOnly(dimAIS);
     } else {
         createSymbolFor(c);
+    }
+}
+
+void ConstraintOverlayManager::refreshSymbol(const QString& constraintUuid) {
+    if (!m_sketch || !m_geomSymbols.contains(constraintUuid)) return;
+    if (const SketchConstraint* c = m_sketch->findConstraint(constraintUuid)) {
+        updateSymbolFor(*c);
+        m_ctx->RecomputeSelectionOnly(m_geomSymbols[constraintUuid]);
+        m_ctx->UpdateCurrentViewer();
     }
 }
 

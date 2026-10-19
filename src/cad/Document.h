@@ -187,7 +187,23 @@ public:
         Sketch* master,
         class Plane* plane,
         const QHash<QString, double>& overrides = {},
-        const QString& name = QString());
+        const QString& name = QString(),
+        bool rebuildNow = true);
+
+    /**
+     * @brief 批次更新 FeatureTree：begin/end 之間所有 treeStructureChanged() 合併
+     *        成 end 時的「一次」發射（可巢狀）。沿線斷面陣列一次建立上百個測站
+     *        節點時，避免 UI 樹狀圖重建上百次。
+     */
+    void beginTreeBatch();
+    void endTreeBatch();
+
+    /**
+     * @brief 依 feature->featureDependencies() 重新登記它在依賴圖中「依賴誰」。
+     *        別的特徵對它的依賴（例如 Loft 依賴陣列）保持不變。
+     *        用於特徵建立後才改變依賴對象的情形（沿線陣列換了 profile）。
+     */
+    void refreshFeatureDependencies(Feature* feature);
 
     /**
      * @brief 建立擠出
@@ -461,6 +477,9 @@ private:
     Handle(TDocStd_Document) m_ocafDoc;      ///< OCAF 文件
     
     int m_nextFeatureNumber;                 ///< 下一個特徵編號（用於自動命名）
+    void emitTreeStructureChanged();
+    int  m_treeBatchDepth   = 0;
+    bool m_treeBatchPending = false;
 
     // ✅ 新增：參考幾何和 AIS 上下文
     QList<ReferenceGeometry> m_referenceGeometries;

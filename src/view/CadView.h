@@ -74,6 +74,7 @@ enum class InteractionMode {
     GetGeom,        ///< ✅ Task E: 點擊回報 geomUuid+handle（幾何約束互動選取）
     PlaceDimLine,   ///< ✅ Task E: 移動預覽尺寸線位置，點擊確認
     DimLineDrag,    ///< 拖曳已存在的尺寸線（移動尺寸線及數值位置）
+    SymbolDrag,     ///< 拖曳已存在的幾何約束符號（第 9 項：位置可存檔）
     DimValueEdit,   ///< 雙擊尺寸線數值 → 行內編輯數值/表達式中
     Navigation,
     PickEdge        ///< ✅ Chamfer 等指令使用：點選任意已顯示實體 Feature 的邊
@@ -427,8 +428,13 @@ public:
     /// 移除草圖軸 AIS（離開草圖模式時呼叫）
     void hideSketchAxes();
 
+    /// 目前相機狀態（eye/at/up/scale/viewType），供存檔與「編輯草圖」還原視圖用。
     QJsonObject saveViewState() const;
+    /// 完整還原相機狀態（含 viewType、ZFit、格線刷新）。不呼叫 fitAll()。
     void restoreViewState(const QJsonObject& state);
+    /// 只還原「視野中心＋縮放尺寸」，保留目前相機朝向。用於「編輯草圖」第一次
+    /// 進入（沒有前次視圖可還原）時，維持進入前畫面上看到的範圍與縮放。
+    void restoreViewFraming(const QJsonObject& state);
 
     /// 顯示 H-Alignment edit 模式的返回按鈕（右上角）
     void showReturnAlignmentButton();
@@ -543,6 +549,14 @@ Q_SIGNALS:
     void dimLineDragging(const QString& constraintUuid, double offsetX, double offsetY);
     /// 拖曳現有尺寸線 — 放開確認
     void dimLineDragFinished(const QString& constraintUuid, double offsetX, double offsetY);
+
+    /// 第 9 項：拖曳幾何約束符號——即時（像素偏移，草圖平面 u/v 軸）／放開確認
+    void symbolDragging(const QString& constraintUuid, double offsetX, double offsetY);
+    void symbolDragFinished(const QString& constraintUuid, double offsetX, double offsetY);
+    /// 第 9 項：滑鼠懸停到約束符號（uuid 空字串 = 離開），供外部高亮其關聯幾何
+    void constraintSymbolHovered(const QString& constraintUuid);
+    /// 第 11 項：雙擊幾何約束符號 → 編輯其啟用條件公式
+    void constraintSymbolDoubleClicked(const QString& constraintUuid);
 
     /// 雙擊尺寸線數值文字進入行內編輯，使用者按 Enter 或滑鼠右鍵確認新數值/表達式後發出
     /// （CoordinateDim 等雙數值類型以 "x,y" 逗號分隔）
@@ -779,14 +793,17 @@ private:
     void handleObjectSelection(const QPoint& screenPos);
 
     /**
-     * @brief GDIM 專用：對草圖所有 Circle／Arc 做「距圓心 vs 半徑」的幾何式
-     *        命中測試，補足 OCCT AIS_Shape 邊界曲線選取靈敏度無法涵蓋「圓/弧
-     *        內部」的缺口（見 setGdimWholeGeomHitTestEnabled() 說明）。
+     * @brief GDIM 專用：對草圖所有 Circle／Arc 做幾何式命中測試，補足 OCCT
+     *        AIS_Shape 邊界曲線選取靈敏度偏窄的缺口（見
+     *        setGdimWholeGeomHitTestEnabled() 說明）。
+     *
+     *        第 12 項回報後：命中範圍只限「圓/弧曲線本身內外側各約 14 像素」的
+     *        帶狀區域（弧另需落在弧的角度範圍內，或貼近兩端點），不再是整個圓盤
+     *        內部；游標已停在尺寸標註／約束符號上時不做此測試，避免搶走其他尺寸
+     *        約束的偵測。
      *
      *        只在既有 OSnap／OCCT DetectedInteractive 皆未命中（geomUuid 仍為
-     *        空）時才呼叫。多個候選時，取「距圓心的距離 相對於半徑 的比例」
-     *        最小者（即最貼近該幾何「感應核心」的一個），以合理處理巢狀圓的
-     *        情況。
+     *        空）時才呼叫。多個候選時取「到曲線距離」最小者。
      *
      * @return {geomUuid, GeomHandle::WholeGeom} 的 pair；找不到則回傳
      *         std::nullopt。

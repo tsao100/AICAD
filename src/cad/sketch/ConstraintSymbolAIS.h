@@ -41,6 +41,14 @@ public:
 
     const QString& constraintUuid() const { return m_constraint.uuid; }
 
+    /// 第 9 項：目前生效的符號偏移（像素；使用者拖放過用存檔值，否則預設）。
+    double symbolOffsetX() const {
+        return m_constraint.hasSymbolOffset ? m_constraint.symbolOffsetX : kSymbolOffsetPx; }
+    double symbolOffsetY() const {
+        return m_constraint.hasSymbolOffset ? m_constraint.symbolOffsetY : kSymbolOffsetPx; }
+    /// 符號所屬幾何中心（世界座標，ZoomPers 錨點）。
+    const gp_Pnt& anchorWorld() const { return m_anchor; }
+
 private:
     void Compute(const Handle(PrsMgr_PresentationManager)&,
                  const Handle(Prs3d_Presentation)& prs,
@@ -67,6 +75,11 @@ private:
     gp_Pnt computeSymbolPos() const;
     Quantity_Color symbolColor() const;
 
+    /// 以 Graphic3d_TMF_ZoomPers 把整個符號釘成「固定螢幕像素大小」，錨點為
+    /// m_anchor（符號所屬幾何的中心）。比照 SketchPoint 的 marker：縮放視圖時
+    /// 符號大小不變，只有位置跟著幾何走。
+    void applyZoomPersistence();
+
     /// 將符號局部（草圖平面內，以符號中心為原點）的 (du, dv) 位移轉成世界座標。
     /// 所有符號形狀（水平線、L 形、三角形…）都必須透過此函式取得端點，
     /// 而不是直接在 m_symbolPos 上加減世界座標的 X/Y，否則畫在非 XY
@@ -77,10 +90,15 @@ private:
     QList<SketchGeometry*>   m_geoms;
     gp_Trsf                  m_sketchToWorld;
     SolveStatus              m_status;
-    gp_Pnt                   m_symbolPos;       ///< 世界座標（供 ComputeSelection 使用）
+    mutable gp_Pnt           m_anchor;          ///< ZoomPers 錨點（世界座標）= 幾何中心，不含符號偏移
+    gp_Pnt                   m_symbolPos;       ///< 符號中心（ZoomPers 縮放前的座標，供 ComputeSelection 使用）
     mutable gp_Pnt           m_symbolPosLocal;  ///< 草圖平面局部座標（z=0，供符號形狀計算用；由 const 的 computeSymbolPos() 寫入）
 
-    static constexpr double kSymbolSize = 3.0;  // mm
+    // ⚠️ 單位是「螢幕像素」，不是 mm。符號整體掛 Graphic3d_TMF_ZoomPers，
+    // 以錨點為中心縮放到固定像素大小（1 單位 ≈ 1 像素），所以所有 draw*
+    // 內用的 kSymbolSize 與下面的偏移量都不會隨視圖縮放而改變。
+    static constexpr double kSymbolSize     = 7.0;   // px：符號基本尺寸
+    static constexpr double kSymbolOffsetPx = 14.0;  // px：符號相對幾何中心的偏移
 };
 
 } // namespace aicad::cad
