@@ -1,4 +1,5 @@
 #include "ProfileLoftSolid.h"
+#include "SketchInstance.h"
 #include "AlignedProfileArray.h"
 #include "Document.h"
 
@@ -101,7 +102,17 @@ bool ProfileLoftSolid::rebuild() {
 
     const QVector<QList<TopoDS_Wire>> stationLoops = m_array->stationWireLoops();
     const QVector<int> stationSeg = m_array->stationSegmentIndices();
-    if (stationLoops.size() < 2) {
+
+    // 每個分段一個 Loft：只放樣自己負責的那一段（舊檔 segmentId 為空 = 全部分段）。
+    int targetSeg = -1;
+    if (!m_segmentId.isEmpty()) {
+        targetSeg = m_array->segmentIndexById(m_segmentId);
+        if (targetSeg < 0) {
+            setError("The segment this loft belongs to no longer exists");
+            return false;
+        }
+    }
+    if (targetSeg < 0 && stationLoops.size() < 2) {
         setError("Profile array needs at least 2 stations to loft");
         return false;
     }
@@ -118,10 +129,18 @@ bool ProfileLoftSolid::rebuild() {
             groups.last().count++;
     }
 
+    if (targetSeg >= 0) {
+        QVector<Group> mine;
+        for (const Group& g : groups) if (g.seg == targetSeg) mine.append(g);
+        groups = mine;
+    }
+
     int loftableGroups = 0;
     for (const Group& g : groups) if (g.count >= 2) ++loftableGroups;
     if (loftableGroups == 0) {
-        setError("No segment has at least 2 stations — cannot loft");
+        setError(targetSeg >= 0
+            ? QString("Segment %1 needs at least 2 stations to loft").arg(targetSeg)
+            : QString("No segment has at least 2 stations — cannot loft"));
         return false;
     }
 
@@ -145,8 +164,16 @@ bool ProfileLoftSolid::rebuild() {
                 if (!stationLoops[s].isEmpty()) { loopCount = stationLoops[s].size(); break; }
             }
             if (loopCount <= 0) {
-                setError(QString("Segment %1: no closed profile found in any station — cannot loft")
-                              .arg(grp.seg));
+                QString hint;
+                const auto insts = m_array->instances();
+                if (grp.first >= 0 && grp.first < insts.size() && insts[grp.first]) {
+                    const QStringList bad = insts[grp.first]->unsupportedProfileGeometry();
+                    if (!bad.isEmpty())
+                        hint = QString(" (the profile sketch contains unsupported geometry: %1)")
+                                   .arg(bad.join(", "));
+                }
+                setError(QString("Segment %1: no closed profile found in any station — cannot loft%2")
+                              .arg(grp.seg).arg(hint));
                 return false;
             }
             for (int s = grp.first; s < grp.first + grp.count; ++s) {
@@ -218,8 +245,13 @@ bool ProfileLoftSolid::rebuild() {
             }
         }
 
-        setShape(compound);
+        // ⚠️ 順序很重要：必須先更新角點邊，再 setShape()。setShape() 會同步發出
+        //    shapeChanged，而 ChamferSolid 連著這個訊號並立刻 rebuild，它會透過
+        //    longitudinalEdge() 讀取 m_loopCornerEdges；若先 setShape()，Chamfer 讀到的
+        //    是「舊形狀的角點邊」配對到「新形狀」，導致分段表套用新值後，
+        //    畫面上（Loft 被 Chamfer 消耗而隱藏，只看得到 Chamfer 結果）沒有跟著更新。
         m_loopCornerEdges = newLoopCornerEdges;
+        setShape(compound);
         clearError();
         return true;
 
@@ -245,12 +277,14 @@ QJsonObject ProfileLoftSolid::toJson() const {
     QJsonObject obj = Feature::toJson();
     obj["type"]           = typeString();
     obj["sourceArrayId"]  = sourceArrayId();
+    obj["segmentId"]      = m_segmentId;
     return obj;
 }
 
 bool ProfileLoftSolid::fromJson(const QJsonObject& json) {
     Feature::fromJson(json);
     m_pendingSourceArrayId = json["sourceArrayId"].toString();
+    m_segmentId            = json["segmentId"].toString();   // 舊檔沒有 → 空
     return true;
 }
 

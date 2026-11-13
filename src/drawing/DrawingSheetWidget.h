@@ -31,6 +31,7 @@
 #include <QTransform>
 
 class QPainter;
+class QTimer;
 class QMenu;
 class QScrollArea;
 class QRubberBand;
@@ -76,6 +77,12 @@ public:
     void setGridVisible(bool visible);
 
     bool isRulersVisible() const { return m_showRulers; }
+
+    // ── 視圖歷史（返回前一視圖／下一視圖）：記錄圖紙＋縮放＋平移 ─────────────
+    bool canViewBack() const    { return m_histPos > 0; }
+    bool canViewForward() const { return m_histPos >= 0 && m_histPos + 1 < m_hist.size(); }
+    void viewBack();
+    void viewForward();
     void setRulersVisible(bool visible);
 
     // ── 選取 ──────────────────────────────────────────────────────────────
@@ -88,6 +95,9 @@ Q_SIGNALS:
     void viewMoved(DrawingView* view, const QPointF& newPos);
     void zoomChanged(double zoom);
     void renderingComplete();                       // 所有視圖渲染完成
+    void historyChanged();                          // 視圖歷史變動（更新 Back／Next View 按鈕）
+    void historySheetRequested(const QUuid& sheetId);   // 歷史要回到另一張圖紙
+    void indexEntryActivated(const QString& drawingNumber, const QString& sheetNumber); // 雙擊圖目錄列
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -117,6 +127,8 @@ private Q_SLOTS:
 private:
     // ── 座標轉換 ──────────────────────────────────────────────────────────
     void updateTransform();
+    bool hitTestHandle(DrawingView* view, const QPoint& screenPt) const;
+    void refitFromCache(DrawingView* view);
     QPointF sheetToScreen(const QPointF& sheetPt) const;
     QPointF screenToSheet(const QPointF& screenPt) const;
 
@@ -152,6 +164,7 @@ private:
     // 互動狀態
     DrawingView* m_selectedView    = nullptr;
     DrawingView* m_draggingView    = nullptr;
+    DrawingView* m_resizingView    = nullptr;   // 拖曳四角控點縮放配置框（以中心對稱）
     QPointF      m_dragStartPos;     // 拖曳起始（圖紙座標）
     QPointF      m_viewDragOffset;  // 拖曳偏移
 
@@ -159,6 +172,15 @@ private:
     QPoint  m_panStartScreen;
 
     // 顯示選項
+    struct ViewState { QUuid sheetId; double zoom = 1.0; QPointF pan; };
+    QVector<ViewState> m_hist;
+    int   m_histPos = -1;
+    bool  m_histSuppress = false;
+    QTimer* m_histTimer = nullptr;
+    void scheduleHistoryCommit();
+    void commitHistory();
+    void gotoHistory(int pos);
+
     bool m_showGrid    = true;
     bool m_showRulers  = true;
 };
@@ -209,6 +231,10 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void refreshPageCombo();                 ///< 重建「頁」下拉選單
+    bool m_loading = false;                  ///< loadFromSheet 進行中：忽略各控制項的「已編輯」訊號
+    void saveSheetPrefs(const SheetConfig& cfg);   ///< 圖紙規格存入 QSettings（與平縱面設定同步）
+    void switchToSheet(class DrawingSheet* s);   ///< 切換預覽／編輯的圖紙（先套用目前編輯）
     void setupPreviewTab();
     void setupSheetConfigTab();
     void setupTitleBlockTab();
@@ -223,6 +249,8 @@ private:
 
     DrawingSheet*       m_sheet  = nullptr;
     DrawingSheetWidget* m_preview = nullptr;
+    class DrawingSheetManager* m_mgr = nullptr;   ///< sheet 的 parent（可為 nullptr）
+    class QComboBox*    m_pageCombo = nullptr;
 
     // Tab widgets（宣告後在 setupUi() 中建立）
     class QTabWidget* m_tabs = nullptr;

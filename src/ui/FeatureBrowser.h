@@ -103,6 +103,14 @@ Q_SIGNALS:
 
     // Context menu actions
     void editSketchRequested(const QString& featureId);
+    /// ProfileArray 測站（SketchInstance）的「查看草圖」：唯讀，顯示本站實際套用值
+    void viewSketchInstanceRequested(const QString& featureId);
+    /// 複製草圖到剪貼簿（可貼到其他檔案）
+    void copySketchRequested(const QString& featureId);
+    /// 重新命名草圖（右鍵「重新命名」或 F2）
+    void renameSketchRequested(const QString& featureId);
+    /// 把剪貼簿中的草圖貼進目前文件
+    void pasteSketchRequested();
     void deleteFeatureRequested(const QString& featureId);
     void sectionViewRequested(const QString& featureId);
 
@@ -115,6 +123,14 @@ Q_SIGNALS:
     /** 右鍵 TrackCenterLine 節點 →「以 AQT 編輯」，開啟
      *  ALIGNMENTQUICKTABLE 對話框並預先載入此線路現有的關鍵點資料。 */
     void editWithQuickTableRequested(const QString& tclId);
+
+    /**
+     * 圖冊／圖紙節點的動作。action：
+     *   newbook | open | bookSettings | regen | index | rename | deleteBook | exportPdf |
+     *   sheetSettings | clearOverride | regenSheet | deleteSheet
+     * itemId：樹節點 id（"book_<id>" / "dsheet_<id>" / "__drawings_folder__"）
+     */
+    void drawingActionRequested(const QString& action, const QString& itemId);
 
     /** Step 8：右鍵 AlignedProfileArray 節點 → 顯示唯讀站位資料表。 */
     void showProfileArrayTableRequested(const QString& featureId);

@@ -30,6 +30,8 @@ class QTableWidget;
 class QTableWidgetItem;
 class QTabWidget;
 class QPushButton;
+class QCheckBox;
+class QComboBox;
 
 namespace aicad {
 namespace railway {
@@ -105,6 +107,7 @@ private:
         bool editStartContChainage = false; ///< 僅第一列：可編輯起始連續里程
         bool startChainageUsesSolver = false; ///< 僅第一列：true=透過 solver 偏移量套用；
                                                ///< false=尚未求解（如 ALD 直接匯入），直接平移 TCL 原始點位
+        double contChainageNow = 0.0;   ///< 本點目前的連續里程（編輯時用來算平移量）
         bool isLastPoint = false; ///< 是否為序列最後一點（無「下一點」，
                                    ///< length 以後的欄位代表點位間資訊，故不顯示）
     };
@@ -139,6 +142,10 @@ private:
     railway::TrackCenterLine*   m_tcl = nullptr;
 
     QTabWidget*    m_tabs   = nullptr;
+    QComboBox*     m_contDir = nullptr;   ///< 連續里程增減方向（+1／−1）
+    int            currentContDir() const;
+    QCheckBox*     m_noChain = nullptr;   ///< 此線形單獨（不成串）
+    void propagateContChainage();          ///< 連續里程改過後，依線形串連動重算其他線形
     QTableWidget*  m_hTable = nullptr;
     QTableWidget*  m_vTable = nullptr;
 

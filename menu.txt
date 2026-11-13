@@ -100,6 +100,15 @@ menu|Features|chamfer|Chamfer Solid Edges||
 
 
 # ======================
+# Menu : Drawing
+# ======================
+
+menu|Drawing|drawingsheet|Drawing Sheet (DSH)…||
+menu|Drawing|planprofile|Plan/Profile Sheets (PPS)…||
+menu|Drawing|depotview|Depot Plan Views (DV)…||
+
+
+# ======================
 # Menu : View
 # ======================
 
@@ -155,6 +164,9 @@ command|profilearray||0
 command|profileloft||0
 command|chamfer|cha|0
 command|setorigin||0
+command|drawingsheet|dsh|0
+command|planprofile|pps|0
+command|depotview|dv|0
 
 # ======================
 # Menu : Railway

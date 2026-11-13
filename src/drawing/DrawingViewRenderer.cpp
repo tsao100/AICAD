@@ -14,7 +14,13 @@
  */
 
 #include "DrawingViewRenderer.h"
+#include "PlanProfilePainter.h"
 #include "DrawingSheet.h"
+#include "cad/Feature.h"
+#include <cmath>
+#include <algorithm>
+#include <initializer_list>
+#include <TopoDS_Wire.hxx>
 
 // ── Qt ────────────────────────────────────────────────────────────────────────
 #include <QThreadPool>
@@ -23,6 +29,7 @@
 #include <QPainterPath>
 #include <QDebug>
 #include <QtMath>
+#include <QSet>
 
 // ── OCCT: HLR ─────────────────────────────────────────────────────────────────
 #include <HLRBRep_Algo.hxx>
@@ -59,6 +66,13 @@
 
 // ── OCCT: Curve tessellation ──────────────────────────────────────────────────
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Cylinder.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
 
 // ── Standard ──────────────────────────────────────────────────────────────────
@@ -103,11 +117,12 @@ public:
             m_sectionParams, m_detailParams,
             m_shape);
 
-        // 透過 invokeMethod 回到主執行緒
-        QMetaObject::invokeMethod(m_renderer, "onRenderTaskFinished",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(QUuid, m_viewId),
-                                  Q_ARG(ViewRenderResult, result));
+        // 以 functor 形式 queued 回主執行緒（不依賴 metatype 字串解析）
+        DrawingViewRenderer* r  = m_renderer;
+        const QUuid          id = m_viewId;
+        QMetaObject::invokeMethod(r, [r, id, result]() {
+            r->onRenderTaskFinished(id, result);
+        }, Qt::QueuedConnection);
     }
 
 private:
@@ -129,6 +144,7 @@ private:
 DrawingViewRenderer::DrawingViewRenderer(QObject* parent)
     : QObject(parent)
 {
+    qRegisterMetaType<ViewRenderResult>("ViewRenderResult");
     qDebug() << "[DrawingViewRenderer] Created";
 }
 
@@ -156,6 +172,43 @@ ViewRenderResult DrawingViewRenderer::render(const DrawingView* view,
                            shape);
 }
 
+double DrawingViewRenderer::computeFitScale(const DrawingView* view,
+                                            const QRectF& b)
+{
+    auto niceFloor = [](double raw) {
+        if (!(raw > 0.0)) return 1.0;
+        const double base = std::pow(10.0, std::floor(std::log10(raw)));
+        const double m = raw / base;
+        return ((m >= 5.0) ? 5.0 : (m >= 2.0) ? 2.0 : 1.0) * base;
+    };
+    constexpr double kFill = 0.9;
+    const double sx = (b.width()  > 1e-9) ? view->size().width()  * kFill / b.width()  : 1e30;
+    const double sy = (b.height() > 1e-9) ? view->size().height() * kFill / b.height() : 1e30;
+    const double raw = qMin(sx, sy);
+    return (raw >= 1e30) ? 1.0 : niceFloor(raw);
+}
+
+QMap<QUuid, ViewRenderResult> DrawingViewRenderer::renderSheetSync(DrawingSheet& sheet)
+{
+    QMap<QUuid, ViewRenderResult> results;
+    DrawingViewRenderer renderer;
+    for (DrawingView* v : sheet.views()) {
+        if (!v || !v->sourceFeature()) continue;
+        const TopoDS_Shape shape = v->sourceFeature()->shape();
+        if (shape.IsNull()) continue;
+        ViewRenderResult r = renderer.render(v, shape);
+        if (!r.isValid) {
+            qWarning() << "[DrawingViewRenderer] sync render failed for" << v->label()
+                       << ":" << r.errorMessage;
+            continue;
+        }
+        if (v->autoFit())
+            v->applyFitScale(computeFitScale(v, r.projectedBounds));
+        results.insert(v->id(), r);
+    }
+    return results;
+}
+
 void DrawingViewRenderer::renderAsync(const DrawingView* view,
                                       const TopoDS_Shape& shape)
 {
@@ -179,7 +232,7 @@ ViewRenderResult DrawingViewRenderer::render_internal(
     bool                  showHidden,
     bool                  showCenter,
     const SectionParams&  sectionParams,
-    const DetailParams&   /*detailParams*/,
+    const DetailParams&   detailParams,
     const TopoDS_Shape&   shape)
 {
     ViewRenderResult result;
@@ -196,7 +249,13 @@ ViewRenderResult DrawingViewRenderer::render_internal(
         }
 
         // ── Step 2: 建立投影軸 ────────────────────────────────────────────────
-        gp_Ax2 projAxis = buildProjectionAxis(viewType);
+        gp_Ax2 projAxis;
+        if (viewType == ViewType::Section)
+            projAxis = buildSectionAxis(sectionParams);
+        else if (viewType == ViewType::Detail)
+            projAxis = buildProjectionAxis(detailParams.sourceType);   // 放大來源投影的一部分
+        else
+            projAxis = buildProjectionAxis(viewType);
 
         // ── Step 3: 執行 HLR ─────────────────────────────────────────────────
         TopoDS_Compound visEdges, hidEdges;
@@ -211,28 +270,39 @@ ViewRenderResult DrawingViewRenderer::render_internal(
             result.hiddenEdges = hidEdges;
         }
 
-        // ── Step 4: 中心線辨識 ────────────────────────────────────────────────
-        if (showCenter) {
-            result.centerLines = detectCenterLines(workShape, projAxis);
-        }
+        // ── Step 4: 剖切面（hatching 區域；實際填充線於繪製時依比例裁切）───────
+        if (viewType == ViewType::Section)
+            result.sectionFaces = extractSectionFaces(workShape, projAxis, sectionParams);
 
-        // ── Step 5: 剖面填充線 ────────────────────────────────────────────────
-        if (viewType == ViewType::Section) {
-            // 取剖切截面（Compound of faces on cutting plane）
-            // 簡化：對 workShape 的所有 Face 產生填充線
-            result.sectionHatch = generateHatching(workShape);
-        }
-
-        // ── Step 6: 計算邊界框 ────────────────────────────────────────────────
+        // ── Step 5: 計算投影範圍 ──────────────────────────────────────────────
         Bnd_Box bbox;
         BRepBndLib::Add(visEdges, bbox);
-        if (!bbox.IsVoid()) {
-            double xmin, ymin, zmin, xmax, ymax, zmax;
-            bbox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
-            result.boundingBox = QSizeF(xmax - xmin, ymax - ymin);
-        } else {
-            result.boundingBox = QSizeF(100, 100);
+        if (showHidden && !hidEdges.IsNull())
+            BRepBndLib::Add(hidEdges, bbox);
+        if (bbox.IsVoid()) {
+            // HLR 沒有產生任何邊（形體為空、或只含無法投影的幾何）→ 當作失敗，
+            // 讓 Widget 的 renderError 路徑印出原因，而不是靜默畫出空白。
+            result.errorMessage = "HLR produced no edges (empty projection)";
+            return result;
         }
+        bbox.SetGap(0.0);
+        double xmin, ymin, zmin, xmax, ymax, zmax;
+        bbox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+
+        if (viewType == ViewType::Detail) {
+            // 局部放大：範圍就是放大圓（繪製時以圓裁切，並置中於視圖中心）
+            const double r = qMax(detailParams.radius, 1e-6);
+            result.projectedBounds = QRectF(detailParams.center.x() - r,
+                                            detailParams.center.y() - r, 2 * r, 2 * r);
+            result.boundingBox = QSizeF(2 * r, 2 * r);
+        } else {
+            result.boundingBox     = QSizeF(xmax - xmin, ymax - ymin);
+            result.projectedBounds = QRectF(QPointF(xmin, ymin), QPointF(xmax, ymax));
+        }
+
+        // ── Step 6: 中心線辨識（需要範圍以過濾遠離形體的大半徑圓弧面）────────
+        if (showCenter)
+            result.centerLines = detectCenterLines(workShape, projAxis, result.projectedBounds);
 
         result.isValid = true;
         qDebug() << "[DrawingViewRenderer] Render done for view"
@@ -391,13 +461,17 @@ TopoDS_Shape DrawingViewRenderer::applySectionCut(const TopoDS_Shape& shape,
         // 切割平面通過剖切線起點（2D 圖紙座標轉 3D 模型座標）
         // 這裡做簡化：切割平面通過原點，僅依方向決定
         // 完整實作需要將 SectionParams 的 cutPlaneStart 反投影回 3D
-        gp_Pln cuttingPlane(gp::Origin(), planeNormal);
+        // 切割平面：法向 N，通過 N * offset
+        const gp_Pnt planeOrigin(planeNormal.X() * params.offset,
+                                 planeNormal.Y() * params.offset,
+                                 planeNormal.Z() * params.offset);
+        gp_Pln cuttingPlane(planeOrigin, planeNormal);
 
-        // 建立無限大的半空間（保留法向量正方向的一側）
+        // 半空間（法向「正」側）被移除 → 保留負側；觀看者位於正側（見 buildSectionAxis）
         TopoDS_Face planeFace = BRepBuilderAPI_MakeFace(cuttingPlane).Face();
-        gp_Pnt refPoint(planeNormal.X() * 1000,
-                        planeNormal.Y() * 1000,
-                        planeNormal.Z() * 1000);
+        gp_Pnt refPoint(planeNormal.X() * (params.offset + 1.0),
+                        planeNormal.Y() * (params.offset + 1.0),
+                        planeNormal.Z() * (params.offset + 1.0));
         BRepPrimAPI_MakeHalfSpace halfSpace(planeFace, refPoint);
         TopoDS_Solid cutter = halfSpace.Solid();
 
@@ -421,78 +495,148 @@ TopoDS_Shape DrawingViewRenderer::applySectionCut(const TopoDS_Shape& shape,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 剖面：法向 / 投影軸
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+gp_Dir sectionNormalOf(const SectionParams& p)
+{
+    switch (p.direction) {
+    case SectionDirection::Vertical: return gp_Dir(1, 0, 0);
+    case SectionDirection::Diagonal: return gp_Dir(1, 1, 0);
+    case SectionDirection::Horizontal:
+    default:                         return gp_Dir(0, 1, 0);
+    }
+}
+} // namespace
+
+gp_Ax2 DrawingViewRenderer::buildSectionAxis(const SectionParams& p) const
+{
+    // 保留的是法向負側（見 applySectionCut），觀看者在法向正側，視線朝向 -N，
+    // 因此 gp_Ax2 的主方向（朝向觀看者）取 +N。
+    switch (p.direction) {
+    case SectionDirection::Vertical:   // N=+X：同「右視圖」
+        return gp_Ax2(gp::Origin(), gp_Dir(1, 0, 0), gp_Dir(0, 1, 0));
+    case SectionDirection::Diagonal:   // N=(1,1,0)/√2，X 軸取 (-1,1,0)，Y 軸 = Z
+        return gp_Ax2(gp::Origin(), gp_Dir(1, 1, 0), gp_Dir(-1, 1, 0));
+    case SectionDirection::Horizontal: // N=+Y：同「後視圖」
+    default:
+        return gp_Ax2(gp::Origin(), gp_Dir(0, 1, 0), gp_Dir(-1, 0, 0));
+    }
+}
+
+TopoDS_Compound DrawingViewRenderer::extractSectionFaces(const TopoDS_Shape& shape,
+                                                         const gp_Ax2& axis,
+                                                         const SectionParams& p)
+{
+    BRep_Builder builder;
+    TopoDS_Compound out;
+    builder.MakeCompound(out);
+
+    try {
+        const gp_Dir n = sectionNormalOf(p);
+        gp_Trsf toView;
+        toView.SetTransformation(gp_Ax3(axis));   // 全域座標 → 視圖座標（與 HLR 輸出同座標）
+
+        for (TopExp_Explorer fe(shape, TopAbs_FACE); fe.More(); fe.Next()) {
+            const TopoDS_Face face = TopoDS::Face(fe.Current());
+            BRepAdaptor_Surface surf(face);
+            if (surf.GetType() != GeomAbs_Plane) continue;
+
+            const gp_Pln pl = surf.Plane();
+            if (qAbs(pl.Axis().Direction().Dot(n)) < 0.9999) continue;       // 非平行於切面
+            const double dist = pl.Location().XYZ().Dot(n.XYZ());
+            if (qAbs(dist - p.offset) > 1e-4 * qMax(1.0, qAbs(p.offset))) continue;  // 不在切面上
+
+            BRepBuilderAPI_Transform xf(face, toView, true);
+            const TopoDS_Shape f2 = xf.Shape();
+            for (TopExp_Explorer we(f2, TopAbs_WIRE); we.More(); we.Next())
+                builder.Add(out, we.Current());
+        }
+    } catch (const Standard_Failure& e) {
+        qWarning() << "[DrawingViewRenderer] extractSectionFaces:" << e.GetMessageString();
+    }
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // detectCenterLines — 辨識圓柱面並產生中心線
 // ─────────────────────────────────────────────────────────────────────────────
 
 TopoDS_Compound DrawingViewRenderer::detectCenterLines(const TopoDS_Shape& shape,
-                                                       const gp_Ax2&       axis)
+                                                       const gp_Ax2&       axis,
+                                                       const QRectF&       bounds)
 {
-    // 中心線辨識策略：
-    //   遍歷所有 Face → 若為圓柱面（Geom_CylindricalSurface）
-    //   → 取其軸線 → 投影到視圖平面 → 建立中心線邊
-    //
-    // 目前回傳空 Compound（避免對複雜形體產生誤判），
-    // 完整實作將在 Phase 6 加入。
-
+    // 策略：遍歷圓柱面 → 取軸線 → 轉到視圖座標：
+    //   • 軸線與視線平行（端視，呈圓）→ 在圓心畫十字中心線
+    //   • 否則 → 沿軸線畫一段中心線（兩端各外延 15%）
+    // 過濾：
+    //   • 圓周角 < 3 rad（~172°）的圓柱面略過（如鐵路線形拉伸出的大半徑弧面，
+    //     其「軸」遠在形體之外，畫出來只是雜訊）
+    //   • 中心／軸線中點不在投影範圍（外擴 5%）內者略過
+    //   • 軸線端點（四捨五入後）相同者去重（圓柱常被分成兩個半面）
     BRep_Builder builder;
-    TopoDS_Compound centerLines;
-    builder.MakeCompound(centerLines);
+    TopoDS_Compound cl;
+    builder.MakeCompound(cl);
 
-    Q_UNUSED(shape)
-    Q_UNUSED(axis)
+    try {
+        gp_Trsf toView;
+        toView.SetTransformation(gp_Ax3(axis));
 
-    // TODO Phase 6：
-    // TopExp_Explorer faceExp(shape, TopAbs_FACE);
-    // for (; faceExp.More(); faceExp.Next()) {
-    //     const TopoDS_Face& face = TopoDS::Face(faceExp.Current());
-    //     Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
-    //     if (surf->DynamicType() == STANDARD_TYPE(Geom_CylindricalSurface)) {
-    //         // 取出軸線，投影到 axis 平面，建立 BRepBuilderAPI_MakeEdge
-    //     }
-    // }
+        const double m = 0.05 * qMax(bounds.width(), bounds.height());
+        const QRectF allowed = bounds.adjusted(-m, -m, m, m);
+        QSet<QString> seen;
 
-    return centerLines;
-}
+        auto addSeg = [&](const gp_Pnt& a, const gp_Pnt& b) {
+            const QString key = QString("%1,%2,%3,%4")
+                                    .arg(qRound64(a.X() * 1000)).arg(qRound64(a.Y() * 1000))
+                                    .arg(qRound64(b.X() * 1000)).arg(qRound64(b.Y() * 1000));
+            if (seen.contains(key)) return;
+            seen.insert(key);
+            if (a.Distance(b) < 1e-9) return;
+            builder.Add(cl, BRepBuilderAPI_MakeEdge(a, b).Edge());
+        };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// generateHatching — 剖面填充線
-// ─────────────────────────────────────────────────────────────────────────────
+        for (TopExp_Explorer fe(shape, TopAbs_FACE); fe.More(); fe.Next()) {
+            const TopoDS_Face face = TopoDS::Face(fe.Current());
+            BRepAdaptor_Surface surf(face);
+            if (surf.GetType() != GeomAbs_Cylinder) continue;
 
-TopoDS_Compound DrawingViewRenderer::generateHatching(const TopoDS_Shape& sectionShape,
-                                                      double spacing,
-                                                      double angle)
-{
-    // 填充線策略：
-    //   取 sectionShape 的 Bnd_Box
-    //   沿 angle 方向等距產生線段，與 sectionShape 的外輪廓求交
-    //   得到在截面內部的線段片段
-    //
-    // 目前回傳空 Compound，Phase 4 完整實作。
+            double u1, u2, v1, v2;
+            BRepTools::UVBounds(face, u1, u2, v1, v2);
+            if (u2 - u1 < 3.0) continue;
 
-    BRep_Builder builder;
-    TopoDS_Compound hatch;
-    builder.MakeCompound(hatch);
+            const gp_Cylinder cyl = surf.Cylinder();
+            const gp_Ax1 ax = cyl.Axis();
+            const double r  = cyl.Radius();
 
-    Q_UNUSED(sectionShape)
-    Q_UNUSED(spacing)
-    Q_UNUSED(angle)
+            gp_Pnt p0 = ax.Location().Translated(gp_Vec(ax.Direction()) * v1);
+            gp_Pnt p1 = ax.Location().Translated(gp_Vec(ax.Direction()) * v2);
+            p0.Transform(toView);
+            p1.Transform(toView);
+            const gp_Dir d = ax.Direction().Transformed(toView);
 
-    // TODO Phase 4：
-    // Bnd_Box box;
-    // BRepBndLib::Add(sectionShape, box);
-    // double xmin, ymin, zmin, xmax, ymax, zmax;
-    // box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
-    // double rad = qDegreesToRadians(angle);
-    // double dy = spacing / qCos(rad);
-    // for (double y = ymin; y <= ymax; y += dy) {
-    //     gp_Pnt p1(xmin - 10, y, 0);
-    //     gp_Pnt p2(xmax + 10, y, 0);
-    //     // TODO: intersect line with sectionShape boundary
-    //     TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(p1, p2).Edge();
-    //     builder.Add(hatch, edge);
-    // }
-
-    return hatch;
+            if (qAbs(d.Z()) > 0.98) {
+                // 端視：十字中心線
+                const QPointF c(p0.X(), p0.Y());
+                if (!allowed.contains(c)) continue;
+                const double h = r * 1.3;
+                addSeg(gp_Pnt(c.x() - h, c.y(), 0), gp_Pnt(c.x() + h, c.y(), 0));
+                addSeg(gp_Pnt(c.x(), c.y() - h, 0), gp_Pnt(c.x(), c.y() + h, 0));
+            } else {
+                const QPointF mid((p0.X() + p1.X()) / 2, (p0.Y() + p1.Y()) / 2);
+                if (!allowed.contains(mid)) continue;
+                const gp_Vec v(p0, p1);
+                const gp_Vec ext = v * 0.15;
+                gp_Pnt a(p0.X() - ext.X(), p0.Y() - ext.Y(), 0);
+                gp_Pnt b(p1.X() + ext.X(), p1.Y() + ext.Y(), 0);
+                addSeg(a, b);
+            }
+        }
+    } catch (const Standard_Failure& e) {
+        qWarning() << "[DrawingViewRenderer] detectCenterLines:" << e.GetMessageString();
+    }
+    return cl;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -515,6 +659,10 @@ void DrawingSheetPainter::paintSheet(QPainter& painter,
 {
     painter.save();
 
+    m_lwThin   = sheet.config().lineWidthThin;
+    m_lwMedium = sheet.config().lineWidthMedium;
+    m_lwThick  = sheet.config().lineWidthThick;
+
     // 白色圖紙底
     QSizeF sz = sheet.config().paperSizeMM();
     painter.fillRect(QRectF(QPointF(0, 0), sz), Qt::white);
@@ -523,9 +671,15 @@ void DrawingSheetPainter::paintSheet(QPainter& painter,
     paintFrame(painter, sheet);
 
     // 2. 標題欄
-    if (sheet.config().frameTemplate != FrameTemplate::None) {
+    if (sheet.isCover()) {
+        paintCover(painter, sheet);
+    } else if (sheet.config().frameTemplate != FrameTemplate::None) {
         paintTitleBlock(painter, sheet.titleBlock(), sz);
     }
+
+    // 2b. 平縱面圖層（Plan & Profile）
+    if (sheet.planProfile().enabled || sheet.planProfile().tableKind > 0)
+        paintPlanProfileLayer(painter, sheet);
 
     // 3. 各視圖
     for (const DrawingView* view : sheet.views()) {
@@ -536,6 +690,9 @@ void DrawingSheetPainter::paintSheet(QPainter& painter,
         }
         // 若尚未渲染完成，視圖框由 DrawingSheetWidget 自行畫
     }
+
+    // 3b. 剖切線 / 局部放大範圍（畫在宿主視圖上）
+    paintViewAnnotations(painter, sheet, results);
 
     // 4. 可選表格
     if (sheet.isPartsListEnabled() && sheet.partsList())
@@ -551,6 +708,52 @@ void DrawingSheetPainter::paintSheet(QPainter& painter,
     for (const NoteBlock& note : sheet.noteBlocks())
         paintNoteBlock(painter, note);
 
+    painter.restore();
+}
+
+// ── 封面 ──────────────────────────────────────────────────────────────────────
+
+void DrawingSheetPainter::paintCover(QPainter& painter, const DrawingSheet& sheet)
+{
+    const QSizeF sz = sheet.config().paperSizeMM();
+    const TitleBlock& tb = sheet.titleBlock();
+    painter.save();
+    painter.setPen(Qt::black);
+
+    auto text = [&](double y, double h, const QString& t, double pt, bool bold) {
+        QFont f(QStringLiteral("Arial"));
+        f.setPointSizeF(pt);
+        f.setBold(bold);
+        painter.setFont(f);
+        painter.drawText(QRectF(20, y, sz.width() - 40, h), Qt::AlignHCenter | Qt::AlignVCenter | Qt::TextWordWrap, t);
+    };
+
+    const double cy = sz.height() * 0.30;
+    if (!tb.companyName.isEmpty()) text(cy - 40, 12, tb.companyName, 6.0, false);
+    text(cy, 30, tb.drawingTitle.isEmpty() ? QStringLiteral("Drawing Book") : tb.drawingTitle, 14.0, true);
+    const QString sub = tb.customFields.value(QStringLiteral("subtitle"));
+    if (!sub.isEmpty()) text(cy + 32, 12, sub, 6.0, false);
+    if (!tb.projectName.isEmpty()) text(cy + 48, 12, tb.projectName, 7.0, false);
+
+    painter.setPen(QPen(Qt::black, 0.5));
+    painter.drawLine(QPointF(sz.width() * 0.25, cy + 66), QPointF(sz.width() * 0.75, cy + 66));
+
+    // 簽署欄
+    double y = sz.height() * 0.62;
+    const struct { const char* label; QString v; } rows[] = {
+        { "設計 Designed", tb.designedBy }, { "校核 Checked", tb.checkedBy },
+        { "核定 Approved", tb.approvedBy }, { "日期 Date", tb.designDate },
+        { "版次 Revision", tb.revision },
+    };
+    QFont f(QStringLiteral("Arial")); f.setPointSizeF(4.5);
+    painter.setFont(f);
+    const double x0 = sz.width() * 0.5 - 50;
+    for (const auto& r : rows) {
+        painter.drawText(QRectF(x0, y, 45, 9), Qt::AlignLeft | Qt::AlignVCenter, QString::fromUtf8(r.label));
+        painter.drawText(QRectF(x0 + 47, y, 55, 9), Qt::AlignLeft | Qt::AlignVCenter, r.v);
+        painter.drawLine(QPointF(x0 + 47, y + 9), QPointF(x0 + 102, y + 9));
+        y += 11;
+    }
     painter.restore();
 }
 
@@ -636,123 +839,78 @@ void DrawingSheetPainter::paintTitleBlock(QPainter& painter,
                                           const TitleBlock& tb,
                                           const QSizeF& sheetSize)
 {
-    // 標題欄位於圖紙右下角；Standard 版型高度 55 mm，寬度 180 mm
-    constexpr double kW = 180.0;
-    constexpr double kH = 55.0;
+    // 直式標題欄：位於圖面右側，寬 60 mm、高度為整個內框；上方為公司與圖名，
+    // 下方為由下往上堆疊的資料格（圖號、版次／頁次、簽署、日期…）。
+    constexpr double kW = 60.0;
     constexpr double kInner = 10.0;
 
-    double x0 = sheetSize.width()  - kInner - kW;
-    double y0 = sheetSize.height() - kInner - kH;
+    const double x0 = sheetSize.width() - kInner - kW;
+    const double y0 = kInner;
+    const double kH = sheetSize.height() - 2 * kInner;
 
     QPen borderPen(Qt::black, 0.5);
     borderPen.setCosmetic(false);
-    painter.setPen(borderPen);
-
-    // 外框
-    painter.drawRect(QRectF(x0, y0, kW, kH));
-
-    // ── 列配置（從上到下）──────────────────────────────────────────────────
-    // Row 0: 公司名稱                                (h=12)
-    // Row 1: 圖名                                   (h=10)
-    // Row 2: 圖號 | 版次 | 頁次                    (h=8)
-    // Row 3: 設計/審查/核准 | 日期                  (h=8)
-    // Row 4: 材料 | 公差 | 比例 | 投影符號           (h=8)
-    // Row 5: 角度公差 | 表面粗糙度                  (h=9)
-
-    struct Row { double y; double h; };
-    const QVector<Row> rows = {
-                               { y0,      12 },
-                               { y0 + 12, 10 },
-                               { y0 + 22,  8 },
-                               { y0 + 30,  8 },
-                               { y0 + 38,  8 },
-                               { y0 + 46,  9 },
-                               };
-
     QPen thinPen(Qt::black, 0.25);
     thinPen.setCosmetic(false);
+
+    painter.save();
+    painter.setPen(borderPen);
+    painter.drawRect(QRectF(x0, y0, kW, kH));
+
+    // ── 上方：公司名稱、圖名 ──────────────────────────────────────────────
+    const double hCompany = 22.0, hTitle = 34.0;
     painter.setPen(thinPen);
+    painter.drawLine(QPointF(x0, y0 + hCompany), QPointF(x0 + kW, y0 + hCompany));
+    painter.drawLine(QPointF(x0, y0 + hCompany + hTitle), QPointF(x0 + kW, y0 + hCompany + hTitle));
 
-    // 水平分割線
-    for (const Row& r : rows)
-        painter.drawLine(QPointF(x0, r.y), QPointF(x0 + kW, r.y));
-
-    // ── Row 0：公司名稱 ────────────────────────────────────────────────────
-    painter.setFont(QFont("Arial", 5, QFont::Bold));
     painter.setPen(Qt::black);
-    if (!tb.companyName.isEmpty()) {
-        painter.drawText(
-            QRectF(x0 + 2, rows[0].y + 2, kW - 4, rows[0].h - 4),
-            Qt::AlignCenter, tb.companyName);
-    }
-
-    // ── Row 1：圖名 ───────────────────────────────────────────────────────
     painter.setFont(QFont("Arial", 4.5, QFont::Bold));
-    painter.drawText(
-        QRectF(x0 + 2, rows[1].y + 1, kW - 4, rows[1].h - 2),
-        Qt::AlignCenter, tb.drawingTitle);
+    if (!tb.companyName.isEmpty())
+        painter.drawText(QRectF(x0 + 2, y0 + 1, kW - 4, hCompany - 2),
+                         Qt::AlignCenter | Qt::TextWordWrap, tb.companyName);
+    painter.setFont(QFont("Arial", 5, QFont::Bold));
+    painter.drawText(QRectF(x0 + 2, y0 + hCompany + 1, kW - 4, hTitle - 2),
+                     Qt::AlignCenter | Qt::TextWordWrap, tb.drawingTitle);
 
-    // ── Row 2：圖號 | 版次 | 頁次 ─────────────────────────────────────────
-    painter.setFont(QFont("Arial", 3));
-    double col2w = kW / 3.0;
-
-    auto drawLabelValue = [&](double cx, double cy, double cw, double ch,
-                              const QString& label, const QString& value) {
-        painter.setFont(QFont("Arial", 2.5));
+    // ── 下方資料格（由下往上）─────────────────────────────────────────────
+    auto cell = [&](double x, double y, double w, double h, const QString& label, const QString& value) {
         painter.setPen(Qt::darkGray);
-        painter.drawText(QRectF(cx + 1, cy + 1, cw - 2, ch * 0.4),
-                         Qt::AlignLeft | Qt::AlignTop, label);
-        painter.setFont(QFont("Arial", 3.5));
+        painter.setFont(QFont("Arial", 2.5));
+        painter.drawText(QRectF(x + 1, y + 0.8, w - 2, h * 0.35), Qt::AlignLeft | Qt::AlignTop, label);
         painter.setPen(Qt::black);
-        painter.drawText(QRectF(cx + 1, cy + ch * 0.4, cw - 2, ch * 0.6),
-                         Qt::AlignLeft | Qt::AlignVCenter, value);
+        painter.setFont(QFont("Arial", 3.5));
+        painter.drawText(QRectF(x + 1, y + h * 0.35, w - 2, h * 0.65),
+                         Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, value);
     };
 
-    // 垂直分割線 Row2
-    painter.setPen(thinPen);
-    painter.drawLine(QPointF(x0 + col2w, rows[2].y),
-                     QPointF(x0 + col2w, rows[2].y + rows[2].h));
-    painter.drawLine(QPointF(x0 + col2w * 2, rows[2].y),
-                     QPointF(x0 + col2w * 2, rows[2].y + rows[2].h));
-
-    drawLabelValue(x0,           rows[2].y, col2w, rows[2].h, "DWG NO.", tb.drawingNumber);
-    drawLabelValue(x0 + col2w,   rows[2].y, col2w, rows[2].h, "REV",     tb.revision);
-    drawLabelValue(x0 + col2w*2, rows[2].y, col2w, rows[2].h, "SHEET",   tb.sheetNumber);
-
-    // ── Row 3：設計/審查/核准 ─────────────────────────────────────────────
-    double col3w = kW / 3.0;
-    painter.setPen(thinPen);
-    painter.drawLine(QPointF(x0 + col3w,   rows[3].y),
-                     QPointF(x0 + col3w,   rows[3].y + rows[3].h));
-    painter.drawLine(QPointF(x0 + col3w*2, rows[3].y),
-                     QPointF(x0 + col3w*2, rows[3].y + rows[3].h));
-
-    drawLabelValue(x0,           rows[3].y, col3w, rows[3].h, "DESIGNED", tb.designedBy);
-    drawLabelValue(x0 + col3w,   rows[3].y, col3w, rows[3].h, "CHECKED",  tb.checkedBy);
-    drawLabelValue(x0 + col3w*2, rows[3].y, col3w, rows[3].h, "APPROVED", tb.approvedBy);
-
-    // ── Row 4：材料 | 公差 | 比例 ─────────────────────────────────────────
-    double col4a = kW * 0.35;
-    double col4b = kW * 0.30;
-    double col4c = kW * 0.35;
-    painter.setPen(thinPen);
-    painter.drawLine(QPointF(x0 + col4a, rows[4].y),
-                     QPointF(x0 + col4a, rows[4].y + rows[4].h));
-    painter.drawLine(QPointF(x0 + col4a + col4b, rows[4].y),
-                     QPointF(x0 + col4a + col4b, rows[4].y + rows[4].h));
-
-    drawLabelValue(x0,                  rows[4].y, col4a, rows[4].h, "MATERIAL",  tb.material);
-    drawLabelValue(x0 + col4a,          rows[4].y, col4b, rows[4].h, "TOLERANCE", tb.tolerance);
-    drawLabelValue(x0 + col4a + col4b,  rows[4].y, col4c, rows[4].h, "SCALE",     tb.projectName);
-
-    // ── Row 5：日期 | 料號 ─────────────────────────────────────────────────
-    double col5w = kW / 2.0;
-    painter.setPen(thinPen);
-    painter.drawLine(QPointF(x0 + col5w, rows[5].y),
-                     QPointF(x0 + col5w, rows[5].y + rows[5].h));
-
-    drawLabelValue(x0,         rows[5].y, col5w, rows[5].h, "DATE",    tb.designDate);
-    drawLabelValue(x0 + col5w, rows[5].y, col5w, rows[5].h, "PART NO", tb.partNumber);
+    struct Row { QString l1, v1, l2, v2; double h; };
+    const QVector<Row> rows = {      // 由上而下的順序
+        { "DWG NO.",   tb.drawingNumber, "",         "",              14 },
+        { "REV",       tb.revision,      "SHEET",    tb.sheetNumber,  12 },
+        { "DESIGNED",  tb.designedBy,    "",         "",              12 },
+        { "CHECKED",   tb.checkedBy,     "",         "",              12 },
+        { "APPROVED",  tb.approvedBy,    "",         "",              12 },
+        { "DATE",      tb.designDate,    "PART NO",  tb.partNumber,   12 },
+        { "MATERIAL",  tb.material,      "TOLERANCE",tb.tolerance,    12 },
+        { "SCALE",     tb.projectName,   "",         "",              12 },
+    };
+    double total = 0;
+    for (const Row& r : rows) total += r.h;
+    double y = y0 + kH - total;
+    if (y < y0 + hCompany + hTitle) y = y0 + hCompany + hTitle;   // 圖紙太矮時壓縮上方空白
+    for (const Row& r : rows) {
+        painter.setPen(thinPen);
+        painter.drawLine(QPointF(x0, y), QPointF(x0 + kW, y));
+        if (r.l2.isEmpty()) {
+            cell(x0, y, kW, r.h, r.l1, r.v1);
+        } else {
+            painter.drawLine(QPointF(x0 + kW / 2, y), QPointF(x0 + kW / 2, y + r.h));
+            cell(x0, y, kW / 2, r.h, r.l1, r.v1);
+            cell(x0 + kW / 2, y, kW / 2, r.h, r.l2, r.v2);
+        }
+        y += r.h;
+    }
+    painter.restore();
 }
 
 // ── 視圖 ──────────────────────────────────────────────────────────────────────
@@ -764,56 +922,93 @@ void DrawingSheetPainter::paintView(QPainter& painter,
     if (!view || !result.isValid) return;
 
     painter.save();
-    painter.translate(view->position());
+    painter.translate(view->position());     // position = 視圖中心
 
     const double sc = view->scale();
 
+    // HLR 輸出在投影平面座標（Y 向上、原點為模型原點）。把投影範圍中心對到
+    // 視圖中心：x' = (X - cx) * sc，y' = -(Y - cy) * sc（螢幕 Y 向下）。
+    const QPointF c = result.projectedBounds.center();
+    const QPointF fitOffset(-c.x() * sc, c.y() * sc);
+
+    const bool isDetail = (view->type() == ViewType::Detail);
+    const QSizeF sz = result.boundingBox * sc;   // 內容在圖紙上的大小（mm）
+
+    // ── 內容（Detail 以放大圓裁切）──────────────────────────────────────────
+    painter.save();
+    if (isDetail) {
+        QPainterPath clip;
+        const double r = view->detailParams().radius * sc;
+        clip.addEllipse(QPointF(0, 0), r, r);
+        painter.setClipPath(clip, Qt::IntersectClip);
+    }
+
+    // 剖面填充線（先畫，讓輪廓線蓋在上面）
+    if (view->type() == ViewType::Section && !result.sectionFaces.IsNull())
+        paintHatching(painter, result.sectionFaces, fitOffset, sc);
+
     // 可見線（實線，中等線寬）
-    QPen visPen(Qt::black, 0.5);
+    QPen visPen(Qt::black, m_lwMedium);
     visPen.setCosmetic(false);
     visPen.setCapStyle(Qt::RoundCap);
     visPen.setJoinStyle(Qt::RoundJoin);
-    paintEdges(painter, result.visibleEdges, visPen, QPointF(0, 0), sc);
+    paintEdges(painter, result.visibleEdges, visPen, fitOffset, sc);
 
     // 隱藏線（虛線，細線）
     if (view->showHiddenLines() && !result.hiddenEdges.IsNull()) {
-        QPen hidPen(QColor(80, 80, 80), 0.25);
+        QPen hidPen(QColor(80, 80, 80), m_lwThin);
         hidPen.setCosmetic(false);
         hidPen.setStyle(Qt::DashLine);
-        paintEdges(painter, result.hiddenEdges, hidPen, QPointF(0, 0), sc);
+        paintEdges(painter, result.hiddenEdges, hidPen, fitOffset, sc);
     }
 
     // 中心線（點劃線，細線，青色）
     if (view->showCenterLines() && !result.centerLines.IsNull()) {
-        QPen clPen(QColor(0, 150, 150), 0.2);
+        QPen clPen(QColor(0, 150, 150), m_lwThin);
         clPen.setCosmetic(false);
         clPen.setStyle(Qt::DashDotLine);
-        paintEdges(painter, result.centerLines, clPen, QPointF(0, 0), sc);
+        paintEdges(painter, result.centerLines, clPen, fitOffset, sc);
+    }
+    painter.restore();   // 解除 Detail 裁切
+
+    // Detail 的放大圓外框
+    if (isDetail) {
+        const double r = view->detailParams().radius * sc;
+        QPen cp(Qt::black, m_lwMedium);
+        cp.setCosmetic(false);
+        painter.setPen(cp);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(QPointF(0, 0), r, r);
     }
 
-    // 剖面填充線（細實線，灰色）
-    if (!result.sectionHatch.IsNull()) {
-        QPen hatchPen(QColor(100, 100, 100), 0.2);
-        hatchPen.setCosmetic(false);
-        paintEdges(painter, result.sectionHatch, hatchPen, QPointF(0, 0), sc);
-    }
+    // ── 外框尺寸（總寬／總高）：等角、局部放大不標（投影尺寸非真長）──────────
+    if (view->showDimensions() && !isDetail && view->type() != ViewType::Isometric)
+        paintOverallDimensions(painter, sz, result.boundingBox);
 
     // 視圖標籤（置中在視圖下方）
     if (view->showViewLabel()) {
-        QSizeF sz = result.boundingBox * sc;
+        QString text = view->label();
+        if (view->type() == ViewType::Section) {
+            const QString l = view->sectionParams().sectionLabel.isEmpty()
+                                  ? QStringLiteral("A") : view->sectionParams().sectionLabel;
+            text = QString("SECTION %1-%1").arg(l);
+        } else if (isDetail) {
+            const QString l = view->detailParams().label.isEmpty()
+                                  ? QStringLiteral("B") : view->detailParams().label;
+            text = QString("DETAIL %1").arg(l);
+        }
         painter.setFont(QFont("Arial", 3.5));
         painter.setPen(Qt::black);
         painter.drawText(
             QRectF(-sz.width() / 2, sz.height() / 2 + 2, sz.width(), 6),
-            Qt::AlignCenter, view->label());
+            Qt::AlignCenter, text);
     }
 
     // 比例標籤
     if (view->showScaleLabel()) {
-        QSizeF sz = result.boundingBox * sc;
-        QString scaleStr = QString("SCALE %1:%2")
-                               .arg(view->scale() >= 1.0 ? 1 : (int)(1.0 / view->scale()))
-                               .arg(view->scale() >= 1.0 ? (int)view->scale() : 1);
+        QString scaleStr = (view->scale() >= 1.0)
+            ? QString("SCALE %1:1").arg(view->scale(), 0, 'g', 4)
+            : QString("SCALE 1:%1").arg(1.0 / view->scale(), 0, 'g', 4);
         painter.setFont(QFont("Arial", 2.5));
         painter.setPen(Qt::darkGray);
         painter.drawText(
@@ -821,6 +1016,245 @@ void DrawingSheetPainter::paintView(QPainter& painter,
             Qt::AlignCenter, scaleStr);
     }
 
+    painter.restore();
+}
+
+// ── 剖面填充線 ────────────────────────────────────────────────────────────────
+
+void DrawingSheetPainter::paintHatching(QPainter& painter,
+                                        const TopoDS_Compound& wires,
+                                        const QPointF& offset,
+                                        double scale)
+{
+    // 以所有 Wire 組成一個區域（奇偶填充 → 內孔自動不填），再用該區域裁切
+    // 一組 45° 平行線。間距以圖紙 mm 計，所以與比例無關。
+    QPainterPath region;
+    region.setFillRule(Qt::OddEvenFill);
+
+    for (TopExp_Explorer we(wires, TopAbs_WIRE); we.More(); we.Next()) {
+        const TopoDS_Wire wire = TopoDS::Wire(we.Current());
+        bool first = true;
+        try {
+            for (BRepTools_WireExplorer ex(wire); ex.More(); ex.Next()) {
+                const TopoDS_Edge edge = ex.Current();
+                BRepAdaptor_Curve curve(edge);
+                GCPnts_TangentialDeflection disc(curve, qDegreesToRadians(1.0), 0.01);
+                QVector<QPointF> pts;
+                for (int i = 1; i <= disc.NbPoints(); ++i) {
+                    const gp_Pnt p = disc.Value(i);
+                    pts.append(QPointF(p.X() * scale + offset.x(), -p.Y() * scale + offset.y()));
+                }
+                if (pts.size() < 2) continue;
+                if (edge.Orientation() == TopAbs_REVERSED)
+                    std::reverse(pts.begin(), pts.end());
+                for (int i = 0; i < pts.size(); ++i) {
+                    if (first) { region.moveTo(pts[i]); first = false; }
+                    else if (i > 0) region.lineTo(pts[i]);
+                }
+            }
+        } catch (const Standard_Failure&) {
+            continue;
+        }
+        if (!first) region.closeSubpath();
+    }
+    if (region.isEmpty()) return;
+
+    const QRectF br = region.boundingRect();
+    painter.save();
+    painter.setClipPath(region, Qt::IntersectClip);
+    QPen hp(QColor(110, 110, 110), m_lwThin);
+    hp.setCosmetic(false);
+    painter.setPen(hp);
+    constexpr double kStep = 4.0;   // 水平間距 mm（垂直間距 ≈ 2.8mm）
+    for (double t = br.left() - br.height(); t <= br.right(); t += kStep)
+        painter.drawLine(QPointF(t, br.bottom()), QPointF(t + br.height(), br.top()));
+    painter.restore();
+}
+
+// ── 外框尺寸 ──────────────────────────────────────────────────────────────────
+
+namespace {
+
+QString fmtDim(double v)
+{
+    QString s = QString::number(v, 'f', 2);
+    if (s.contains('.')) {
+        while (s.endsWith('0')) s.chop(1);
+        if (s.endsWith('.')) s.chop(1);
+    }
+    return s;
+}
+
+void drawArrowHead(QPainter& p, const QPointF& tip, const QPointF& dir /*單位向量，指向 tip 外側*/)
+{
+    constexpr double L = 2.5, W = 0.8;
+    const QPointF n(-dir.y(), dir.x());
+    QPolygonF tri;
+    tri << tip << (tip - dir * L + n * W) << (tip - dir * L - n * W);
+    p.save();
+    p.setBrush(Qt::black);
+    p.drawPolygon(tri);
+    p.restore();
+}
+
+} // namespace
+
+void DrawingSheetPainter::paintOverallDimensions(QPainter& painter,
+                                                 const QSizeF& sizeMM,
+                                                 const QSizeF& modelSize)
+{
+    // 視圖內容矩形以 (0,0) 為中心。水平尺寸放在上方、垂直尺寸放在左方，
+    // 避開下方的視圖標籤與比例標籤。
+    const QRectF r(-sizeMM.width() / 2, -sizeMM.height() / 2, sizeMM.width(), sizeMM.height());
+    if (r.width() < 4 || r.height() < 4) return;
+
+    constexpr double kOff = 8.0, kExt = 2.0, kOver = 1.5;
+    QPen pen(Qt::black, m_lwThin);
+    pen.setCosmetic(false);
+    painter.save();
+    painter.setPen(pen);
+    painter.setFont(QFont("Arial", 3));
+
+    // 水平（總寬）
+    {
+        const double y = r.top() - kOff;
+        painter.drawLine(QPointF(r.left(),  r.top() - kExt), QPointF(r.left(),  y - kOver));
+        painter.drawLine(QPointF(r.right(), r.top() - kExt), QPointF(r.right(), y - kOver));
+        painter.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+        drawArrowHead(painter, QPointF(r.left(),  y), QPointF(-1, 0));
+        drawArrowHead(painter, QPointF(r.right(), y), QPointF(1, 0));
+        painter.drawText(QRectF(r.left(), y - 5, r.width(), 4.5), Qt::AlignCenter,
+                         fmtDim(modelSize.width()));
+    }
+    // 垂直（總高）
+    {
+        const double x = r.left() - kOff;
+        painter.drawLine(QPointF(r.left() - kExt, r.top()),    QPointF(x - kOver, r.top()));
+        painter.drawLine(QPointF(r.left() - kExt, r.bottom()), QPointF(x - kOver, r.bottom()));
+        painter.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
+        drawArrowHead(painter, QPointF(x, r.top()),    QPointF(0, -1));
+        drawArrowHead(painter, QPointF(x, r.bottom()), QPointF(0, 1));
+        painter.save();
+        painter.translate(x - 1.0, r.center().y());
+        painter.rotate(-90);
+        painter.drawText(QRectF(-r.height() / 2, -4.5, r.height(), 4.5), Qt::AlignCenter,
+                         fmtDim(modelSize.height()));
+        painter.restore();
+    }
+    painter.restore();
+}
+
+// ── 剖切線與局部放大標記 ──────────────────────────────────────────────────────
+
+void DrawingSheetPainter::paintViewAnnotations(QPainter& painter,
+                                               const DrawingSheet& sheet,
+                                               const QMap<QUuid, ViewRenderResult>& results)
+{
+    auto resultOf = [&](const DrawingView* v) -> const ViewRenderResult* {
+        auto it = results.constFind(v->id());
+        return (it != results.constEnd() && it.value().isValid) ? &it.value() : nullptr;
+    };
+    // 宿主視圖投影座標 (X,Y) → 圖紙座標
+    auto toSheet = [](const DrawingView* v, const ViewRenderResult& r, double X, double Y) {
+        const QPointF c = r.projectedBounds.center();
+        const double sc = v->scale();
+        return QPointF(v->position().x() + (X - c.x()) * sc,
+                       v->position().y() - (Y - c.y()) * sc);
+    };
+    auto findHost = [&](std::initializer_list<ViewType> types, const ViewRenderResult*& hr)
+        -> const DrawingView* {
+        for (ViewType t : types)
+            for (const DrawingView* v : sheet.views())
+                if (v && v->type() == t && (hr = resultOf(v)))
+                    return v;
+        hr = nullptr;
+        return nullptr;
+    };
+
+    painter.save();
+    for (const DrawingView* v : sheet.views()) {
+        if (!v) continue;
+
+        if (v->type() == ViewType::Section) {
+            const SectionParams p = v->sectionParams();
+            if (!p.showCutLine || p.direction == SectionDirection::Diagonal) continue;
+
+            const ViewRenderResult* hr = nullptr;
+            const DrawingView* host = (p.direction == SectionDirection::Horizontal)
+                ? findHost({ViewType::Top}, hr)
+                : findHost({ViewType::Top, ViewType::Front}, hr);
+            if (!host || !hr) continue;
+
+            const QRectF b = hr->projectedBounds;
+            const double ext = 0.08 * qMax(b.width(), b.height());
+            QPointF a, e, dir;
+            if (p.direction == SectionDirection::Horizontal) {      // 平面 Y=offset，俯視為水平線
+                a = toSheet(host, *hr, b.left()  - ext, p.offset);
+                e = toSheet(host, *hr, b.right() + ext, p.offset);
+                dir = QPointF(0, -1);                               // 看向 -Y，觀看者在 +Y（俯視圖上方）
+            } else {                                                // 平面 X=offset
+                a = toSheet(host, *hr, p.offset, b.top()    + ext);
+                e = toSheet(host, *hr, p.offset, b.bottom() - ext);
+                dir = QPointF(1, 0);
+            }
+            const QString lbl = p.sectionLabel.isEmpty() ? QStringLiteral("A") : p.sectionLabel;
+
+            // 中段：細點劃線
+            QPen thin(Qt::black, m_lwThin);
+            thin.setCosmetic(false);
+            thin.setStyle(Qt::DashDotLine);
+            painter.setPen(thin);
+            painter.drawLine(a, e);
+
+            // 兩端：粗短線 + 箭頭 + 代號
+            QPointF u = e - a;
+            const double len = std::hypot(u.x(), u.y());
+            if (len < 1e-6) continue;
+            u /= len;
+            QPen thick(Qt::black, m_lwThick);
+            thick.setCosmetic(false);
+            painter.setFont(QFont("Arial", 4));
+            for (int k = 0; k < 2; ++k) {
+                const QPointF pt = (k == 0) ? a : e;
+                const QPointF inward = (k == 0) ? u : -u;
+                painter.setPen(thick);
+                painter.drawLine(pt, pt + inward * qMin(6.0, len / 3));
+                if (p.showArrows) {
+                    const QPointF tip = pt + dir * 7.0;
+                    painter.drawLine(pt, tip);
+                    drawArrowHead(painter, tip, dir);
+                    painter.setPen(Qt::black);
+                    const QPointF lp = tip + dir * 3.5;
+                    painter.drawText(QRectF(lp.x() - 3, lp.y() - 3, 6, 6), Qt::AlignCenter, lbl);
+                } else {
+                    painter.setPen(Qt::black);
+                    const QPointF lp = pt - inward * 4.0;
+                    painter.drawText(QRectF(lp.x() - 3, lp.y() - 3, 6, 6), Qt::AlignCenter, lbl);
+                }
+            }
+        }
+        else if (v->type() == ViewType::Detail) {
+            const DetailParams p = v->detailParams();
+            const ViewRenderResult* hr = nullptr;
+            const DrawingView* host = findHost({p.sourceType}, hr);
+            if (!host || !hr) continue;
+
+            const QPointF c = toSheet(host, *hr, p.center.x(), p.center.y());
+            const double r = p.radius * host->scale();
+            QPen cp(Qt::black, m_lwThin);
+            cp.setCosmetic(false);
+            cp.setStyle(Qt::DashDotLine);
+            painter.setPen(cp);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(c, r, r);
+
+            const QString lbl = p.label.isEmpty() ? QStringLiteral("B") : p.label;
+            painter.setFont(QFont("Arial", 4));
+            painter.setPen(Qt::black);
+            const QPointF lp = c + QPointF(r * 0.72 + 3, -r * 0.72 - 3);
+            painter.drawText(QRectF(lp.x() - 3, lp.y() - 3, 6, 6), Qt::AlignCenter, lbl);
+        }
+    }
     painter.restore();
 }
 
@@ -1035,24 +1469,60 @@ void DrawingSheetPainter::paintRevisionTable(QPainter& painter,
 
 // ── 圖目錄 ────────────────────────────────────────────────────────────────────
 
+namespace {
+constexpr double kIdxRowH = 8.0;
+constexpr double kIdxHdrH = 10.0;
+constexpr double kIdxWidth = 26 + 38 + 66 + 14 + 24 + 62;   // 與 paintDrawingIndex 的欄寬合計一致
+}
+
+int DrawingSheetPainter::drawingIndexRowAt(const DrawingIndex* idx, const QPointF& pt)
+{
+    if (!idx) return -1;
+    const QPointF o = idx->position();
+    if (pt.x() < o.x() || pt.x() > o.x() + kIdxWidth) return -1;
+    const double y = pt.y() - (o.y() + kIdxHdrH);
+    if (y < 0) return -1;
+    const int row = int(y / kIdxRowH);
+    return (row >= 0 && row < idx->entries().size()) ? row : -1;
+}
+
 void DrawingSheetPainter::paintDrawingIndex(QPainter& painter,
                                             const DrawingIndex* idx)
 {
     if (!idx) return;
 
     const QPointF origin = idx->position();
-    constexpr double kRowH = 8.0;
-    constexpr double kHdrH = 10.0;
-    constexpr double kW    = 160.0;
+    constexpr double kRowH = kIdxRowH;
+    constexpr double kHdrH = kIdxHdrH;
 
     struct Col { QString label; double w; };
     const QVector<Col> cols = {
-        {"SHEET", 15}, {"DWG NO.", 35}, {"TITLE", 65},
-        {"REV", 12}, {"DATE", 20}, {"REMARK", 13}
+        {"SHEET", 26}, {"DWG NO.", 38}, {"TITLE", 66},
+        {"REV", 14}, {"DATE", 24}, {"REMARK", 62}
     };
+    double kW = 0;
+    for (const Col& c : cols) kW += c.w;
 
     QPen borderPen(Qt::black, 0.35);
     borderPen.setCosmetic(false);
+
+    // 在儲存格內畫字：太寬時水平壓縮，確保不被截掉
+    auto cellText = [&](const QRectF& r, const QString& text, int align) {
+        if (text.isEmpty()) return;
+        const double avail = r.width() - 2.0;
+        const QFontMetricsF fm(painter.font(), painter.device());
+        const double w = fm.boundingRect(text).width();
+        painter.save();
+        if (w > avail && w > 0) {
+            const double k = avail / w;
+            painter.translate(r.left() + 1.0, r.top());
+            painter.scale(k, 1.0);
+            painter.drawText(QRectF(0, 0, w + 1.0, r.height()), align, text);
+        } else {
+            painter.drawText(QRectF(r.left() + 1.0, r.top(), avail, r.height()), align, text);
+        }
+        painter.restore();
+    };
 
     // 標題列
     double x0 = origin.x(), y0 = origin.y();
@@ -1070,11 +1540,9 @@ void DrawingSheetPainter::paintDrawingIndex(QPainter& painter,
 
     double cx = x0;
     for (const Col& c : cols) {
-        painter.drawText(QRectF(cx + 1, y0 + 1, c.w - 2, kHdrH - 2),
-                         Qt::AlignCenter, c.label);
+        cellText(QRectF(cx, y0 + 1, c.w, kHdrH - 2), c.label, Qt::AlignCenter);
         painter.setPen(borderPen);
-        painter.drawLine(QPointF(cx + c.w, y0),
-                         QPointF(cx + c.w, y0 + kHdrH));
+        painter.drawLine(QPointF(cx + c.w, y0), QPointF(cx + c.w, y0 + kHdrH));
         painter.setPen(Qt::black);
         cx += c.w;
     }
@@ -1088,13 +1556,12 @@ void DrawingSheetPainter::paintDrawingIndex(QPainter& painter,
         painter.drawRect(QRectF(x0, y, kW, kRowH));
         painter.setPen(Qt::black);
 
-        QStringList vals = { e.sheetNumber, e.drawingNumber, e.title,
-                            e.revision, e.date, e.remark };
+        const QStringList vals = { e.sheetNumber, e.drawingNumber, e.title,
+                                   e.revision, e.date, e.remark };
         for (int i = 0; i < cols.size(); ++i) {
-            double cw = cols[i].w;
-            painter.drawText(QRectF(cx + 1, y + 1, cw - 2, kRowH - 2),
-                             Qt::AlignVCenter | Qt::AlignLeft,
-                             i < vals.size() ? vals[i] : "");
+            const double cw = cols[i].w;
+            cellText(QRectF(cx, y + 1, cw, kRowH - 2), i < vals.size() ? vals[i] : QString(),
+                     Qt::AlignVCenter | Qt::AlignLeft);
             painter.setPen(borderPen);
             painter.drawLine(QPointF(cx + cw, y), QPointF(cx + cw, y + kRowH));
             painter.setPen(Qt::black);

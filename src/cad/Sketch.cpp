@@ -2427,6 +2427,47 @@ void Sketch::initDatumGeometry()
     addLine(kDatumYAxis, kDatumYStart, kDatumYEnd);
 }
 
+void Sketch::buildDatumSolveInputs(const QList<SketchConstraint>& cons,
+                                   QList<SketchGeometry*>& ownedGeoms,
+                                   QList<SketchConstraint>& solveCons)
+{
+    bool uses = false;
+    for (const SketchConstraint& c : cons) {
+        for (const GeomRef& r : c.refs)
+            if (isDatumUuid(r.geomUuid)) { uses = true; break; }
+        if (uses) break;
+    }
+    if (!uses) return;      // 沒有約束引用座標軸：求解輸入完全不變
+
+    // 與 initDatumGeometry()／appendDatumSolveInputs() 相同的常數替身：端點釘死在絕對座標
+    const QString pointIds[] = { kDatumOrigin, kDatumXStart, kDatumXEnd, kDatumYStart, kDatumYEnd };
+    for (const QString& id : pointIds) {
+        auto* sp = new SketchPoint(datumPointPos(id), SketchPoint::Origin::Explicit,
+                                   GeomRole::Construction);
+        sp->uuid = id;
+        ownedGeoms.append(sp);
+
+        SketchConstraint c;
+        c.uuid  = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        c.type  = ConstraintType::Fixed;
+        c.refs  = { GeomRef(id, GeomHandle::WholeGeom) };
+        c.fixedAbsolute = true;
+        const QVector2D p = datumPointPos(id);
+        c.value  = p.x();
+        c.value2 = p.y();
+        solveCons.append(c);
+    }
+    auto addLine = [&ownedGeoms](const QString& id, const QString& st, const QString& en) {
+        auto* ln = new SketchLine(datumPointPos(st), datumPointPos(en), GeomRole::Construction);
+        ln->uuid      = id;
+        ln->startUuid = st;
+        ln->endUuid   = en;
+        ownedGeoms.append(ln);
+    };
+    addLine(kDatumXAxis, kDatumXStart, kDatumXEnd);
+    addLine(kDatumYAxis, kDatumYStart, kDatumYEnd);
+}
+
 void Sketch::resetDatumGeometry()
 {
     // 求解器會把替身的變數寫回（誤差極小但會累積），每次求解前拉回標準位置

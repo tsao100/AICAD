@@ -400,6 +400,11 @@ public:
     bool elementChainSyncEnabled() const { return m_elementChainSyncEnabled; }
     void setElementChainSyncEnabled(bool v) { m_elementChainSyncEnabled = v; Q_EMIT dataChanged(); }
 
+    /** 單獨（不成串）：true 時，本線形不與前後線形串接——連續里程不跟著前後線形連動累加，
+     *  圖冊的線形串（平縱面圖／簡圖）也不會把它接進任何一串。隨檔案存檔。 */
+    bool noChain() const { return m_noChain; }
+    void setNoChain(bool v) { m_noChain = v; Q_EMIT dataChanged(); }
+
     HorizontalAlignment* horizontal() const { return m_h; }
     VerticalAlignment*   vertical()   const { return m_v; }
 
@@ -483,6 +488,16 @@ public:
     double    getCantForCalc    (double p, bool signed_ = true)   const;
     double    getAppliedHForCalc(double p)                        const;
 
+    /**
+     * @brief 本線形（與 …ForCalc 同一資料來源）的里程範圍 [p0, p1]。
+     * @return 線形沒有任何元素時回傳 false
+     *
+     * 超出這個範圍的查詢，HorizontalAlignment 會退回最近的邊界元素並「外推」，
+     * 得到的座標不是真實線形；AlignedProfileArray 用此範圍判斷測站是否越界，
+     * 並改接到端點相連的另一條線形。
+     */
+    bool      chainageRangeForCalc(double& p0, double& p1)        const;
+
     // ── Offset polyline (for OCCT / DXF output) ───────────────────────────────
 
     /**
@@ -524,6 +539,7 @@ private:
     bool                 m_hAlignVisible = false;  ///< 3D view visibility
     bool                 m_vAlignVisible = false;  ///< profile dock visibility
     bool                 m_elementChainSyncEnabled = false;  ///< 見 elementChainSyncEnabled()
+    bool                 m_noChain = false;                  ///< 見 noChain()
 
     QVector<SpacingRule> m_spacingRules;
     double               m_preDistance = 25.0;

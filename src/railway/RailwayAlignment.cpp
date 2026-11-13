@@ -971,6 +971,7 @@ QJsonObject TrackCenterLine::toJson() const
     o["hAlignVisible"]  = m_hAlignVisible;
     o["vAlignVisible"]  = m_vAlignVisible;
     o["elementChainSyncEnabled"] = m_elementChainSyncEnabled;
+    if (m_noChain) o["noChain"] = true;
     o["horizontal"] = m_h->toJson();
     o["vertical"]   = m_v->toJson();
     // 只在真的有 ALD 匯入資料時才寫出，讓沒有用到本功能的舊檔/新建線路
@@ -988,6 +989,7 @@ bool TrackCenterLine::fromJson(const QJsonObject& j)
     m_vAlignVisible = j["vAlignVisible"].toBool(false);
     // 預設關閉（需求 7）：舊檔沒有這個欄位時，一律視為關閉。
     m_elementChainSyncEnabled = j["elementChainSyncEnabled"].toBool(false);
+    m_noChain = j["noChain"].toBool(false);
 
     if (!m_h->fromJson(j["horizontal"].toObject()))
         return false;
@@ -1074,6 +1076,23 @@ double TrackCenterLine::getSlopeForCalc(double p) const
 double TrackCenterLine::getCantForCalc(double p, bool signed_) const
 {
     return (hasAldHorizontalImport() ? m_hAld : m_h)->getCant(p, signed_);
+}
+
+bool TrackCenterLine::chainageRangeForCalc(double& p0, double& p1) const
+{
+    const HorizontalAlignment* h = hasAldHorizontalImport() ? m_hAld : m_h;
+    if (!h || h->isEmpty()) return false;
+    double lo =  std::numeric_limits<double>::infinity();
+    double hi = -std::numeric_limits<double>::infinity();
+    for (const AlignmentElement* e : h->elements()) {
+        if (!e) continue;
+        lo = std::min(lo, e->startChainage());
+        hi = std::max(hi, e->endChainage());
+    }
+    if (!(hi > lo)) return false;
+    p0 = lo;
+    p1 = hi;
+    return true;
 }
 
 double TrackCenterLine::getAppliedHForCalc(double p) const

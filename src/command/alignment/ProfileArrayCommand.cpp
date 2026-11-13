@@ -348,14 +348,19 @@ void CreateProfileArrayCommand::createArray()
         return;
     }
 
-    // 放樣：該陣列已有 Loft 就沿用（它會隨陣列 shapeChanged 自動重建）；沒有才建立。
+    // 放樣：每個分段各有一個 Loft。沿用既有陣列時 commitSegments() 已為新的分段建立；
+    // 新建陣列則在這裡補建。找出「這次輸入的那一段」的 Loft 供回報。
+    arr->syncSegmentLofts();
     cad::ProfileLoftSolid* loft = nullptr;
-    for (cad::Feature* f : doc->features()) {
-        auto* cand = qobject_cast<cad::ProfileLoftSolid*>(f);
-        if (cand && cand->sourceArray() == arr) { loft = cand; break; }
+    {
+        QString segId;
+        for (const cad::ProfileArraySegment& s : arr->segments())
+            if (s.name == segName) { segId = s.id; break; }
+        for (cad::Feature* f : doc->features()) {
+            auto* cand = qobject_cast<cad::ProfileLoftSolid*>(f);
+            if (cand && cand->sourceArray() == arr && cand->segmentId() == segId) { loft = cand; break; }
+        }
     }
-    if (!loft)
-        loft = doc->createProfileLoftSolid(arr);
     if (!loft) {
         complete(CommandResult::Failure(
             "Profile array created but loft failed to start"));
@@ -564,11 +569,20 @@ CommandResult LoftProfileArrayCommand::doLoft(cad::AlignedProfileArray* arr)
     Application* app = Application::instance();
     cad::Document* doc = app->documentManager()->currentDocument();
 
-    cad::ProfileLoftSolid* loft = doc->createProfileLoftSolid(arr);
-    if (!loft)
+    // 每個分段各有一個 Loft：補建缺少的（已有的不會重複建立）
+    arr->syncSegmentLofts();
+    QList<cad::ProfileLoftSolid*> lofts;
+    for (cad::Feature* f : doc->features()) {
+        auto* cand = qobject_cast<cad::ProfileLoftSolid*>(f);
+        if (cand && cand->sourceArray() == arr) lofts.append(cand);
+    }
+    if (lofts.isEmpty())
         return CommandResult::Failure("Failed to create profile loft");
-    if (!loft->errorMessage().isEmpty())
-        return CommandResult::Failure("Loft failed: " + loft->errorMessage());
+    for (cad::ProfileLoftSolid* l : lofts)
+        if (!l->errorMessage().isEmpty())
+            return CommandResult::Failure(
+                QString("Loft '%1' failed: %2").arg(l->name(), l->errorMessage()));
+    cad::ProfileLoftSolid* loft = lofts.first();
 
     // ✅ 放樣完常常在畫面之外（測站沿線分布，範圍可能跟目前視角差很多），
     //    直接 fitAll() 讓使用者馬上看得到結果，不用自己找。
@@ -577,7 +591,9 @@ CommandResult LoftProfileArrayCommand::doLoft(cad::AlignedProfileArray* arr)
             cadView->fitAll();
     }
 
-    return CommandResult::Success("Profile loft solid created: " + loft->name());
+    return CommandResult::Success(
+        QString("%1 profile loft solid(s) for %2: %3")
+            .arg(lofts.size()).arg(arr->name()).arg(loft->name() + (lofts.size() > 1 ? " ..." : "")));
 }
 
 void LoftProfileArrayCommand::cleanup()

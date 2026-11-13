@@ -41,6 +41,11 @@ public:
     AlignedProfileArray* sourceArray() const;
     QString sourceArrayId() const;
 
+    /// 本 Loft 負責的分段（ProfileArraySegment::id）。每個分段各有一個 Loft。
+    /// 空字串 = 舊檔的「涵蓋全部分段」Loft，載入後由 AlignedProfileArray::syncSegmentLofts() 轉換。
+    void    setSegmentId(const QString& id) { m_segmentId = id; }
+    QString segmentId() const { return m_segmentId; }
+
     bool rebuild() override;
 
     /**
@@ -83,6 +88,7 @@ private:
     QPointer<AlignedProfileArray> m_array;
     QMetaObject::Connection m_arrayRebuiltConn;
     QString m_pendingSourceArrayId;
+    QString m_segmentId;               ///< 本 Loft 對應的分段 id（見 segmentId()）
 
     /// 外層 index = loopIndex，內層 index = cornerIndex（見 loopCount()/
     /// cornerCount()/longitudinalEdge() 的說明）。只在 rebuild() 成功時更新。

@@ -36,6 +36,8 @@
 #include <QResizeEvent>
 #include <QDebug>
 #include <QtMath>
+#include <cmath>
+#include <algorithm>
 
 namespace aicad {
 namespace drawing {
@@ -124,6 +126,7 @@ void DrawingSheetWidget::setZoom(double zoom)
     updateTransform();
     update();
     Q_EMIT zoomChanged(zoom);
+    scheduleHistoryCommit();
 }
 
 void DrawingSheetWidget::fitToWindow()
@@ -144,6 +147,7 @@ void DrawingSheetWidget::fitToWindow()
     updateTransform();
     update();
     Q_EMIT zoomChanged(m_zoom);
+    scheduleHistoryCommit();
 }
 
 void DrawingSheetWidget::setGridVisible(bool visible)
@@ -206,9 +210,41 @@ void DrawingSheetWidget::resizeEvent(QResizeEvent* /*event*/)
     }
 }
 
+bool DrawingSheetWidget::hitTestHandle(DrawingView* view, const QPoint& screenPt) const
+{
+    if (!view) return false;
+    const QRectF r = view->boundingRect();
+    for (const QPointF& c : { r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight() }) {
+        const QPointF s = sheetToScreen(c);
+        if (QLineF(s, QPointF(screenPt)).length() <= 7.0) return true;
+    }
+    return false;
+}
+
+// 配置框改變後，直接用快取的投影範圍重算自動 Fit 比例（不重跑 HLR）
+void DrawingSheetWidget::refitFromCache(DrawingView* view)
+{
+    if (!view || !view->autoFit()) return;
+    auto it = m_renderCache.constFind(view->id());
+    if (it == m_renderCache.constEnd() || !it.value().isValid) return;
+    const QRectF b = it.value().projectedBounds;
+    if (b.width() > 0.0 || b.height() > 0.0)
+        view->applyFitScale(DrawingViewRenderer::computeFitScale(view, b));
+}
+
 void DrawingSheetWidget::mousePressEvent(QMouseEvent* event)
 {
     setFocus();
+
+    // 已選取的視圖：點到四角控點 → 開始縮放配置框
+    if (event->button() == Qt::LeftButton && m_selectedView &&
+        !(event->modifiers() & Qt::AltModifier) &&
+        hitTestHandle(m_selectedView, event->pos()))
+    {
+        m_resizingView = m_selectedView;
+        event->accept();
+        return;
+    }
 
     if (event->button() == Qt::MiddleButton ||
         (event->button() == Qt::LeftButton &&
@@ -259,6 +295,19 @@ void DrawingSheetWidget::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
+    if (m_resizingView && (event->buttons() & Qt::LeftButton)) {
+        const QPointF pt = screenToSheet(event->pos());
+        const QPointF c  = m_resizingView->position();
+        // 以視圖中心對稱縮放；最小 20mm
+        const QSizeF sz(qMax(20.0, 2.0 * qAbs(pt.x() - c.x())),
+                        qMax(20.0, 2.0 * qAbs(pt.y() - c.y())));
+        m_resizingView->setSize(sz);
+        refitFromCache(m_resizingView);
+        update();
+        event->accept();
+        return;
+    }
+
     if (m_draggingView && (event->buttons() & Qt::LeftButton)) {
         QPointF sheetPt  = screenToSheet(event->pos());
         QPointF newPos   = sheetPt - m_viewDragOffset;
@@ -278,6 +327,10 @@ void DrawingSheetWidget::mouseMoveEvent(QMouseEvent* event)
     }
 
     // 更新游標形狀
+    if (m_selectedView && hitTestHandle(m_selectedView, event->pos())) {
+        setCursor(Qt::SizeFDiagCursor);
+        return;
+    }
     DrawingView* hit = hitTestView(event->pos());
     setCursor(hit ? Qt::SizeAllCursor : Qt::ArrowCursor);
 }
@@ -289,6 +342,13 @@ void DrawingSheetWidget::mouseReleaseEvent(QMouseEvent* event)
     {
         m_isPanning = false;
         unsetCursor();
+        scheduleHistoryCommit();
+    }
+
+    if (m_resizingView) {
+        m_resizingView = nullptr;
+        unsetCursor();
+        update();
     }
 
     if (m_draggingView) {
@@ -300,12 +360,80 @@ void DrawingSheetWidget::mouseReleaseEvent(QMouseEvent* event)
 void DrawingSheetWidget::mouseDoubleClickEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
+        // 雙擊圖目錄的資料列 → 切換到該圖頁
+        if (m_sheet && m_sheet->isDrawingIndexEnabled() && m_sheet->drawingIndex()) {
+            const int row = DrawingSheetPainter::drawingIndexRowAt(m_sheet->drawingIndex(),
+                                                                   screenToSheet(event->pos()));
+            if (row >= 0) {
+                const DrawingIndexEntry& e = m_sheet->drawingIndex()->entries()[row];
+                Q_EMIT indexEntryActivated(e.drawingNumber, e.sheetNumber);
+                return;
+            }
+        }
         DrawingView* hit = hitTestView(event->pos());
         if (hit) {
             Q_EMIT viewDoubleClicked(hit);
         }
     }
 }
+
+// ── 視圖歷史 ─────────────────────────────────────────────────────────────────
+
+void DrawingSheetWidget::scheduleHistoryCommit()
+{
+    if (m_histSuppress) return;
+    if (!m_histTimer) {
+        m_histTimer = new QTimer(this);
+        m_histTimer->setSingleShot(true);
+        m_histTimer->setInterval(350);
+        connect(m_histTimer, &QTimer::timeout, this, &DrawingSheetWidget::commitHistory);
+    }
+    m_histTimer->start();
+}
+
+void DrawingSheetWidget::commitHistory()
+{
+    if (m_histSuppress || !m_sheet) return;
+    ViewState cur;
+    cur.sheetId = m_sheet->id();
+    cur.zoom = m_zoom;
+    cur.pan = m_panOffset;
+    if (m_histPos >= 0 && m_histPos < m_hist.size()) {
+        const ViewState& t = m_hist[m_histPos];
+        if (t.sheetId == cur.sheetId && std::fabs(t.zoom - cur.zoom) < 1e-6 * std::max(1.0, t.zoom)
+            && std::fabs(t.pan.x() - cur.pan.x()) < 0.5 && std::fabs(t.pan.y() - cur.pan.y()) < 0.5)
+            return;
+    }
+    while (m_hist.size() > m_histPos + 1) m_hist.removeLast();      // 丟掉「下一視圖」分支
+    m_hist.append(cur);
+    if (m_hist.size() > 100) m_hist.removeFirst();
+    m_histPos = m_hist.size() - 1;
+    Q_EMIT historyChanged();
+}
+
+void DrawingSheetWidget::gotoHistory(int pos)
+{
+    if (pos < 0 || pos >= m_hist.size()) return;
+    if (m_histTimer) m_histTimer->stop();
+    m_histPos = pos;
+    const ViewState st = m_hist[pos];
+    m_histSuppress = true;
+    const bool otherSheet = !m_sheet || m_sheet->id() != st.sheetId;
+    if (otherSheet) Q_EMIT historySheetRequested(st.sheetId);   // 對話框換圖紙（setSheet 之後會延遲 fit）
+    // 換圖紙後 setSheet 排了「fit＋渲染」；等它跑完再套用歷史中的縮放／平移
+    QTimer::singleShot(otherSheet ? 60 : 0, this, [this, st]() {
+        m_zoom = st.zoom;
+        m_panOffset = st.pan;
+        updateTransform();
+        update();
+        Q_EMIT zoomChanged(m_zoom);
+        QTimer::singleShot(450, this, [this]() { m_histSuppress = false; });
+    });
+    Q_EMIT historyChanged();
+}
+
+void DrawingSheetWidget::viewBack()    { if (canViewBack())    gotoHistory(m_histPos - 1); }
+void DrawingSheetWidget::viewForward() { if (canViewForward()) gotoHistory(m_histPos + 1); }
 
 void DrawingSheetWidget::wheelEvent(QWheelEvent* event)
 {
@@ -328,12 +456,14 @@ void DrawingSheetWidget::wheelEvent(QWheelEvent* event)
         updateTransform();
         update();
         Q_EMIT zoomChanged(m_zoom);
+        scheduleHistoryCommit();
         event->accept();
     } else {
         // 無修飾鍵 → 垂直捲動
         m_panOffset.ry() += (delta > 0 ? 30 : -30);
         updateTransform();
         update();
+        scheduleHistoryCommit();
     }
 }
 
@@ -507,9 +637,11 @@ void DrawingSheetWidget::paintViewBoundingBox(QPainter& p,
 {
     if (!view) return;
 
-    // 若已有渲染結果，不需畫佔位框（paintView 已畫）
-    if (m_renderCache.contains(view->id()) &&
-        m_renderCache[view->id()].isValid)
+    // 若已有渲染結果：未選取時不需畫佔位框（paintView 已畫）；
+    // 選取時只畫外框與四角控點（讓使用者可拖曳縮放配置框）。
+    const bool rendered = m_renderCache.contains(view->id()) &&
+                          m_renderCache[view->id()].isValid;
+    if (rendered && !selected)
         return;
 
     QRectF rect = view->boundingRect();
@@ -519,13 +651,16 @@ void DrawingSheetWidget::paintViewBoundingBox(QPainter& p,
     pen.setCosmetic(true);
     pen.setStyle(Qt::DashLine);
     p.setPen(pen);
-    p.setBrush(selected ? QColor(0, 120, 255, 20) : QColor(200, 220, 255, 15));
+    p.setBrush(rendered ? Qt::NoBrush
+                        : (selected ? QColor(0, 120, 255, 20) : QColor(200, 220, 255, 15)));
     p.drawRect(rect);
 
-    // 視圖標籤
-    p.setPen(selected ? QColor(0, 80, 200) : QColor(100, 140, 200));
-    p.setFont(QFont("Arial", 3));
-    p.drawText(rect, Qt::AlignCenter, view->label());
+    // 視圖標籤（只在尚未渲染時當佔位）
+    if (!rendered) {
+        p.setPen(selected ? QColor(0, 80, 200) : QColor(100, 140, 200));
+        p.setFont(QFont("Arial", 3));
+        p.drawText(rect, Qt::AlignCenter, view->label());
+    }
 
     // 選取時的四角控點
     if (selected) {
@@ -646,22 +781,19 @@ void DrawingSheetWidget::showViewContextMenu(DrawingView* view,
     // 對齊功能
     QMenu* alignMenu = menu.addMenu("Align");
     alignMenu->addAction("Align Left",   [this, view]() {
-        view->setPosition(QPointF(10, view->position().y()));
+        view->setPosition(QPointF(10 + view->size().width() / 2, view->position().y()));
         Q_EMIT viewMoved(view, view->position());
         update();
     });
     alignMenu->addAction("Align Top",    [this, view]() {
-        view->setPosition(QPointF(view->position().x(), 10));
+        view->setPosition(QPointF(view->position().x(), 10 + view->size().height() / 2));
         Q_EMIT viewMoved(view, view->position());
         update();
     });
     alignMenu->addAction("Center on Sheet", [this, view]() {
         if (!m_sheet) return;
         QSizeF sz = m_sheet->config().paperSizeMM();
-        QPointF newPos(
-            (sz.width()  - view->size().width())  / 2,
-            (sz.height() - view->size().height()) / 2
-            );
+        QPointF newPos(sz.width() / 2, sz.height() / 2);   // position = 視圖中心
         view->setPosition(newPos);
         Q_EMIT viewMoved(view, newPos);
         update();
@@ -733,6 +865,11 @@ void DrawingSheetWidget::showSheetContextMenu(const QPoint& globalPos)
     connect(rulerAct, &QAction::toggled, this, &DrawingSheetWidget::setRulersVisible);
 
     menu.addSeparator();
+    menu.addAction("Auto Layout", [this]() {
+        if (!m_sheet) return;
+        m_sheet->autoLayout();
+        update();
+    });
     menu.addAction("Rebuild All Views", this, &DrawingSheetWidget::triggerRenderAll);
 
     menu.exec(globalPos);
@@ -785,6 +922,20 @@ void DrawingSheetWidget::onViewRendered(const QUuid& viewId,
 {
     m_pendingRenders.remove(viewId);
     m_renderCache[viewId] = result;
+
+    // ── 自動 Fit：把投影範圍縮放到視圖配置框（size）的 90% 內 ──────────────
+    if (m_sheet) {
+        if (DrawingView* v = m_sheet->findView(viewId)) {
+            const QRectF b = result.projectedBounds;
+            if (v->autoFit() && (b.width() > 0.0 || b.height() > 0.0)) {
+                const double fit = DrawingViewRenderer::computeFitScale(v, b);
+                v->applyFitScale(fit);
+                qDebug() << "[DrawingSheetWidget] auto-fit" << v->label()
+                         << "bounds" << b.width() << "x" << b.height()
+                         << "→ scale" << fit;
+            }
+        }
+    }
     update();
 
     if (m_pendingRenders.isEmpty())

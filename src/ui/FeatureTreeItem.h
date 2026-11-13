@@ -32,7 +32,12 @@ enum class ItemType {
     VAlignment,       ///< 縱斷面（TrackCenterLine 的子節點）
     Pattern,          ///< 沿線斷面陣列（AlignedProfileArray）
     Loft,             ///< 斷面放樣實體（ProfileLoftSolid）
-    Chamfer           ///< 倒角特徵（ChamferSolid）
+    Chamfer,          ///< 倒角特徵（ChamferSolid）
+    Drawings,         ///< 「Drawing Sheets」資料夾
+    DrawingBook,      ///< 圖冊（Book）
+    DrawingSheetItem, ///< 圖冊內的一張圖（封面／圖目錄／平縱面圖）
+    DepotViewFolder,  ///< 圖冊內的「機廠矩形視圖」資料夾
+    DepotViewItem     ///< 一個機廠矩形視圖
 };
 
 /**
@@ -72,6 +77,11 @@ struct FeatureTreeItem {
             case ItemType::Pattern:         return "Pattern";
             case ItemType::Loft:            return "Loft";
             case ItemType::Chamfer:         return "Chamfer";
+            case ItemType::Drawings:        return "Drawings";
+            case ItemType::DrawingBook:     return "DrawingBook";
+            case ItemType::DrawingSheetItem:return "DrawingSheet";
+            case ItemType::DepotViewFolder: return "DepotViewFolder";
+            case ItemType::DepotViewItem:   return "DepotView";
             default:                        return "Feature";
         }
     }

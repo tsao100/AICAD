@@ -15,8 +15,17 @@
  *   7 – 圖例&說明   Legend + NoteBlock
  */
 
-#include "DrawingSheetWidget.h"   // DrawingSheetDialog 宣告在同一個 .h
+#include "DrawingSheetWidget.h"
+#include "DrawingSheetManager.h"
+#include "PlanProfileDialog.h"
+#include <QFileInfo>
+#include <QSignalBlocker>
+#include <QUuid>   // DrawingSheetDialog 宣告在同一個 .h
 #include "DrawingSheet.h"
+#include "cad/Document.h"
+#include "cad/Feature.h"
+#include <functional>
+#include <memory>
 
 #include <QTabWidget>
 #include <QDialogButtonBox>
@@ -29,6 +38,7 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QComboBox>
+#include <QSettings>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QCheckBox>
@@ -108,6 +118,7 @@ TableToolbar makeTableToolbar(QWidget* parent)
 DrawingSheetDialog::DrawingSheetDialog(DrawingSheet* sheet, QWidget* parent)
     : QDialog(parent)
     , m_sheet(sheet)
+    , m_mgr(sheet ? qobject_cast<DrawingSheetManager*>(sheet->parent()) : nullptr)
 {
     Q_ASSERT(sheet);
     setWindowTitle(QString("Drawing Sheet — %1")
@@ -119,11 +130,32 @@ DrawingSheetDialog::DrawingSheetDialog(DrawingSheet* sheet, QWidget* parent)
     setupUi();
     loadFromSheet();
 
+    // 採用前次的視窗大小／位置與分頁（QSettings）
+    {
+        QSettings qs("AICAD", "AICAD");
+        qs.beginGroup("DrawingSheetDialog");
+        const QByteArray g = qs.value("geometry").toByteArray();
+        if (!g.isEmpty()) restoreGeometry(g);
+        const int tab = qs.value("tab", 0).toInt();
+        if (m_tabs && tab >= 0 && tab < m_tabs->count()) m_tabs->setCurrentIndex(tab);
+        qs.endGroup();
+    }
+
     qDebug() << "[DrawingSheetDialog] Created";
 }
 
 DrawingSheetDialog::~DrawingSheetDialog()
 {
+    // 儲存對話框設定（下次開啟採用）
+    {
+        QSettings qs("AICAD", "AICAD");
+        qs.beginGroup("DrawingSheetDialog");
+        qs.setValue("geometry", saveGeometry());
+        if (m_tabs) qs.setValue("tab", m_tabs->currentIndex());
+        if (auto* a = findChild<QAction*>("gridAct"))  qs.setValue("grid", a->isChecked());
+        if (auto* a = findChild<QAction*>("rulerAct")) qs.setValue("rulers", a->isChecked());
+        qs.endGroup();
+    }
     qDebug() << "[DrawingSheetDialog] Destroyed";
 }
 
@@ -179,6 +211,43 @@ void DrawingSheetDialog::setupUi()
 // Tab 0 — 預覽
 // ─────────────────────────────────────────────────────────────────────────────
 
+void DrawingSheetDialog::refreshPageCombo()
+{
+    if (!m_pageCombo) return;
+    QSignalBlocker block(m_pageCombo);
+    m_pageCombo->clear();
+    if (!m_mgr) {
+        m_pageCombo->addItem(m_sheet ? m_sheet->titleBlock().drawingTitle : QString());
+        m_pageCombo->setEnabled(false);
+        return;
+    }
+    m_pageCombo->setEnabled(true);
+    int cur = 0, n = 0;
+    for (DrawingSheet* s : m_mgr->sheets()) {
+        const TitleBlock& tb = s->titleBlock();
+        m_pageCombo->addItem(QString("%1. %2  %3  %4")
+                                 .arg(n + 1).arg(tb.drawingNumber, tb.drawingTitle, tb.sheetNumber));
+        if (s == m_sheet) cur = n;
+        ++n;
+    }
+    m_pageCombo->setCurrentIndex(cur);
+}
+
+void DrawingSheetDialog::switchToSheet(DrawingSheet* s)
+{
+    if (!s || s == m_sheet) return;
+    applyToSheet();                      // 先把目前圖紙的編輯寫回
+    m_sheet = s;
+    if (m_mgr) m_mgr->setActiveSheet(s);
+    if (m_preview) m_preview->setSheet(s);
+    loadFromSheet();
+    if (m_preview) m_preview->fitToWindow();
+    setWindowTitle(QString("Drawing Sheet — %1")
+                       .arg(s->titleBlock().drawingTitle.isEmpty() ? "Untitled"
+                                                                   : s->titleBlock().drawingTitle));
+    refreshPageCombo();
+}
+
 void DrawingSheetDialog::setupPreviewTab()
 {
     auto* tab    = new QWidget();
@@ -193,15 +262,81 @@ void DrawingSheetDialog::setupPreviewTab()
     auto* zoomInAct = ctrlBar->addAction("Zoom +");
     auto* zoomOutAct= ctrlBar->addAction("Zoom -");
     ctrlBar->addSeparator();
+    QSettings uiqs("AICAD", "AICAD");
     auto* gridAct   = ctrlBar->addAction("Grid");
+    gridAct->setObjectName("gridAct");
     gridAct->setCheckable(true);
-    gridAct->setChecked(true);
+    gridAct->setChecked(uiqs.value("DrawingSheetDialog/grid", true).toBool());
     auto* rulerAct  = ctrlBar->addAction("Rulers");
+    rulerAct->setObjectName("rulerAct");
     rulerAct->setCheckable(true);
-    rulerAct->setChecked(true);
+    rulerAct->setChecked(uiqs.value("DrawingSheetDialog/rulers", true).toBool());
+
+    // ── 視圖歷史：返回前一視圖／下一視圖 ─────────────────────────────────────
+    ctrlBar->addSeparator();
+    auto* backAct = ctrlBar->addAction(QStringLiteral("⟲ Back"));
+    backAct->setToolTip(QStringLiteral("返回前一視圖（縮放／平移／圖紙）"));
+    backAct->setEnabled(false);
+    auto* fwdAct = ctrlBar->addAction(QStringLiteral("Next View ⟳"));
+    fwdAct->setToolTip(QStringLiteral("下一視圖"));
+    fwdAct->setEnabled(false);
     ctrlBar->addSeparator();
     ctrlBar->addAction("Rebuild All", [this]() {
         if (m_preview) m_preview->triggerRenderAll();
+    });
+    ctrlBar->addAction("Auto Layout", [this]() {
+        if (!m_sheet || !m_preview) return;
+        m_sheet->autoLayout();                   // 依投影法排列正投影視圖，其餘放右側
+        m_preview->update();
+    });
+    ctrlBar->addAction("Auto-Fit All", [this]() {
+        if (!m_sheet || !m_preview) return;
+        for (DrawingView* v : m_sheet->views())
+            v->setAutoFit(true);                 // 同時觸發重新渲染 → 重新 Fit
+        m_preview->triggerRenderAll();
+    });
+
+    // ── 換頁：◀ 頁次下拉 ▶ 圖目錄… ────────────────────────────────────────
+    ctrlBar->addSeparator();
+    auto* prevAct = ctrlBar->addAction(QStringLiteral("◀ Prev Page"));
+    m_pageCombo = new QComboBox(ctrlBar);
+    m_pageCombo->setMinimumWidth(260);
+    m_pageCombo->setToolTip(QStringLiteral("切換到其他圖紙"));
+    ctrlBar->addWidget(m_pageCombo);
+    auto* nextAct = ctrlBar->addAction(QStringLiteral("Next Page ▶"));
+    auto* indexAct = ctrlBar->addAction(QStringLiteral("Index…"));
+    indexAct->setToolTip(QStringLiteral("調整圖的順序並重建圖目錄"));
+    refreshPageCombo();
+
+    auto step = [this](int d) {
+        if (!m_mgr) return;
+        const auto& all = m_mgr->sheets();
+        const int i = all.indexOf(m_sheet);
+        const int t = i + d;
+        if (i < 0 || t < 0 || t >= all.size()) return;
+        switchToSheet(all[t]);
+    };
+    connect(prevAct, &QAction::triggered, this, [step]() { step(-1); });
+    connect(nextAct, &QAction::triggered, this, [step]() { step(1); });
+    connect(m_pageCombo, QOverload<int>::of(&QComboBox::activated), this, [this](int idx) {
+        if (!m_mgr || idx < 0 || idx >= m_mgr->sheets().size()) return;
+        switchToSheet(m_mgr->sheets()[idx]);
+    });
+    connect(indexAct, &QAction::triggered, this, [this]() {
+        if (!m_mgr || !m_sheet || !m_sheet->sourceDocument()) return;
+        applyToSheet();
+        const QUuid keep = m_sheet->id();
+        if (!runPlanProfileIndexEditor(m_mgr, m_sheet->sourceDocument(), this, m_sheet->bookId())) return;
+        DrawingSheet* t = m_mgr->findSheet(keep);
+        if (!t && !m_mgr->sheets().isEmpty()) t = m_mgr->sheets().first();
+        if (t) {
+            m_sheet = t;
+            m_preview->setSheet(t);
+            loadFromSheet();
+            m_preview->fitToWindow();
+            setWindowTitle(QString("Drawing Sheet — %1").arg(t->titleBlock().drawingTitle));
+        }
+        refreshPageCombo();
     });
 
     layout->addWidget(ctrlBar);
@@ -217,6 +352,37 @@ void DrawingSheetDialog::setupPreviewTab()
     connect(zoomOutAct, &QAction::triggered, m_preview, &DrawingSheetWidget::zoomOut);
     connect(gridAct,    &QAction::toggled,   m_preview, &DrawingSheetWidget::setGridVisible);
     connect(rulerAct,   &QAction::toggled,   m_preview, &DrawingSheetWidget::setRulersVisible);
+    m_preview->setGridVisible(gridAct->isChecked());
+    m_preview->setRulersVisible(rulerAct->isChecked());
+
+    // 視圖歷史
+    connect(backAct, &QAction::triggered, m_preview, &DrawingSheetWidget::viewBack);
+    connect(fwdAct,  &QAction::triggered, m_preview, &DrawingSheetWidget::viewForward);
+    connect(m_preview, &DrawingSheetWidget::historyChanged, this, [this, backAct, fwdAct]() {
+        backAct->setEnabled(m_preview->canViewBack());
+        fwdAct->setEnabled(m_preview->canViewForward());
+    });
+    connect(m_preview, &DrawingSheetWidget::historySheetRequested, this, [this](const QUuid& id) {
+        if (!m_mgr) return;
+        if (DrawingSheet* s = m_mgr->findSheet(id)) switchToSheet(s);
+    });
+
+    // 雙擊圖目錄列 → 切換到該圖頁（以圖號比對，優先同圖冊）
+    connect(m_preview, &DrawingSheetWidget::indexEntryActivated, this,
+            [this](const QString& drawingNumber, const QString& sheetNumber) {
+        if (!m_mgr || !m_sheet) return;
+        DrawingSheet* target = nullptr;
+        for (DrawingSheet* s : m_mgr->sheets()) {
+            if (s == m_sheet) continue;
+            const bool match = !drawingNumber.isEmpty()
+                                   ? s->titleBlock().drawingNumber == drawingNumber
+                                   : (!sheetNumber.isEmpty() && s->titleBlock().sheetNumber == sheetNumber);
+            if (!match) continue;
+            if (s->bookId() == m_sheet->bookId()) { target = s; break; }
+            if (!target) target = s;
+        }
+        if (target) switchToSheet(target);
+    });
 
     // 視圖雙擊 → 跳到視圖管理 Tab
     connect(m_preview, &DrawingSheetWidget::viewDoubleClicked,
@@ -305,6 +471,12 @@ void DrawingSheetDialog::setupSheetConfigTab()
             this, applyAndRefresh);
     connect(m_projectionCombo,   QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, applyAndRefresh);
+    connect(m_unitCombo,         QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, applyAndRefresh);
+    connect(m_defaultScaleSpin,  QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, applyAndRefresh);
+    for (auto* s : {lwThinSpin, lwMediumSpin, lwThickSpin})
+        connect(s, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyAndRefresh);
 
     layout->addStretch();
     scroll->setWidget(tab);
@@ -442,9 +614,11 @@ void DrawingSheetDialog::setupViewsTab()
 
     auto* viewScaleSpin = new QDoubleSpinBox(propWidget);
     viewScaleSpin->setObjectName("viewScale");
-    viewScaleSpin->setRange(0.01, 100.0);
-    viewScaleSpin->setSingleStep(0.5);
-    viewScaleSpin->setDecimals(2);
+    viewScaleSpin->setRange(0.000001, 1000.0);   // 大型模型可能需要 1:5000 以上
+    viewScaleSpin->setSingleStep(0.0001);
+    viewScaleSpin->setDecimals(6);
+    viewScaleSpin->setToolTip("手動改比例會關閉該視圖的自動 Fit；"
+                              "預覽工具列的「Auto-Fit All」可重新啟用。");
     basicForm->addRow("Scale:", viewScaleSpin);
 
     auto* viewPosXSpin = new QDoubleSpinBox(propWidget);
@@ -482,6 +656,199 @@ void DrawingSheetDialog::setupViewsTab()
                       showAnnotChk, showScaleLblChk, showViewLblChk})
         optionsForm->addRow(chk);
 
+    // ── 版面 / 來源 / 剖面 / 局部放大 參數 ───────────────────────────────
+    struct ViewExtras {
+        QCheckBox* autoFit; QDoubleSpinBox *boxW, *boxH; QComboBox* source;
+        QGroupBox* secGroup; QComboBox* secDir; QDoubleSpinBox* secOffset;
+        QLineEdit* secLabel; QCheckBox *secCut, *secArrows;
+        QGroupBox* detGroup; QComboBox* detSrc; QDoubleSpinBox *detX, *detY, *detR;
+        QLineEdit* detLabel;
+    };
+    auto ex = std::make_shared<ViewExtras>();
+
+    {
+        auto* g = new QGroupBox("Layout && Source", propWidget);
+        auto* f = new QFormLayout(g);
+        ex->autoFit = new QCheckBox("Auto-fit scale to box", g);
+        ex->autoFit->setToolTip("內容自動縮放到配置框的 90%（標準比例 1/2/5×10ⁿ）");
+        f->addRow(ex->autoFit);
+        ex->boxW = new QDoubleSpinBox(g); ex->boxH = new QDoubleSpinBox(g);
+        for (auto* s : {ex->boxW, ex->boxH}) { s->setRange(20, 2000); s->setDecimals(1); s->setSuffix(" mm"); }
+        auto* bl = new QHBoxLayout();
+        bl->addWidget(new QLabel("W:", g)); bl->addWidget(ex->boxW);
+        bl->addWidget(new QLabel("H:", g)); bl->addWidget(ex->boxH);
+        f->addRow("Box size:", bl);
+        ex->source = new QComboBox(g);
+        f->addRow("Source feature:", ex->source);
+        propLayout->addWidget(g);
+    }
+    {
+        ex->secGroup = new QGroupBox("Section Parameters", propWidget);
+        auto* f = new QFormLayout(ex->secGroup);
+        ex->secDir = new QComboBox(ex->secGroup);
+        ex->secDir->addItems({"Horizontal (cut plane Y = offset)", "Vertical (cut plane X = offset)",
+                              "Diagonal (not drawn on host)"});
+        f->addRow("Direction:", ex->secDir);
+        ex->secOffset = new QDoubleSpinBox(ex->secGroup);
+        ex->secOffset->setRange(-1e9, 1e9); ex->secOffset->setDecimals(3);
+        ex->secOffset->setToolTip("切割平面沿法向的位置（模型單位）。從法向正側往負側看。");
+        f->addRow("Offset:", ex->secOffset);
+        ex->secLabel = new QLineEdit(ex->secGroup);
+        ex->secLabel->setPlaceholderText("A");
+        f->addRow("Label:", ex->secLabel);
+        ex->secCut    = new QCheckBox("Show cut line on host view", ex->secGroup);
+        ex->secArrows = new QCheckBox("Show arrows", ex->secGroup);
+        f->addRow(ex->secCut); f->addRow(ex->secArrows);
+        propLayout->addWidget(ex->secGroup);
+    }
+    {
+        ex->detGroup = new QGroupBox("Detail Parameters", propWidget);
+        auto* f = new QFormLayout(ex->detGroup);
+        ex->detSrc = new QComboBox(ex->detGroup);
+        ex->detSrc->addItems({"Front", "Top", "Right", "Left", "Bottom", "Back", "Isometric"});
+        f->addRow("Magnify view of:", ex->detSrc);
+        ex->detX = new QDoubleSpinBox(ex->detGroup); ex->detY = new QDoubleSpinBox(ex->detGroup);
+        ex->detR = new QDoubleSpinBox(ex->detGroup);
+        for (auto* s : {ex->detX, ex->detY}) { s->setRange(-1e9, 1e9); s->setDecimals(3); }
+        ex->detR->setRange(0.001, 1e9); ex->detR->setDecimals(3);
+        auto* cl = new QHBoxLayout();
+        cl->addWidget(new QLabel("X:", ex->detGroup)); cl->addWidget(ex->detX);
+        cl->addWidget(new QLabel("Y:", ex->detGroup)); cl->addWidget(ex->detY);
+        f->addRow("Center (model):", cl);
+        f->addRow("Radius (model):", ex->detR);
+        ex->detLabel = new QLineEdit(ex->detGroup);
+        ex->detLabel->setPlaceholderText("B");
+        f->addRow("Label:", ex->detLabel);
+        propLayout->addWidget(ex->detGroup);
+    }
+    ex->secGroup->setVisible(false);
+    ex->detGroup->setVisible(false);
+
+    // 目前選取的視圖
+    auto currentView = [this]() -> DrawingView* {
+        const int row = m_viewList ? m_viewList->currentRow() : -1;
+        if (!m_sheet || row < 0 || row >= m_sheet->views().size()) return nullptr;
+        return m_sheet->views().at(row);
+    };
+
+    // 視圖 → 控制項
+    auto refreshExtras = [this, ex](DrawingView* v) {
+        const QSignalBlocker b1(ex->autoFit), b2(ex->boxW), b3(ex->boxH), b4(ex->source),
+            b5(ex->secDir), b6(ex->secOffset), b7(ex->secLabel), b8(ex->secCut), b9(ex->secArrows),
+            b10(ex->detSrc), b11(ex->detX), b12(ex->detY), b13(ex->detR), b14(ex->detLabel);
+
+        ex->autoFit->setChecked(v->autoFit());
+        ex->boxW->setValue(v->size().width());
+        ex->boxH->setValue(v->size().height());
+
+        ex->source->clear();
+        cad::Document* doc = m_sheet ? m_sheet->sourceDocument() : nullptr;
+        ex->source->setEnabled(doc != nullptr);
+        int cur = -1;
+        if (doc) {
+            for (cad::Feature* f : doc->features()) {
+                if (!f || f->shape().IsNull()) continue;
+                ex->source->addItem(QString("%1 (%2)").arg(f->name(), f->typeString()), f->id());
+                if (f == v->sourceFeature()) cur = ex->source->count() - 1;
+            }
+        }
+        if (v->sourceFeature() && cur < 0) {   // 來源特徵目前沒有形體：仍列出，避免被誤清
+            ex->source->addItem(v->sourceFeature()->name(), v->sourceFeature()->id());
+            cur = ex->source->count() - 1;
+        }
+        ex->source->setCurrentIndex(cur);
+
+        const bool isSec = (v->type() == ViewType::Section);
+        const bool isDet = (v->type() == ViewType::Detail);
+        ex->secGroup->setVisible(isSec);
+        ex->detGroup->setVisible(isDet);
+        if (isSec) {
+            const SectionParams p = v->sectionParams();
+            ex->secDir->setCurrentIndex((int)p.direction);
+            ex->secOffset->setValue(p.offset);
+            ex->secLabel->setText(p.sectionLabel);
+            ex->secCut->setChecked(p.showCutLine);
+            ex->secArrows->setChecked(p.showArrows);
+        }
+        if (isDet) {
+            const DetailParams p = v->detailParams();
+            static const ViewType order[] = {ViewType::Front, ViewType::Top, ViewType::Right,
+                ViewType::Left, ViewType::Bottom, ViewType::Back, ViewType::Isometric};
+            int idx = 0;
+            for (int i = 0; i < 7; ++i) if (order[i] == p.sourceType) idx = i;
+            ex->detSrc->setCurrentIndex(idx);
+            ex->detX->setValue(p.center.x());
+            ex->detY->setValue(p.center.y());
+            ex->detR->setValue(p.radius);
+            ex->detLabel->setText(p.label);
+        }
+    };
+
+    // 控制項 → 視圖（只在有差異時才動，避免無謂的重新渲染）
+    auto applyExtras = [this, ex, currentView]() {
+        DrawingView* v = currentView();
+        if (!v) return;
+        bool refit = false;
+
+        if (v->autoFit() != ex->autoFit->isChecked())
+            v->setAutoFit(ex->autoFit->isChecked());   // 開啟時自帶 rebuildRequested
+
+        const QSizeF box(ex->boxW->value(), ex->boxH->value());
+        if (box != v->size()) { v->setSize(box); refit = true; }
+
+        cad::Document* doc = m_sheet ? m_sheet->sourceDocument() : nullptr;
+        const QString fid = ex->source->currentData().toString();
+        if (doc && !fid.isEmpty()) {
+            cad::Feature* f = doc->findFeature(fid);
+            if (f && f != v->sourceFeature()) v->setSourceFeature(f);   // 自帶 rebuildRequested
+        }
+
+        if (v->type() == ViewType::Section) {
+            SectionParams p = v->sectionParams();
+            SectionParams n = p;
+            n.direction   = (SectionDirection)ex->secDir->currentIndex();
+            n.offset      = ex->secOffset->value();
+            n.sectionLabel= ex->secLabel->text();
+            n.showCutLine = ex->secCut->isChecked();
+            n.showArrows  = ex->secArrows->isChecked();
+            if (n.direction != p.direction || n.offset != p.offset ||
+                n.sectionLabel != p.sectionLabel || n.showCutLine != p.showCutLine ||
+                n.showArrows != p.showArrows)
+                v->setSectionParams(n);
+        }
+        if (v->type() == ViewType::Detail) {
+            static const ViewType order[] = {ViewType::Front, ViewType::Top, ViewType::Right,
+                ViewType::Left, ViewType::Bottom, ViewType::Back, ViewType::Isometric};
+            DetailParams p = v->detailParams();
+            DetailParams n = p;
+            n.sourceType = order[qBound(0, ex->detSrc->currentIndex(), 6)];
+            n.center     = QPointF(ex->detX->value(), ex->detY->value());
+            n.radius     = ex->detR->value();
+            n.label      = ex->detLabel->text();
+            if (n.sourceType != p.sourceType || n.center != p.center ||
+                n.radius != p.radius || n.label != p.label)
+                v->setDetailParams(n);
+        }
+
+        if (refit && m_preview) m_preview->triggerRender(v);
+        if (m_preview) m_preview->update();
+    };
+
+    connect(ex->autoFit,   &QCheckBox::toggled, this, applyExtras);
+    connect(ex->boxW,      QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyExtras);
+    connect(ex->boxH,      QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyExtras);
+    connect(ex->source,    QOverload<int>::of(&QComboBox::activated), this, applyExtras);
+    connect(ex->secDir,    QOverload<int>::of(&QComboBox::currentIndexChanged), this, applyExtras);
+    connect(ex->secOffset, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyExtras);
+    connect(ex->secLabel,  &QLineEdit::editingFinished, this, applyExtras);
+    connect(ex->secCut,    &QCheckBox::toggled, this, applyExtras);
+    connect(ex->secArrows, &QCheckBox::toggled, this, applyExtras);
+    connect(ex->detSrc,    QOverload<int>::of(&QComboBox::currentIndexChanged), this, applyExtras);
+    connect(ex->detX,      QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyExtras);
+    connect(ex->detY,      QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyExtras);
+    connect(ex->detR,      QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, applyExtras);
+    connect(ex->detLabel,  &QLineEdit::editingFinished, this, applyExtras);
+
     propLayout->addStretch();
     rightScroll->setWidget(propWidget);
     layout->addWidget(rightScroll, 1);
@@ -491,7 +858,7 @@ void DrawingSheetDialog::setupViewsTab()
             [this, propWidget, viewLabelEdit, viewScaleSpin,
              viewPosXSpin, viewPosYSpin,
              showHiddenChk, showCenterChk, showDimChk,
-             showAnnotChk, showScaleLblChk, showViewLblChk](int row) {
+             showAnnotChk, showScaleLblChk, showViewLblChk, refreshExtras](int row) {
                 if (!m_sheet || row < 0 || row >= m_sheet->views().size()) return;
                 DrawingView* v = m_sheet->views().at(row);
 
@@ -509,32 +876,60 @@ void DrawingSheetDialog::setupViewsTab()
                 showAnnotChk->setChecked(v->showAnnotations());
                 showScaleLblChk->setChecked(v->showScaleLabel());
                 showViewLblChk->setChecked(v->showViewLabel());
+                refreshExtras(v);
             });
 
     // 屬性變更 → 更新視圖
     auto updateSelectedView = [this, viewLabelEdit, viewScaleSpin,
                                viewPosXSpin, viewPosYSpin,
-                               showHiddenChk, showCenterChk]() {
+                               showHiddenChk, showCenterChk, showDimChk,
+                               showAnnotChk, showScaleLblChk, showViewLblChk]() {
         int row = m_viewList->currentRow();
         if (!m_sheet || row < 0 || row >= m_sheet->views().size()) return;
         DrawingView* v = m_sheet->views().at(row);
         v->setLabel(viewLabelEdit->text());
-        v->setScale(viewScaleSpin->value());
         v->setPosition(QPointF(viewPosXSpin->value(), viewPosYSpin->value()));
         v->setShowHiddenLines(showHiddenChk->isChecked());
         v->setShowCenterLines(showCenterChk->isChecked());
+        v->setShowDimensions(showDimChk->isChecked());
+        v->setShowAnnotations(showAnnotChk->isChecked());
+        v->setShowScaleLabel(showScaleLblChk->isChecked());
+        v->setShowViewLabel(showViewLblChk->isChecked());
         if (m_preview) m_preview->update();
     };
 
     connect(viewLabelEdit, &QLineEdit::textChanged,     updateSelectedView);
-    connect(viewScaleSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            updateSelectedView);
+    // 比例欄位：只有使用者實際編輯它時才視為手動指定（否則自動 Fit 算出的新比例
+    // 會被舊的欄位值蓋回去）→ 關閉該視圖的自動 Fit
+    connect(viewScaleSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this, viewScaleSpin](double val) {
+                const int row = m_viewList->currentRow();
+                if (!m_sheet || row < 0 || row >= m_sheet->views().size()) return;
+                DrawingView* v = m_sheet->views().at(row);
+                if (qAbs(v->scale() - val) <= 1e-9) return;
+                v->setAutoFit(false);
+                v->setScale(val);
+            });
+    // 渲染完成後（自動 Fit 可能改了比例）→ 同步目前選取視圖的比例欄位
+    if (m_preview) {
+        connect(m_preview, &DrawingSheetWidget::renderingComplete, this,
+                [this, viewScaleSpin]() {
+                    const int row = m_viewList->currentRow();
+                    if (!m_sheet || row < 0 || row >= m_sheet->views().size()) return;
+                    const QSignalBlocker b(viewScaleSpin);
+                    viewScaleSpin->setValue(m_sheet->views().at(row)->scale());
+                });
+    }
     connect(viewPosXSpin,  QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             updateSelectedView);
     connect(viewPosYSpin,  QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             updateSelectedView);
     connect(showHiddenChk, &QCheckBox::toggled, updateSelectedView);
     connect(showCenterChk, &QCheckBox::toggled, updateSelectedView);
+    connect(showDimChk,     &QCheckBox::toggled, updateSelectedView);
+    connect(showAnnotChk,   &QCheckBox::toggled, updateSelectedView);
+    connect(showScaleLblChk,&QCheckBox::toggled, updateSelectedView);
+    connect(showViewLblChk, &QCheckBox::toggled, updateSelectedView);
 
     // ── 新增視圖 ──────────────────────────────────────────────────────────
     connect(tb.addAct, &QAction::triggered, [this, addViewCombo]() {
@@ -589,6 +984,9 @@ void DrawingSheetDialog::setupPartsListTab()
     autoChk->setChecked(true);
     hdr->addWidget(m_partsListCheck);
     hdr->addWidget(autoChk);
+    auto* populateBtn = new QPushButton("Populate from Document", tab);
+    populateBtn->setToolTip("重新掃描文件中含實體的特徵產生零件表（保留同料號的材質／備註）");
+    hdr->addWidget(populateBtn);
     hdr->addStretch();
     layout->addLayout(hdr);
 
@@ -608,6 +1006,27 @@ void DrawingSheetDialog::setupPartsListTab()
     m_partsListTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_partsListTable->setAlternatingRowColors(true);
     layout->addWidget(m_partsListTable, 1);
+
+    // 由文件自動產生 BOM → 填入表格
+    connect(populateBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_sheet || !m_sheet->sourceDocument() || !m_sheet->partsList()) return;
+        // 先把表格上目前的手動內容寫回，populate 才能依料號保留材質／備註
+        applyToSheet();
+        m_sheet->partsList()->populateFromDocument(m_sheet->sourceDocument());
+        const auto& rows = m_sheet->partsList()->rows();
+        m_partsListTable->setRowCount(0);
+        for (const PartsListRow& r : rows) {
+            const int row = m_partsListTable->rowCount();
+            m_partsListTable->insertRow(row);
+            const QStringList cells = { QString::number(r.itemNo), r.partNumber, r.description,
+                                        r.material, QString::number(r.quantity), r.unit,
+                                        r.revision, r.remark };
+            for (int c = 0; c < cells.size(); ++c)
+                m_partsListTable->setItem(row, c, new QTableWidgetItem(cells[c]));
+        }
+        if (!m_partsListCheck->isChecked()) m_partsListCheck->setChecked(true);
+        if (m_preview) m_preview->update();
+    });
 
     // 啟用/停用表格
     connect(m_partsListCheck, &QCheckBox::toggled,
@@ -912,6 +1331,14 @@ void DrawingSheetDialog::loadFromSheet()
 {
     if (!m_sheet) return;
 
+    // 載入時逐一 setCurrentIndex／setValue 會觸發 onSheetConfigEdited：它會讀「全部」控制項
+    // （尚未載入者還是預設值：Portrait、None…）寫回圖紙，把 Orientation／FrameTemplate 等蓋掉。
+    struct LoadGuard {
+        bool& f;
+        explicit LoadGuard(bool& flag) : f(flag) { f = true; }
+        ~LoadGuard() { f = false; }
+    } loadGuard(m_loading);
+
     // ── Tab 1：圖紙設定 ───────────────────────────────────────────────────
     const SheetConfig& cfg = m_sheet->config();
     m_paperSizeCombo->setCurrentIndex((int)cfg.paperSize);
@@ -1045,6 +1472,7 @@ void DrawingSheetDialog::applyToSheet()
     if (auto* s = findChild<QDoubleSpinBox*>("lwMedium")) cfg.lineWidthMedium = s->value();
     if (auto* s = findChild<QDoubleSpinBox*>("lwThick"))  cfg.lineWidthThick  = s->value();
     m_sheet->applyConfig(cfg);
+    saveSheetPrefs(cfg);
 
     // ── 標題欄 ────────────────────────────────────────────────────────────
     TitleBlock tb;
@@ -1181,56 +1609,123 @@ void DrawingSheetDialog::onCancel()
     reject();
 }
 
+/** 圖紙規格存入 QSettings（與平縱面圖冊設定對話框同步；新建圖紙也採用） */
+void DrawingSheetDialog::saveSheetPrefs(const SheetConfig& cfg)
+{
+    DrawingPrefs p;
+    p.paperSize     = static_cast<int>(cfg.paperSize);
+    p.orientation   = static_cast<int>(cfg.orientation);
+    p.unit          = static_cast<int>(cfg.unit);
+    p.frameTemplate = static_cast<int>(cfg.frameTemplate);
+    p.projection    = static_cast<int>(cfg.projectionMethod);
+    p.defaultScale  = cfg.defaultScale;
+    p.lwThin        = cfg.lineWidthThin;
+    p.lwMedium      = cfg.lineWidthMedium;
+    p.lwThick       = cfg.lineWidthThick;
+    saveDrawingPrefs(p);
+}
+
+namespace {
+/** 有多張圖紙時詢問：全部／僅目前。回傳 1＝全部、0＝僅目前、-1＝取消。 */
+int askExportScope(QWidget* parent, int sheetCount)
+{
+    if (sheetCount <= 1) return 0;
+    QMessageBox box(parent);
+    box.setWindowTitle("Export");
+    box.setText(QString("文件中共有 %1 張圖紙。要輸出哪些？").arg(sheetCount));
+    QPushButton* all = box.addButton(QString("全部圖面（%1 張）").arg(sheetCount), QMessageBox::AcceptRole);
+    QPushButton* cur = box.addButton("僅目前圖面", QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(all);
+    box.exec();
+    if (box.clickedButton() == all) return 1;
+    if (box.clickedButton() == cur) return 0;
+    return -1;
+}
+} // namespace
+
 void DrawingSheetDialog::onExportPdf()
 {
-    QString path = QFileDialog::getSaveFileName(this, "Export PDF",
-                                                m_sheet->fileName().replace(".aicad_dwg", ".pdf"),
-                                                "PDF Files (*.pdf)");
+    applyToSheet();
+    const int scope = askExportScope(this, m_mgr ? m_mgr->sheets().size() : 1);
+    if (scope < 0) return;
+
+    QString defName = scope == 1 ? QString("drawings.pdf")
+                                 : m_sheet->fileName().replace(".aicad_dwg", ".pdf");
+    QString path = QFileDialog::getSaveFileName(this, "Export PDF", defName, "PDF Files (*.pdf)");
     if (path.isEmpty()) return;
 
-    applyToSheet();
-    if (!m_sheet->exportPdf(path)) {
+    const bool ok = scope == 1 ? DrawingSheet::exportPdfAll(m_mgr->sheets(), path)
+                               : m_sheet->exportPdf(path);
+    if (!ok) {
         QMessageBox::warning(this, "Export Failed",
-                             "Failed to export PDF.\n(Not yet fully implemented)");
+                             "Failed to export PDF.\nSee the application log for details.");
     } else {
         QMessageBox::information(this, "Export Complete",
-                                 "PDF exported to:\n" + path);
+                                 scope == 1 ? QString("已輸出全部 %1 張圖面（多頁 PDF）：\n%2")
+                                                  .arg(m_mgr->sheets().size()).arg(path)
+                                            : "PDF exported to:\n" + path);
     }
 }
 
 void DrawingSheetDialog::onExportSvg()
 {
-    QString path = QFileDialog::getSaveFileName(this, "Export SVG",
-                                                m_sheet->fileName().replace(".aicad_dwg", ".svg"),
-                                                "SVG Files (*.svg)");
+    applyToSheet();
+    const int scope = askExportScope(this, m_mgr ? m_mgr->sheets().size() : 1);
+    if (scope < 0) return;
+
+    QString defName = scope == 1 ? QString("drawings.svg")
+                                 : m_sheet->fileName().replace(".aicad_dwg", ".svg");
+    QString path = QFileDialog::getSaveFileName(this, "Export SVG", defName, "SVG Files (*.svg)");
     if (path.isEmpty()) return;
 
-    applyToSheet();
-    if (!m_sheet->exportSvg(path)) {
-        QMessageBox::warning(this, "Export Failed",
-                             "Failed to export SVG.\n(Not yet fully implemented)");
+    bool ok = true;
+    QString msg;
+    if (scope == 1) {
+        // SVG 一檔一頁：依圖紙順序輸出 <name>_01.svg、<name>_02.svg …
+        const QFileInfo fi(path);
+        const QString base = fi.absolutePath() + "/" + fi.completeBaseName();
+        int n = 0;
+        for (DrawingSheet* s : m_mgr->sheets()) {
+            const QString p = QString("%1_%2.svg").arg(base).arg(++n, 2, 10, QLatin1Char('0'));
+            if (!s->exportSvg(p)) { ok = false; break; }
+        }
+        msg = QString("已輸出 %1 個 SVG：\n%2_01.svg …").arg(n).arg(base);
     } else {
-        QMessageBox::information(this, "Export Complete",
-                                 "SVG exported to:\n" + path);
+        ok = m_sheet->exportSvg(path);
+        msg = "SVG exported to:\n" + path;
+    }
+    if (!ok) {
+        QMessageBox::warning(this, "Export Failed",
+                             "Failed to export SVG.\nSVG export needs the QtSvg module (Ubuntu: sudo apt install libqt5svg5-dev, then re-run qmake).");
+    } else {
+        QMessageBox::information(this, "Export Complete", msg);
     }
 }
 
 // 即時預覽：圖紙設定變更
 void DrawingSheetDialog::onSheetConfigEdited()
 {
-    if (!m_sheet) return;
+    if (!m_sheet || m_loading) return;
 
     // 即時套用圖紙規格（紙張大小、方向），讓預覽立即反映
     SheetConfig cfg = m_sheet->config();
+    const QSizeF oldPaper = cfg.paperSizeMM();
     cfg.paperSize        = (PaperSize)       m_paperSizeCombo->currentIndex();
     cfg.orientation      = (PaperOrientation)m_orientationCombo->currentIndex();
     cfg.frameTemplate    = (FrameTemplate)   m_frameTemplateCombo->currentIndex();
     cfg.projectionMethod = (ProjectionMethod)m_projectionCombo->currentIndex();
     cfg.defaultScale     = m_defaultScaleSpin->value();
+    cfg.unit             = (DrawingUnit)m_unitCombo->currentIndex();
+    if (auto* s = findChild<QDoubleSpinBox*>("lwThin"))   cfg.lineWidthThin   = s->value();
+    if (auto* s = findChild<QDoubleSpinBox*>("lwMedium")) cfg.lineWidthMedium = s->value();
+    if (auto* s = findChild<QDoubleSpinBox*>("lwThick"))  cfg.lineWidthThick  = s->value();
     m_sheet->applyConfig(cfg);
+    saveSheetPrefs(cfg);
 
     if (m_preview) {
-        m_preview->fitToWindow();
+        if (m_sheet->config().paperSizeMM() != oldPaper)   // 只有紙張大小／方向變了才重新 Fit 視窗
+            m_preview->fitToWindow();
         m_preview->update();
     }
 }
@@ -1238,7 +1733,7 @@ void DrawingSheetDialog::onSheetConfigEdited()
 // 即時預覽：標題欄欄位變更
 void DrawingSheetDialog::onTitleBlockEdited()
 {
-    if (!m_sheet || !m_preview) return;
+    if (!m_sheet || !m_preview || m_loading) return;
 
     // 僅更新標題欄（不觸發重渲染）
     TitleBlock tb = m_sheet->titleBlock();

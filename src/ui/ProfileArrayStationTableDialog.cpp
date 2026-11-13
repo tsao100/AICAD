@@ -35,10 +35,10 @@ ProfileArrayStationTableDialog::ProfileArrayStationTableDialog(
     layout->addWidget(info);
 
     m_table = new QTableWidget(this);
-    m_table->setColumnCount(6);
+    m_table->setColumnCount(7);
     m_table->setHorizontalHeaderLabels({
         tr("#"), tr("Segment"), tr("Chainage [m]"), tr("Cant [mm]"),
-        tr("H [m]"), tr("Azimuth [deg]") });
+        tr("H [m]"), tr("Azimuth [deg]"), tr("Alignment") });
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->verticalHeader()->setVisible(false);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);  // 唯讀
@@ -78,15 +78,21 @@ void ProfileArrayStationTableDialog::populateTable() {
 
         if (tcl) {
             // 與 AlignedProfileArray 實際計算所用資料來源保持一致（優先 ALD
-            // 匯入，沒有匯入時才退回目前 horizontal()/vertical()）。
-            const double cant = tcl->getCantForCalc(p);
-            const double h    = tcl->getAppliedHForCalc(p);
-            const double az   = tcl->getAzimuthForCalc(p) * 180.0 / M_PI;
+            // 匯入，沒有匯入時才退回目前 horizontal()/vertical()）；
+            // 里程超出主線形時，使用相連線形（resolveAlignment）。
+            const cad::AlignedProfileArray::AlignmentSample as = m_array->resolveAlignment(p);
+            const double cant = as.tcl->getCantForCalc(as.p);
+            const double h    = as.tcl->getAppliedHForCalc(as.p);
+            const double az   = as.tcl->getAzimuthForCalc(as.p) * 180.0 / M_PI;
             m_table->setItem(row, 3, makeItem(QString::number(cant, 'f', 2)));
             m_table->setItem(row, 4, makeItem(QString::number(h,    'f', 3)));
             m_table->setItem(row, 5, makeItem(QString::number(az,   'f', 3)));
+            QString nm = as.tcl->name();
+            if (as.connected)  nm += tr(" (相連, p=%1)").arg(as.p, 0, 'f', 3);
+            if (as.outOfRange) nm = tr("⚠ 超出範圍（外推）");
+            m_table->setItem(row, 6, makeItem(nm));
         } else {
-            for (int col = 3; col <= 5; ++col)
+            for (int col = 3; col <= 6; ++col)
                 m_table->setItem(row, col, makeItem(tr("—")));
         }
     }

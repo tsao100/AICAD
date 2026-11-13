@@ -18,11 +18,21 @@
 #include <QObject>
 #include <QVector>
 #include <QUuid>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QTimer>
 
 namespace aicad {
 namespace cad { class Document; }
 
 namespace drawing {
+
+/** 圖冊（Book）：一組圖紙（封面、圖目錄、圖）與其全域設定 */
+struct DrawingBook {
+    QString     id;
+    QString     name;
+    QJsonObject settings;   ///< 全域設定（PlanProfileSettings::toJson）
+};
 
 /**
  * @brief 圖紙管理器
@@ -51,6 +61,23 @@ public:
     explicit DrawingSheetManager(QObject* parent = nullptr);
     ~DrawingSheetManager() override;
 
+    /** 取得（必要時建立）文件的管理器；掛在 Document 之下。 */
+    static DrawingSheetManager* forDocument(cad::Document* doc);
+
+    // ── 圖冊 ──────────────────────────────────────────────────────────────
+    const QVector<DrawingBook>& books() const { return m_books; }
+    DrawingBook* findBook(const QString& id);
+    DrawingBook* addBook(const QString& name, const QJsonObject& settings, const QString& id = {});
+    /** 刪除圖冊；deleteSheets=false 時圖紙保留（脫離圖冊）。 */
+    void removeBook(const QString& id, bool deleteSheets);
+
+    /** 通知內容已變更：同步到 Document（Feature Browser 與存檔用）並標記文件已修改。 */
+    void touch();
+    /** 線形有變更 → 稍後重算所有圖冊 */
+    void scheduleRefresh();
+    /** 立即重算所有圖冊（以圖冊的全域設定與各圖的局部設定）。 */
+    void refreshBooks();
+
     // ── 關聯文件 ──────────────────────────────────────────────────────────
     void setSourceDocument(cad::Document* doc);
     cad::Document* sourceDocument() const { return m_sourceDocument; }
@@ -71,6 +98,9 @@ public:
 
     const QVector<DrawingSheet*>& sheets() const { return m_sheets; }
     DrawingSheet* findSheet(const QUuid& id) const;
+
+    /** 重新排列圖紙順序（order 必須恰為目前所有圖紙的一個排列）。 */
+    bool setSheetOrder(const QVector<DrawingSheet*>& order);
     DrawingSheet* activeSheet() const { return m_activeSheet; }
 
     // ── 啟用圖紙 ──────────────────────────────────────────────────────────
@@ -91,6 +121,17 @@ public:
     /** 從索引檔案重新載入所有圖紙 */
     bool loadFromIndex(const QString& indexFilePath);
 
+    // ── 內嵌於 .aicad ─────────────────────────────────────────────────────
+
+    /**
+     * 序列化所有圖紙（JSON 陣列）。DrawingSheetManager 在文件 aboutToSave() 時
+     * 會自動呼叫並寫入 Document::setDrawingSheetsData()，隨 .aicad 一併存檔。
+     */
+    QJsonArray toJson() const;
+
+    /** 從 JSON 陣列重建圖紙（先 setSourceDocument()，才能還原視圖的來源特徵）。 */
+    void loadFromJson(const QJsonArray& sheets);
+
     // ── 預設值 ────────────────────────────────────────────────────────────
 
     /** 設定新圖紙的預設配置（之後 newSheet() 都套用） */
@@ -106,7 +147,15 @@ Q_SIGNALS:
     void activeSheetChanged(DrawingSheet* sheet);
     void anySheetModified();
 
+private Q_SLOTS:
+    void onTclListChanged();
+    void syncToDocument();
+
 private:
+    QVector<DrawingBook>  m_books;
+    QTimer*               m_syncTimer = nullptr;
+    QTimer*               m_refreshTimer = nullptr;
+    bool                  m_refreshing = false;
     cad::Document*        m_sourceDocument = nullptr;
     QVector<DrawingSheet*> m_sheets;
     DrawingSheet*          m_activeSheet   = nullptr;

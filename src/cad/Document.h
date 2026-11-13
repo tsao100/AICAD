@@ -17,8 +17,10 @@
 #include <QObject>
 #include <QString>
 #include <QList>
+#include <QSet>
 #include <QVector>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <TDocStd_Document.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_InteractiveObject.hxx>
@@ -176,6 +178,31 @@ public:
      */
     Sketch* createSketch(class Plane* plane, const QString& name = QString());
 
+    // ── 草圖複製／貼上（可跨檔案）────────────────────────────────────────────
+    /// 剪貼簿的 MIME 型別（跨檔案、跨程式實體皆可貼上）
+    static QString sketchClipboardMimeType() { return QStringLiteral("application/x-aicad-sketch+json"); }
+
+    /**
+     * @brief 把草圖匯出成可放進剪貼簿的 JSON。
+     *
+     * 內容：草圖完整 JSON（含平面幾何、幾何、約束、標註、本地參數），以及草圖運算式
+     * 所引用到的「文件全域參數」（含其相依的全域參數）——貼到另一個檔案時，
+     * 沒有這些全域參數會導致尺寸運算式無法求值。
+     */
+    QJsonObject exportSketchForCopy(const Sketch* sketch) const;
+
+    /// payload 是否為 exportSketchForCopy() 產生的草圖資料
+    static bool isSketchClipboardPayload(const QJsonObject& payload);
+
+    /**
+     * @brief 把 exportSketchForCopy() 的資料貼成本文件的一個新草圖。
+     *
+     * 一律產生新的 Feature id（不與來源衝突），名稱遇到重複會加「 - 複本」，
+     * 來源文件缺少的全域參數會一併補進（已存在同名者不覆蓋）。
+     * @return 新草圖；payload 無效時回傳 nullptr 並填入 error
+     */
+    Sketch* pasteSketch(const QJsonObject& payload, QString* error = nullptr);
+
     /**
      * @brief 建立草圖副本（Phase 3）
      * @param master     主草圖
@@ -232,7 +259,8 @@ public:
      */
     ProfileLoftSolid* createProfileLoftSolid(
         AlignedProfileArray* sourceArray,
-        const QString& name = QString());
+        const QString& name = QString(),
+        const QString& segmentId = QString());   ///< 負責的分段 id（每段一個 Loft）
 
     /**
      * @brief 對來源實體 Feature（Loft/Extrude 等）的選取邊建立 Chamfer（倒角）特徵。
@@ -355,6 +383,17 @@ public:
     void setViewState(const QJsonObject& state) { m_viewState = state; }
     QJsonObject viewState() const { return m_viewState; }
 
+    // ── 圖紙（Drawing Sheets）passthrough ───────────────────────────────────
+    /** 圖紙以 JSON 陣列內嵌於 .aicad（key = "drawingSheets"）。
+     *  cad 層不認識 drawing 模組，只負責原樣保存／讀回；
+     *  DrawingSheetManager 於 aboutToSave() 時寫入最新內容。 */
+    void       setDrawingSheetsData(const QJsonArray& data) { m_drawingSheetsData = data; }
+    QJsonArray drawingSheetsData() const { return m_drawingSheetsData; }
+
+    /** 目前在 View 中顯示的機廠矩形視圖（key＝"<bookId>#<序號>"；不隨檔案保存）。 */
+    QSet<QString>& shownDepotViews() { return m_shownDepotViews; }
+    const QSet<QString>& shownDepotViews() const { return m_shownDepotViews; }
+
     /** Passthrough blob for AlignmentDocument — written/read by UIManager */
     void setAlignmentData(const QJsonObject& data) { m_alignmentData = data; }
     QJsonObject alignmentData() const { return m_alignmentData; }
@@ -380,6 +419,12 @@ public:
     // void redo();
 
 Q_SIGNALS:
+    /**
+     * @brief save() 開始序列化之前發出（同步）。外部模組（如圖紙管理器）
+     *        可在此把最新資料寫回 setXxxData()。
+     */
+    void aboutToSave();
+
     /**
      * @brief 檔名改變時發出
      */
@@ -503,6 +548,8 @@ private:
 
     aicad::core::ParameterStore* m_parameterStore;
     DependencyGraph              m_depGraph;
+    QSet<QString> m_shownDepotViews;
+    QJsonArray  m_drawingSheetsData;  // 圖紙 passthrough（見 setDrawingSheetsData）
     QJsonObject m_viewState;       // ✅ 儲存視圖狀態（camera eye/at/up/scale）
     QJsonObject m_alignmentData;   // legacy passthrough — kept for compatibility
     QHash<QString, QJsonObject> m_tclAlignmentData;  // per-TCL edit session JSON

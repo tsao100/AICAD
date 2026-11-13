@@ -23,6 +23,7 @@
 #include "ChamferCommand.h"
 #include "OffsetCommand.h"
 #include "ConstructionToggleCommand.h"
+#include "PasteClipCommand.h"
 #include "../core/Application.h"
 #include "../core/CommandLineManager.h"
 #include "../core/EventBus.h"
@@ -1636,12 +1637,18 @@ void registerConstraintCommands(core::Application* app)
         []() -> Command* { return new ConstructionToggleCommand(); });
     aliasMgr->registerAlias("CT", "CONSTRUCTION", "Toggle construction geometry", true);
 
+    // PASTECLIP：貼上剪貼簿裡從 AutoCAD 複製來的圖（見 PasteClipCommand.h 檔頭說明）。
+    // 別名 PC 尚未在 CommandAlias 內建立，比照 CONSTRUCTION/CT 的作法額外註冊。
+    cmdMgr->registerCommand("PASTECLIP", QStringList{"PC"},
+        []() -> Command* { return new PasteClipCommand(); });
+    aliasMgr->registerAlias("PC", "PASTECLIP", "Paste drawing from AutoCAD clipboard", true);
+
     // 別名 O 已在 CommandAlias 內建立（isSystem=true，跟 M/CO/RO/MI/TR/EX/
     // F/CHA 同批），這裡不重複註冊。
     cmdMgr->registerCommand("OFFSET", QStringList{"O"},
         []() -> Command* { return new OffsetCommand(); });
 
-    qDebug() << "[ConstraintCommands] Registered" << 35
+    qDebug() << "[ConstraintCommands] Registered" << 36
              << "constraint/editing commands and aliases.";
 }
 

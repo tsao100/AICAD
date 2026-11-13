@@ -101,6 +101,33 @@ public:
                      bool forceResolve);
     QString solveSignature() const { return m_solveSig; }
 
+    /**
+     * @brief 最近一次求解是否「退回未求解的 master 幾何」（求解器 Conflict／發散）。
+     *
+     * 這種情況下本站形狀不會反映新的參數值（等於「套用後圖形沒更新」），
+     * 但 rebuildWith() 仍回傳 true（形狀可建），所以由這個旗標讓擁有者
+     * （AlignedProfileArray）得以回報。
+     */
+    bool solveFellBack() const { return m_solveFellBack; }
+
+    /**
+     * @brief 建立「本站實際套用值」的唯讀檢視草圖（呼叫端擁有，用完須 delete）。
+     *
+     * 與編輯草圖看到的畫面一致（master 草圖平面、草圖單位），但內容是本站
+     * 求解後的幾何，以及以本站 instance 覆寫值重新求值的尺寸／約束／標註，
+     * 因此尺寸標註顯示的是本站實際套用的數值。此草圖不屬於 Document 的
+     * features，不會被存檔，也不會參與任何相依傳播。
+     * master 未設定或尚未求解時回傳 nullptr。
+     */
+    Sketch* createViewSketch() const;
+
+    /**
+     * @brief 斷面中目前「無法組成 Loft 輪廓」的幾何種類（樣條、橢圓等，非建構線）。
+     * 支援的有 Line／Polyline／Arc／Circle；其他幾何不會被納入輪廓，因此含有它們的
+     * 斷面可能湊不成封閉迴圈。供 Loft 失敗時給出明確提示。
+     */
+    QStringList unsupportedProfileGeometry() const;
+
     // ── Instance ParameterStore（本地覆寫）──────────────────────────────
     /**
      * 取得 instance 層的 ParameterStore。
@@ -212,6 +239,7 @@ private:
     PlacementFrame                  m_frame;
     bool                            m_externallyDriven = false;
     QString                         m_solveSig;   ///< 目前 m_geomClones 對應的參數簽章（空 = 未知）
+    bool                            m_solveFellBack = false;  ///< 最近一次求解退回 master 原始幾何
 
     QMetaObject::Connection         m_masterRebuildConn;
     QMetaObject::Connection         m_masterDestroyConn;

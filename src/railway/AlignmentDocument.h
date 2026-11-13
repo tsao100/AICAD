@@ -606,6 +606,11 @@ public:
     void setStartChainage(double chainage)            { m_startChainage     = chainage; }
     void setStartContinuousChainage(double contChain) { m_startContChainage = contChain; }
 
+    /** 連續里程增減方向：+1＝隨里程增加（預設）、−1＝隨里程減少。
+     *  contChainage = m_startContChainage + dir × (chainage − m_startChainage)。 */
+    int  continuousDirection() const { return m_contDirection < 0 ? -1 : 1; }
+    void setContinuousDirection(int dir) { m_contDirection = dir < 0 ? -1 : 1; }
+
     // ── 序列化 ───────────────────────────────────────────────────────────────
 
     QJsonObject toJson()                        const;
@@ -657,6 +662,7 @@ private:
 
     QVector<EditableElement>             m_elems;
     std::unique_ptr<HorizontalAlignment> m_result;
+    int                                   m_contDirection     = 1;
     double                                m_startChainage     = 0.0;
     double                                m_startContChainage = 0.0;
     

@@ -1,5 +1,7 @@
 #include "AlignedProfileArray.h"
 #include "Document.h"
+#include "ProfileLoftSolid.h"
+#include "ChamferSolid.h"
 #include "Sketch.h"
 #include "Plane.h"
 #include "PlaneManager.h"
@@ -10,6 +12,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSignalBlocker>
+#include <QStringList>
+#include <QUuid>
 #include <QHash>
 #include <algorithm>
 #include <cmath>
@@ -121,6 +125,7 @@ void AlignedProfileArray::setTrackCenterLine(railway::TrackCenterLine* tcl) {
 
     if (m_tcl) disconnect(m_tclDataChangedConn);
     m_tcl = tcl;
+    m_routeValid = false;
 
     if (m_tcl) {
         // Alignment 編輯（含 cant/H 的來源資料）改變 → 全部測站重建（走
@@ -142,11 +147,35 @@ QString AlignedProfileArray::trackCenterLineId() const {
 // 分段資料
 // ─────────────────────────────────────────────────────────────────────────────
 
+void AlignedProfileArray::ensureSegmentIds()
+{
+    QSet<QString> seen;
+    for (ProfileArraySegment& s : m_segments) {
+        if (s.id.isEmpty() || seen.contains(s.id))
+            s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        seen.insert(s.id);
+    }
+}
+
+QString AlignedProfileArray::segmentId(int idx) const
+{
+    return (idx >= 0 && idx < m_segments.size()) ? m_segments[idx].id : QString();
+}
+
+int AlignedProfileArray::segmentIndexById(const QString& id) const
+{
+    if (id.isEmpty()) return -1;
+    for (int i = 0; i < m_segments.size(); ++i)
+        if (m_segments[i].id == id) return i;
+    return -1;
+}
+
 void AlignedProfileArray::setSegments(const QList<ProfileArraySegment>& segs,
                                       const QStringList& extraColumns)
 {
     m_segments     = segs;
     m_extraColumns = extraColumns;
+    ensureSegmentIds();        // 表格新增的列沒有 id → 在這裡配發
     syncMasterConnections();
 }
 
@@ -160,7 +189,124 @@ bool AlignedProfileArray::commitSegments(const QList<ProfileArraySegment>& segs,
 
     doc->refreshFeatureDependencies(this);   // 依賴的 profile 可能已換
     doc->rebuildFeature(this);
-    return errorMessage().isEmpty();
+    const bool ok = errorMessage().isEmpty();
+
+    // 每個分段一個 Loft：新增的列建立新 Loft、刪除的列移除其 Loft。
+    // 必須在陣列重建完成（測站已就緒）之後，Loft 建立時才取得到各站輪廓。
+    syncSegmentLofts();
+    return ok;
+}
+
+QHash<QString, ProfileLoftSolid*> AlignedProfileArray::collectSegmentLofts() const
+{
+    QHash<QString, ProfileLoftSolid*> out;
+    Document* doc = document();
+    if (!doc) return out;
+    for (Feature* f : doc->features()) {
+        auto* l = qobject_cast<ProfileLoftSolid*>(f);
+        if (l && l->sourceArray() == this && !l->segmentId().isEmpty())
+            out.insert(l->segmentId(), l);
+    }
+    return out;
+}
+
+void AlignedProfileArray::reparentInstances()
+{
+    Document* doc = document();
+    if (!doc) return;
+    const QHash<QString, ProfileLoftSolid*> lofts = collectSegmentLofts();
+
+    TreeBatch treeBatch(doc);
+    for (int i = 0; i < m_instances.size(); ++i) {
+        SketchInstance* inst = m_instances[i];
+        if (!inst) continue;
+        Feature* want = this;
+        if (i < m_stationSeg.size()) {
+            const int s = m_stationSeg[i];
+            if (s >= 0 && s < m_segments.size())
+                if (ProfileLoftSolid* l = lofts.value(m_segments[s].id, nullptr))
+                    want = l;
+        }
+        if (inst->parent() != want) {
+            inst->setFeatureParent(want);
+            doc->setTreeItemParent(inst->id(), want->id());
+        }
+    }
+}
+
+void AlignedProfileArray::syncSegmentLofts()
+{
+    Document* doc = document();
+    if (!doc) return;
+    ensureSegmentIds();
+
+    // 先取快照：下面會新增／移除 Feature
+    QList<ProfileLoftSolid*> mine;
+    const QList<Feature*> snapshot = doc->features();
+    for (Feature* f : snapshot) {
+        auto* l = qobject_cast<ProfileLoftSolid*>(f);
+        if (l && l->sourceArray() == this) mine.append(l);
+    }
+
+    QSet<QString> segIds;
+    for (const ProfileArraySegment& s : m_segments) segIds.insert(s.id);
+
+    // 1) 舊檔：一個 Loft 涵蓋全部分段（segmentId 為空）→ 轉成第一個還沒有 Loft 的分段
+    QSet<QString> used;
+    for (ProfileLoftSolid* l : mine)
+        if (!l->segmentId().isEmpty() && segIds.contains(l->segmentId()))
+            used.insert(l->segmentId());
+    QList<ProfileLoftSolid*> toRemove;
+    for (ProfileLoftSolid* l : mine) {
+        if (!l->segmentId().isEmpty()) continue;
+        QString target;
+        for (const ProfileArraySegment& s : m_segments)
+            if (!used.contains(s.id)) { target = s.id; break; }
+        if (target.isEmpty()) toRemove.append(l);
+        else { l->setSegmentId(target); used.insert(target); }
+    }
+
+    // 2) 分段已不存在（列被刪除）或重複的 Loft → 移除（連同以它為來源的 Chamfer）
+    QSet<QString> have;
+    for (ProfileLoftSolid* l : mine) {
+        if (toRemove.contains(l)) continue;
+        if (!segIds.contains(l->segmentId()) || have.contains(l->segmentId()))
+            toRemove.append(l);
+        else
+            have.insert(l->segmentId());
+    }
+    for (ProfileLoftSolid* l : toRemove) {
+        for (Feature* f : snapshot) {
+            if (auto* cf = qobject_cast<ChamferSolid*>(f))
+                if (cf->sourceFeature() == l) doc->removeFeature(cf);
+        }
+        // 先把測站移回陣列，避免它們短暫掛在即將刪除的 Loft 下
+        for (SketchInstance* inst : m_instances) {
+            if (inst && inst->parent() == l) {
+                inst->setFeatureParent(this);
+                doc->setTreeItemParent(inst->id(), id());
+            }
+        }
+        doc->removeFeature(l);
+    }
+
+    // 3) 每個分段恰好一個 Loft；名稱跟著分段名稱
+    TreeBatch treeBatch(doc);
+    for (const ProfileArraySegment& s : m_segments) {
+        const QString wantName = QString("%1_%2_Loft").arg(name(), s.name);
+        ProfileLoftSolid* existing = nullptr;
+        for (ProfileLoftSolid* l : mine)
+            if (!toRemove.contains(l) && l->segmentId() == s.id) { existing = l; break; }
+        if (!existing) {
+            doc->createProfileLoftSolid(this, wantName, s.id);
+        } else if (existing->name() != wantName) {
+            existing->setName(wantName);
+            doc->setTreeItemName(existing->id(), wantName);
+        }
+    }
+
+    // 4) 測站掛到各自分段的 Loft 之下
+    reparentInstances();
 }
 
 QString AlignedProfileArray::uniqueSegmentName(const QString& base) const {
@@ -177,6 +323,7 @@ void AlignedProfileArray::setRange(double startChainage, double endChainage, dou
         ProfileArraySegment seg;
         seg.name = QStringLiteral("Seg1");
         m_segments.append(seg);
+        ensureSegmentIds();
     }
     m_segments[0].start    = startChainage;
     m_segments[0].end      = endChainage;
@@ -204,6 +351,180 @@ double AlignedProfileArray::interval() const {
 // ─────────────────────────────────────────────────────────────────────────────
 // rebuild() 核心（對應規劃 §2.2）
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  里程超出線形範圍 → 接續端點相連的線形
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// 線形在里程 p 的 (E, N, Z) 與切線方位角
+struct EndPoint { double e = 0, n = 0, z = 0, az = 0; };
+
+EndPoint endPointOf(const railway::TrackCenterLine* t, double p)
+{
+    EndPoint ep;
+    const QPointF xy = t->getXYForCalc(p, 0.0);
+    ep.e  = xy.x();
+    ep.n  = xy.y();
+    ep.z  = t->getElevationForCalc(p);
+    ep.az = t->getAzimuthForCalc(p);
+    return ep;
+}
+
+/// 兩端點是否相連：E,N 距離與 Z 差在容差內，且切線方向大致連續。
+/// @return 相連時回傳「方向差 (rad)」供多個候選時挑最順的；不相連回傳 -1
+double connectionScore(const EndPoint& a, const EndPoint& b, double azB)
+{
+    if (std::hypot(a.e - b.e, a.n - b.n) > AlignedProfileArray::kConnectTolXY) return -1.0;
+    if (std::abs(a.z - b.z)              > AlignedProfileArray::kConnectTolZ)  return -1.0;
+    double d = std::fmod(std::abs(a.az - azB), 2.0 * M_PI);
+    if (d > M_PI) d = 2.0 * M_PI - d;
+    return (d <= AlignedProfileArray::kConnectTolAz) ? d : -1.0;
+}
+
+} // namespace
+
+void AlignedProfileArray::ensureRoute() const
+{
+    if (m_routeValid) return;
+    m_route.clear();
+    m_routeValid = true;
+    if (!m_tcl) return;
+
+    double p0 = 0.0, p1 = 0.0;
+    if (!m_tcl->chainageRangeForCalc(p0, p1)) return;
+
+    RouteLeg main;
+    main.tcl = m_tcl;
+    main.a0  = p0;
+    main.a1  = p1;
+    main.off = 0.0;
+    m_route.append(main);
+
+    Document* doc = document();
+    if (!doc) return;
+    const QList<railway::TrackCenterLine*> all = doc->trackCenterLines();
+
+    QSet<const railway::TrackCenterLine*> used;
+    used.insert(m_tcl.data());
+
+    // 往前接（終點接到下一條的起點）與往後接（上一條的終點接到本線形起點）
+    for (int dir = 0; dir < 2; ++dir) {
+        const bool forward = (dir == 0);
+        railway::TrackCenterLine* cur = m_tcl.data();
+        double curA = forward ? p1 : p0;          // 目前路徑端點的陣列里程
+        double cur0 = p0, cur1 = p1;              // 目前線形的里程範圍
+
+        for (int hop = 0; hop < 16; ++hop) {
+            const EndPoint here = endPointOf(cur, forward ? cur1 : cur0);
+
+            railway::TrackCenterLine* best = nullptr;
+            double bestScore = 1e9, b0 = 0.0, b1 = 0.0;
+            for (railway::TrackCenterLine* cand : all) {
+                if (!cand || used.contains(cand)) continue;
+                double c0, c1;
+                if (!cand->chainageRangeForCalc(c0, c1)) continue;
+                // 往前接：候選的「起點」要接到本端終點；往後接：候選的「終點」接到本端起點
+                const double pc = forward ? c0 : c1;
+                const EndPoint there = endPointOf(cand, pc);
+                const double sc = connectionScore(here, there, there.az);
+                if (sc >= 0.0 && sc < bestScore) {
+                    best = cand; bestScore = sc; b0 = c0; b1 = c1;
+                }
+            }
+            if (!best) break;
+
+            RouteLeg leg;
+            leg.tcl = best;
+            if (forward) {
+                leg.a0  = curA;
+                leg.a1  = curA + (b1 - b0);
+                leg.off = b0 - curA;
+                curA    = leg.a1;
+                m_route.append(leg);
+            } else {
+                leg.a1  = curA;
+                leg.a0  = curA - (b1 - b0);
+                leg.off = b1 - curA;
+                curA    = leg.a0;
+                m_route.prepend(leg);
+            }
+            used.insert(best);
+            cur = best; cur0 = b0; cur1 = b1;
+        }
+    }
+}
+
+AlignedProfileArray::AlignmentSample AlignedProfileArray::resolveAlignment(double p) const
+{
+    AlignmentSample s;
+    s.tcl = m_tcl.data();
+    s.p   = p;
+    if (!m_tcl) return s;
+
+    ensureRoute();
+    constexpr double kEdge = 0.01;     // ALD 樁號各自四捨五入造成的微小越界不算超出
+    for (const RouteLeg& leg : m_route) {
+        if (!leg.tcl) continue;
+        if (p >= leg.a0 - kEdge && p <= leg.a1 + kEdge) {
+            s.tcl       = leg.tcl.data();
+            s.p         = p + leg.off;
+            s.connected = (leg.tcl.data() != m_tcl.data());
+            return s;
+        }
+    }
+    s.outOfRange = !m_route.isEmpty();   // 路徑已建好但沒有任何一段涵蓋 → 只能外推
+    return s;
+}
+
+AlignedProfileArray::SegmentAlignments
+AlignedProfileArray::alignmentsForRange(double start, double end) const
+{
+    SegmentAlignments out;
+    if (!m_tcl) return out;
+    if (end < start) std::swap(start, end);
+
+    m_routeValid = false;      // 對話框編輯中可能剛新增／移動過線形：每次都重新判定
+    ensureRoute();
+    if (m_route.isEmpty()) {
+        // 主線形沒有元素（無法取得範圍）：只能回報主線形名稱
+        out.names << m_tcl->name();
+        return out;
+    }
+
+    constexpr double kEdge = 0.01;
+    double covered = start;            // 已被路徑涵蓋到的里程
+    for (const RouteLeg& leg : m_route) {
+        if (!leg.tcl) continue;
+        if (leg.a1 < start - kEdge || leg.a0 > end + kEdge) continue;   // 與本段無交集
+        const QString nm = leg.tcl->name();
+        if (!out.names.contains(nm)) out.names << nm;
+        covered = std::max(covered, std::min(leg.a1, end));
+    }
+    // 路徑涵蓋不到的部分（起點之前或終點之後）→ 越界
+    if (start < m_route.first().a0 - kEdge || end > m_route.last().a1 + kEdge)
+        out.outOfRange = true;
+    if (out.names.isEmpty()) out.names << m_tcl->name();   // 整段都越界：仍顯示主線形
+    return out;
+}
+
+void AlignedProfileArray::syncRouteConnections()
+{
+    for (const QMetaObject::Connection& c : m_routeConns) disconnect(c);
+    m_routeConns.clear();
+    ensureRoute();
+    for (const RouteLeg& leg : m_route) {
+        if (!leg.tcl || leg.tcl.data() == m_tcl.data()) continue;
+        // 相連線形的資料改變 → 路徑失效、陣列重建（與主線形的 dataChanged 相同處理）
+        m_routeConns.append(connect(
+            leg.tcl.data(), &railway::TrackCenterLine::dataChanged, this, [this]() {
+                m_routeValid = false;
+                if (Document* doc = document()) doc->rebuildFeature(this);
+                else rebuild();
+            }));
+    }
+}
 
 QVector<AlignedProfileArray::StationRef> AlignedProfileArray::computeStationRefs() const {
     QVector<StationRef> refs;
@@ -241,8 +562,10 @@ AlignedProfileArray::stationParameters(double p, const ProfileArraySegment& seg)
     };
 
     // 1) 線形資料（ALD 匯入優先，見 TrackCenterLine ForCalc 系列方法）
-    setParam(QStringLiteral("cant"), m_tcl->getCantForCalc(p));
-    setParam(QStringLiteral("H"),    m_tcl->getAppliedHForCalc(p));
+    // 里程超出主線形時改用相連線形的資料（見 resolveAlignment）
+    const AlignmentSample as = resolveAlignment(p);
+    setParam(QStringLiteral("cant"), as.tcl->getCantForCalc(as.p));
+    setParam(QStringLiteral("H"),    as.tcl->getAppliedHForCalc(as.p));
 
     // 2) 本段的表格值：有填才覆寫；優先於線形資料。
     if (seg.hasThick)
@@ -307,6 +630,12 @@ bool AlignedProfileArray::rebuild() {
         }
     }
     syncMasterConnections();
+    ensureSegmentIds();
+
+    // 線形路徑每次重建都重新判定（主線形／相連線形資料可能已變），並連接相連線形的變動訊號
+    m_routeValid = false;
+    syncRouteConnections();
+    QStringList outOfRangeStations;
 
     // 1. 測站清單（先依段、段內依里程）。
     const QVector<StationRef> stations = computeStationRefs();
@@ -384,6 +713,10 @@ bool AlignedProfileArray::rebuild() {
     m_stationSeg.resize(stations.size());
     for (int i = 0; i < stations.size(); ++i) m_stationSeg[i] = stations[i].seg;
 
+    // 新建／換段的測站先掛到各自分段的 Loft（Loft 尚未建立者暫掛陣列，
+    // 由 syncSegmentLofts() 稍後補掛）
+    reparentInstances();
+
     // 3. 逐站：放置座標系 + 參數 + 重建
     //
     //   profile 沒變 → 各站 2D 解可重用（簽章相同者只重建 3D wire）；
@@ -392,6 +725,7 @@ bool AlignedProfileArray::rebuild() {
     QHash<Sketch*, quint64> fpOf;               // 本輪各 profile 的指紋
     QHash<QString, quint64> newFp;
     QHash<QString, SketchInstance*> donors;     // 簽章 → 本輪已求解的測站
+    QStringList failedStations;                 // 本輪重建失敗的測站名稱
 
     for (int i = 0; i < stations.size(); ++i) {
         const double p = stations[i].p;
@@ -414,10 +748,16 @@ bool AlignedProfileArray::rebuild() {
         //   Y  = Z × X（平坦時 Y = 世界 +Z，朝上）
         // 原點 = 中心線上里程 p 的點（w 是 profile 內的參數，與位置無關）；高程取中心線高程。
         // 不套用 cant 旋轉：cant/H/Thick 只當作 sketch instance 內部束制求解用的參數。
-        const QPointF xy  = m_tcl->getXYForCalc(p, 0.0);
-        const double  z0  = m_tcl->getElevationForCalc(p);
-        const double  az  = m_tcl->getAzimuthForCalc(p);              // [rad], CW from N
-        const double  g   = m_tcl->getSlopeForCalc(p) / 100.0;        // dz/dp
+        // 里程超出主線形範圍時，改取端點相連的線形（見 resolveAlignment）
+        const AlignmentSample as = resolveAlignment(p);
+        if (as.outOfRange)
+            outOfRangeStations << QString::number(p, 'f', 3);
+        const railway::TrackCenterLine* T = as.tcl;
+        const double  pc  = as.p;
+        const QPointF xy  = T->getXYForCalc(pc, 0.0);
+        const double  z0  = T->getElevationForCalc(pc);
+        const double  az  = T->getAzimuthForCalc(pc);              // [rad], CW from N
+        const double  g   = T->getSlopeForCalc(pc) / 100.0;        // dz/dp
 
         const double sA = std::sin(az), cA = std::cos(az);
         const double tn = std::sqrt(1.0 + g * g);
@@ -477,18 +817,39 @@ bool AlignedProfileArray::rebuild() {
         }
 
         SketchInstance* donor = donors.value(sig, nullptr);
-        inst->rebuildWith(sig, donor, force);
+        // 舊版忽略回傳值：求解失敗的測站保留舊形狀，卻回報整體成功，使用者
+        // 看到的就是「套用後圖形沒有更新」。改為彙總失敗測站並回報。
+        if (!inst->rebuildWith(sig, donor, force))
+            failedStations << inst->name();
+        else if (inst->solveFellBack())
+            failedStations << (inst->name() + QStringLiteral(" (solver conflict)"));
         if (!donor && !inst->solveSignature().isEmpty())
             donors.insert(sig, inst);
     }
 
     m_lastMasterFp = newFp;
 
-    clearError();
+    QStringList problems;
+    if (!outOfRangeStations.isEmpty()) {
+        // 找不到相連線形可接：舊版靜默外推，座標不是真實線形 → 明確回報
+        QString list = outOfRangeStations.mid(0, 5).join(QStringLiteral(", "));
+        if (outOfRangeStations.size() > 5) list += QStringLiteral(" ...");
+        problems << QString("%1 station(s) are outside the alignment range and no connected "
+                            "alignment (matching E,N,Z) was found; geometry is extrapolated: %2")
+                        .arg(outOfRangeStations.size()).arg(list);
+    }
+    if (!failedStations.isEmpty()) {
+        QString list = failedStations.mid(0, 5).join(QStringLiteral(", "));
+        if (failedStations.size() > 5) list += QStringLiteral(" ...");
+        problems << QString("%1 station(s) failed to rebuild (previous or unsolved master shape kept): %2")
+                        .arg(failedStations.size()).arg(list);
+    }
+    if (problems.isEmpty()) clearError();
+    else                    setError(problems.join(QLatin1Char('\n')));
     doc->setTreeItemName(id(), QString("%1 (%2 segments, %3 stations)")
                                    .arg(name()).arg(m_segments.size()).arg(m_instances.size()));
     Q_EMIT shapeChanged();
-    return true;
+    return problems.isEmpty();
 }
 
 void AlignedProfileArray::clearInstances() {
@@ -540,6 +901,7 @@ QJsonObject AlignedProfileArray::toJson() const {
     QJsonArray segArr;
     for (const ProfileArraySegment& s : m_segments) {
         QJsonObject o;
+        o["id"]        = s.id;
         o["name"]      = s.name;
         o["start"]     = s.start;
         o["end"]       = s.end;
@@ -581,6 +943,7 @@ bool AlignedProfileArray::fromJson(const QJsonObject& json) {
         for (const QJsonValue& v : json["segments"].toArray()) {
             const QJsonObject o = v.toObject();
             ProfileArraySegment s;
+            s.id        = o["id"].toString();      // 舊檔沒有 → 載入後由 ensureSegmentIds() 配發
             s.name      = o["name"].toString();
             s.start     = o["start"].toDouble(0.0);
             s.end       = o["end"].toDouble(0.0);
@@ -608,6 +971,7 @@ bool AlignedProfileArray::fromJson(const QJsonObject& json) {
         s.interval  = json["interval"].toDouble(20.0);
         m_segments.append(s);
     }
+    ensureSegmentIds();
     return true;
 }
 

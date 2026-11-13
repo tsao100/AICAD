@@ -16,6 +16,7 @@
 #include <QFileDialog>
 #include <QSettings>
 #include <QFileInfo>
+#include <QDir>
 #include <QVariantMap>
 #include <QDebug>
 
@@ -37,8 +38,11 @@ const char* kKeyLastAldDir = "railway/lastAldDirectory";
 /** 找出既有同名 TrackCenterLine（重新匯入時就地更新，而非產生重複線路）。 */
 TrackCenterLine* findByName(cad::Document* doc, const QString& name)
 {
+    // 不分大小寫、忽略前後空白：Windows 使用者的 "L1" 與 "l1" 視為同一條線路，
+    // 否則會因大小寫不同而新增重複線路，看起來就像「沒有覆蓋既有同名線路」。
+    const QString key = name.trimmed();
     for (TrackCenterLine* tcl : doc->trackCenterLines()) {
-        if (tcl && tcl->name() == name)
+        if (tcl && tcl->name().trimmed().compare(key, Qt::CaseInsensitive) == 0)
             return tcl;
     }
     return nullptr;
@@ -53,6 +57,21 @@ QString deriveTrackName(const QString& fileName)
         return base;
     }
     return QFileInfo(fileName).completeBaseName();
+}
+
+/** 在資料夾內以「不分大小寫」尋找檔名（Linux 檔案系統區分大小寫，
+ *  H 檔是 .ALD、V 檔卻是 .ald 這類混用時 QFileInfo::exists 會找不到）。 */
+QString findFileCaseInsensitive(const QDir& dir, const QString& fileName)
+{
+    if (fileName.isEmpty()) return QString();
+    if (QFileInfo::exists(dir.filePath(fileName)))
+        return dir.filePath(fileName);
+    const QStringList all = dir.entryList(QDir::Files);
+    for (const QString& f : all) {
+        if (f.compare(fileName, Qt::CaseInsensitive) == 0)
+            return dir.filePath(f);
+    }
+    return QString();
 }
 
 } // namespace
@@ -134,7 +153,35 @@ CommandResult ImportAldCommand::execute(const CommandContext& /*context*/)
     tcl->setAldHorizontalImport(hPts);
     tcl->loadHorizontal(hPts);
 
+    // ── 3b. 若同資料夾存在對應的 *V.ALD，一併匯入垂直線形 ────────────────────
+    //      （比照 ImportAlignmentCommand：*H.ALD → *V.ALD）
+    bool hasVertical = false;
+    QString vMsg;
+    {
+        const QString vFileName = AldFileIO::verticalFileNameFor(fileName);
+        const QString vPath = findFileCaseInsensitive(QFileInfo(aldPath).dir(), vFileName);
+        if (!vPath.isEmpty()) {
+            QString vErr;
+            const QVector<railway::VerticalAlignmentPoint> vPts =
+                AldFileIO::readVerticalALD(vPath, &vErr);
+            if (!vPts.isEmpty()) {
+                tcl->setAldVerticalImport(vPts);
+                tcl->loadVertical(vPts);
+                hasVertical = true;
+            } else if (!vErr.isEmpty()) {
+                vMsg = QStringLiteral("（垂直線形讀取失敗: %1 — %2）")
+                           .arg(QFileInfo(vPath).fileName(), vErr);
+            }
+        }
+    }
+
     doc->setModified(true);
+
+    // 覆蓋既有同名線路時，addTrackCenterLine() 不會被呼叫，因此依賴
+    // trackCenterLinesChanged() 的刷新（OSnap 線形來源、線路清單／3D 顯示）要在這裡
+    // 手動觸發；新增線路則已由 addTrackCenterLine() 發出。
+    if (isUpdate)
+        Q_EMIT doc->trackCenterLinesChanged();
 
     // ── 4. 開啟 Railway 資料夾彙總 3D Alignment 顯示 ─────────────────────────
     if (bus) {
@@ -144,10 +191,12 @@ CommandResult ImportAldCommand::execute(const CommandContext& /*context*/)
         bus->publish("feature.visibility-changed", vdata);
     }
 
-    const QString summary = QStringLiteral("匯入完成: %1（%2 個關鍵點）%3")
+    const QString summary = QStringLiteral("匯入完成: %1（%2 個關鍵點%3）%4%5")
         .arg(trackName)
         .arg(hPts.size())
-        .arg(isUpdate ? QStringLiteral("— 已更新既有線路") : QString());
+        .arg(hasVertical ? QStringLiteral("，含垂直線形") : QString())
+        .arg(isUpdate ? QStringLiteral("— 已覆蓋既有同名線路") : QString())
+        .arg(vMsg);
 
     if (clm) clm->printMessage(QStringLiteral("[匯入 ALD] %1").arg(summary));
     return CommandResult::Success(summary);

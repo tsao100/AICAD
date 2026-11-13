@@ -54,6 +54,7 @@ private:
     int     addExtraColumn(const QString& name);
     QString uniqueName(const QString& wanted, int ignoreRow) const;
     void    updateInfo();
+    void    refreshAlignmentCell(int row);   ///< 重算「線形」欄（唯讀，依該列起訖里程）
     QList<QPair<QString, QString>> profiles() const;   ///< (名稱, feature id)
 
     QPointer<cad::AlignedProfileArray> m_array;

@@ -10,6 +10,8 @@
 
 #include <QObject>
 #include <QString>
+#include <QJsonObject>
+#include <QPointer>
 #include <QMainWindow>
 #include <QUndoStack>
 #include "osnap/OSnapToolbar.h"
@@ -321,6 +323,10 @@ public slots:
     /** Phase 3/7：在 ParameterPanel 中顯示 SketchInstance 覆寫參數 */
     void showInstanceInParameterPanel(cad::SketchInstance* instance);
 
+    /// ProfileArray 測站「查看草圖」：唯讀 2D 草圖畫面（含實際套用值的尺寸標註）。
+    /// 其他視圖隱藏，按「Finish Sketch」結束後還原。
+    void viewSketchInstance(cad::SketchInstance* instance);
+
     
 public:
     /**
@@ -380,6 +386,12 @@ private:
 
     osnap::OSnapToolbar* m_snapToolbar = nullptr;
     cad::Sketch* m_currentActiveSketch = nullptr;
+
+    // ── 「查看草圖」（SketchInstance 唯讀檢視）狀態 ─────────────────────────
+    QPointer<cad::Sketch>              m_viewSketch;             ///< 暫時檢視草圖（本類別擁有；QPointer 防文件先釋放）
+    QPointer<cad::SketchInstance>      m_viewInstance;
+    QJsonObject                        m_viewStateBeforeView;    ///< 進入前相機，結束時還原
+    void endInstanceView();
 
     /// 第 6 項回報：由「編輯草圖」（FeatureBrowser 右鍵選單）進入時為 true——
     /// onSketchEditStarted() 不縮放全部，改還原前次視圖。新建草圖

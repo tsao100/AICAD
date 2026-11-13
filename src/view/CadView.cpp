@@ -6,6 +6,7 @@
  */
 
 #include "CadView.h"
+#include <QPointer>
 #include <Standard_Failure.hxx>
 #include "DimPreviewOverlay.h"
 #include <limits>
@@ -87,6 +88,10 @@
 #include <TopoDS_Face.hxx>
 #include <Geom_Surface.hxx>
 #include <Geom_Plane.hxx>
+#include <Bnd_Box.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Ax1.hxx>
+#include <Graphic3d_Camera.hxx>
 #include <Graphic3d_ClipPlane.hxx>
 #include <Graphic3d_SequenceOfHClipPlane.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -102,6 +107,60 @@
 
 using namespace aicad::core;
 using namespace aicad::cad;
+
+namespace {
+/**
+ * 實體（Loft／Extrude…）的顯示網格細緻度。
+ *
+ * OCCT 預設 DeviationCoefficient=0.001（相對於包圍盒）、DeviationAngle=20°。
+ * 沿線形放樣的實體包圍盒可達數十公尺，弦高容許量因此變成公分級；而斷面中的淺圓弧
+ * 張角常小於 20°，會被切成「單一弦線」——幾何其實是圓弧，畫面卻像直線。
+ * 這裡只調整顯示用的網格密度，不改變實體本身。
+ */
+void applyFineTessellation(const Handle(AIS_Shape)& shape)
+{
+    if (shape.IsNull()) return;
+    shape->SetOwnDeviationCoefficient(0.0002);
+    shape->SetOwnDeviationAngle(5.0 * 3.14159265358979323846 / 180.0);
+}
+
+// 取得 AIS 物件的包圍盒。OCCT 7.6 以 BoundingBox(Bnd_Box&) 回傳，7.7 起改為
+// `const Bnd_Box& BoundingBox()`；以 SFINAE 同時支援兩種版本。
+template <class T>
+auto aisBoundingBox(T& o, int) -> decltype(o.BoundingBox(), Bnd_Box())
+{
+    return o.BoundingBox();
+}
+template <class T>
+Bnd_Box aisBoundingBox(T& o, long)
+{
+    Bnd_Box b;
+    o.BoundingBox(b);
+    return b;
+}
+
+/// 目前選取物件的包圍盒中心。沒有選取、或包圍盒不可用（空／無限大）時回傳 false。
+bool selectionPivot(const Handle(AIS_InteractiveContext)& ctx, gp_Pnt& pivot)
+{
+    if (ctx.IsNull() || ctx->NbSelected() <= 0) return false;
+
+    Bnd_Box box;
+    for (ctx->InitSelected(); ctx->MoreSelected(); ctx->NextSelected()) {
+        const Handle(AIS_InteractiveObject) obj = ctx->SelectedInteractive();
+        if (obj.IsNull()) continue;
+        const Bnd_Box b = aisBoundingBox(*obj, 0);
+        if (!b.IsVoid()) box.Add(b);
+    }
+    if (box.IsVoid() || box.IsOpen()) return false;
+
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    if (!std::isfinite(x0 + y0 + z0 + x1 + y1 + z1)) return false;
+    pivot = gp_Pnt(0.5 * (x0 + x1), 0.5 * (y0 + y1), 0.5 * (z0 + z1));
+    return true;
+}
+} // namespace
+
 
 namespace aicad {
 namespace view {
@@ -285,6 +344,19 @@ public:
     Handle(AIS_Shape) sketchOriginAIS;
 
     QList<OverlayEntry> overlayObjects;
+
+    // ── 隔離顯示（見 CadView::setIsolatedFeature()）──────────────────────────
+    bool                 isolationActive = false;
+    QString              isolatedFeatureId;          ///< 唯一保留顯示的 Feature id（可為空）
+    QPointer<cad::Sketch> viewSketch;                ///< 不屬於 Document 的暫時檢視草圖
+
+    // ── 右鍵拖曳「繞選取物件中心」旋轉 ────────────────────────────────────────
+    bool    orbitAroundPivot = false;        ///< 本次右鍵拖曳是否繞自訂中心（否則用 OCCT 預設旋轉）
+    gp_Pnt  orbitPivot;
+    gp_Pnt  orbitEye0, orbitCenter0;         ///< 按下當下的相機
+    gp_Dir  orbitUp0 = gp_Dir(0, 0, 1);
+    gp_Dir  orbitRight0 = gp_Dir(1, 0, 0);
+    int     orbitStartX = 0, orbitStartY = 0;
     QVector2D            dimLineAnchor2D;    // ✅ Task E: PlaceDimLine 錨點（草圖平面 2D）
     QVector2D            dimPreviewMousePt; // GDIM: 目前滑鼠草圖座標（overlay 更新用）
 
@@ -852,6 +924,7 @@ void CadView::initializeViewer() {
                                    }
                                } else {
                                    Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
+                                   applyFineTessellation(aisShape);
                                    aisShape->SetColor(Quantity_NOC_YELLOW);
                                    d->context->Display(aisShape, Standard_False);
                                    d->aisToFeatureId[aisShape.get()] = itemId;
@@ -1715,12 +1788,17 @@ void CadView::displayAllFeatures() {
     redisplayAxis(d->sketchYAxisAIS,  6.0);
     redisplayAxis(d->sketchOriginAIS, 8.0);
 
+    // 隔離顯示：只有被指定的 Feature 會顯示，其餘（含 overlay）一律只登記不顯示。
+    const bool isolated = d->isolationActive;
+
     for (Feature* feature : d->document->features()) {
         if (!feature) continue;
 
+        const bool isIsolationTarget = isolated && feature->id() == d->isolatedFeatureId;
+
         if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
 
-            if (feature->isVisible()) {
+            if (isolated ? isIsolationTarget : feature->isVisible()) {
                 // ✅ visible: 正常顯示並註冊
                 QList<Handle(AIS_InteractiveObject)> shapes =
                     sketch->displayInContext(d->context);
@@ -1795,17 +1873,25 @@ void CadView::displayAllFeatures() {
 
         } else if (!feature->shape().IsNull()) {
             Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
+            applyFineTessellation(aisShape);
             // ✅ 修正：使用 Shaded 模式並設定合理的非選取色（淺藍灰）
             aisShape->SetDisplayMode(AIS_Shaded);
             aisShape->SetMaterial(Graphic3d_NameOfMaterial_Silver);
             aisShape->SetColor(Quantity_NOC_CADETBLUE);   // 不與選取黃色衝突
             // ✅ 中間結果（被其他 Feature 依賴）一律不顯示，見上方 consumedFeatureIds
             //    的說明——即使自己的 isVisible() 是 true 也一樣。
-            if (feature->isVisible() && !consumedFeatureIds.contains(feature->id()))
+            const bool showIt = isolated
+                ? isIsolationTarget
+                : (feature->isVisible() && !consumedFeatureIds.contains(feature->id()));
+            if (showIt)
                 d->context->Display(aisShape, Standard_False);
             d->aisToFeatureId[aisShape.get()] = feature->id();
         }
     }
+
+    // ── 不屬於 Document 的暫時檢視草圖（ProfileArray 測站「查看草圖」）──────────
+    if (isolated && !d->viewSketch.isNull())
+        d->viewSketch->displayInContext(d->context);
 
     d->context->UpdateCurrentViewer();
 
@@ -1814,7 +1900,7 @@ void CadView::displayAllFeatures() {
     // 確保 Sketch draw commands 進入時不會意外顯示被 eye-close 的 Alignment。
     bool anyOverlayDisplayed = false;
     for (const auto& entry : d->overlayObjects) {
-        if (!entry.obj.IsNull() && entry.visible) {
+        if (!entry.obj.IsNull() && entry.visible && !isolated) {
             d->context->Display(entry.obj, Standard_False);
             for (int m : entry.modes)
                 d->context->Activate(entry.obj, m);
@@ -1884,6 +1970,40 @@ void CadView::fitAll() {
     update();
 }
 
+void CadView::setIsolatedFeature(const QString& featureId, bool redisplay)
+{
+    d->viewSketch.clear();
+    d->isolationActive   = !featureId.isEmpty();
+    d->isolatedFeatureId = featureId;
+    if (redisplay) displayAllFeatures();
+}
+
+void CadView::setViewSketch(cad::Sketch* sketch, bool redisplay)
+{
+    if (!sketch) { clearIsolation(redisplay); return; }
+    d->viewSketch        = sketch;
+    d->isolationActive   = true;
+    d->isolatedFeatureId.clear();      // 文件內的 Feature 一個都不保留
+    if (redisplay) displayAllFeatures();
+}
+
+void CadView::clearIsolation(bool redisplay)
+{
+    const bool was = d->isolationActive;
+    d->viewSketch.clear();
+    d->isolationActive = false;
+    d->isolatedFeatureId.clear();
+    if (was && redisplay) displayAllFeatures();
+}
+
+bool CadView::isIsolated() const { return d->isolationActive; }
+
+void CadView::showFinishViewButton(bool show)
+{
+    if (show) showFinishSketchButton();
+    else      hideFinishSketchButton();
+}
+
 void CadView::addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
                             const QList<int>& activationModes)
 {
@@ -1891,7 +2011,8 @@ void CadView::addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
     removeOverlayAIS(obj);  // 避免重複登錄
     d->overlayObjects.append({obj, activationModes});
 
-    if (!d->context.IsNull()) {
+    // 隔離顯示期間只登記、不顯示（離開隔離後由 displayAllFeatures 依 visible 還原）
+    if (!d->context.IsNull() && !d->isolationActive) {
         d->context->Display(obj, Standard_False);
         for (int m : activationModes)
             d->context->Activate(obj, m);
@@ -1930,6 +2051,7 @@ void CadView::setOverlayAISVisible(const Handle(AIS_InteractiveObject)& obj, boo
     if (d->context.IsNull()) return;
 
     if (visible) {
+        if (d->isolationActive) return;   // 隔離顯示中：旗標已更新，離開隔離時再顯示
         // 重新顯示
         if (!d->context->IsDisplayed(obj))
             d->context->Display(obj, Standard_False);
@@ -3949,9 +4071,24 @@ void CadView::mousePressEvent(QMouseEvent* event) {
         }
     }
 
-    // 右鍵啟動旋轉
+    // 右鍵啟動旋轉：有選取物件時，以該物件（包圍盒中心）為旋轉中心；
+    // 沒有選取物件則維持 OCCT 預設的旋轉。草圖編輯中的選取是幾何元素，不拿來當中心。
     if (event->button() == Qt::RightButton && !d->view.IsNull()) {
-        d->view->StartRotation(xp, yp);
+        d->orbitAroundPivot = false;
+        gp_Pnt pivot;
+        if (d->mode != InteractionMode::Sketching && selectionPivot(d->context, pivot)) {
+            const Handle(Graphic3d_Camera)& cam = d->view->Camera();
+            d->orbitPivot    = pivot;
+            d->orbitEye0     = cam->Eye();
+            d->orbitCenter0  = cam->Center();
+            d->orbitUp0      = cam->Up();
+            d->orbitRight0   = gp_Dir(cam->Direction().Crossed(cam->Up()));
+            d->orbitStartX   = xp;
+            d->orbitStartY   = yp;
+            d->orbitAroundPivot = true;
+        } else {
+            d->view->StartRotation(xp, yp);
+        }
     }
 
     if (!d->context.IsNull() && event->button() == Qt::LeftButton) {
@@ -4265,7 +4402,26 @@ void CadView::mouseMoveEvent(QMouseEvent* event) {
 
     // 右鍵拖曳旋轉
     if (d->mousePressed && d->pressedButton == Qt::RightButton && !d->view.IsNull()) {
-        d->view->Rotation(xp, yp);
+        if (d->orbitAroundPivot) {
+            // 整個相機繞 pivot 做剛體旋轉：pivot 在相機座標系中的位置不變，
+            // 所以它在畫面上固定不動，其餘景物繞著它轉。
+            // 水平拖曳 → 繞相機「上」軸；垂直拖曳 → 繞相機「右」軸（以按下時的相機為基準）。
+            const double k = M_PI / std::max(1, width());          // 拖過整個視窗寬 ≈ 180°
+            const double yaw   = -(xp - d->orbitStartX) * k;
+            const double pitch = -(yp - d->orbitStartY) * k;       // 視窗座標 y 向下：往下拖 → 相機上移、由上往下看
+
+            gp_Trsf tYaw, tPitch;
+            tYaw.SetRotation(gp_Ax1(d->orbitPivot, d->orbitUp0), yaw);
+            tPitch.SetRotation(gp_Ax1(d->orbitPivot, d->orbitRight0), pitch);
+            const gp_Trsf T = tYaw.Multiplied(tPitch);
+
+            const Handle(Graphic3d_Camera)& cam = d->view->Camera();
+            cam->SetEyeAndCenter(d->orbitEye0.Transformed(T), d->orbitCenter0.Transformed(T));
+            cam->SetUp(d->orbitUp0.Transformed(T));
+            d->view->Update();
+        } else {
+            d->view->Rotation(xp, yp);
+        }
         d->lastMousePos = event->pos();
         update();
         return;

@@ -25,6 +25,7 @@
 #include "view/RubberBand.h"
 #include "view/ViewGrid.h"      // ✅ 添加
 #include <QShortcut>
+#include <QApplication>
 #include <QKeyEvent>
 #include "CommandLineWidget.h"
 #include "CommandInputEdit.h"
@@ -58,6 +59,7 @@
 #include "railway/AlignmentDocument.h"
 #include "core/geometry/ProjectOrigin.h"
 #include "railway/RailwayAlignment.h"
+#include "command/DrawingBookActions.h"
 #include "ui/VAlignEditorDockWidget.h"   // Step 16
 
 #include <QMenu>
@@ -78,6 +80,10 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QMimeData>
+#include <QJsonDocument>
 #include <gp_Ax3.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Dir.hxx>
@@ -436,6 +442,10 @@ void UIManager::initGripSystem()
             if (!d->pendingOpenViewState.isEmpty()) {
                 d->cadView->restoreViewState(d->pendingOpenViewState);
                 d->pendingOpenViewState = QJsonObject();
+            }
+            if (!m_viewSketch.isNull()) {         // 查看草圖：還原軸線／尺寸標註
+                reshowSketchEditOverlays(m_viewSketch.data());
+                return;
             }
             if (!m_currentActiveSketch) return;   // 未在編輯任何 Sketch，無需處理
             reshowSketchEditOverlays(m_currentActiveSketch);
@@ -2108,6 +2118,88 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     showFeatureProperties(f);
                 });
 
+        // ── 草圖重新命名 ────────────────────────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::renameSketchRequested,
+                this, [this, docMgr](const QString& featureId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* sk  = doc ? qobject_cast<cad::Sketch*>(doc->findFeature(featureId)) : nullptr;
+                    if (!sk) return;
+
+                    QString suggestion = sk->name();
+                    for (;;) {
+                        bool ok = false;
+                        const QString input = QInputDialog::getText(
+                            d->mainWindow, tr("重新命名草圖"), tr("草圖名稱:"),
+                            QLineEdit::Normal, suggestion, &ok).trimmed();
+                        if (!ok || input == sk->name()) return;       // 取消或沒有變更
+                        suggestion = input;
+
+                        if (input.isEmpty()) {
+                            QMessageBox::warning(d->mainWindow, tr("重新命名草圖"),
+                                                 tr("名稱不可空白。"));
+                            continue;
+                        }
+                        // 名稱需唯一：分段資料表以「名稱」選 profile，重複會無法區分
+                        bool dup = false;
+                        for (cad::Feature* f : doc->features())
+                            if (f && f != sk && f->name() == input) { dup = true; break; }
+                        if (dup) {
+                            QMessageBox::warning(d->mainWindow, tr("重新命名草圖"),
+                                                 tr("已有名為「%1」的項目，請改用其他名稱。").arg(input));
+                            continue;
+                        }
+
+                        sk->setName(input);                 // 發出 nameChanged → 文件標記已修改
+                        doc->setTreeItemName(sk->id(), input);   // 更新樹狀圖並重繪
+                        doc->setModified(true);
+                        setStatusMessage(tr("草圖已重新命名為：%1").arg(input), 4000);
+                        return;
+                    }
+                });
+
+        // ── 草圖複製／貼上（可跨檔案；經系統剪貼簿，亦可跨程式實體）────────────────
+        connect(d->featureBrowser, &FeatureBrowser::copySketchRequested,
+                this, [this, docMgr](const QString& featureId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* sk  = doc ? qobject_cast<cad::Sketch*>(doc->findFeature(featureId)) : nullptr;
+                    if (!sk) return;
+                    const QJsonObject payload = doc->exportSketchForCopy(sk);
+                    const QByteArray bytes = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+                    auto* md = new QMimeData;
+                    md->setData(cad::Document::sketchClipboardMimeType(), bytes);
+                    md->setText(QString::fromUtf8(bytes));      // 文字備援：可貼到文字編輯器檢視
+                    QGuiApplication::clipboard()->setMimeData(md);
+                    setStatusMessage(tr("已複製草圖：%1").arg(sk->name()), 4000);
+                });
+        connect(d->featureBrowser, &FeatureBrowser::pasteSketchRequested,
+                this, [this, docMgr]() {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    const QMimeData* md = QGuiApplication::clipboard()->mimeData();
+                    if (!md || !md->hasFormat(cad::Document::sketchClipboardMimeType())) {
+                        setStatusMessage(tr("剪貼簿中沒有草圖資料"), 4000);
+                        return;
+                    }
+                    const QJsonDocument jd = QJsonDocument::fromJson(
+                        md->data(cad::Document::sketchClipboardMimeType()));
+                    QString err;
+                    cad::Sketch* sk = doc->pasteSketch(jd.object(), &err);
+                    if (!sk) {
+                        setStatusMessage(tr("貼上草圖失敗：%1").arg(err), 6000);
+                        return;
+                    }
+                    setStatusMessage(tr("已貼上草圖：%1").arg(sk->name()), 4000);
+                });
+
+        // ── 查看草圖（ProfileArray 測站，唯讀）────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::viewSketchInstanceRequested,
+                this, [this, docMgr](const QString& featureId) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    viewSketchInstance(
+                        qobject_cast<cad::SketchInstance*>(doc->findFeature(featureId)));
+                });
+
         // ── 編輯草圖 ──────────────────────────────────────────────────────────────
         connect(d->featureBrowser, &FeatureBrowser::editSketchRequested,
                 this, [this, docMgr](const QString& featureId) {
@@ -2475,6 +2567,29 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     dlg->activateWindow();
                 });
 
+        // ── Drawing Sheets（圖冊／封面／圖目錄／圖）— drawingActionRequested ──
+        connect(d->featureBrowser, &FeatureBrowser::drawingActionRequested,
+                this, [this, docMgr](const QString& action, const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    command::runDrawingBookAction(doc, d->mainWindow, action, itemId);
+                });
+
+        // ── 機廠矩形視圖的眼睛圖示（顯示／隱藏於 View）─────────────────────────
+        core::Application::instance()->eventBus()->subscribe(
+            "depotview.visibility-changed", this,
+            [this, docMgr](const QVariant& data) {
+                auto* doc = docMgr->currentDocument();
+                if (!doc) return;
+                const QVariantMap m = data.toMap();
+                const QString id = m.value("itemId").toString();
+                const bool vis = m.value("visible").toBool();
+                const bool folder = id.startsWith(QLatin1String("depotfolder_"));
+                const QString act = folder ? (vis ? QStringLiteral("depotShowAll") : QStringLiteral("depotHideAll"))
+                                           : (vis ? QStringLiteral("depotShow") : QStringLiteral("depotHide"));
+                command::runDrawingBookAction(doc, d->mainWindow, act, id);
+            });
+
         // ── TrackCenterLine — renameTrackRequested ────────────────────────────
         connect(d->featureBrowser, &FeatureBrowser::renameTrackRequested,
                 this, [this, docMgr](const QString& tclId) {
@@ -2726,6 +2841,31 @@ void UIManager::setupCommandLine() {
                     "or curve in the viewport first, then press Delete.");
             return;
         }
+    });
+
+    // ⑥ Ctrl+V — 草圖編輯模式下等同 PASTECLIP（貼上從 AutoCAD 複製的圖）。
+    //    同樣用 WidgetWithChildrenShortcut 綁在 cadView 上。cadView 內有 InputJig 的
+    //    QLineEdit，焦點在文字輸入框時要維持原本「貼上文字」的行為，否則 Ctrl+V 會被
+    //    這個快捷鍵吃掉。已有命令執行中時不打斷它。
+    auto* shortcutPaste = new QShortcut(QKeySequence::Paste, d->cadView);
+    shortcutPaste->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(shortcutPaste, &QShortcut::activated, this, [this]() {
+        auto* app = core::Application::instance();
+        if (!app || !d->cadView) return;
+
+        if (auto* le = qobject_cast<QLineEdit*>(QApplication::focusWidget())) {
+            le->paste();
+            return;
+        }
+
+        if (!app->activeSketch()) return;
+        auto* cmdMgr = app->commandManager();
+        if (!cmdMgr || cmdMgr->hasActiveCommand()) return;
+
+        command::CommandContext ctx;
+        ctx.uiManager = this;
+        ctx.cadView   = d->cadView;
+        cmdMgr->executeCommand("PASTECLIP", ctx);
     });
 
     // 注意：show() 移到 VIEW_READY callback 內，這裡不呼叫
@@ -4176,6 +4316,14 @@ void UIManager::onSketchEditStarted(Sketch* sketch)
     if (d->cadView)
         d->cadView->showSketchAxes(sketch);
 
+    // 第 1 項回報：草圖開啟期間，其他視圖（其他草圖、實體、線形 overlay…）一律隱藏，
+    // 結束草圖時（onSketchEditEnded）才還原。只改 CadView 的顯示過濾，不動各
+    // Feature 的 isVisible()，所以還原後的可見性與進入前完全相同。
+    // 放在相機對齊／fitAll 之後，既有的進入視角行為不變；redisplay 傳 false，
+    // 因為下面的 SKETCH_ENTERED 訂閱者會同步呼叫 displayAllFeatures()。
+    if (d->cadView)
+        d->cadView->setIsolatedFeature(sketch->id(), /*redisplay=*/false);
+
     bus->publish(core::Events::SKETCH_ENTERED, QVariant::fromValue(sketch));
     bus->publish("sketch.editStarted", QVariant::fromValue(sketch));
 }
@@ -4208,6 +4356,15 @@ void UIManager::onSketchEditEnded()
                        : (d->mainWindow ? d->mainWindow->parameterPanel() : nullptr);
     if (pp) pp->clearPanel();
 
+    // 查看草圖（SketchInstance 唯讀檢視）：結束並還原相機。必須在 SketchPanel 的
+    // overlay 已 detach 之後（上面 exitOverlayMode），才能安全刪除暫時草圖。
+    endInstanceView();
+
+    // 第 1 項回報：結束隔離顯示，其他視圖依原本的可見性還原。
+    // （onSketchEditEnded 可能被重複連線觸發兩次，clearIsolation 是冪等的。）
+    if (d->cadView)
+        d->cadView->clearIsolation(/*redisplay=*/true);
+
     // 統一發布 SKETCH_EXITED → 由 initGripSystem 的訂閱執行完整清理
     bus->publish(core::Events::SKETCH_EXITED, QVariant{});
     bus->publish("sketch.editEnded", QVariant{});  // 保留向下相容
@@ -4215,6 +4372,105 @@ void UIManager::onSketchEditEnded()
 
 MainWindow* UIManager::mainWindow() const {
     return d->mainWindow;
+}
+
+void UIManager::viewSketchInstance(cad::SketchInstance* inst)
+{
+    if (!inst || !d->cadView) return;
+
+    if (m_currentActiveSketch) {
+        setStatusMessage(tr("請先完成目前正在編輯的草圖，再查看測站草圖"), 5000);
+        return;
+    }
+
+    // 已在查看另一站：先結束（還原相機與顯示）再開新的
+    const bool wasViewing = !m_viewSketch.isNull();
+    QJsonObject cameraBefore = wasViewing ? m_viewStateBeforeView
+                                          : d->cadView->saveViewState();
+    if (wasViewing) endInstanceView();
+
+    cad::Sketch* vs = inst->createViewSketch();
+    if (!vs || !vs->plane()) {
+        delete vs;
+        setStatusMessage(tr("無法查看草圖：此測站尚未求解，或 master 草圖已不存在"), 5000);
+        return;
+    }
+    cad::Plane* plane = vs->plane();
+
+    m_viewSketch          = vs;
+    m_viewInstance        = inst;
+    m_viewStateBeforeView = cameraBefore;
+
+    // 1) 先隔離顯示（文件內所有視圖隱藏、只顯示暫時草圖），之後的 fitAll 才會
+    //    只涵蓋這張草圖。
+    d->cadView->setViewSketch(vs, /*redisplay=*/true);
+
+    // 2) 與「編輯草圖」相同的方式正視草圖平面並顯示格線
+    if (view::ViewGrid* grid = d->cadView->grid())
+        grid->setPlane(plane);
+    if (plane->isXY())      d->cadView->setTopView();
+    else if (plane->isXZ()) d->cadView->setFrontView();
+    else if (plane->isYZ()) d->cadView->setRightView();
+    d->cadView->alignToPlane(plane);
+    d->cadView->setGridEnabled(true);
+    d->cadView->fitAll();
+
+    // 3) 尺寸／約束標註（唯讀：不呼叫 SketchPanel::setActiveSketch，因此沒有輸入列、
+    //    抓點與任何編輯命令；overlay 本身只負責畫）
+    if (d->sketchPanel) {
+        const QVector3D o  = plane->origin();
+        const QVector3D xa = plane->xAxis();
+        const QVector3D n  = plane->normal();
+        gp_Ax3 ax3(gp_Pnt(o.x(), o.y(), o.z()),
+                   gp_Dir(n.x(), n.y(), n.z()),
+                   gp_Dir(xa.x(), xa.y(), xa.z()));
+        gp_Trsf toWorld;
+        toWorld.SetTransformation(ax3, gp::XOY());
+        d->sketchPanel->enterSketchMode(vs, d->cadView->context(), toWorld);
+    }
+
+    d->cadView->showSketchAxes(vs);
+
+    // 4) 實際套用的參數值（唯讀）
+    ParameterPanel* pp = d->parameterPanel
+                       ? d->parameterPanel
+                       : (d->mainWindow ? d->mainWindow->parameterPanel() : nullptr);
+    if (pp) {
+        pp->showInstance(inst, /*readOnly=*/true);
+        pp->show();
+        pp->raise();
+    }
+
+    // 5) 結束方式：沿用「Finish Sketch」按鈕 → sketchFinished → onSketchEditEnded
+    d->cadView->showFinishViewButton(true);
+    setStatusMessage(tr("查看草圖（唯讀）：%1　尺寸標註為本站實際套用值，按「Finish Sketch」結束")
+                         .arg(inst->name()), 0);
+}
+
+void UIManager::endInstanceView()
+{
+    if (m_viewSketch.isNull()) return;
+
+    // 先讓 CadView 不再引用暫時草圖，再 detach overlay，最後才刪除
+    if (d->cadView) {
+        d->cadView->clearIsolation(/*redisplay=*/true);
+        d->cadView->hideSketchAxes();
+        d->cadView->showFinishViewButton(false);
+    }
+    if (d->sketchPanel)
+        d->sketchPanel->exitOverlayMode();
+
+    delete m_viewSketch.data();
+    m_viewSketch.clear();
+    m_viewInstance.clear();
+
+    if (d->cadView) {
+        d->cadView->setGridEnabled(false);
+        if (!m_viewStateBeforeView.isEmpty())
+            d->cadView->restoreViewState(m_viewStateBeforeView);
+    }
+    m_viewStateBeforeView = QJsonObject();
+    setStatusMessage(QString(), 1);
 }
 
 void UIManager::showInstanceInParameterPanel(cad::SketchInstance* instance) {

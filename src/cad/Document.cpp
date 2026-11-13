@@ -5,6 +5,7 @@
  * @date 2025-01-08
  */
 
+#include "core/FpuGuard.h"
 #include "core/Application.h"
 #include "core/EventBus.h"
 #include "Document.h"
@@ -18,6 +19,14 @@
 #include "ProfileLoftSolid.h"
 #include "ChamferSolid.h"
 #include "ui/FeatureTreeItem.h"
+#include <QUuid>
+#include <QSignalBlocker>
+#include <QRegularExpression>
+#include "drawing/DrawingSheetManager.h"
+#include <QTimer>
+#include <QSet>
+#include <QJsonObject>
+#include <QJsonArray>
 
 #include <AIS_Point.hxx>
 #include <AIS_Axis.hxx>
@@ -149,6 +158,9 @@ bool Document::save(const QString& fileName) {
 
     qDebug() << "[Document] Saving to:" << saveFileName;
 
+    // 讓圖紙管理器等外部模組先把最新資料寫回 passthrough 欄位
+    Q_EMIT aboutToSave();
+
     try {
         QJsonObject docJson;
         docJson["version"] = "1.0";
@@ -178,6 +190,10 @@ bool Document::save(const QString& fileName) {
         // ✅ 儲存視圖狀態
         if (!m_viewState.isEmpty())
             docJson["viewState"] = m_viewState;
+
+        // ✅ 儲存圖紙（Drawing Sheets，passthrough）
+        if (!m_drawingSheetsData.isEmpty())
+            docJson["drawingSheets"] = m_drawingSheetsData;
 
         // ✅ 儲存 TrackCenterLine 資料（含 per-TCL alignmentEdit）
         if (!m_trackCenterLines.isEmpty()) {
@@ -234,6 +250,11 @@ bool Document::load(const QString& fileName) {
     }
 
     qDebug() << "[Document] Loading from:" << fileName;
+
+    // 載入期間（QJSEngine 參數運算、OCCT 建構、約束求解）可能合法地產生
+    // Inf/NaN；ECL 若曾開啟浮點例外 trap，會把它變成 FLOATING-POINT-OVERFLOW
+    // 並使行程崩潰。此處再保險遮蔽一次，函式結束時自動還原。
+    aicad::core::FpuMaskGuard fpuGuard;
 
     try {
         // ✅ 清除現有 Feature（保留 origin tree items）
@@ -349,6 +370,13 @@ bool Document::load(const QString& fileName) {
         if (docJson.contains("viewState"))
             m_viewState = docJson["viewState"].toObject();
 
+        // ✅ 讀取圖紙（Drawing Sheets，passthrough；由 DrawingSheetManager 延後解析）
+        m_drawingSheetsData = docJson.value("drawingSheets").toArray();
+
+        // 圖冊：載入後建立管理器（與線形比對、監看線形更新）。延後到事件迴圈，確保線形已載入。
+        if (!m_drawingSheetsData.isEmpty())
+            QTimer::singleShot(0, this, [this]() { drawing::DrawingSheetManager::forDocument(this); });
+
         // ✅ 讀取 TrackCenterLine 資料（含 per-TCL alignmentEdit）
         if (docJson.contains("trackCenterLines")) {
             qDeleteAll(m_trackCenterLines);
@@ -405,6 +433,18 @@ bool Document::load(const QString& fileName) {
                 //    最後被處理到的之外都可能顯示不出來。
                 rebuildFeature(arr);
             }
+        }
+
+        // 先接上各 Loft 的來源陣列，再依「每個分段一個 Loft」整理（舊檔的單一 Loft 轉成
+        // 第一段的 Loft、補建其餘分段的 Loft、測站改掛到各自的 Loft 底下）。
+        {
+            const QList<Feature*> preLoft = m_features;
+            for (Feature* feature : preLoft)
+                if (auto* loft = qobject_cast<ProfileLoftSolid*>(feature))
+                    loft->resolveReferences(this);
+            for (Feature* feature : preLoft)
+                if (auto* arr = qobject_cast<AlignedProfileArray*>(feature))
+                    arr->syncSegmentLofts();
         }
 
         // ✅ ProfileLoftSolid 依賴 AlignedProfileArray，必須在後者 rebuild 完成後
@@ -744,6 +784,131 @@ Sketch* Document::createSketch(Plane* plane, const QString& name) {
     return sketch;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 草圖複製／貼上
+// ─────────────────────────────────────────────────────────────────────────────
+
+QJsonObject Document::exportSketchForCopy(const Sketch* sketch) const
+{
+    QJsonObject payload;
+    if (!sketch) return payload;
+
+    payload[QStringLiteral("format")]  = QStringLiteral("aicad-sketch");
+    payload[QStringLiteral("version")] = 1;
+    const QJsonObject sketchJson = sketch->toJson();
+    payload[QStringLiteral("sketch")]  = sketchJson;
+
+    // 找出草圖運算式引用到的文件全域參數（以識別字邊界比對整份 JSON 文字，
+    // 再對新找到的全域參數的運算式重複一次，取得相依閉包）。
+    QString haystack = QString::fromUtf8(
+        QJsonDocument(sketchJson).toJson(QJsonDocument::Compact));
+    QJsonObject globals;
+    if (m_parameterStore) {
+        const QStringList names = m_parameterStore->localNames();
+        bool grew = true;
+        int guard = 0;
+        while (grew && guard++ < 16) {
+            grew = false;
+            for (const QString& n : names) {
+                if (globals.contains(n)) continue;
+                const QRegularExpression re(
+                    QStringLiteral("(?<![A-Za-z0-9_])%1(?![A-Za-z0-9_])")
+                        .arg(QRegularExpression::escape(n)));
+                if (!re.match(haystack).hasMatch()) continue;
+                const QString expr = m_parameterStore->expression(n);
+                globals[n] = expr;
+                haystack += QLatin1Char(' ') + expr;
+                grew = true;
+            }
+        }
+    }
+    payload[QStringLiteral("globalParameters")] = globals;
+    return payload;
+}
+
+bool Document::isSketchClipboardPayload(const QJsonObject& payload)
+{
+    return payload.value(QStringLiteral("format")).toString() == QLatin1String("aicad-sketch")
+        && payload.value(QStringLiteral("sketch")).isObject();
+}
+
+Sketch* Document::pasteSketch(const QJsonObject& payload, QString* error)
+{
+    if (!isSketchClipboardPayload(payload)) {
+        if (error) *error = QStringLiteral("剪貼簿內容不是 AICAD 草圖資料");
+        return nullptr;
+    }
+
+    QJsonObject sketchJson = payload.value(QStringLiteral("sketch")).toObject();
+
+    // ── 1. 補進來源文件的全域參數（只補缺少的，不覆蓋既有同名參數）──────────────
+    const QJsonObject globals = payload.value(QStringLiteral("globalParameters")).toObject();
+    if (m_parameterStore && !globals.isEmpty()) {
+        // 新增參數不會改變既有草圖的求值結果，阻斷訊號可避免整份文件被重建
+        QSignalBlocker blocker(m_parameterStore);
+        for (auto it = globals.begin(); it != globals.end(); ++it) {
+            if (!m_parameterStore->hasLocal(it.key()))
+                m_parameterStore->setLocal(it.key(), it.value().toString());
+        }
+    }
+
+    // ── 2. 新的 Feature id、清除來源專屬欄位、可見 ────────────────────────────
+    sketchJson[QStringLiteral("id")]      = QUuid::createUuid().toString();
+    sketchJson[QStringLiteral("visible")] = true;
+    sketchJson[QStringLiteral("suppressed")] = false;
+    sketchJson.remove(QStringLiteral("parentId"));
+    sketchJson.remove(QStringLiteral("hasError"));
+    sketchJson.remove(QStringLiteral("errorMessage"));
+
+    // ── 3. 名稱不得與既有 Feature 重複 ────────────────────────────────────────
+    const QString baseName = sketchJson.value(QStringLiteral("name")).toString();
+    auto nameTaken = [this](const QString& n) {
+        for (Feature* f : m_features)
+            if (f && f->name() == n) return true;
+        return false;
+    };
+    QString newName = baseName;
+    if (newName.isEmpty()) newName = QStringLiteral("Sketch");
+    if (nameTaken(newName)) {
+        const QString stem = newName + QStringLiteral(" - 複本");
+        newName = stem;
+        for (int i = 2; nameTaken(newName); ++i)
+            newName = QStringLiteral("%1 %2").arg(stem).arg(i);
+    }
+    sketchJson[QStringLiteral("name")] = newName;
+
+    // ── 4. 建立草圖 ───────────────────────────────────────────────────────────
+    auto* sketch = new Sketch(this);
+    if (!sketch->fromJson(sketchJson)) {
+        delete sketch;
+        if (error) *error = QStringLiteral("草圖資料格式錯誤，無法貼上");
+        return nullptr;
+    }
+
+    // 與 createSketch()／載入檔案相同：草圖參數 store → 文件全域 store 的作用域鏈
+    sketch->parameterStore()->setParentStore(m_parameterStore);
+    connect(sketch->parameterStore(), &aicad::core::ParameterStore::parametersRecomputed,
+            sketch, &Sketch::scheduleRebuild, Qt::UniqueConnection);
+
+    addFeature(sketch);
+
+    ui::FeatureTreeItem sketchItem;
+    sketchItem.type       = ui::ItemType::Sketch;
+    sketchItem.id         = sketch->id();
+    sketchItem.name       = sketch->name();
+    sketchItem.parentId   = QString();
+    sketchItem.visible    = sketch->isVisible();
+    sketchItem.selectable = true;
+    sketchItem.data       = QVariant::fromValue(sketch);
+    m_treeItems.append(sketchItem);
+
+    rebuildFeature(sketch);         // 建立 AIS 並通知畫面顯示
+    emitTreeStructureChanged();
+
+    qDebug() << "[Document] Sketch pasted:" << newName;
+    return sketch;
+}
+
 SketchInstance* Document::createSketchInstance(
         Sketch* master,
         Plane* plane,
@@ -851,7 +1016,8 @@ AlignedProfileArray* Document::createAlignedProfileArray(
 
 ProfileLoftSolid* Document::createProfileLoftSolid(
     AlignedProfileArray* sourceArray,
-    const QString& name)
+    const QString& name,
+    const QString& segmentId)
 {
     if (!sourceArray) {
         qWarning() << "[Document] createProfileLoftSolid: sourceArray is null";
@@ -862,6 +1028,7 @@ ProfileLoftSolid* Document::createProfileLoftSolid(
     loft->setName(name.isEmpty()
         ? QString("ProfileLoft %1").arg(m_nextFeatureNumber++)
         : name);
+    loft->setSegmentId(segmentId);
     loft->setSourceArray(sourceArray);
 
     addFeature(loft);
@@ -1617,6 +1784,25 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
 
     feature->setVisible(visible);
 
+    // ── ProfileArray／Loft 的眼睛圖示：底下的子項（Loft、測站…，沿樹狀圖 parentId）同步開關 ──
+    //    Array → Loft(每段一個) → 測站。以 tree item 的 parentId 往下走，所以不論目前
+    //    是舊檔（測站掛在陣列下）或新結構都適用；每個子孫的旗標與樹狀圖勾選一併更新。
+    if (qobject_cast<AlignedProfileArray*>(feature) || qobject_cast<ProfileLoftSolid*>(feature)) {
+        QSet<QString> seen;
+        QStringList stack{ itemId };
+        while (!stack.isEmpty()) {
+            const QString pid = stack.takeLast();
+            for (ui::FeatureTreeItem& ti : m_treeItems) {
+                if (ti.parentId != pid || seen.contains(ti.id)) continue;
+                seen.insert(ti.id);
+                ti.visible = visible;
+                if (Feature* child = findFeature(ti.id))
+                    child->setVisible(visible);
+                stack.append(ti.id);
+            }
+        }
+    }
+
     if (Sketch* sketch = qobject_cast<Sketch*>(feature)) {
         if (visible)
             sketch->displayInContext(m_aisContext);
@@ -1761,6 +1947,81 @@ QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
         vAlignItem.visible    = tcl->vAlignVisible();
         vAlignItem.selectable = true;
         items.append(vAlignItem);
+    }
+
+    // ── Drawing Sheets：圖冊 → 封面／圖目錄／圖（由 drawingSheets JSON 即時建立）──
+    {
+        ui::FeatureTreeItem folder;
+        folder.type       = ui::ItemType::Drawings;
+        folder.id         = "__drawings_folder__";
+        folder.name       = "Drawing Sheets";
+        folder.visible    = true;
+        folder.selectable = false;
+        items.append(folder);
+
+        QSet<QString> bookIds;
+        for (const QJsonValue& v : m_drawingSheetsData) {
+            const QJsonObject o = v.toObject();
+            if (!o.value("__book").toBool()) continue;
+            ui::FeatureTreeItem b;
+            b.type       = ui::ItemType::DrawingBook;
+            b.id         = QStringLiteral("book_") + o.value("id").toString();
+            b.name       = o.value("name").toString();
+            b.parentId   = folder.id;
+            b.visible    = true;
+            b.selectable = true;
+            items.append(b);
+            bookIds.insert(o.value("id").toString());
+
+            // 機廠矩形視圖：資料夾＋每個視圖一項（資料來自圖冊設定的 depotViews）
+            const QString bid = o.value("id").toString();
+            const QJsonArray dv = o.value("settings").toObject().value("depotViews").toArray();
+            ui::FeatureTreeItem df;
+            df.type       = ui::ItemType::DepotViewFolder;
+            df.id         = QStringLiteral("depotfolder_") + bid;
+            df.name       = tr("機廠矩形視圖 (%1)").arg(dv.size());
+            df.parentId   = b.id;
+            df.visible    = false;
+            df.selectable = true;
+            for (int i = 0; i < dv.size(); ++i)
+                if (m_shownDepotViews.contains(QStringLiteral("%1#%2").arg(bid).arg(i))) { df.visible = true; break; }
+            items.append(df);
+            for (int i = 0; i < dv.size(); ++i) {
+                const QJsonObject vo = dv[i].toObject();
+                ui::FeatureTreeItem vi;
+                vi.type       = ui::ItemType::DepotViewItem;
+                vi.id         = QStringLiteral("dview_%1_%2").arg(bid).arg(i);
+                vi.name       = tr("%1. %2  (%3×%4 m, 排序 %5)").arg(i + 1).arg(vo.value("name").toString())
+                                    .arg(vo.value("w").toDouble(), 0, 'f', 1).arg(vo.value("h").toDouble(), 0, 'f', 1)
+                                    .arg(vo.value("order").toInt(1));
+                vi.parentId   = df.id;
+                vi.visible    = m_shownDepotViews.contains(QStringLiteral("%1#%2").arg(bid).arg(i));
+                vi.selectable = true;
+                items.append(vi);
+            }
+        }
+        for (const QJsonValue& v : m_drawingSheetsData) {
+            const QJsonObject o = v.toObject();
+            if (o.value("__book").toBool()) continue;
+            const QString bookId = o.value("bookId").toString();
+            const QJsonObject tb = o.value("titleBlock").toObject();
+            const bool isCover = o.value("isCover").toBool();
+            const bool isIndex = o.value("planProfile").toObject().value("isIndex").toBool();
+            QString title = tb.value("drawingTitle").toString();
+            if (title.isEmpty()) title = tr("(untitled)");
+            const QString no = tb.value("sheetNumber").toString();
+
+            ui::FeatureTreeItem it;
+            it.type       = ui::ItemType::DrawingSheetItem;
+            it.id         = QStringLiteral("dsheet_") + o.value("id").toString();
+            it.name       = isCover ? tr("封面 Cover — %1").arg(title)
+                          : isIndex ? tr("圖目錄 Index — %1").arg(title)
+                          : (no.isEmpty() ? title : QStringLiteral("%1  %2").arg(no, title));
+            it.parentId   = bookIds.contains(bookId) ? QStringLiteral("book_") + bookId : folder.id;
+            it.visible    = true;
+            it.selectable = true;
+            items.append(it);
+        }
     }
 
     return items;

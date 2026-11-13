@@ -77,7 +77,9 @@ void CommandAlias::registerSystemAliases() {
     registerAlias("SCS", "ALIGNMENTSCS",         "Add SCS (Spiral-Circular-Spiral) curve",       true);
     registerAlias("RSCS", "ALIGNMENTREVSCS",     "Add reverse SCS+SCS curve (left-right or right-left)", true);
     registerAlias("AQT", "ALIGNMENTQUICKTABLE",  "Compute full horizontal alignment table from partial keypoint data", true);
-    registerAlias("ADC", "ALIGNMENTDRAWCHAIN",   "Interactively draw alignment elements one after another", true);
+    registerAlias("DSH", "DRAWINGSHEET",         "Open Drawing Sheet dialog (DSH NEW = new sheet, DSH INFO = diagnostics)", true);
+    registerAlias("PPS", "PLANPROFILE",          "Auto plan & profile sheets along an alignment (PPS GEN/LOAD/SAVE/INFO)", true);
+    registerAlias("ADC", "ALIGNMENTDRAWCHAIN",  "Interactively draw alignment elements one after another", true);
     registerAlias("SCSCHAIN", "SCSCHAIN",        "Add S0-C0-S1-C1-...-Sn compound chain (N>=2 arcs)", true);
     registerAlias("AS",  "ALIGNMENTADDSPIRAL",   "Insert Clothoid between Fixed Tangent and Arc (LC/CA)", true);
     registerAlias("TCL", "TRACK",                "New Track Centerline",                         true);

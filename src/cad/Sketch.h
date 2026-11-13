@@ -589,6 +589,23 @@ public:
     /// 所以約束照常運算，但軸永遠不會被拉動。
     static bool isDatumUuid(const QString& uuid) { return uuid.startsWith(QLatin1String("datum:")); }
 
+    /**
+     * @brief 為「不是 Sketch 本身的求解者」（SketchInstance 的 clone）建立座標軸基準求解輸入。
+     *
+     * 約束以 "datum:xaxis" 等固定代號引用座標軸／原點，這些替身不在幾何清單裡，
+     * Sketch 自己求解時由 appendDatumSolveInputs() 補進去。SketchInstance 直接把
+     * clone 丟給 ConstraintSolver，過去漏掉這一步 → 與座標軸相關的尺寸（例如
+     * 到原點／軸線的距離）在 solver 裡找不到對象，無法被強制執行，改 Thick／w
+     * 之後圖形不會跟著變。
+     *
+     * @param cons        要求解的約束（只用來判斷是否引用了基準）
+     * @param ownedGeoms  輸出：新建的替身幾何（呼叫端擁有，求解後須 qDeleteAll）
+     * @param solveCons   輸出：附加「釘死替身端點」的 Fixed 約束
+     */
+    static void buildDatumSolveInputs(const QList<SketchConstraint>& cons,
+                                      QList<SketchGeometry*>& ownedGeoms,
+                                      QList<SketchConstraint>& solveCons);
+
     QString xAxisGeomUuid();    ///< 固定代號 "datum:xaxis"（不建立任何幾何）
     QString yAxisGeomUuid();    ///< Sketch 內 Y 軸 SketchLine 的 UUID
     QString originPointUuid();  ///< Sketch 內原點 SketchPoint 的 UUID

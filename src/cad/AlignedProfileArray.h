@@ -35,6 +35,7 @@ namespace cad {
 class Sketch;
 class Plane;
 class SketchInstance;
+class ProfileLoftSolid;
 
 /**
  * @brief 沿線陣列的一「段」輸入資料（分段表格的一列）。
@@ -43,6 +44,7 @@ class SketchInstance;
  * 在 [start, end] 以 interval 為間距佈置 `profileId` 指定的斷面草圖。
  */
 struct ProfileArraySegment {
+    QString id;                    ///< 穩定識別碼（uuid；段改名／列順序改變都不變）。每段對應一個 Loft。
     QString name;                  ///< 段名稱（陣列內唯一）
     double  start    = 0.0;        ///< 起點里程 [m]
     double  end      = 0.0;        ///< 終點里程 [m]
@@ -93,6 +95,26 @@ public:
     QList<ProfileArraySegment> segments() const { return m_segments; }
     int                        segmentCount() const { return m_segments.size(); }
     QStringList                extraColumns() const { return m_extraColumns; }
+
+    // ── 每段一個 Loft ───────────────────────────────────────────────────
+    /// 第 idx 段的穩定識別碼；idx 超出範圍回傳空字串。
+    QString segmentId(int idx) const;
+    /// 以識別碼找段索引；找不到回傳 -1。
+    int     segmentIndexById(const QString& id) const;
+
+    /**
+     * @brief 讓「每一個分段恰好有一個 ProfileLoftSolid」，並把各分段的測站掛在
+     *        各自 Loft 之下（樹狀圖：Array → Loft → 測站）。
+     *
+     *  - 新增的分段 → 建立新的 Loft
+     *  - 已刪除分段的 Loft（及其上的 Chamfer）→ 移除
+     *  - 舊檔（單一 Loft 涵蓋全部分段）→ 該 Loft 轉為第一段的 Loft，其餘分段補建
+     *  - Loft 名稱跟著分段名稱走
+     *
+     * 在 rebuild() 之外呼叫（會新增／移除 Feature）：commitSegments()、建立陣列的
+     * 指令、以及載入檔案後。
+     */
+    void syncSegmentLofts();
 
     /// 只更新資料，不重建。
     void setSegments(const QList<ProfileArraySegment>& segs, const QStringList& extraColumns);
@@ -148,6 +170,33 @@ public:
      *        唯讀站位資料表使用。
      */
     QVector<double> stationChainages() const;
+    // ── 里程超出線形範圍時，改接「端點相連」的線形 ──────────────────────────────
+    //
+    // 陣列的里程範圍可能超過 trackCenterLine() 本身的範圍。超出時不可外推（那不是真實
+    // 線形），而是找端點與本線形終點／起點 (E, N, Z) 很接近、切線方向也大致連續的
+    // 另一條線形，沿用其線形資料並接續里程（可連續接多條）。
+    struct AlignmentSample {
+        railway::TrackCenterLine* tcl = nullptr;  ///< 實際提供線形資料的線形
+        double p            = 0.0;                ///< 該線形上的里程
+        bool   connected    = false;              ///< 來自相連線形（非主線形）
+        bool   outOfRange   = false;              ///< 找不到可接的線形，只能外推（結果不可信）
+    };
+    /// 把陣列里程 p 對應到實際的 (線形, 里程)。
+    AlignmentSample resolveAlignment(double p) const;
+
+    /// 某里程範圍 [start, end] 實際會用到哪些線形（依里程順序，主線形可能不在其中）。
+    /// 供分段資料表的「線形」欄顯示「該段所依賴的線形」。
+    struct SegmentAlignments {
+        QStringList names;           ///< 依序用到的線形名稱（去重）
+        bool        outOfRange = false;   ///< 範圍有一部分既不在主線形、也找不到相連線形
+    };
+    SegmentAlignments alignmentsForRange(double start, double end) const;
+
+    /// 端點相連的判定容差 [m]（水平 E,N 距離／高程差）與切線方向容差 [rad]
+    static constexpr double kConnectTolXY  = 0.30;
+    static constexpr double kConnectTolZ   = 0.30;
+    static constexpr double kConnectTolAz  = 0.785398163;   ///< 45°
+
     /// 與 instances()/stationWireLoops() 同順序：各測站所屬的段索引（供分段放樣）。
     QVector<int>    stationSegmentIndices() const { return m_stationSeg; }
 
@@ -165,6 +214,9 @@ private:
     struct StationRef { double p; int seg; };
     QVector<StationRef> computeStationRefs() const;
     QVector<double>     computeStations() const;
+    void ensureSegmentIds();                                   ///< 補齊／去重各段 id
+    QHash<QString, ProfileLoftSolid*> collectSegmentLofts() const;   ///< 段 id → 該段的 Loft
+    void reparentInstances();                                  ///< 測站掛到各自段的 Loft（沒有則掛陣列）
     Sketch*             resolveProfile(const ProfileArraySegment& seg) const;
     void                syncMasterConnections();
 
@@ -184,6 +236,18 @@ private:
     QList<QPointer<SketchInstance>> m_instances;  ///< 依測站順序排列（先依段、再依里程）
     QList<QPointer<Plane>>          m_planes;     ///< 與 m_instances 一一對應
     QVector<int>                    m_stationSeg; ///< 與 m_instances 一一對應：所屬段索引
+
+    // 線形路徑（主線形 + 接續的相連線形）。依需求建立，主線形或相連線形變動時失效。
+    struct RouteLeg {
+        QPointer<railway::TrackCenterLine> tcl;
+        double a0 = 0.0, a1 = 0.0;   ///< 本段涵蓋的陣列里程範圍
+        double off = 0.0;            ///< 線形里程 = 陣列里程 + off
+    };
+    mutable QVector<RouteLeg> m_route;          ///< [0] = 主線形；其後依序為接續的線形
+    mutable bool              m_routeValid = false;
+    QList<QMetaObject::Connection> m_routeConns; ///< 相連線形的 dataChanged 連線
+    void ensureRoute() const;
+    void syncRouteConnections();
 
     QMetaObject::Connection m_tclDataChangedConn;
     QHash<Sketch*, QMetaObject::Connection> m_masterConns;   ///< 各 profile 的 shapeChanged 連線

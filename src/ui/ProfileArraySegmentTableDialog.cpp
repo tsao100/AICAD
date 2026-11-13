@@ -3,8 +3,12 @@
 #include "cad/AlignedProfileArray.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
+#include "cad/ProfileLoftSolid.h"
+#include "cad/ChamferSolid.h"
 
 #include <QApplication>
+#include <QBrush>
+#include <QColor>
 #include <QClipboard>
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -30,14 +34,16 @@ namespace ui {
 
 namespace {
 
-enum Col { ColName = 0, ColStart, ColEnd, ColProfile, ColThick, ColW, ColInterval, ColFixedCount };
+enum Col { ColName = 0, ColStart, ColEnd, ColProfile, ColThick, ColW, ColInterval,
+           ColAlignment,   ///< 唯讀：該段所依賴的線形（不參與 readSegments／貼上）
+           ColFixedCount };
 
 const QStringList& fixedHeaders() {
     static const QStringList h = {
         QObject::tr("段名稱 Name"),  QObject::tr("起點里程 Start [m]"),
         QObject::tr("終點里程 End [m]"), QObject::tr("Profile"),
         QObject::tr("Thick"),        QObject::tr("w"),
-        QObject::tr("間距 Interval [m]") };
+        QObject::tr("間距 Interval [m]"), QObject::tr("線形 Alignment") };
     return h;
 }
 
@@ -58,7 +64,8 @@ int fixedColumnOf(const QString& header) {
         { "profile", "使用的profile" },
         { "thick" },
         { "w" },
-        { "interval", "間距", "間距interval" } };
+        { "interval", "間距", "間距interval" },
+        { "alignment", "線形", "線形alignment" } };
     const QString n = normHeader(header);
     for (int i = 0; i < aliases.size(); ++i)
         if (aliases[i].contains(n)) return i;
@@ -185,6 +192,10 @@ ProfileArraySegmentTableDialog::ProfileArraySegmentTableDialog(
     // ── 表格 ──
     auto* table = new SegmentTable(this);
     m_table = table;
+    // 起／終點里程改變 → 重算該列「線形」欄（該段依賴哪條線形）
+    connect(table, &QTableWidget::cellChanged, this, [this](int r, int c) {
+        if (c == ColStart || c == ColEnd) refreshAlignmentCell(r);
+    });
     table->onCopy  = [this] { copySelection(); };
     table->onPaste = [this] { paste(); };
     table->onClear = [this] { clearCells(); };
@@ -281,6 +292,10 @@ void ProfileArraySegmentTableDialog::loadFromArray() {
         m_table->insertRow(r);
         auto put = [&](int c, const QString& t) { m_table->setItem(r, c, new QTableWidgetItem(t)); };
         put(ColName,     s.name);
+        // 每列攜帶該段的穩定 id：列順序改變、段改名、中間刪列時，陣列才能把每個 Loft
+        // 對回自己的段（新增的列沒有 id → 套用時由陣列配發並建立新的 Loft）。
+        if (auto* nameItem = m_table->item(r, ColName))
+            nameItem->setData(Qt::UserRole + 10, s.id);
         put(ColStart,    fmt(s.start));
         put(ColEnd,      fmt(s.end));
         const QString pn = nameOf(s.profileId);
@@ -290,6 +305,7 @@ void ProfileArraySegmentTableDialog::loadFromArray() {
         put(ColInterval, fmt(s.interval));
         for (int k = 0; k < cols.size(); ++k)
             put(ColFixedCount + k, s.extra.contains(cols[k]) ? fmt(s.extra.value(cols[k])) : QString());
+        refreshAlignmentCell(r);
     }
     m_table->blockSignals(false);
     m_table->resizeColumnsToContents();
@@ -320,6 +336,8 @@ bool ProfileArraySegmentTableDialog::readSegments(QList<cad::ProfileArraySegment
         cad::ProfileArraySegment s;
 
         s.name = text(r, ColName);
+        if (const auto* nameItem = m_table->item(r, ColName))
+            s.id = nameItem->data(Qt::UserRole + 10).toString();
         if (s.name.isEmpty())            { error = tr("%1：段名稱不可空白").arg(where(ColName)); return false; }
         if (usedNames.contains(s.name))  { error = tr("%1：段名稱「%2」重複").arg(where(ColName), s.name); return false; }
         usedNames.insert(s.name);
@@ -377,8 +395,39 @@ void ProfileArraySegmentTableDialog::apply() {
     QApplication::restoreOverrideCursor();
 
     updateInfo();
-    if (!ok)
-        QMessageBox::warning(this, tr("重建失敗"), m_array->errorMessage());
+
+    // 下游（Loft／Chamfer）重建失敗時會保留舊形狀，畫面看起來就像「沒更新」。
+    // 這裡把下游的錯誤一併回報，避免使用者不知道失敗。
+    QStringList downstream;
+    if (cad::Document* doc = m_array->document()) {
+        QList<cad::ProfileLoftSolid*> lofts;
+        for (cad::Feature* f : doc->features()) {
+            if (auto* l = qobject_cast<cad::ProfileLoftSolid*>(f)) {
+                if (l->sourceArray() == m_array) {
+                    lofts << l;
+                    if (!l->errorMessage().isEmpty())
+                        downstream << QStringLiteral("%1: %2").arg(l->name(), l->errorMessage());
+                }
+            }
+        }
+        for (cad::Feature* f : doc->features()) {
+            if (auto* c = qobject_cast<cad::ChamferSolid*>(f)) {
+                for (cad::ProfileLoftSolid* l : lofts) {
+                    if (c->sourceFeature() == l && !c->errorMessage().isEmpty())
+                        downstream << QStringLiteral("%1: %2").arg(c->name(), c->errorMessage());
+                }
+            }
+        }
+    }
+
+    if (!ok || !downstream.isEmpty()) {
+        QString msg = ok ? QString() : m_array->errorMessage();
+        if (!downstream.isEmpty()) {
+            if (!msg.isEmpty()) msg += QStringLiteral("\n\n");
+            msg += tr("下游特徵重建失敗（畫面維持舊形狀）：\n") + downstream.join(QLatin1Char('\n'));
+        }
+        QMessageBox::warning(this, tr("重建失敗"), msg);
+    }
 }
 
 void ProfileArraySegmentTableDialog::updateInfo() {
@@ -436,7 +485,41 @@ int ProfileArraySegmentTableDialog::appendDefaultRow(int baseRow) {
     put(ColW,        QString());
     put(ColInterval, fmt(interval));
     for (int c = ColFixedCount; c < m_table->columnCount(); ++c) put(c, QString());
+    refreshAlignmentCell(r);
     return r;
+}
+
+void ProfileArraySegmentTableDialog::refreshAlignmentCell(int r)
+{
+    if (!m_table || r < 0 || r >= m_table->rowCount() || ColAlignment >= m_table->columnCount())
+        return;
+
+    double s = 0, e = 0;
+    const auto* is = m_table->item(r, ColStart);
+    const auto* ie = m_table->item(r, ColEnd);
+    QString text;
+    QString tip;
+    if (m_array && m_array->trackCenterLine() && is && ie
+        && parseNum(is->text(), s) && parseNum(ie->text(), e)) {
+        const auto sa = m_array->alignmentsForRange(s, e);
+        text = sa.names.join(QStringLiteral(" → "));
+        tip  = tr("本段（%1 ~ %2 m）依賴的線形。\n超出主線形里程範圍時，會接續端點相連（E,N,Z 很接近）的線形。")
+                   .arg(s, 0, 'f', 3).arg(e, 0, 'f', 3);
+        if (sa.outOfRange) {
+            text += tr("  ⚠ 超出範圍（無相連線形，將外推）");
+            tip  += tr("\n⚠ 部分里程既不在主線形範圍內，也找不到端點相連的線形。");
+        }
+    } else {
+        text = QStringLiteral("—");
+    }
+
+    auto* it = m_table->item(r, ColAlignment);
+    if (!it) { it = new QTableWidgetItem; m_table->setItem(r, ColAlignment, it); }
+    it->setText(text);
+    it->setToolTip(tip);
+    it->setFlags(it->flags() & ~Qt::ItemIsEditable);        // 唯讀：由起訖里程推得
+    it->setForeground(text.contains(QStringLiteral("⚠")) ? QBrush(QColor(0xC0, 0x39, 0x2B))
+                                                         : QBrush(QColor(0x55, 0x55, 0x55)));
 }
 
 void ProfileArraySegmentTableDialog::addRow() {
@@ -452,6 +535,7 @@ void ProfileArraySegmentTableDialog::addRow() {
         m_table->insertRow(cur + 1);
         for (int c = 0; c < m_table->columnCount(); ++c)
             m_table->setItem(cur + 1, c, new QTableWidgetItem(row[c]));
+        refreshAlignmentCell(cur + 1);      // 搬移時重建了儲存格 → 還原唯讀的「線形」欄
         m_table->setCurrentCell(cur + 1, ColName);
     } else {
         m_table->setCurrentCell(r, ColName);
@@ -607,6 +691,7 @@ void ProfileArraySegmentTableDialog::paste() {
         for (const QString& hRaw : grid.first()) {
             const QString h = hRaw.trimmed();
             int fc = fixedColumnOf(h);
+            if (fc == ColAlignment) { map << -1; continue; }     // 唯讀欄，不可貼入
             if (fc >= 0) { map << fc; continue; }
             int found = -1;
             for (int c = ColFixedCount; c < m_table->columnCount(); ++c)
@@ -641,7 +726,8 @@ void ProfileArraySegmentTableDialog::paste() {
         const QModelIndexList idx = m_table->selectionModel()->selectedIndexes();
         if (idx.size() > 1) {
             for (const QModelIndex& i : idx)
-                if (auto* it = m_table->item(i.row(), i.column())) it->setText(grid[0][0].trimmed());
+                if (i.column() != ColAlignment)
+                    if (auto* it = m_table->item(i.row(), i.column())) it->setText(grid[0][0].trimmed());
             return;
         }
     }
@@ -652,6 +738,7 @@ void ProfileArraySegmentTableDialog::paste() {
         for (int j = 0; j < grid[i].size(); ++j) {
             const int c = c0 + j;
             if (c >= m_table->columnCount()) break;
+            if (c == ColAlignment) continue;                      // 唯讀欄，不可貼入
             m_table->item(r, c)->setText(grid[i][j].trimmed());
         }
     }

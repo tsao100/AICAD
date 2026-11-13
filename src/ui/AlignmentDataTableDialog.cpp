@@ -19,6 +19,15 @@
 #include "railway/RailwayAlignment.h"
 #include "command/alignment/AlignmentEditCommand.h"
 #include "core/geometry/ProjectOrigin.h"
+#include "cad/Document.h"
+#include "drawing/PlanProfileGenerator.h"
+#include <QCheckBox>
+#include <algorithm>
+#include <functional>
+#include <QPlainTextEdit>
+#include <QDialog>
+#include <QSignalBlocker>
+#include <QMessageBox>
 
 #include <QTabWidget>
 #include <QTableWidget>
@@ -388,6 +397,53 @@ void AlignmentDataTableDialog::buildUi()
     // railway::TrackCenterLine::elementChainSyncEnabled()／
     // FeatureBrowser::onCustomContextMenu()。這裡不再放置獨立開關。
 
+    m_noChain = new QCheckBox(tr("此線形單獨（不成串）：連續里程不與前後接續的線形連動"), this);
+    m_noChain->setToolTip(tr("在連續里程欄任一列輸入數值，會以該點為基準重新累加（減）；同一線形串（E,N,Z 接續）的其他線形一併連動。\n勾選此項則本線形獨立，也不會被別的線形連動。"));
+    m_noChain->setChecked(m_tcl && m_tcl->noChain());
+    connect(m_noChain, &QCheckBox::toggled, this, [this](bool on) {
+        if (!m_tcl) return;
+        m_tcl->setNoChain(on);
+        if (!on) propagateContChainage();      // 重新併入線形串：依本線形的連續里程重算前後
+    });
+    mainLayout->addWidget(m_noChain);
+
+    {
+        auto* row = new QHBoxLayout;
+        row->addWidget(new QLabel(tr("連續里程增減方向："), this));
+        m_contDir = new QComboBox(this);
+        m_contDir->addItem(tr("隨里程增加（＋）"), 1);
+        m_contDir->addItem(tr("隨里程減少（－）"), -1);
+        m_contDir->setToolTip(tr("指定連續里程相對本線形里程的增減方向。變更後，同一線形串（E,N,Z 接續、未標單獨）的線形一併連動，並保持方向一致。"));
+        row->addWidget(m_contDir);
+        row->addStretch();
+        mainLayout->addLayout(row);
+        connect(m_contDir, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+            if (m_populating || !m_tcl) return;
+            const int dir = m_contDir->currentData().toInt() < 0 ? -1 : 1;
+            if (m_hTable->rowCount() < 1) return;
+            // 保持第一列（起點）的連續里程不變，只改增減方向
+            const QTableWidgetItem* c0 = m_hTable->item(0, kColContChainage);
+            const double startCont = c0 ? c0->text().toDouble() : 0.0;
+            if (m_doc && m_hMeta.size() > 0 && m_hMeta[0].startChainageUsesSolver) {
+                const QJsonObject before = m_doc->toJson();
+                m_doc->horizontal()->setStartContinuousChainage(startCont);
+                m_doc->horizontal()->setContinuousDirection(dir);
+                m_doc->horizontal()->solve();
+                command::AlignmentEditCommand::push(m_doc, before, m_doc->toJson(), tr("變更連續里程方向"));
+            } else {
+                QVector<AlignmentPoint> raw = m_tcl->horizontal()->rawPoints();
+                if (!raw.isEmpty()) {
+                    const double ch0 = raw.first().chainage;
+                    for (AlignmentPoint& pt : raw) pt.contChainage = startCont + dir * (pt.chainage - ch0);
+                    m_tcl->loadHorizontal(raw);
+                }
+            }
+            populateHorizontalTable();
+            propagateContChainage();
+            Q_EMIT dataCommitted();
+        });
+    }
+
     m_tabs = new QTabWidget(this);
     mainLayout->addWidget(m_tabs);
 
@@ -651,19 +707,20 @@ void AlignmentDataTableDialog::populateHorizontalTable()
         // 不論資料來源是否已透過 solver 求解皆可編輯：已求解時透過
         // HorizontalAlignmentEdit 的起始里程偏移量套用；尚未求解（例如 ALD
         // 直接匯入、尚未進行任何幾何編輯）則直接平移 TCL 的原始點位。
+        // 連續里程：任一列都可輸入（以該點為基準，整條線形平移；同一線形串的其他線形連動）
+        meta.startChainageUsesSolver = usingSolverResult;
+        meta.contChainageNow = p.contChainage;
+        {
+            auto* contItem = editItem(p.contChainage);
+            m_hTable->setItem(row, kColContChainage, contItem);
+            meta.editStartContChainage = true;
+        }
         if (row == 0) {
             auto* chItem = editItem(p.chainage);
             m_hTable->setItem(row, kColChainage, chItem);
             meta.editStartChainage = true;
-
-            auto* contItem = editItem(p.contChainage);
-            m_hTable->setItem(row, kColContChainage, contItem);
-            meta.editStartContChainage = true;
-
-            meta.startChainageUsesSolver = usingSolverResult;
         } else {
-            m_hTable->setItem(row, kColChainage,     roItem(QString::number(p.chainage, 'f', 5)));
-            m_hTable->setItem(row, kColContChainage, roItem(QString::number(p.contChainage, 'f', 5)));
+            m_hTable->setItem(row, kColChainage, roItem(QString::number(p.chainage, 'f', 5)));
         }
 
         m_hTable->setItem(row, kColAzimuth, roItem(azimuthToDMS(p.azimuth)));
@@ -785,6 +842,20 @@ void AlignmentDataTableDialog::populateHorizontalTable()
     pushAuxToTcl(merged);
 
     m_populating = false;
+    if (m_contDir) {
+        QSignalBlocker blk(m_contDir);
+        m_contDir->setCurrentIndex(m_contDir->findData(currentContDir()));
+    }
+}
+
+int AlignmentDataTableDialog::currentContDir() const
+{
+    if (m_hTable && m_hTable->rowCount() > 1) {
+        const QTableWidgetItem* a = m_hTable->item(0, kColContChainage);
+        const QTableWidgetItem* b = m_hTable->item(1, kColContChainage);
+        if (a && b) return b->text().toDouble() < a->text().toDouble() ? -1 : 1;
+    }
+    return (m_doc && m_doc->horizontal()) ? m_doc->horizontal()->continuousDirection() : 1;
 }
 
 void AlignmentDataTableDialog::onHCellDoubleClicked(int row, int col)
@@ -841,6 +912,62 @@ void AlignmentDataTableDialog::onHCellDoubleClicked(int row, int col)
     menu->deleteLater();
 }
 
+void AlignmentDataTableDialog::propagateContChainage()
+{
+    if (!m_tcl || m_tcl->noChain() || m_hTable->rowCount() < 1) return;
+    auto* cadDoc = qobject_cast<aicad::cad::Document*>(m_tcl->parent());
+    if (!cadDoc) return;
+    const QTableWidgetItem* a = m_hTable->item(0, kColContChainage);
+    const QTableWidgetItem* b = m_hTable->item(m_hTable->rowCount() - 1, kColContChainage);
+    if (!a || !b) return;
+    const auto ups = aicad::drawing::planProfilePropagateContChainage(
+        cadDoc, m_tcl, a->text().toDouble(), b->text().toDouble(), currentContDir());
+    int n = 0;
+    for (const auto& u : ups) if (u.changed) ++n;
+    if (n > 0) Q_EMIT dataCommitted();
+    if (!ups.isEmpty()) {
+        // 依序顯示：本線形 → 主串（沿接續方向逐條）→ 分支（縮排，標明接在哪條線形的哪個端點）
+        const QString srcName = m_tcl->name().isEmpty() ? m_tcl->id() : m_tcl->name();
+        QStringList out;
+        out << tr("◆ 本線形 %1：起點 %2、終點 %3，連續里程%4")
+                   .arg(srcName).arg(a->text()).arg(b->text())
+                   .arg(currentContDir() < 0 ? tr("隨里程減少") : tr("隨里程增加"));
+        // 以深度優先輸出：同一父線形下先主串、後分支
+        std::function<void(const QString&, int)> dump = [&](const QString& parentId, int indent) {
+            QVector<const aicad::drawing::ContChainageUpdate*> kids;
+            for (const auto& u : ups) if (u.parentId == parentId) kids << &u;
+            std::stable_sort(kids.begin(), kids.end(), [](auto* x, auto* y) { return !x->branch && y->branch; });
+            for (const auto* u : kids) {
+                const QString mark = u->branch ? tr("└ 分支") : tr("├ 主串");
+                const QString state = u->changed
+                    ? tr("起點 %1 → %2，終點 %3").arg(u->oldStart, 0, 'f', 3).arg(u->newStart, 0, 'f', 3).arg(u->newEnd, 0, 'f', 3)
+                    : tr("已一致，未更動（起點 %1）").arg(u->newStart, 0, 'f', 3);
+                out << QString(indent * 3, QLatin1Char(' ')) + tr("%1 %2〔%3，接 %4〕 %5（%6）")
+                           .arg(mark).arg(u->name).arg(u->link).arg(u->parentName).arg(state)
+                           .arg(u->dir < 0 ? tr("減") : tr("增"));
+                dump(u->tclId, indent + 1);
+            }
+        };
+        dump(m_tcl->id(), 0);
+
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("連續里程已連動更新"));
+        auto* lay = new QVBoxLayout(&dlg);
+        lay->addWidget(new QLabel(tr("串接的 %1 條線形中，%2 條已依本線形重新累加（減）：").arg(ups.size()).arg(n), &dlg));
+        auto* te = new QPlainTextEdit(&dlg);
+        te->setReadOnly(true);
+        te->setLineWrapMode(QPlainTextEdit::NoWrap);
+        QFont mono = te->font(); mono.setStyleHint(QFont::Monospace); te->setFont(mono);
+        te->setPlainText(out.join(QLatin1Char('\n')));
+        lay->addWidget(te);
+        auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok, &dlg);
+        connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        lay->addWidget(bb);
+        dlg.resize(720, 360);
+        dlg.exec();
+    }
+}
+
 bool AlignmentDataTableDialog::elementChainSyncEnabled() const
 {
     return m_tcl && m_tcl->elementChainSyncEnabled();
@@ -888,8 +1015,8 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
     }
 
     // ── 起始里程（僅第一列）───────────────────────────────────────────────
-    if (row == 0 && (col == kColChainage || col == kColContChainage) &&
-        (meta.editStartChainage || meta.editStartContChainage)) {
+    if (((row == 0 && col == kColChainage && meta.editStartChainage) ||
+         (col == kColContChainage && meta.editStartContChainage))) {
         bool ok = false;
         const double value = item->text().toDouble(&ok);
         if (!ok) { populateHorizontalTable(); return; }
@@ -903,8 +1030,10 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
                 m_doc->horizontal()->setStartChainage(value);
                 actionText = tr("編輯起始里程");
             } else {
-                m_doc->horizontal()->setStartContinuousChainage(value);
-                actionText = tr("編輯起始連續里程");
+                // 以第 row 點的連續里程為準：整條線形平移（連續里程＝里程＋常數）
+                m_doc->horizontal()->setStartContinuousChainage(
+                    m_doc->horizontal()->startContinuousChainage() + (value - meta.contChainageNow));
+                actionText = tr("編輯連續里程");
             }
             m_doc->horizontal()->solve();
             command::AlignmentEditCommand::push(m_doc, before, m_doc->toJson(), actionText);
@@ -917,7 +1046,7 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
                     const double delta = value - raw.first().chainage;
                     for (AlignmentPoint& pt : raw) pt.chainage += delta;
                 } else {
-                    const double delta = value - raw.first().contChainage;
+                    const double delta = value - meta.contChainageNow;
                     for (AlignmentPoint& pt : raw) pt.contChainage += delta;
                 }
                 m_tcl->loadHorizontal(raw);
@@ -925,6 +1054,7 @@ void AlignmentDataTableDialog::onHCellChanged(QTableWidgetItem* item)
         }
 
         populateHorizontalTable();
+        if (col == kColContChainage) propagateContChainage();
         Q_EMIT dataCommitted();
         return;
     }

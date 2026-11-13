@@ -51,6 +51,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
 
+#include <ShapeFix_Wire.hxx>
 #include <QDebug>
 #include <cmath>
 
@@ -652,6 +653,55 @@ QVector3D GeometryBuilder::fromGpPnt(const gp_Pnt& p) {
     return QVector3D(p.X(), p.Y(), p.Z());
 }
 
+namespace {
+
+/// 草圖座標（mm）下，端點距離在此值內視為相接。草圖點以 float 儲存（座標約 1e3 時
+/// 誤差約 1e-4），但圓弧的 curve 是 double 精度；兩者的端點會差到超過 OCCT 預設的
+/// Precision::Confusion (1e-7)，BRepBuilderAPI_MakeWire 就接不上弧邊。
+constexpr double kSketchJoinTol = 1e-3;
+
+/// 把一圈邊組成一條 wire：先嚴格連接；有邊接不上時，改用容差連接並修正端點。
+TopoDS_Wire wireFromEdges(const QVector<TopoDS_Edge>& edges)
+{
+    if (edges.isEmpty()) return {};
+
+    BRepBuilderAPI_MakeWire strict;
+    bool allAdded = true;
+    for (const TopoDS_Edge& e : edges) {
+        if (e.IsNull()) continue;
+        strict.Add(e);
+        if (!strict.IsDone()) { allAdded = false; break; }
+    }
+    if (allAdded && strict.IsDone()) return strict.Wire();
+
+    Handle(TopTools_HSequenceOfShape) seq = new TopTools_HSequenceOfShape;
+    for (const TopoDS_Edge& e : edges)
+        if (!e.IsNull()) seq->Append(e);
+    Handle(TopTools_HSequenceOfShape) wires;
+    ShapeAnalysis_FreeBounds::ConnectEdgesToWires(seq, kSketchJoinTol, Standard_False, wires);
+    if (wires.IsNull() || wires->IsEmpty()) return {};
+
+    TopoDS_Wire best;
+    int bestCount = 0;
+    for (int i = 1; i <= wires->Length(); ++i) {
+        const TopoDS_Wire w = TopoDS::Wire(wires->Value(i));
+        int n = 0;
+        for (TopExp_Explorer ex(w, TopAbs_EDGE); ex.More(); ex.Next()) ++n;
+        if (n > bestCount) { best = w; bestCount = n; }
+    }
+    if (best.IsNull()) return {};
+
+    ShapeFix_Wire fix;
+    fix.Load(best);
+    fix.SetPrecision(kSketchJoinTol);
+    fix.FixReorder();
+    fix.FixConnected();
+    fix.FixClosed();
+    return fix.Wire();
+}
+
+} // namespace
+
 TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
                                    const cad::SketchGeometry* g)
 {
@@ -670,7 +720,30 @@ TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
     case SketchGeometryType::Arc: {
         const auto* a = static_cast<const cad::SketchArc*>(g);
         if (a->curve.IsNull()) return {};
-        BRepBuilderAPI_MakeEdge e(a->curve);          // ← 修正
+
+        // 端點取自與相鄰線段「共用的 SketchPoint」（與 Line 的 start/end 同一份 float
+        // 座標），中點取自 curve。這樣弧與線的端點完全重合，wire 才接得起來；
+        // 直接用 curve（double）的端點會與 float 的線端點差約 1e-4 而接不上，
+        // 弧就沒有併入輪廓。
+        QVector2D s2, e2;
+        bool haveS = false, haveE = false;
+        if (!a->startUuid.isEmpty())
+            if (const auto* sp = sketch->point(a->startUuid)) { s2 = sp->pos; haveS = true; }
+        if (!a->endUuid.isEmpty())
+            if (const auto* ep = sketch->point(a->endUuid))   { e2 = ep->pos; haveE = true; }
+        if (haveS && haveE) {
+            const double tm = 0.5 * (a->curve->FirstParameter() + a->curve->LastParameter());
+            const gp_Pnt pm = a->curve->Value(tm);
+            const QVector3D ws = sketch->planeToWorld(s2);
+            const QVector3D we = sketch->planeToWorld(e2);
+            GC_MakeArcOfCircle mk(gp_Pnt(ws.x(), ws.y(), ws.z()), pm,
+                                  gp_Pnt(we.x(), we.y(), we.z()));
+            if (mk.IsDone()) {
+                BRepBuilderAPI_MakeEdge me(mk.Value());
+                if (me.IsDone()) return me.Edge();
+            }
+        }
+        BRepBuilderAPI_MakeEdge e(a->curve);          // 退回：直接用 curve
         return e.IsDone() ? e.Edge() : TopoDS_Edge();
     }
 
@@ -698,7 +771,7 @@ TopoDS_Edge edgeFromSketchGeometry(const cad::Sketch* sketch,
 TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
                                  const cad::SketchRegion& region)
 {
-    BRepBuilderAPI_MakeWire outerWire;
+    QVector<TopoDS_Edge> outerEdges;
     QSet<QString> processedUuids; // ← 防止同一 Polyline uuid 處理 N 次
 
     for (const QString& uuid : region.outerLoop.edgeUuids) {
@@ -716,18 +789,17 @@ TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
                     BRepBuilderAPI_MakeEdge e(
                         gp_Pnt(p1.x(), p1.y(), p1.z()),
                         gp_Pnt(p2.x(), p2.y(), p2.z()));
-                    if (e.IsDone()) outerWire.Add(e.Edge());
+                    if (e.IsDone()) outerEdges.append(e.Edge());
                 }
             } else {
                 TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);
-                if (!e.IsNull()) outerWire.Add(e);
+                if (!e.IsNull()) outerEdges.append(e);
             }
             break;
         }
     }
-    if (!outerWire.IsDone()) return {};
-
-    TopoDS_Wire wire = outerWire.Wire();
+    TopoDS_Wire wire = wireFromEdges(outerEdges);
+    if (wire.IsNull()) return {};
 
     // ✅ 若 region 由單一圓組成，直接用 gp_Circ 建面，不走 MakeFace(wire)
     if (region.outerLoop.edgeUuids.size() == 1) {
@@ -756,15 +828,16 @@ TopoDS_Face faceFromSketchRegion(const cad::Sketch* sketch,
     BRepBuilderAPI_MakeFace faceMaker(wire, Standard_True);
 
     for (const auto& hole : region.holes) {
-        BRepBuilderAPI_MakeWire holeWire;
+        QVector<TopoDS_Edge> holeEdges;
         for (const QString& uuid : hole.edgeUuids) {
             for (const cad::SketchGeometry* g : sketch->geometries()) {
                 if (g->uuid != uuid) continue;
                 TopoDS_Edge e = edgeFromSketchGeometry(sketch, g);  // ← 正確函式名
-                if (!e.IsNull()) holeWire.Add(e);
+                if (!e.IsNull()) holeEdges.append(e);
             }
         }
-        if (holeWire.IsDone()) faceMaker.Add(holeWire.Wire());
+        const TopoDS_Wire holeWire = wireFromEdges(holeEdges);
+        if (!holeWire.IsNull()) faceMaker.Add(holeWire);
     }
 
     return faceMaker.IsDone() ? faceMaker.Face() : TopoDS_Face();

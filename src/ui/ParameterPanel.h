@@ -49,7 +49,7 @@ public:
      * 切換到 instance 的參數顯示
      * @param instance    SketchInstance 物件
      */
-    void showInstance(aicad::cad::SketchInstance* instance);
+    void showInstance(aicad::cad::SketchInstance* instance, bool readOnly = false);
 
     void clearPanel();
 
@@ -81,6 +81,8 @@ private:
     static constexpr int COL_SOURCE = 3;
 
     PanelMode                        m_mode = PanelMode::Master;
+    bool                             m_readOnly = false;   ///< 「查看草圖」：整個表格唯讀
+    void setReadOnlyMode(bool on);
     aicad::core::ParameterStore*     m_masterStore  = nullptr;
     aicad::cad::SketchInstance*      m_instance     = nullptr;
     QList<aicad::cad::SketchInstance*> m_instances;

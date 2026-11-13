@@ -17,6 +17,8 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Pnt.hxx>
 #include <Geom_TrimmedCurve.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <GC_MakeCircle.hxx>
 #include <gp_Dir.hxx>
 #include <Standard_Failure.hxx>
 #include <Precision.hxx>
@@ -135,6 +137,86 @@ QList<SketchGeometry*> cloneGeometryList(const QList<SketchGeometry*>& src,
         }
     }
     return out;
+}
+
+/// 圓弧的「中點」（草圖 2D 座標）。求解器只更新 curve（Geom_TrimmedCurve，位於草圖 XY 平面），
+/// points[1] 在求解後會過期，所以優先取 curve 上參數中點；curve 為空時才退回 points[1]。
+QVector2D arcMidPoint(const SketchArc* arc)
+{
+    if (arc && !arc->curve.IsNull()) {
+        const double tm = 0.5 * (arc->curve->FirstParameter() + arc->curve->LastParameter());
+        const gp_Pnt m = arc->curve->Value(tm);
+        return QVector2D(static_cast<float>(m.X()), static_cast<float>(m.Y()));
+    }
+    return (arc && arc->points.size() > 1) ? arc->points[1] : QVector2D();
+}
+
+/**
+ * @brief 求解後把 SketchPoint 的位置同步回各曲線（對應 Sketch::syncGeometryFromPoints()）。
+ *
+ * ConstraintSolver::unpackVariables() 只會寫回 Line／Circle／Arc／Ellipse／Point 本身；
+ * Polyline／Spline 的頂點座標（points[]）要靠「以 SketchPoint 為單一來源」事後同步。
+ * 一般草圖的 solveConstraints() 求解後一定會做這一步，但 SketchInstance 直接把 clone
+ * 丟給 solver，漏掉了這一步——結果是尺寸約束的值（Thick／w…）確實改了、solver 也
+ * 算出新的 SketchPoint 位置，但 buildWires() 讀的 Polyline points[] 仍是 master 的舊座標，
+ * 畫面（以及後續 Loft／Chamfer 實體）完全沒有隨新值更新。
+ *
+ * 步驟與 Sketch 完全一致：先把 Line 自身的 start/end 寫回對應 SketchPoint（約束若直接
+ * 作用在 Line DOF，solver 不一定更新了端點），再由 SketchPoint 單向同步回所有曲線。
+ */
+void syncClonesFromPoints(const QList<SketchGeometry*>& geoms)
+{
+    QHash<QString, SketchPoint*> pts;
+    for (SketchGeometry* g : geoms)
+        if (auto* p = dynamic_cast<SketchPoint*>(g))
+            pts.insert(p->uuid, p);
+    if (pts.isEmpty()) return;
+
+    auto P = [&pts](const QString& u) -> SketchPoint* {
+        return u.isEmpty() ? nullptr : pts.value(u, nullptr);
+    };
+
+    // 1) Line → SketchPoint
+    for (SketchGeometry* g : geoms) {
+        if (auto* line = dynamic_cast<SketchLine*>(g)) {
+            if (SketchPoint* ps = P(line->startUuid)) ps->pos = line->start;
+            if (SketchPoint* pe = P(line->endUuid))   pe->pos = line->end;
+        }
+    }
+
+    // 2) SketchPoint → 所有曲線
+    for (SketchGeometry* g : geoms) {
+        if (auto* line = dynamic_cast<SketchLine*>(g)) {
+            if (SketchPoint* ps = P(line->startUuid)) {
+                line->start = ps->pos;
+                if (!line->points.isEmpty()) line->points[0] = ps->pos;
+            }
+            if (SketchPoint* pe = P(line->endUuid)) {
+                line->end = pe->pos;
+                if (line->points.size() > 1) line->points[1] = pe->pos;
+            }
+        } else if (auto* circ = dynamic_cast<SketchCircle*>(g)) {
+            if (SketchPoint* pc = P(circ->centerUuid)) circ->center = pc->pos;
+        } else if (auto* arc = dynamic_cast<SketchArc*>(g)) {
+            if (arc->points.size() >= 3) {
+                if (SketchPoint* ps = P(arc->startUuid)) arc->points[0] = ps->pos;
+                if (SketchPoint* pe = P(arc->endUuid))   arc->points[2] = pe->pos;
+                arc->points[1] = arcMidPoint(arc);   // 中點取自求解後的 curve
+            }
+        } else if (auto* pl = dynamic_cast<SketchPolyline*>(g)) {
+            for (int i = 0; i < pl->vertexUuids.size(); ++i) {
+                if (SketchPoint* pt = P(pl->vertexUuids[i]))
+                    if (i < pl->points.size()) pl->points[i] = pt->pos;
+            }
+        } else if (auto* sp = dynamic_cast<SketchSpline*>(g)) {
+            for (int i = 0; i < sp->controlPointUuids.size(); ++i) {
+                if (SketchPoint* pt = P(sp->controlPointUuids[i]))
+                    if (i < sp->points.size()) sp->points[i] = pt->pos;
+            }
+        } else if (auto* el = dynamic_cast<SketchEllipse*>(g)) {
+            if (SketchPoint* pc = P(el->centerUuid)) el->center = pc->pos;
+        }
+    }
 }
 } // namespace
 
@@ -295,6 +377,20 @@ QList<TopoDS_Wire> SketchInstance::buildWires(
                 if (wireMk.IsDone())
                     wires.append(wireMk.Wire());
 
+            } else if (geom->type == SketchGeometryType::Arc && geom->points.size() >= 3) {
+                const gp_Pnt p1 = toWorld(geom->points[0].x() * m_scale, geom->points[0].y() * m_scale);
+                const gp_Pnt p2 = toWorld(geom->points[2].x() * m_scale, geom->points[2].y() * m_scale);
+                const QVector2D mid = arcMidPoint(static_cast<const SketchArc*>(geom));
+                const gp_Pnt pm = toWorld(mid.x() * m_scale, mid.y() * m_scale);
+                GC_MakeArcOfCircle arcMk(p1, pm, p2);
+                BRepBuilderAPI_MakeEdge edgeMk = arcMk.IsDone()
+                    ? BRepBuilderAPI_MakeEdge(arcMk.Value())
+                    : BRepBuilderAPI_MakeEdge(p1, p2);
+                if (!edgeMk.IsDone()) continue;
+                BRepBuilderAPI_MakeWire wireMk(edgeMk.Edge());
+                if (wireMk.IsDone())
+                    wires.append(wireMk.Wire());
+
             } else if (geom->type == SketchGeometryType::Polyline && geom->points.size() >= 2) {
                 const auto* pl = dynamic_cast<const SketchPolyline*>(geom);
                 const bool closed = pl ? pl->closed
@@ -333,6 +429,7 @@ bool SketchInstance::solveFromMaster() {
         m_constraintClones = cloneConstraints(m_master, remap);
     };
 
+    m_solveFellBack = false;
     cloneAll();
 
     // 以「已解析作用域」求值：instance 覆寫的 cant/H/Thick 會連帶重算 master 裡
@@ -365,7 +462,26 @@ bool SketchInstance::solveFromMaster() {
         if (n.lengthSquared() > 1e-12f) normal = gp_Dir(n.x(), n.y(), n.z());
     }
 
-    const SolveResult result = m_solver.solve(m_geomClones, m_constraintClones, normal);
+    // 座標軸基準替身（"datum:..." 代號）：Sketch 自己求解時會補進求解輸入，
+    // 測站的 clone 也必須一樣，否則引用座標軸／原點的尺寸無法被強制執行。
+    QList<SketchGeometry*>  solveGeoms = m_geomClones;
+    QList<SketchConstraint> solveCons  = m_constraintClones;
+    QList<SketchGeometry*>  datumOwned;
+    Sketch::buildDatumSolveInputs(m_constraintClones, datumOwned, solveCons);
+    solveGeoms += datumOwned;
+
+    const SolveResult result = m_solver.solve(solveGeoms, solveCons, normal);
+    qDeleteAll(datumOwned);     // 替身只是求解輸入，不屬於本站幾何
+    qDebug() << "[SketchInstance]" << name() << "solve status="
+             << static_cast<int>(result.status)
+             << "constraints=" << m_constraintClones.size();
+
+    // 求解成功（含 Conflict 以外的狀態）後，必須把 SketchPoint 的新位置同步回
+    // Polyline／Spline 等曲線——否則改了 Thick／w 後 solver 雖然重算了，
+    // buildWires() 讀到的仍是 master 的舊頂點座標，圖形不會更新。
+    if (result.status != SolveStatus::Conflict)
+        syncClonesFromPoints(m_geomClones);
+
     bool ok = (result.status != SolveStatus::Conflict) && allGeometryFinite(m_geomClones);
 
     if (!ok) {
@@ -378,6 +494,7 @@ bool SketchInstance::solveFromMaster() {
                    << "solve failed (status=" << static_cast<int>(result.status)
                    << ") — using unsolved master geometry for this station.";
         cloneAll();
+        m_solveFellBack = true;     // 讓擁有者得以回報「本站沒有反映新參數值」
         ok = allGeometryFinite(m_geomClones);
     }
     return ok;
@@ -398,6 +515,7 @@ bool SketchInstance::adoptSolution(const SketchInstance& d) {
 
     // 求解後不再需要約束副本（沒有任何外部存取者），省略。
     m_constraintClones.clear();
+    m_solveFellBack = d.m_solveFellBack;
     return true;
 }
 
@@ -472,6 +590,68 @@ bool SketchInstance::rebuildWith(const QString& signature,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// createViewSketch — 本站「實際套用值」的唯讀 2D 檢視草圖
+// ─────────────────────────────────────────────────────────────────────────────
+
+Sketch* SketchInstance::createViewSketch() const
+{
+    if (!m_master || m_geomClones.isEmpty()) return nullptr;
+
+    auto* vs = new Sketch(document());
+    vs->setName(QStringLiteral("%1 [%2]").arg(m_master->name(), name()));
+    if (m_master->plane())
+        vs->setPlane(m_master->plane());
+
+    // 1) 幾何：複製本站「求解後」的幾何（座標為 master 草圖單位）
+    QHash<QString, QString> toView;     // 本站 clone uuid → 檢視草圖 uuid
+    const QList<SketchGeometry*> geoms = cloneGeometryList(m_geomClones, toView);
+    for (SketchGeometry* g : geoms)
+        vs->addGeometry(g);
+
+    // master uuid → 檢視草圖 uuid（datum:… 等基準代號沒有對應則原樣保留）
+    auto mapUuid = [&](const QString& masterUuid) {
+        const QString clone = m_uuidRemap.value(masterUuid, masterUuid);
+        return toView.value(clone, clone);
+    };
+
+    // 2) 約束／尺寸：以本站 instance 作用域重新求值（與 solveFromMaster 同一套規則）
+    {
+        const aicad::core::ParameterScope scope(*m_instanceStore);
+        const QList<SketchConstraint> src = m_master->constraints();
+        for (SketchConstraint c : src) {
+            if (c.isDimensional())
+                c.evaluateValue(scope);
+            if (!c.enableExpr.trimmed().isEmpty()) {
+                const auto [ok, enabled] = scope.evaluateCondition(c.enableExpr);
+                c.conditionOff = ok && !enabled;
+            }
+            if (!c.isActive()) continue;
+            for (GeomRef& r : c.refs)
+                r.geomUuid = mapUuid(r.geomUuid);
+            vs->addConstraint(c, /*solve=*/false);   // 幾何已是求解結果，不再求解
+        }
+    }
+
+    // 3) 標註（Prefix/Suffix/公差/引出線…）：uuid 保持與隱含約束的 implicitOf 對應，
+    //    不可用 addAnnotation()（它會再產生一份隱含約束）。
+    for (SketchAnnotation a : m_master->annotations()) {
+        for (GeomRef& r : a.refs)
+            r.geomUuid = mapUuid(r.geomUuid);
+        for (const SketchConstraint& c : vs->constraints()) {
+            if (c.implicitOf == a.uuid) {
+                a.value  = c.value;
+                a.value2 = c.value2;
+                break;
+            }
+        }
+        vs->annotationsMutable().append(a);
+    }
+
+    vs->rebuild();      // 建立幾何 AIS（檢視草圖未連接任何相依傳播）
+    return vs;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 // hasClosedProfile
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,13 +675,15 @@ constexpr double kWirePosTol = 1e-5;
 struct DirSegment {
     QVector2D from;
     QVector2D to;
+    bool      isArc = false;   ///< true：從 from 經 mid 到 to 的圓弧（否則為直線）
+    QVector2D mid;
 };
 
 bool nearlyEqual(const QVector2D& a, const QVector2D& b) {
     return (a - b).lengthSquared() < (kWirePosTol * kWirePosTol);
 }
 
-/// 收集所有有向線段（支援範圍與 buildWires() 一致：Line + 封閉 Polyline）。
+/// 收集所有有向線段（Line、Polyline、Arc；獨立的 Circle 另外處理，見 allClosedWires()）。
 /// 順序 = m_geomClones 的原始順序，master 每次 clone 出來的順序都相同，
 /// 這是後面「用第一個未走訪線段當迴圈起點」能在各測站間保持一致的關鍵。
 QList<DirSegment> collectSegments(const QList<SketchGeometry*>& geoms) {
@@ -520,6 +702,16 @@ QList<DirSegment> collectSegments(const QList<SketchGeometry*>& geoms) {
             int nSeg = closed ? n : n - 1;
             for (int i = 0; i < nSeg; ++i)
                 segments.append({ geom->points[i], geom->points[(i + 1) % n] });
+
+        } else if (geom->type == SketchGeometryType::Arc && geom->points.size() >= 3) {
+            // 圓弧：與直線一樣是輪廓上的一段有向邊。舊版完全略過圓弧，含圓弧的斷面
+            // （例如 FST）因此永遠湊不成封閉輪廓 → Loft 回報 "no closed profile found"。
+            DirSegment seg;
+            seg.from  = geom->points[0];
+            seg.to    = geom->points[2];
+            seg.isArc = true;
+            seg.mid   = arcMidPoint(static_cast<const SketchArc*>(geom));
+            segments.append(seg);
         }
     }
     return segments;
@@ -578,6 +770,16 @@ TopoDS_Wire makeWireFromSegments(const QList<DirSegment>& ordered,
         for (const DirSegment& seg : ordered) {
             const gp_Pnt p1 = toWorld(seg.from.x() * scale, seg.from.y() * scale);
             const gp_Pnt p2 = toWorld(seg.to.x()   * scale, seg.to.y()   * scale);
+            if (seg.isArc) {
+                // 三點圓弧（from → mid → to）；方向被走訪器反轉時 from/to 已交換、mid 不變
+                const gp_Pnt pm = toWorld(seg.mid.x() * scale, seg.mid.y() * scale);
+                GC_MakeArcOfCircle arcMk(p1, pm, p2);
+                if (arcMk.IsDone()) {
+                    BRepBuilderAPI_MakeEdge arcEdge(arcMk.Value());
+                    if (arcEdge.IsDone()) { wireMk.Add(arcEdge.Edge()); continue; }
+                }
+                // 三點共線（半徑無限大）等退化情況：以直線取代，避免整個輪廓失敗
+            }
             BRepBuilderAPI_MakeEdge edgeMk(p1, p2);
             if (edgeMk.IsDone())
                 wireMk.Add(edgeMk.Edge());
@@ -635,6 +837,19 @@ TopoDS_Wire SketchInstance::orderedWireFrom(const QString& masterPointUuid) cons
         ordered, [this](double u, double v) { return toWorld(u, v); }, m_scale);
 }
 
+QStringList SketchInstance::unsupportedProfileGeometry() const
+{
+    QStringList out;
+    for (const SketchGeometry* g : m_geomClones) {
+        if (!g || g->isConstruction()) continue;
+        if (g->type == SketchGeometryType::Spline  && !out.contains(QStringLiteral("Spline")))
+            out << QStringLiteral("Spline");
+        if (g->type == SketchGeometryType::Ellipse && !out.contains(QStringLiteral("Ellipse")))
+            out << QStringLiteral("Ellipse");
+    }
+    return out;
+}
+
 QList<TopoDS_Wire> SketchInstance::allClosedWires() const {
     QList<TopoDS_Wire> result;
     if (!m_plane && !m_frame.valid) return result;
@@ -645,7 +860,6 @@ QList<TopoDS_Wire> SketchInstance::allClosedWires() const {
     // 這個「第一個未走訪線段」的選法在各測站之間是穩定、一致的，不需要
     // 額外指定「起點 UUID」。
     const QList<DirSegment> segments = collectSegments(m_geomClones);
-    if (segments.isEmpty()) return result;
 
     QVector<bool> used(segments.size(), false);
     for (int i = 0; i < segments.size(); ++i) {
@@ -665,6 +879,28 @@ QList<TopoDS_Wire> SketchInstance::allClosedWires() const {
             ordered, [this](double u, double v) { return toWorld(u, v); }, m_scale);
         if (!w.IsNull())
             result.append(w);
+    }
+
+    // 獨立的圓本身就是封閉輪廓（例如斷面中的圓孔）。排在線段迴圈之後，
+    // clone 順序在各測站相同，所以各站的 wire 順序一致。
+    for (const SketchGeometry* g : m_geomClones) {
+        if (!g || g->isConstruction() || g->type != SketchGeometryType::Circle) continue;
+        const auto* c = static_cast<const SketchCircle*>(g);
+        if (!(c->radius > 1e-9)) continue;
+        try {
+            const double r = c->radius;
+            const gp_Pnt a = toWorld((c->center.x() + r) * m_scale,  c->center.y()      * m_scale);
+            const gp_Pnt b = toWorld( c->center.x()      * m_scale, (c->center.y() + r) * m_scale);
+            const gp_Pnt d = toWorld((c->center.x() - r) * m_scale,  c->center.y()      * m_scale);
+            GC_MakeCircle circMk(a, b, d);
+            if (!circMk.IsDone()) continue;
+            BRepBuilderAPI_MakeEdge e(circMk.Value());
+            if (!e.IsDone()) continue;
+            BRepBuilderAPI_MakeWire wm(e.Edge());
+            if (wm.IsDone()) result.append(wm.Wire());
+        } catch (const Standard_Failure& ex) {
+            qWarning() << "[SketchInstance] circle wire OCC error:" << ex.GetMessageString();
+        }
     }
     return result;
 }

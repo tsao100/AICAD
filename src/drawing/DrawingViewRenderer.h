@@ -49,16 +49,17 @@ class DrawingView;
  *
  * visibleEdges  ：可見輪廓線（實線）
  * hiddenEdges   ：隱藏線（虛線）
- * sectionHatch  ：剖面填充線（Section view 時有效）
+ * sectionFaces  ：剖切面外框（已投影；Section view 時有效，hatching 於繪製時裁切產生）
  * centerLines   ：中心線（需後處理辨識對稱軸）
  * boundingBox   ：視圖在圖紙座標系的邊界框（mm）
  */
 struct ViewRenderResult {
     TopoDS_Compound visibleEdges;
     TopoDS_Compound hiddenEdges;
-    TopoDS_Compound sectionHatch;
+    TopoDS_Compound sectionFaces;   // 剖切面的 Wire（投影座標），painter 以其為區域畫 45° 填充線
     TopoDS_Compound centerLines;
-    QSizeF          boundingBox;    // 投影後實際大小（mm，未套比例）
+    QSizeF          boundingBox;    // 投影後實際大小（模型單位，未套比例）
+    QRectF          projectedBounds; // 投影平面範圍（模型單位，Y 向上；paintView 以其中心置中）
     bool            isValid = false;
     QString         errorMessage;
 };
@@ -102,6 +103,18 @@ public:
      */
     void renderAsync(const DrawingView* view, const TopoDS_Shape& shape);
 
+    /**
+     * @brief 自動 Fit 比例：把投影範圍縮放到視圖配置框（size）的 90% 內，
+     *        並取 ≤ 的工程標準比例（1、2、5 × 10^n）。Widget 預覽與匯出共用。
+     */
+    static double computeFitScale(const DrawingView* view, const QRectF& projectedBounds);
+
+    /**
+     * @brief 同步渲染整張圖紙的所有視圖（供 PDF/SVG 匯出使用），並對
+     *        autoFit 的視圖套用 Fit 比例，使輸出與預覽一致。
+     */
+    static QMap<QUuid, ViewRenderResult> renderSheetSync(DrawingSheet& sheet);
+
 Q_SIGNALS:
     void rendered(const QUuid& viewId, const ViewRenderResult& result);
     void renderError(const QUuid& viewId, const QString& message);
@@ -140,14 +153,18 @@ private:
     TopoDS_Shape applySectionCut(const TopoDS_Shape& shape,
                                  const SectionParams& params);
 
-    /** 辨識並產生中心線 */
-    TopoDS_Compound detectCenterLines(const TopoDS_Shape& shape,
-                                      const gp_Ax2& axis);
+    /** 剖面視圖的投影軸：從切割平面法向正側往負側看 */
+    gp_Ax2 buildSectionAxis(const SectionParams& params) const;
 
-    /** 產生剖面填充線（Hatching） */
-    TopoDS_Compound generateHatching(const TopoDS_Shape& sectionFace,
-                                     double spacing = 3.0,
-                                     double angle   = 45.0);
+    /** 辨識圓柱面並產生中心線（只收 ≥~170° 的圓柱面、且位於 bounds 內者） */
+    TopoDS_Compound detectCenterLines(const TopoDS_Shape& shape,
+                                      const gp_Ax2& axis,
+                                      const QRectF& projectedBounds);
+
+    /** 取出位於切割平面上的平面（剖切面），轉到視圖座標後回傳其 Wire */
+    TopoDS_Compound extractSectionFaces(const TopoDS_Shape& shape,
+                                        const gp_Ax2& axis,
+                                        const SectionParams& params);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +181,9 @@ private:
  */
 class DrawingSheetPainter {
 public:
+    /** 圖目錄表格：座標（圖紙 mm）落在第幾筆資料列（0 起算）；不在資料列上回傳 -1。 */
+    static int drawingIndexRowAt(const DrawingIndex* index, const QPointF& sheetPt);
+
     explicit DrawingSheetPainter();
 
     /**
@@ -177,14 +197,31 @@ public:
                     const QMap<QUuid, ViewRenderResult>& results);
 
 private:
+    // 目前圖紙的線寬（paintSheet 開頭由 SheetConfig 設定）
+    double m_lwThin   = 0.25;
+    double m_lwMedium = 0.5;
+    double m_lwThick  = 0.7;
+
     void paintFrame(QPainter& painter, const DrawingSheet& sheet);
     void paintTitleBlock(QPainter& painter, const TitleBlock& tb, const QSizeF& sheetSize);
+    void paintCover(QPainter& painter, const DrawingSheet& sheet);
     void paintView(QPainter& painter, const DrawingView* view, const ViewRenderResult& result);
     void paintPartsList(QPainter& painter, const PartsListTable* table);
     void paintRevisionTable(QPainter& painter, const RevisionTable* table);
     void paintDrawingIndex(QPainter& painter, const DrawingIndex* index);
     void paintLegend(QPainter& painter, const Legend* legend);
     void paintNoteBlock(QPainter& painter, const NoteBlock& note);
+
+    /** 剖面填充線：以剖切面 Wire 為區域，畫 45° 平行線（間距 mm，與比例無關） */
+    void paintHatching(QPainter& painter, const TopoDS_Compound& wires,
+                       const QPointF& offset, double scale);
+
+    /** 視圖外框尺寸（總寬、總高），sizeMM 為內容在圖紙上的大小，modelSize 為模型單位 */
+    void paintOverallDimensions(QPainter& painter, const QSizeF& sizeMM, const QSizeF& modelSize);
+
+    /** 剖切線（含箭頭與代號）畫在宿主視圖上；局部放大範圍圈畫在來源視圖上 */
+    void paintViewAnnotations(QPainter& painter, const DrawingSheet& sheet,
+                              const QMap<QUuid, ViewRenderResult>& results);
 
     /** 將 OCCT 邊集合畫成 QPainterPath */
     void paintEdges(QPainter& painter, const TopoDS_Compound& edges,
@@ -193,3 +230,6 @@ private:
 
 } // namespace drawing
 } // namespace aicad
+
+// 跨執行緒 queued 傳遞需要的 metatype（沒有註冊時 invokeMethod 會靜默丟棄結果）
+Q_DECLARE_METATYPE(aicad::drawing::ViewRenderResult)

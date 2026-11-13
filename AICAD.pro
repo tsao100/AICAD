@@ -158,6 +158,8 @@ win32 {
     QT += widgets openglwidgets printsupport
     CONFIG += c++17
     LIBS += -lopengl32
+    # PASTECLIP 直接呼叫 Win32 剪貼簿／GDI API（src/core/WinClipboardEmf.cpp）
+    LIBS += -luser32 -lgdi32
     DEFINES += _USE_MATH_DEFINES
     DEFINES += QT_NO_OPENGL_ES_2
     # --- OCCT 7.8.0 paths ---
@@ -275,6 +277,9 @@ SOURCES += \
     src/command/ExtrudeCommand.cpp \
     src/command/ChamferCommand.cpp \
     src/command/ConstructionToggleCommand.cpp \
+    src/command/PasteClipCommand.cpp \
+    src/core/geometry/EmfVectorParser.cpp \
+    src/core/WinClipboardEmf.cpp \
     src/command/alignment/SetOriginCommand.cpp \
     src/command/alignment/AlignmentAddSpiralCommand.cpp \
     src/command/alignment/Alignment3DAddVProfileCommand.cpp \
@@ -290,6 +295,9 @@ SOURCES += \
     src/command/alignment/TrackExtractCommand.cpp \
     src/command/alignment/AlignmentReverseSCSCommand.cpp \
     src/command/alignment/AlignmentQuickTableCommand.cpp \
+    src/command/DrawingSheetCommand.cpp \
+    src/command/PlanProfileCommand.cpp \
+    src/command/DrawingBookActions.cpp \
     src/command/alignment/AlignmentDrawChainCommand.cpp \
     src/command/ScaleCommand.cpp \
     src/command/alignment/ExportAlignmentCommand.cpp \
@@ -310,6 +318,10 @@ SOURCES += \
     src/drawing/DrawingSheet.cpp \
     src/drawing/DrawingSheetDialog.cpp \
     src/drawing/DrawingSheetManager.cpp \
+    src/drawing/PlanProfileSettings.cpp \
+    src/drawing/PlanProfilePainter.cpp \
+    src/drawing/PlanProfileGenerator.cpp \
+    src/drawing/PlanProfileDialog.cpp \
     src/drawing/DrawingSheetWidget.cpp \
     src/drawing/DrawingViewRenderer.cpp \
     src/main.cpp \
@@ -446,6 +458,9 @@ HEADERS += \
     src/command/ExtrudeCommand.h \
     src/command/ChamferCommand.h \
     src/command/ConstructionToggleCommand.h \
+    src/command/PasteClipCommand.h \
+    src/core/geometry/EmfVectorParser.h \
+    src/core/WinClipboardEmf.h \
     src/command/GripMoveCommand.h \
     src/command/SketchEditCommand.h \
     src/command/SketchSelectionPicker.h \
@@ -478,6 +493,9 @@ HEADERS += \
     src/command/alignment/TrackExtractCommand.h \
     src/command/alignment/AlignmentReverseSCSCommand.h \
     src/command/alignment/AlignmentQuickTableCommand.h \
+    src/command/DrawingSheetCommand.h \
+    src/command/PlanProfileCommand.h \
+    src/command/DrawingBookActions.h \
     src/command/alignment/AlignmentDrawChainCommand.h \
     src/command/ScaleCommand.h \
     src/command/alignment/ExportAlignmentCommand.h \
@@ -496,6 +514,7 @@ HEADERS += \
     src/command/SplineCommand.h \
     src/core/Application.h \
     src/core/EventBus.h \
+    src/core/FpuGuard.h \
     src/core/DocumentManager.h \
     src/core/ParameterStore.h \
     src/core/PluginManager.h \
@@ -520,6 +539,10 @@ HEADERS += \
     src/core/geometry/WorkPlane.h \
     src/drawing/DrawingSheet.h \
     src/drawing/DrawingSheetManager.h \
+    src/drawing/PlanProfileSettings.h \
+    src/drawing/PlanProfilePainter.h \
+    src/drawing/PlanProfileGenerator.h \
+    src/drawing/PlanProfileDialog.h \
     src/drawing/DrawingSheetWidget.h \
     src/drawing/DrawingViewRenderer.h \
     src/geometry/GeometryBuilder.h \
@@ -603,3 +626,11 @@ RESOURCES += \
 
 # 設定 Include 路徑
 INCLUDEPATH += $$PWD/src
+
+# ── 選用模組：QtSvg（DrawingSheet 的 SVG 匯出）──────────────────────────────
+# 沒安裝時（Debian/Ubuntu：sudo apt install libqt5svg5-dev）仍可編譯，
+# 只是 SVG 匯出會回報「未啟用」；PDF 匯出不受影響。
+qtHaveModule(svg) {
+    QT += svg
+    DEFINES += AICAD_HAVE_QTSVG
+}

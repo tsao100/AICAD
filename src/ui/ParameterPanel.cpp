@@ -17,6 +17,7 @@
 #include <QShortcut>
 #include <QKeySequence>
 #include <QSet>
+#include "core/ParameterStore.h"
 
 namespace aicad::ui {
 
@@ -158,6 +159,7 @@ void ParameterPanel::showMaster(
     m_masterStore = store;
     m_instance    = nullptr;
     m_instances   = instances;
+    setReadOnlyMode(false);
 
     m_contextLabel->setText(tr("草圖：%1").arg(sketchName));
     m_btnClear->setVisible(false);
@@ -183,7 +185,20 @@ void ParameterPanel::showMaster(
     rebuildMasterTable();
 }
 
-void ParameterPanel::showInstance(aicad::cad::SketchInstance* instance) {
+void ParameterPanel::setReadOnlyMode(bool on) {
+    m_readOnly = on;
+    m_table->setEditTriggers(on ? QAbstractItemView::NoEditTriggers
+                                : (QAbstractItemView::DoubleClicked
+                                   | QAbstractItemView::SelectedClicked));
+    m_btnAdd->setVisible(!on);
+    if (on) {                       // 其餘按鈕的可見性由各 show*() 決定，唯讀時一律隱藏
+        m_btnClear->setVisible(false);
+        m_btnClearAll->setVisible(false);
+    }
+}
+
+void ParameterPanel::showInstance(aicad::cad::SketchInstance* instance, bool readOnly) {
+    setReadOnlyMode(readOnly);
     m_mode        = PanelMode::Instance;
     m_instance    = instance;
     m_masterStore = instance ? instance->masterSketch()
@@ -192,7 +207,9 @@ void ParameterPanel::showInstance(aicad::cad::SketchInstance* instance) {
                              : nullptr;
 
     if (instance) {
-        m_contextLabel->setText(tr("副本：%1").arg(instance->name()));
+        m_contextLabel->setText(readOnly
+            ? tr("副本（唯讀，實際套用值）：%1").arg(instance->name())
+            : tr("副本：%1").arg(instance->name()));
 
         // 訂閱 instance store
         connect(instance->parameterStore(),
@@ -200,8 +217,8 @@ void ParameterPanel::showInstance(aicad::cad::SketchInstance* instance) {
                 this, &ParameterPanel::onParameterChanged, Qt::UniqueConnection);
     }
 
-    m_btnClear->setVisible(true);
-    m_btnClearAll->setVisible(true);
+    m_btnClear->setVisible(!readOnly);
+    m_btnClearAll->setVisible(!readOnly);
     m_btnAdd->setText(tr("覆寫參數"));
     m_instancesLabel->setVisible(false);
 
@@ -209,6 +226,7 @@ void ParameterPanel::showInstance(aicad::cad::SketchInstance* instance) {
 }
 
 void ParameterPanel::clearPanel() {
+    setReadOnlyMode(false);
     m_updating = true;
     m_table->setRowCount(0);
     m_updating = false;
@@ -324,6 +342,12 @@ void ParameterPanel::rebuildInstanceTable() {
     }
     allNames.sort();
 
+    // 「實際套用值」必須以 ParameterScope 解析：instance 覆寫 cant/H/Thick 之後，
+    // master 中以它們推導的衍生參數（d2=if(cant>0,0,abs(cant))…）要整批重新求值。
+    // 舊版直接用 instStore->value(name)，對沒有被覆寫的衍生參數拿到的是 master
+    // 快取的舊值，與求解器實際使用的值不一致（見 ParameterScope 類別說明）。
+    const aicad::core::ParameterScope scope(*instStore);
+
     for (const QString& name : allNames) {
         int row = m_table->rowCount();
         m_table->insertRow(row);
@@ -332,7 +356,7 @@ void ParameterPanel::rebuildInstanceTable() {
         QString expr  = isOverride
                         ? instStore->expression(name)
                         : (masterStore ? masterStore->expression(name) : QString());
-        double  val   = instStore->value(name);
+        double  val   = scope.has(name) ? scope.value(name) : instStore->value(name);
         QString source = isOverride ? "override"
                        : (masterStore && masterStore->hasLocal(name)) ? "master"
                        : "global";

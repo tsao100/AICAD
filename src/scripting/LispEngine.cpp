@@ -18,6 +18,8 @@
 #include <signal.h>
 #endif
 
+#include "../core/FpuGuard.h"
+
 namespace aicad {
 namespace scripting {
 
@@ -100,9 +102,23 @@ bool LispEngine::initialize() {
         ecl_set_option(ECL_OPT_TRAP_SIGSEGV, 0);
         ecl_set_option(ECL_OPT_TRAP_SIGBUS, 0);
 
+        // ⚠️ 同理關掉 SIGFPE：ECL 預設會開啟整個行程的浮點例外 trap
+        //    （zero-divide / invalid / overflow），並把 SIGFPE 轉成 Lisp 的
+        //    FLOATING-POINT-OVERFLOW 條件。但 AICAD 的 C++ 端（QJSEngine
+        //    參數運算式、OCCT、Eigen、約束求解器）會合法地產生並處理
+        //    Inf/NaN；在非 Lisp 呼叫堆疊中觸發時，ECL 無法正確處理
+        //    （"GO found an inexistent tag"），整個行程崩潰。
+        //    實際案例：開啟 FST.aicad（Sketch 1 載入完成後）即崩潰。
+        ecl_set_option(ECL_OPT_TRAP_SIGFPE, 0);
+
         // 初始化 ECL
         char* argv[1] = {(char*)"AICAD"};
         cl_boot(1, argv);
+
+        // Windows（MSVC/MinGW）與其他平台：cl_boot 之後無條件把本執行緒的
+        // 浮點例外全部遮蔽。原本只有 __unix__ 區塊會還原 FPU 狀態，
+        // Windows 完全沒有，導致 trap 維持開啟。
+        aicad::core::maskFpuExceptions();
         
 #ifdef __unix__
         // 恢復 FPU 狀態
@@ -178,7 +194,8 @@ QVariant LispEngine::eval(const QString& code) {
             return QVariant();
         }
         
-        // 執行
+        // 執行（Lisp 執行期間也確保浮點例外維持遮蔽，結束後還原）
+        aicad::core::FpuMaskGuard fpuGuard;
         cl_object result = Cnil;
         
 #ifdef _MSC_VER

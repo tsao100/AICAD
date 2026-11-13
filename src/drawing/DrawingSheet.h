@@ -27,6 +27,7 @@
 #include <QSizeF>
 #include <QPointF>
 #include <QRectF>
+#include "PlanProfileSettings.h"
 
 // Forward declarations
 namespace aicad {
@@ -191,7 +192,10 @@ struct SectionParams {
     SectionDirection direction = SectionDirection::Horizontal;
     QPointF          cutPlaneStart;   // 剖切線起點（圖紙座標，mm）
     QPointF          cutPlaneEnd;     // 剖切線終點
-    QString          sectionLabel;    // 例："A-A"
+    QString          sectionLabel;    // 剖面代號，例："A"（視圖標籤顯示為 SECTION A-A，剖切線兩端標 A）
+    double           offset          = 0.0;  // 切割平面沿法向的位置（模型單位）。
+                                             // Horizontal：平面 Y=offset（俯視看到水平剖切線）；
+                                             // Vertical：平面 X=offset。從法向正側往負側看剖面。
     bool             showCutLine     = true;
     bool             showArrows      = true;
 };
@@ -200,9 +204,10 @@ struct SectionParams {
  * @brief 局部放大視圖參數
  */
 struct DetailParams {
-    QPointF  center;         // 放大區域中心點
-    double   radius  = 10.0; // 放大區域半徑（來源視圖座標，mm）
-    double   scale   = 2.0;  // 局部放大比例
+    ViewType sourceType = ViewType::Front;  // 被放大的來源投影方向
+    QPointF  center;         // 放大區域中心（來源投影的模型座標，Y 向上）
+    double   radius  = 10.0; // 放大區域半徑（模型單位）
+    double   scale   = 2.0;  // （保留）實際顯示比例由視圖 scale／自動 Fit 決定
     QString  label;          // 例："B"
 };
 
@@ -225,10 +230,13 @@ public:
     ViewType type()  const { return m_type; }
 
     // ── 版面配置 ──────────────────────────────────────────────────────────
-    QPointF  position()  const { return m_position; }  // 視圖原點（mm）
-    QSizeF   size()      const { return m_size; }      // 視圖邊界框（mm）
-    double   scale()     const { return m_scale; }     // 顯示比例
-    QRectF   boundingRect() const;
+    QPointF  position()  const { return m_position; }  // 視圖「中心點」（圖紙座標 mm）
+    QSizeF   size()      const { return m_size; }      // 視圖配置框大小（mm）；自動 Fit 時內容縮放到此框的 90%
+    double   scale()     const { return m_scale; }     // 顯示比例（圖紙 mm / 模型單位）
+    QRectF   boundingRect() const;                     // 以 position() 為中心的配置框
+
+    /** 自動 Fit：渲染完成後依投影範圍自動決定 scale（使用者手動改比例時關閉） */
+    bool     autoFit()   const { return m_autoFit; }
 
     // ── 關聯模型 ──────────────────────────────────────────────────────────
     cad::Feature* sourceFeature() const { return m_sourceFeature; }
@@ -251,13 +259,22 @@ public:
     void setPosition(const QPointF& pos);
     void setSize(const QSizeF& size);
     void setScale(double scale);
+    void setAutoFit(bool on);
+    /** 套用自動 Fit 算出的比例：只發 scaleChanged，不觸發 rebuildRequested（避免重複渲染迴圈） */
+    void applyFitScale(double scale);
     void setSourceFeature(cad::Feature* feature);
+    /** 不發任何信號地設定來源特徵（載入還原／Feature 被刪除時使用） */
+    void setSourceFeatureSilently(cad::Feature* feature) { m_sourceFeature = feature; }
+    /** fromJson 暫存的來源特徵 id；由 DrawingSheet::resolveViewSources() 取走並解析 */
+    QString takePendingSourceFeatureId() { QString s = m_pendingSourceFeatureId; m_pendingSourceFeatureId.clear(); return s; }
     void setSectionParams(const SectionParams& params);
     void setDetailParams(const DetailParams& params);
     void setShowHiddenLines(bool show);
     void setShowCenterLines(bool show);
     void setShowDimensions(bool show);
     void setShowAnnotations(bool show);
+    void setShowScaleLabel(bool show);
+    void setShowViewLabel(bool show);
 
     // ── 序列化 ────────────────────────────────────────────────────────────
     QJsonObject toJson() const;
@@ -277,6 +294,8 @@ private:
     QPointF       m_position;
     QSizeF        m_size;
     double        m_scale       = 1.0;
+    bool          m_autoFit     = true;
+    QString       m_pendingSourceFeatureId;
 
     cad::Feature* m_sourceFeature = nullptr;
 
@@ -583,13 +602,35 @@ public:
     void       removeNoteBlock(const QUuid& id);
     const QVector<NoteBlock>& noteBlocks() const { return m_noteBlocks; }
 
+    // ── 圖冊（Book）歸屬與封面 ────────────────────────────────────────────
+    QString bookId() const { return m_bookId; }
+    void    setBookId(const QString& id) { if (m_bookId != id) { m_bookId = id; markModified(); } }
+    bool    isCover() const { return m_isCover; }
+    void    setIsCover(bool c) { if (m_isCover != c) { m_isCover = c; markModified(); Q_EMIT configChanged(); } }
+
+    // ── 平縱面圖層（Plan & Profile）──────────────────────────────────────
+    PlanProfileLayer&       planProfile()       { return m_planProfile; }
+    const PlanProfileLayer& planProfile() const { return m_planProfile; }
+    void setPlanProfile(const PlanProfileLayer& l) { m_planProfile = l; markModified(); Q_EMIT configChanged(); }
+
+    // ── 序列化（供內嵌於 .aicad 或獨立檔案共用） ─────────────────────────
+    QJsonObject toJson() const;
+    /** 需先 setSourceDocument()，才能把 sourceFeatureId 還原成 Feature* */
+    bool        fromJson(const QJsonObject& json);
+
     // ── 檔案 I/O ──────────────────────────────────────────────────────────
     bool save(const QString& fileName = {});
     bool load(const QString& fileName);
 
+    /** 標記圖紙已修改（供外部編輯 UI 在直接改 View/Config 後呼叫） */
+    void markModified() { setModified(true); }
+
     // ── 輸出 ──────────────────────────────────────────────────────────────
     /** 匯出為 PDF（路徑為空則使用同目錄同名） */
     bool exportPdf(const QString& pdfPath = {});
+
+    /** 多張圖紙匯出成同一個多頁 PDF（依傳入順序，每張一頁，頁面尺寸各依該圖紙）。 */
+    static bool exportPdfAll(const QVector<DrawingSheet*>& sheets, const QString& pdfPath);
 
     /** 匯出為 SVG（用於預覽） */
     bool exportSvg(const QString& svgPath);
@@ -619,6 +660,7 @@ Q_SIGNALS:
 private:
     void setModified(bool modified);
     void setFileName(const QString& fileName);
+    void resolveViewSources();
 
     // ── 成員 ──────────────────────────────────────────────────────────────
     QUuid          m_id;
@@ -645,6 +687,9 @@ private:
     bool            m_legendEnabled = false;
 
     QVector<NoteBlock> m_noteBlocks;
+    PlanProfileLayer   m_planProfile;
+    QString            m_bookId;
+    bool               m_isCover = false;
 };
 
 } // namespace drawing

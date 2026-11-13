@@ -321,6 +321,32 @@ public:
     /// 移除登錄並從 context 移除
     void removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj);
 
+    // ── 隔離顯示（編輯／查看草圖期間，其他視圖一律隱藏）─────────────────────
+    /**
+     * @brief 隔離顯示單一 Feature：displayAllFeatures() 只顯示該 Feature，
+     *        其他所有 Feature 與所有 overlay（AlignmentRenderer、Extrude 箭頭…）
+     *        只登記、不顯示。各 Feature 自己的 isVisible() 旗標完全不被改動，
+     *        因此離開隔離（clearIsolation）後會依原本的可見性自動還原。
+     * @param featureId  要保留顯示的 Feature id（即使它自己的 isVisible()==false）
+     * @param redisplay  是否立即 displayAllFeatures()。呼叫端接著會自行重繪時
+     *                   （例如隨後發布 SKETCH_ENTERED）可傳 false 避免重複重繪。
+     */
+    void setIsolatedFeature(const QString& featureId, bool redisplay = true);
+
+    /**
+     * @brief 隔離顯示一張「不屬於 Document」的暫時草圖（例如 ProfileArray 測站的
+     *        唯讀檢視草圖）。文件內所有 Feature 與 overlay 皆隱藏，只顯示此草圖。
+     *        擁有權仍在呼叫端；傳 nullptr 等同 clearIsolation()。
+     */
+    void setViewSketch(cad::Sketch* sketch, bool redisplay = true);
+
+    /// 結束隔離顯示並依各 Feature 原本的可見性還原。
+    void clearIsolation(bool redisplay = true);
+    bool isIsolated() const;
+
+    /// 顯示／隱藏「完成草圖」按鈕（供「查看草圖」模式使用——它不進入 Sketching 模式）。
+    void showFinishViewButton(bool show);
+
     /**
      * @brief 螢幕座標轉平面座標
      * @param screenPos 螢幕座標
