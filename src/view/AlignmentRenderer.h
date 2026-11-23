@@ -93,6 +93,9 @@ public:
      */
     int editableIndexForObject(const AIS_InteractiveObject* obj) const;
 
+    /** 目前顯示中的線形 overlay AIS 物件（不含 PI grips）。供「聚焦 Focus」計算範圍用。 */
+    QList<Handle(AIS_InteractiveObject)> overlayObjects() const { return m_overlays; }
+
     /** Show PI marker grips in the CadView. */
     void showPIGrips();
 

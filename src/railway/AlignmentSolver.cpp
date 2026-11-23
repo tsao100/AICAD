@@ -1248,7 +1248,7 @@ namespace {
  *  已知/未知對調，直接令 azJ = azP + thetaS 即可（thetaS 只與 L 本身
  *  有關，與哪一端已知無關），offset 公式（stDx/stDy）維持不變。
  */
-void jFromArcCT(QPointF centre, double R, int signR, SpiralType type,
+void jFromArcCT(QPointF /*centre*/, double R, int signR, SpiralType type,
                 QPointF P, double azP, double L,
                 QPointF& J, double& azJ, double& thetaOut)
 {
@@ -1272,7 +1272,7 @@ void jFromArcCT(QPointF centre, double R, int signR, SpiralType type,
  *  維持不變，但因為 SC = TS + offset(az1) ⟹ TS = SC − offset(az1)，
  *  offset 從 P 減去而非加上。
  */
-void jFromArcTC(QPointF centre, double R, int signR, SpiralType type,
+void jFromArcTC(QPointF /*centre*/, double R, int signR, SpiralType type,
                 QPointF P, double azP, double L,
                 QPointF& J, double& azJ, double& thetaOut)
 {
@@ -1472,14 +1472,14 @@ bool AlignmentSolver::analyzeReverseSpiralFamily(
         double f_lo  = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_try,
                                              arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_lo,
                                              bestJ, bestAz1, bestAz2);
-        double L2_hi = -1.0, f_hi = 0.0;
+        double L2_hi = -1.0;
         for (int m = 1; m <= nScan; ++m) {
             const double L2_k = L2_max * m / static_cast<double>(nScan);
             const double f_k  = reverseSpiralResidual(arc1Center, R1, signR1, type1, arc1Start, arc1AzStart, L1_try,
                                                       arc2Center, R2, signR2, type2, arc2End, arc2AzEnd, L2_k,
                                                       bestJ, bestAz1, bestAz2);
             if (std::isfinite(f_lo) && std::isfinite(f_k) && f_lo * f_k < 0.0) {
-                L2_hi = L2_k; f_hi = f_k;
+                L2_hi = L2_k;
                 break;
             }
             if (std::isfinite(f_k)) { f_lo = f_k; L2_lo = L2_k; }
@@ -1670,13 +1670,13 @@ SolvedReverseSpiral AlignmentSolver::solveReverseSpiral(
         double L1_lo = 1e-3;
         bool okLo = false;
         double f_lo = outerF(L1_lo, okLo);
-        double L1_hi = -1.0, f_hi = 0.0;
+        double L1_hi = -1.0;
         for (int m = 1; m <= nScan; ++m) {
             const double L1_k = L1_max * m / static_cast<double>(nScan);
             bool okK = false;
             const double f_k = outerF(L1_k, okK);
             if (okLo && okK && std::isfinite(f_lo) && std::isfinite(f_k) && f_lo * f_k < 0.0) {
-                L1_hi = L1_k; f_hi = f_k; break;
+                L1_hi = L1_k; break;
             }
             if (okK) { f_lo = f_k; L1_lo = L1_k; okLo = true; }
         }

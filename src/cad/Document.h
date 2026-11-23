@@ -33,6 +33,10 @@ class Sketch;
 class Extrude;
 class AlignedProfileArray;
 class ProfileLoftSolid;
+class TrackSlabPlan;
+class ComponentInstall;
+class DefinedPlane;
+struct PlaneDef;
 class ChamferSolid;
 
 /**
@@ -252,7 +256,31 @@ public:
         double startChainage,
         double endChainage,
         double interval,
-        const QString& name = QString());
+        const QString& name = QString(),
+        bool autoInterval = false);
+
+    /// 道版 E,N 平面圖（把 Loft 上方曲面的邊緣投影到隨 cant 變化的軌道面後展平，沿線形繪製）。
+    /// 整份文件只有一個、列在 root 底下，由 syncSlabPlan() 自動建立／移除，不需要手動呼叫。
+    TrackSlabPlan* createTrackSlabPlan();
+    void syncSlabPlan();
+
+    /// 定義平面：基準平面（"XY"／"XZ"／"YZ" 或另一個 DefinedPlane 的 id）沿其法線偏移 offsetExpr（可用參數）。
+    /// 例：createDefinedPlane("XY", "-90") = XY 平面往 -Z 方向 90 單位。失敗回傳 nullptr 並在 error 說明。
+    /// 更新既有定義平面的基準／偏移／名稱（含樹狀圖名稱），重建並標記已修改。已建立的草圖不會跟著移動。
+    bool updateDefinedPlane(DefinedPlane* dp, const QString& baseRef, const QString& offsetExpr,
+                            const QString& name, QString* error = nullptr);
+    /// 以完整的平面定義（任一種方式）新增／更新
+    bool updateDefinedPlane(DefinedPlane* dp, const PlaneDef& def, const QString& name, QString* error = nullptr);
+    DefinedPlane* createDefinedPlane(const PlaneDef& def, const QString& name, QString* error = nullptr);
+    DefinedPlane* createDefinedPlane(const QString& baseRef, const QString& offsetExpr,
+                                     const QString& name = QString(), QString* error = nullptr);
+
+    /// 3D 組件安裝：createComponentInstall() 建立空物件 → 呼叫端 setSource()／setPlacements() → addComponentInstall()
+    ComponentInstall* createComponentInstall(const QString& name = QString());
+    void addComponentInstall(ComponentInstall* ci);
+    /// 組件的安裝位置被編輯（或組件被刪除）後：重算組件、並重建所有 Loft 重新開孔
+    void applyComponentChange(ComponentInstall* ci);
+    void rebuildLoftsForComponents();
 
     /**
      * @brief 將 AlignedProfileArray 各測站輪廓放樣成實體（Step 9）
@@ -409,6 +437,8 @@ public:
     void removeTrackCenterLine(const QString& id);
     railway::TrackCenterLine* findTrackCenterLine(const QString& id) const;
     const QList<railway::TrackCenterLine*>& trackCenterLines() const { return m_trackCenterLines; }
+    /// Railway 資料夾 eyeOpen（彙總 3D Alignment 顯示中）
+    bool railway3DVisible() const { return m_railway3DVisible; }
 
     cad::Extrude* lastExtrude() const;
 
@@ -525,6 +555,9 @@ private:
     void emitTreeStructureChanged();
     int  m_treeBatchDepth   = 0;
     bool m_treeBatchPending = false;
+    QString m_componentSig;            ///< 上次同步時的 ComponentInstall id 清單（變了 → 重建 Loft）
+    bool m_slabSyncPending  = false;   ///< 道版圖同步已排程（合併多次 featureAdded/Removed）
+    void scheduleSlabSync();
 
     // ✅ 新增：參考幾何和 AIS 上下文
     QList<ReferenceGeometry> m_referenceGeometries;

@@ -284,14 +284,14 @@ QString formatLispResultForDisplay(const QVariant& value) {
     if (!value.isValid()) {
         return QStringLiteral("NIL");
     }
-    if (value.type() == QVariant::List) {
+    if (value.userType() == QMetaType::QVariantList) {
         QStringList parts;
         for (const QVariant& item : value.toList()) {
             parts << formatLispResultForDisplay(item);
         }
         return QLatin1Char('(') + parts.join(QLatin1Char(' ')) + QLatin1Char(')');
     }
-    if (value.type() == QVariant::Bool) {
+    if (value.userType() == QMetaType::Bool) {
         return value.toBool() ? QStringLiteral("T") : QStringLiteral("NIL");
     }
     return value.toString();

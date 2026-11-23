@@ -37,7 +37,11 @@ enum class ItemType {
     DrawingBook,      ///< 圖冊（Book）
     DrawingSheetItem, ///< 圖冊內的一張圖（封面／圖目錄／平縱面圖）
     DepotViewFolder,  ///< 圖冊內的「機廠矩形視圖」資料夾
-    DepotViewItem     ///< 一個機廠矩形視圖
+    DepotViewItem,    ///< 一個機廠矩形視圖
+    SlabPlan,         ///< 道版 XY 平面圖（TrackSlabPlan）
+    Component,        ///< 3D 組件安裝（ComponentInstall）
+    ComponentLayout,  ///< 「組件安裝位置」虛擬資料夾（底下是各組件）
+    DefinedPlane      ///< 定義平面（可選用為草圖平面）
 };
 
 /**

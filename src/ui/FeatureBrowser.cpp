@@ -96,7 +96,9 @@ public:
         bool isFolder = (index.data(Qt::UserRole + 1).toInt()
                          == static_cast<int>(ItemType::Folder) ||
                          index.data(Qt::UserRole + 1).toInt()
-                         == static_cast<int>(ItemType::Railway));
+                         == static_cast<int>(ItemType::Railway) ||
+                         index.data(Qt::UserRole + 1).toInt()
+                         == static_cast<int>(ItemType::ComponentLayout));
         if (isFolder) {
             QFont f = p->font(); f.setBold(true); p->setFont(f);
         }
@@ -203,6 +205,14 @@ public:
                     QVariantMap data;
                     data["itemId"]  = id;
                     data["visible"] = next;
+                    // EventBus 為同步呼叫：Document / CadView / ViewManager / UIManager 各自會
+                    // 重繪（Railway 資料夾還會逐條線路、逐個 overlay 重繪）。用 batch 事件包住，
+                    // 讓這一次眼睛切換最多只重繪一次。
+                    struct BatchGuard {
+                        core::EventBus* b;
+                        explicit BatchGuard(core::EventBus* bus) : b(bus) { b->publish("view.batch-begin", QVariant()); }
+                        ~BatchGuard() { b->publish("view.batch-end", QVariant()); }
+                    } guard(bus);
                     bus->publish("feature.visibility-changed", data);
                 }
                 return true;
@@ -294,18 +304,45 @@ QSet<QString>& collapsedOf(const QString& docName)
     }
     return it.value();
 }
+// 「預設收合」的節點類型（Loft：底下是該分段的所有測站草圖，動輒上百個）。
+// 這類節點相反地只記「使用者明確展開過」的 id；沒記錄 = 收合。
+bool collapsedByDefault(ItemType t) { return t == ItemType::Loft; }
+QString expandedKey(const QString& docName)
+{
+    return QStringLiteral("FeatureBrowser/expanded/") + (docName.isEmpty() ? QStringLiteral("(untitled)") : docName);
+}
+QHash<QString, QSet<QString>>& expandedCache() { static QHash<QString, QSet<QString>> h; return h; }
+QSet<QString>& expandedOf(const QString& docName)
+{
+    auto& h = expandedCache();
+    auto it = h.find(docName);
+    if (it == h.end()) {
+        QSettings st;
+        const QStringList l = st.value(expandedKey(docName)).toStringList();
+        it = h.insert(docName, QSet<QString>(l.begin(), l.end()));
+    }
+    return it.value();
+}
 void flushCollapsed()
 {
     QSettings st;
     const auto& h = collapsedCache();
     for (auto it = h.begin(); it != h.end(); ++it)
         st.setValue(collapsedKey(it.key()), QStringList(it.value().begin(), it.value().end()));
+    const auto& e = expandedCache();
+    for (auto it = e.begin(); it != e.end(); ++it)
+        st.setValue(expandedKey(it.key()), QStringList(it.value().begin(), it.value().end()));
 }
-void setCollapsedItem(const QString& docName, const QString& id, bool collapsed)
+void setCollapsedItem(const QString& docName, const QString& id, bool collapsed, ItemType type)
 {
     if (id.isEmpty()) return;
-    QSet<QString>& s = collapsedOf(docName);
-    if (collapsed) s.insert(id); else s.remove(id);
+    if (collapsedByDefault(type)) {            // 預設收合的節點：記「展開」
+        QSet<QString>& e = expandedOf(docName);
+        if (collapsed) e.remove(id); else e.insert(id);
+    } else {
+        QSet<QString>& s = collapsedOf(docName);
+        if (collapsed) s.insert(id); else s.remove(id);
+    }
     static bool pending = false;
     if (!pending) {
         pending = true;
@@ -350,7 +387,8 @@ void FeatureBrowser::connectSignals() {
     }
     auto onExp = [this](QTreeWidgetItem* it, bool expanded) {
         if (!it || !d->document) return;
-        setCollapsedItem(d->document->fileName(), it->data(0, Qt::UserRole).toString(), !expanded);
+        const ItemType t = static_cast<ItemType>(it->data(0, Qt::UserRole + 1).toInt());
+        setCollapsedItem(d->document->fileName(), it->data(0, Qt::UserRole).toString(), !expanded, t);
     };
     connect(d->treeWidget, &QTreeWidget::itemExpanded, this, [onExp](QTreeWidgetItem* it) { onExp(it, true); });
     connect(d->treeWidget, &QTreeWidget::itemCollapsed, this, [onExp](QTreeWidgetItem* it) { onExp(it, false); });
@@ -426,10 +464,17 @@ void FeatureBrowser::refresh() {
 
     {
         // 還原先前的展開／摺疊狀態（只有被摺疊過的才收起，其餘預設展開）
-        const QSet<QString>& collapsed = collapsedOf(d->document->fileName());
-        for (auto it = m_itemMap.begin(); it != m_itemMap.end(); ++it)
-            if (it.value() && it.value()->childCount() > 0)
-                it.value()->setExpanded(!collapsed.contains(it.key()));
+        const QString docName = d->document->fileName();      // 具名區域變數，避免參考綁到暫存物件
+        const QSet<QString>& collapsed = collapsedOf(docName);
+        const QSet<QString>& expanded  = expandedOf(docName);
+        for (auto it = m_itemMap.begin(); it != m_itemMap.end(); ++it) {
+            if (!it.value() || it.value()->childCount() <= 0) continue;
+            const ItemType t = static_cast<ItemType>(it.value()->data(0, Qt::UserRole + 1).toInt());
+            // Loft（測站草圖的父節點）預設收合，使用者展開過才記住；其餘維持「預設展開」
+            const bool exp = collapsedByDefault(t) ? expanded.contains(it.key())
+                                                   : !collapsed.contains(it.key());
+            it.value()->setExpanded(exp);
+        }
     }
     d->treeWidget->resizeColumnToContents(0);
     d->treeWidget->resizeColumnToContents(1);
@@ -448,23 +493,37 @@ void FeatureBrowser::buildTreeFromData(const QVector<FeatureTreeItem>& items) {
         }
     }
 
-    // 第二遍：建立子項目
-    for (const FeatureTreeItem& itemData : items) {
-        if (!itemData.parentId.isEmpty()) {
-            QTreeWidgetItem* item = createTreeWidgetItem(itemData);
+    // 第二遍：建立子項目。
+    // 父項目本身也可能是子項目（階層 ≥ 3：陣列 → Loft → 測站草圖），而 items 的順序是
+    // 「建立順序」，測站草圖常在它的 Loft 之前（Loft 是 rebuild 之後才補建的）。
+    // 單趟依序處理時，找不到尚未建立的父項目就會被錯放到頂層 —— 所以改成多趟：
+    // 每趟只處理「父項目已建立」的項目，直到沒有進展；剩下的（真的找不到父項目／循環）才放頂層。
+    // 同一父項目的子項目在同一趟內依 items 順序加入，兄弟順序不變。
+    QVector<const FeatureTreeItem*> pending;
+    for (const FeatureTreeItem& itemData : items)
+        if (!itemData.parentId.isEmpty()) pending.append(&itemData);
 
-            QTreeWidgetItem* parentItem = m_itemMap.value(itemData.parentId);
-            if (parentItem) {
-                parentItem->addChild(item);
-            } else {
-                // 找不到父項目，加入頂層
-                qWarning() << "[FeatureBrowser] Parent not found for:"
-                           << itemData.name << "parentId:" << itemData.parentId;
-                d->treeWidget->addTopLevelItem(item);
-            }
-
-            m_itemMap[itemData.id] = item;
+    while (!pending.isEmpty()) {
+        QVector<const FeatureTreeItem*> deferred;
+        for (const FeatureTreeItem* itemData : pending) {
+            QTreeWidgetItem* parentItem = m_itemMap.value(itemData->parentId, nullptr);
+            if (!parentItem) { deferred.append(itemData); continue; }
+            QTreeWidgetItem* item = createTreeWidgetItem(*itemData);
+            parentItem->addChild(item);
+            m_itemMap[itemData->id] = item;
         }
+        if (deferred.size() == pending.size()) {
+            // 沒有任何進展：剩下的找不到父項目（或互為父子），加入頂層
+            for (const FeatureTreeItem* itemData : deferred) {
+                qWarning() << "[FeatureBrowser] Parent not found for:"
+                           << itemData->name << "parentId:" << itemData->parentId;
+                QTreeWidgetItem* item = createTreeWidgetItem(*itemData);
+                d->treeWidget->addTopLevelItem(item);
+                m_itemMap[itemData->id] = item;
+            }
+            break;
+        }
+        pending = deferred;
     }
 
     d->treeWidget->blockSignals(false); // ← ADD THIS
@@ -486,6 +545,7 @@ QTreeWidgetItem* FeatureBrowser::createTreeWidgetItem(const FeatureTreeItem& ite
 
     if (itemData.type == ItemType::Folder ||
         itemData.type == ItemType::Railway ||
+        itemData.type == ItemType::ComponentLayout ||
         itemData.type == ItemType::Drawings) {
         item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
     }
@@ -505,6 +565,10 @@ QIcon FeatureBrowser::getIconForType(ItemType type) {
     case ItemType::TrackCenterLine: return QIcon(":/icons/sketch.png");      // 單線路
     case ItemType::VAlignment:      return QIcon(":/icons/plane.png");       // 縱斷面
     case ItemType::Pattern:         return QIcon(":/icons/sketch.png");      // 沿線斷面陣列（暫沿用 sketch 圖示）
+    case ItemType::SlabPlan:        return QIcon(":/icons/sketch.png");      // 道版 XY 平面圖（暫沿用 sketch 圖示）
+    case ItemType::Component:       return QIcon(":/icons/extrude.png");     // 3D 組件安裝（暫沿用 extrude 圖示）
+    case ItemType::DefinedPlane:    return QIcon(":/icons/plane.png");       // 定義平面
+    case ItemType::ComponentLayout: return QIcon(":/icons/folder.png");      // 組件安裝位置（資料夾）
     case ItemType::Loft:            return QIcon(":/icons/extrude.png");     // 放樣實體（暫沿用 extrude 圖示）
     case ItemType::Drawings:        return QIcon(":/icons/folder.png");
     case ItemType::DrawingBook:     return QIcon(":/icons/folder.png");
@@ -565,6 +629,7 @@ void FeatureBrowser::onItemClicked(QTreeWidgetItem* item, int column) {
     // 資料夾不發選取事件
     if (static_cast<ItemType>(itemType) == ItemType::Folder ||
         static_cast<ItemType>(itemType) == ItemType::Railway ||
+        static_cast<ItemType>(itemType) == ItemType::ComponentLayout ||
         static_cast<ItemType>(itemType) == ItemType::Drawings ||
         static_cast<ItemType>(itemType) == ItemType::DrawingBook ||
         static_cast<ItemType>(itemType) == ItemType::DepotViewFolder ||
@@ -591,6 +656,14 @@ void FeatureBrowser::onItemDoubleClicked(QTreeWidgetItem* item, int column) {
             Q_EMIT drawingActionRequested(QStringLiteral("open"), itemId);
             return;
         }
+        if (ty == ItemType::Component) {                 // 雙擊組件 → 另開 CADView 編輯來源 *.aicad
+            Q_EMIT openComponentSourceRequested(itemId);
+            return;
+        }
+        if (ty == ItemType::ComponentLayout) {           // 雙擊資料夾 → 編輯各組件安裝位置
+            Q_EMIT editComponentLayoutRequested();
+            return;
+        }
         if (ty == ItemType::Drawings || ty == ItemType::DepotViewFolder) return;
         if (ty == ItemType::DepotViewItem) {
             Q_EMIT drawingActionRequested(QStringLiteral("depotEdit"), itemId);
@@ -600,6 +673,38 @@ void FeatureBrowser::onItemDoubleClicked(QTreeWidgetItem* item, int column) {
 
     Q_EMIT featureDoubleClickedById(itemId);
     Q_EMIT featureDoubleClicked(0);
+}
+
+// 哪些節點類型在 View 中有幾何可聚焦（Plane/Axis 為無限大參考、VAlignment 在縱斷面視窗、
+// 圖冊／圖紙不在 3D View，皆不適用）
+static bool itemSupportsFocus(ItemType t)
+{
+    switch (t) {
+    case ItemType::Sketch:
+    case ItemType::Extrude:
+    case ItemType::Feature:
+    case ItemType::Loft:
+    case ItemType::Chamfer:
+    case ItemType::Pattern:
+    case ItemType::SlabPlan:
+    case ItemType::Component:
+    case ItemType::DefinedPlane:
+    case ItemType::TrackCenterLine:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// 目前顯示狀態：優先用外部解析器，否則用樹狀圖眼睛狀態
+static bool itemCurrentlyVisible(const std::function<int(const QString&)>& resolver,
+                                 const QString& id, QTreeWidgetItem* item)
+{
+    if (resolver) {
+        const int r = resolver(id);
+        if (r >= 0) return r != 0;
+    }
+    return item->data(0, Qt::UserRole + 2).toBool();
 }
 
 void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
@@ -617,10 +722,25 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
         return;
     }
 
+    showItemContextMenu(item, d->treeWidget->mapToGlobal(pos));
+}
+
+bool FeatureBrowser::showContextMenuForItem(const QString& itemId, const QPoint& globalPos) {
+    QTreeWidgetItem* item = m_itemMap.value(itemId, nullptr);
+    if (!item) return false;
+    showItemContextMenu(item, globalPos);
+    return true;
+}
+
+void FeatureBrowser::collapseRailwayFolder() {
+    if (QTreeWidgetItem* folder = m_itemMap.value(QStringLiteral("__railway_folder__"), nullptr))
+        d->treeWidget->collapseItem(folder);
+}
+
+void FeatureBrowser::showItemContextMenu(QTreeWidgetItem* item, const QPoint& globalPos) {
     QString  itemId   = item->data(0, Qt::UserRole).toString();
     ItemType itemType = static_cast<ItemType>(
         item->data(0, Qt::UserRole + 1).toInt());
-    QPoint   globalPos = d->treeWidget->mapToGlobal(pos);
 
     if (itemType == ItemType::Folder || itemType == ItemType::Origin)
         return;
@@ -703,12 +823,32 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
         return;
     }
 
+    // ── 「組件安裝位置」資料夾 ───────────────────────────────────────────
+    if (itemType == ItemType::ComponentLayout) {
+        QMenu menu(this);
+        QAction* actEdit = menu.addAction(tr("新增／編輯各組件安裝位置…"));
+        connect(actEdit, &QAction::triggered, this, [this] { Q_EMIT editComponentLayoutRequested(); });
+        QAction* actIns = menu.addAction(tr("插入 3D 組件 (*.aicad)…"));
+        connect(actIns, &QAction::triggered, this, [this] { Q_EMIT insertComponentRequested(); });
+        menu.exec(globalPos);
+        return;
+    }
+
     // ── Railway 資料夾：提供新增線路 ─────────────────────────────────────
     if (itemType == ItemType::Railway) {
         QMenu menu(this);
         QAction* actAdd = menu.addAction(tr("新增線路中心線"));
         connect(actAdd, &QAction::triggered, this, [this] {
             Q_EMIT editAlignmentRequested(QString());  // 空 id = 新增
+        });
+        menu.addSeparator();
+        QAction* actAllClose = menu.addAction(tr("所有線形 eyeClose"));
+        connect(actAllClose, &QAction::triggered, this, [this] {
+            Q_EMIT allAlignmentsVisibilityRequested(false);
+        });
+        QAction* actAllOpen = menu.addAction(tr("所有線形 eyeOpen"));
+        connect(actAllOpen, &QAction::triggered, this, [this] {
+            Q_EMIT allAlignmentsVisibilityRequested(true);
         });
         menu.exec(globalPos);
         return;
@@ -729,6 +869,9 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
             d2["visible"] = true;
             bus->publish("railway.valign-visibility-changed", d2);
         });
+        menu.addSeparator();
+        QAction* actCollapse = menu.addAction(tr("收合 Railway 項目"));
+        connect(actCollapse, &QAction::triggered, this, [this] { collapseRailwayFolder(); });
         menu.exec(globalPos);
         return;
     }
@@ -736,6 +879,21 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
     // ── TrackCenterLine 專屬選單 ──────────────────────────────────────────
     if (itemType == ItemType::TrackCenterLine) {
         QMenu menu(this);
+
+        QAction* actFocus = menu.addAction(tr("聚焦 Focus"));
+        connect(actFocus, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT focusRequested(itemId);
+        });
+        {
+            const bool vis = itemCurrentlyVisible(m_visibilityResolver, itemId, item);
+            QAction* actVis = menu.addAction(vis ? tr("隱藏 Hide (eyeClose)") : tr("顯示 Show (eyeOpen)"));
+            connect(actVis, &QAction::triggered, this, [this, itemId, vis] {
+                Q_EMIT visibilityRequested(itemId, !vis);
+            });
+        }
+        QAction* actCollapse = menu.addAction(tr("收合 Railway 項目"));
+        connect(actCollapse, &QAction::triggered, this, [this] { collapseRailwayFolder(); });
+        menu.addSeparator();
 
         QAction* actEdit = menu.addAction(tr("編輯線形 (Edit Alignment)"));
         connect(actEdit, &QAction::triggered, this, [this, itemId] {
@@ -799,6 +957,26 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
     // ── AlignedProfileArray（Step 8：唯讀站位資料表）───────────────────────
     if (itemType == ItemType::Pattern) {
         QMenu menu(this);
+        QAction* actFocus = menu.addAction(tr("聚焦 Focus"));
+        connect(actFocus, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT focusRequested(itemId);
+        });
+        {
+            const bool vis = itemCurrentlyVisible(m_visibilityResolver, itemId, item);
+            QAction* actVis = menu.addAction(vis ? tr("隱藏 Hide (eyeClose)") : tr("顯示 Show (eyeOpen)"));
+            connect(actVis, &QAction::triggered, this, [this, itemId, vis] {
+                Q_EMIT visibilityRequested(itemId, !vis);
+            });
+        }
+        QAction* actStClose = menu.addAction(tr("所有測站草圖 eyeClose"));
+        connect(actStClose, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT stationSketchesVisibilityRequested(itemId, false);
+        });
+        QAction* actStOpen = menu.addAction(tr("所有測站草圖 eyeOpen"));
+        connect(actStOpen, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT stationSketchesVisibilityRequested(itemId, true);
+        });
+        menu.addSeparator();
         QAction* actTable = menu.addAction(tr("分段資料表 (Segment Table)…"));
         connect(actTable, &QAction::triggered, this, [this, itemId] {
             Q_EMIT showProfileArrayTableRequested(itemId);
@@ -822,6 +1000,90 @@ void FeatureBrowser::onCustomContextMenu(const QPoint& pos) {
     if (itemType == ItemType::Sketch) {
         if (auto* doc = core::Application::instance()->documentManager()->currentDocument())
             isInstanceNode = qobject_cast<cad::SketchInstance*>(doc->findFeature(itemId)) != nullptr;
+    }
+
+    // ── 聚焦 Focus（測站節點 SketchInstance 不在 View 中顯示，不提供）────────
+    if (itemSupportsFocus(itemType) && !isInstanceNode) {
+        QAction* actFocus = menu.addAction(tr("聚焦 Focus"));
+        connect(actFocus, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT focusRequested(itemId);
+        });
+        const bool vis = itemCurrentlyVisible(m_visibilityResolver, itemId, item);
+        QAction* actVis = menu.addAction(vis ? tr("隱藏 Hide (eyeClose)") : tr("顯示 Show (eyeOpen)"));
+        connect(actVis, &QAction::triggered, this, [this, itemId, vis] {
+            Q_EMIT visibilityRequested(itemId, !vis);
+        });
+        menu.addSeparator();
+    }
+
+    if (itemType == ItemType::Component) {
+        QAction* actOpenSrc = menu.addAction(tr("在另一個 CADView 編輯組件（開啟來源檔）"));
+        connect(actOpenSrc, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT openComponentSourceRequested(itemId);
+        });
+        QAction* actEditPl = menu.addAction(tr("編輯安裝位置…"));
+        connect(actEditPl, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT editComponentPlacementsRequested(itemId);
+        });
+        QAction* actFrame = menu.addAction(tr("建立／重設組件座標線（與斷面草圖約束）…"));
+        connect(actFrame, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT createComponentFrameRequested(itemId);
+        });
+        menu.addSeparator();
+        QAction* actSync = menu.addAction(tr("同步來源檔（重新載入組件）"));
+        connect(actSync, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT syncComponentRequested(itemId);
+        });
+        QAction* actAuto = menu.addAction(tr("切換自動同步（來源檔存檔時）"));
+        connect(actAuto, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT toggleComponentAutoSyncRequested(itemId);
+        });
+        menu.addSeparator();
+    }
+
+    if (itemType == ItemType::DefinedPlane) {
+        QAction* actSk = menu.addAction(tr("在此平面建立草圖"));
+        connect(actSk, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT createSketchOnDefinedPlaneRequested(itemId);
+        });
+        QAction* actEd = menu.addAction(tr("編輯平面（基準／偏移）…"));
+        connect(actEd, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT editDefinedPlaneRequested(itemId);
+        });
+        QAction* actNew = menu.addAction(tr("以此平面為基準定義新平面…"));
+        connect(actNew, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT defineNewPlaneRequested(itemId);
+        });
+        menu.addSeparator();
+    }
+
+    // 標準參考平面（XY／XZ／YZ，Origin 底下）：可以此為基準定義新的偏移平面
+    if (itemType == ItemType::Plane && (itemId == QLatin1String("plane_xy")
+                                        || itemId == QLatin1String("plane_xz")
+                                        || itemId == QLatin1String("plane_yz"))) {
+        const QString base = itemId == QLatin1String("plane_xy") ? QStringLiteral("XY")
+                           : itemId == QLatin1String("plane_xz") ? QStringLiteral("XZ") : QStringLiteral("YZ");
+        QAction* actDef = menu.addAction(tr("以此平面定義新平面（偏移）…"));
+        connect(actDef, &QAction::triggered, this, [this, base] {
+            Q_EMIT defineNewPlaneRequested(base);
+        });
+        menu.addSeparator();
+    }
+
+    if (itemType == ItemType::Extrude) {
+        QAction* actExt = menu.addAction(tr("編輯擠出（方向／尺寸）…"));
+        connect(actExt, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT editExtrudeRequested(itemId);
+        });
+        menu.addSeparator();
+    }
+
+    if (itemType == ItemType::SlabPlan) {
+        QAction* actDxf = menu.addAction(tr("匯出 DXF…"));
+        connect(actDxf, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT exportSlabPlanDxfRequested(itemId);
+        });
+        menu.addSeparator();
     }
 
     if (itemType == ItemType::Sketch) {

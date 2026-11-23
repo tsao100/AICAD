@@ -77,6 +77,21 @@ public:
      */
     double volume() const;
 
+    /// 放樣出的「未開孔」實體。ChamferSolid 以它為基底（角點邊 longitudinalEdge() 屬於這個實體；
+    /// 開孔後邊會被切開，不能拿去倒角）。無開孔時與 shape() 相同。
+    const TopoDS_Shape& baseShape() const { return m_baseShape; }
+
+    /// 本 Loft 涵蓋的陣列里程範圍（供組件開孔挑選適用的所需空間）；失敗回傳 false。
+    bool chainageRange(double& pMin, double& pMax) const;
+
+    /**
+     * @brief 道版兩端的端面邊緣倒角（依本段在分段表中的設定：預設要倒角、0.025 × 0.025 m）。
+     *        找出本段頭、尾測站位置上的平面端面，把端面的邊緣倒角；**底邊（朝下的邊）不倒**。
+     *        未啟用、找不到端面、或倒角失敗 → 回傳原 solid（失敗原因寫入 warn）。
+     * @param solid 要倒角的實體（放樣結果，或已做完縱向倒角的結果）
+     */
+    TopoDS_Shape applyEndChamfer(const TopoDS_Shape& solid, QString* warn = nullptr) const;
+
     QJsonObject toJson()  const override;
     bool fromJson(const QJsonObject& json) override;
     QSet<QString> featureDependencies() const override;
@@ -93,6 +108,7 @@ private:
     /// 外層 index = loopIndex，內層 index = cornerIndex（見 loopCount()/
     /// cornerCount()/longitudinalEdge() 的說明）。只在 rebuild() 成功時更新。
     QVector<QVector<TopoDS_Edge>> m_loopCornerEdges;
+    TopoDS_Shape m_baseShape;          ///< 未開孔的放樣結果（見 baseShape()）
 };
 
 } // namespace cad

@@ -311,6 +311,41 @@ public:
      */
     void fitAll();
 
+    /**
+     * @brief 批次重繪：begin/end 之間所有 overlay 的 add/remove/setVisible/refreshView
+     *        只標記「需要重繪」，最外層 endViewerBatch() 時才一次 UpdateCurrentViewer + Redraw。
+     *        可巢狀。EventBus 為同步呼叫，所以包住一次 publish 即可合併整條連鎖反應的重繪。
+     */
+    void beginViewerBatch();
+    void endViewerBatch();
+
+    /// 把視圖中心平移到世界座標 (x,y)（保留視角方向、縮放與中心高度 Z）。
+    void panToPoint(double x, double y);
+
+    /// 目前可視範圍投影到「相機中心所在的水平面」的四邊形（世界 XY，4 點）；無法投影則為空。
+    QVector<QPointF> viewportOnPlane() const;
+
+    /// 該 Feature 目前顯示中的 AIS 物件聯集範圍（世界 XY）；沒有顯示中的物件回傳 false。
+    bool featureBoundsXY(const QString& featureId, QRectF& out) const;
+
+    /// 由 AIS 物件反查所屬 Feature id（只涵蓋 displayAllFeatures 登記的物件）；找不到回傳空字串。
+    QString featureIdForObject(const Handle(AIS_InteractiveObject)& obj) const;
+
+    /// 目前游標（widget 座標）下偵測到的 AIS 物件；沒有則回傳 null handle。
+    Handle(AIS_InteractiveObject) detectedObjectAt(const QPoint& widgetPos);
+
+    /**
+     * @brief 將指定 AIS 物件群的聯集範圍 Fit 聚焦到視圖（保留目前視角方向，只改縮放與中心）。
+     * @return false = 這些物件沒有可用的包圍盒（不改變視圖）
+     */
+    bool fitToObjects(const QList<Handle(AIS_InteractiveObject)>& objects);
+
+    /**
+     * @brief 將指定 Feature 的內容 Fit 聚焦到視圖（Feature Browser 右鍵「聚焦 Focus」）。
+     * @return false = 該 Feature 目前沒有任何可聚焦的幾何
+     */
+    bool fitToFeature(const QString& featureId);
+
     /// 登錄「常駐」AIS 物件，displayAllFeatures 的 RemoveAll 後會自動重新顯示
     void addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
                        const QList<int>& activationModes = {});
@@ -508,6 +543,16 @@ public Q_SLOTS:
     /** 高亮選取的 region */
     void highlightSketchRegion(const QString& regionUuid);
 Q_SIGNALS:
+    /**
+     * @brief 右鍵「點擊」（按下到放開位移很小，且沒有被指令的右鍵確認／結束選取吃掉）。
+     *        僅在非草圖編輯、非互動取點等模式發出；接收端用 detectedObjectAt(widgetPos)
+     *        判斷點到什麼，沒有要處理就忽略。
+     */
+    void rightClicked(const QPoint& widgetPos, const QPoint& globalPos);
+
+    /// 游標在 View 中停留一小段時間（未按任何鍵）→ 供外部顯示 tooltip；位置為 widget／螢幕座標
+    void hoverIdle(const QPoint& widgetPos, const QPoint& globalPos);
+
     /// 返回按鈕被按下（結束 H-Alignment edit 模式）
     void returnAlignmentRequested();
 

@@ -35,8 +35,8 @@ namespace {
 
 // ── QSettings 落地位置／機碼（比照 ExportAlignmentCommand.cpp、
 //    BasicCommands.cpp 既有慣例：("AICAD","AICAD")；Windows 上等同
-//    VBA SaveSetting()/GetSetting() 落地在 HKEY_CURRENT_USER\Software\
-//    AICAD\AICAD 底下）───────────────────────────────────────────────────
+//    VBA SaveSetting()/GetSetting() 落地在 HKEY_CURRENT_USER\Software\AICAD\AICAD 底下）
+//   ───────────────────────────────────────────────────
 const char* kSettingsOrg = "AICAD";
 const char* kSettingsApp = "AICAD";
 const char* kKeyRadius1  = "railway/rscs/radius1";

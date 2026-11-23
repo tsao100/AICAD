@@ -11,6 +11,7 @@
 #include <ui/FeatureTreeItem.h>
 
 #include <QDockWidget>
+#include <functional>
 #include <QTreeWidget>
 
 namespace aicad {
@@ -75,6 +76,19 @@ public:
     void selectFeature(int featureId);
 
     void selectFeature(const QString& featureId);
+
+    /**
+     * @brief 在指定螢幕座標彈出「等同 Feature Browser 該項目右鍵」的選單。
+     *        供 View 中點選圖形（例如 Railway 線形）右鍵時共用，選單內容與樹狀圖完全一致。
+     * @return false = 樹狀圖中找不到該項目（未彈出選單）
+     */
+    bool showContextMenuForItem(const QString& itemId, const QPoint& globalPos);
+
+    /**
+     * @brief 設定「項目目前實際是否顯示」的查詢函式（回傳 1=顯示 0=隱藏 -1=未知，改用樹狀圖眼睛狀態）。
+     *        用於 Railway 3D 彙總顯示時，單一線路的實際顯示狀態與樹狀圖眼睛不同。
+     */
+    void setVisibilityResolver(std::function<int(const QString&)> resolver) { m_visibilityResolver = std::move(resolver); }
     
 Q_SIGNALS:
     /**
@@ -113,6 +127,39 @@ Q_SIGNALS:
     void pasteSketchRequested();
     void deleteFeatureRequested(const QString& featureId);
     void sectionViewRequested(const QString& featureId);
+    /// 右鍵「聚焦 Focus」：把該項目的內容 Fit 聚焦顯示在 View 中
+    /// itemId 可為 Feature id 或 TrackCenterLine id
+    void focusRequested(const QString& itemId);
+    /// 右鍵「隱藏 Hide (eyeClose)」／「顯示 Show (eyeOpen)」
+    void visibilityRequested(const QString& itemId, bool visible);
+    /// Railway 資料夾右鍵「所有線形 eyeOpen / eyeClose」
+    void allAlignmentsVisibilityRequested(bool visible);
+    /// 沿線斷面陣列（Pattern）右鍵「所有測站草圖 eyeOpen / eyeClose」
+    void stationSketchesVisibilityRequested(const QString& arrayId, bool visible);
+    /// 道版 E,N 平面圖右鍵「匯出 DXF…」
+    void exportSlabPlanDxfRequested(const QString& itemId);
+    /// 3D 組件安裝右鍵「編輯安裝位置…」
+    void editComponentPlacementsRequested(const QString& itemId);
+    /// 建立／重設組件座標線（與斷面草圖建立約束關係）
+    void createComponentFrameRequested(const QString& itemId);
+    /// 立即與來源 *.aicad 同步
+    void syncComponentRequested(const QString& itemId);
+    /// 切換「來源檔被存檔時自動同步」
+    void toggleComponentAutoSyncRequested(const QString& itemId);
+    /// 雙擊組件 → 在另一個 CADView（另開文件視圖）開啟來源 *.aicad 編輯
+    void openComponentSourceRequested(const QString& itemId);
+    /// 「組件安裝位置」資料夾：新增／編輯各式組件沿線形的安裝位置
+    void editComponentLayoutRequested();
+    /// 「組件安裝位置」資料夾：插入新的 3D 組件（*.aicad）
+    void insertComponentRequested();
+    /// Extrude 右鍵「編輯擠出（方向／尺寸）…」
+    void editExtrudeRequested(const QString& itemId);
+    /// 定義平面：以 baseRef（"XY"/"XZ"/"YZ" 或 DefinedPlane 的 id）為基準新增
+    void defineNewPlaneRequested(const QString& baseRef);
+    /// 定義平面：編輯基準／偏移
+    void editDefinedPlaneRequested(const QString& itemId);
+    /// 定義平面：在此平面建立草圖
+    void createSketchOnDefinedPlaneRequested(const QString& itemId);
 
     // TrackCenterLine context menu actions
     void editAlignmentRequested(const QString& tclId);
@@ -139,6 +186,8 @@ private Q_SLOTS:
     void onItemClicked(QTreeWidgetItem* item, int column);
     void onItemDoubleClicked(QTreeWidgetItem* item, int column);
     void onCustomContextMenu(const QPoint& pos);
+    void showItemContextMenu(QTreeWidgetItem* item, const QPoint& globalPos);
+    void collapseRailwayFolder();
 
     /**
      * @brief 處理 tree 結構改變
@@ -171,6 +220,7 @@ private:
 
     // 儲存 item 到 ID 的映射
     QHash<QString, QTreeWidgetItem*> m_itemMap;
+    std::function<int(const QString&)> m_visibilityResolver;
 
     class Private;
     Private* d;

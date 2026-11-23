@@ -161,6 +161,24 @@ win32 {
     # PASTECLIP 直接呼叫 Win32 剪貼簿／GDI API（src/core/WinClipboardEmf.cpp）
     LIBS += -luser32 -lgdi32
     DEFINES += _USE_MATH_DEFINES
+
+    # Eigen 模板（ConstraintSolver / AlignmentNLSolver）在 Debug 下會產生極多 section，
+    # 超過 COFF 預設上限（MinGW: "too many sections / file too big"；MSVC: C1128）。
+    msvc:   QMAKE_CXXFLAGS += /bigobj
+    mingw:  QMAKE_CXXFLAGS += -Wa,-mbig-obj
+
+    # ── 加速編譯／連結（MSVC）────────────────────────────────────────────
+    msvc {
+        # 預編譯標頭：Qt／std 常用標頭只解析一次
+        CONFIG += precompile_header
+        PRECOMPILED_HEADER = src/pch.h
+
+        # /Zc:inline：丟掉未被引用的 inline 函式，縮小 .obj、加快連結（Eigen／Qt 模板很多）
+        QMAKE_CXXFLAGS += /Zc:inline
+
+        # Debug 連結：只放索引、不複製完整除錯資訊，連結時間大幅縮短
+        QMAKE_LFLAGS_DEBUG += /DEBUG:FASTLINK
+    }
     DEFINES += QT_NO_OPENGL_ES_2
     # --- OCCT 7.8.0 paths ---
     OCC_INC = D:/Git/OCCT/OCCT-install/inc
@@ -170,8 +188,28 @@ win32 {
     INCLUDEPATH += $$OCC_INC
     LIBS += -L$$OCC_LIB
 
-    # Add PATH for DLLs during execution
-    QMAKE_POST_LINK += $$quote(cmd /C "set PATH=$$OCC_BIN;%PATH% && echo Added OCCT bin to PATH")
+    # （原本這裡有一行 QMAKE_POST_LINK += cmd /C "set PATH=... && echo ..."：
+    #  ① set PATH 只影響建置當下的 cmd，之後執行 AICAD.exe 並不會生效；
+    #  ② 它結尾沒有命令分隔，後面所有 QMAKE_POST_LINK += 的內容都被接在 echo 後面當成它的參數，
+    #     所以 menu.txt 的 copy 根本沒被執行。已移除。執行時的 DLL 路徑請見下方 OCC_3RD_BIN／Run 環境設定。）
+
+    # ── OCCT 第三方 DLL（freetype.dll 等；TKService.dll 依賴它）────────────────
+    # 上面那行 set PATH 只影響「建置當下」的 cmd，不會影響之後執行 AICAD.exe，所以這裡
+    # 改成：把第三方 DLL 資料夾填進 OCC_3RD_BIN，建置後自動複製（只複製較新的）到 exe 旁邊。
+    # 例：OCC_3RD_BIN = D:/Git/OCCT/3rdparty-vc14-64/freetype-2.13.2-vc14-64/bin
+    # 多個資料夾可用空格分隔。留空 = 不複製（改在 Qt Creator 的 Run 環境設 PATH 亦可）。
+    OCC_3RD_BIN =
+    !isEmpty(OCC_3RD_BIN) {
+        CONFIG(debug, debug|release): DLL_OUT = $$OUT_PWD/debug
+        else:                         DLL_OUT = $$OUT_PWD/release
+        for(dir, OCC_3RD_BIN) {
+            # /I：目的地視為資料夾；目的路徑不可以反斜線結尾（會跳脫結尾的引號）
+            QMAKE_POST_LINK += cmd /c xcopy /D /Y /Q /I \
+                "\"$$shell_path($$dir)\\*.dll\"" \
+                "\"$$shell_path($$DLL_OUT)\"" \
+                $$escape_expand(\n\t)
+        }
+    }
 
     # OCCT core libs (adjusted for 7.8.0)
     LIBS += -lTKernel \
@@ -218,9 +256,11 @@ win32 {
     INCLUDEPATH += D:/Git/eigen-5.0.0
 
     # 每次編譯完自動複製 menu.txt 到輸出資料夾
+    # ⚠️ 每條 POST_LINK 命令結尾一定要加 $$escape_expand(\n\t)，否則多個 += 會被接成同一行命令。
     QMAKE_POST_LINK += cmd /c copy /Y \
         "\"$$shell_path($$PWD/menu.txt)\"" \
-        "\"$$shell_path($$OUT_PWD)\""
+        "\"$$shell_path($$OUT_PWD)\"" \
+        $$escape_expand(\n\t)
 
 }
 
@@ -342,6 +382,16 @@ SOURCES += \
     src/cad/Extrude.cpp \
     src/cad/AlignedProfileArray.cpp \
     src/cad/ProfileLoftSolid.cpp \
+    src/cad/TrackSlabPlan.cpp \
+    src/cad/ComponentInstall.cpp \
+    src/cad/DefinedPlane.cpp \
+    src/cad/CantLineUtil.cpp \
+    src/ui/ComponentDialogs.cpp \
+    src/ui/ExtrudeEditDialog.cpp \
+    src/ui/DocumentTabBar.cpp \
+    src/ui/DefinePlaneDialog.cpp \
+    src/command/DefinePlaneCommand.cpp \
+    src/command/ComponentInsertCommand.cpp \
     src/cad/ChamferSolid.cpp \
     src/cad/FeatureTree.cpp \
     src/cad/Plane.cpp \
@@ -380,6 +430,7 @@ SOURCES += \
     src/ui/ProfileArraySegmentTableDialog.cpp \
     src/ui/ParameterPanel.cpp \
     src/ui/PropertyPanel.cpp \
+    src/ui/KeymapView.cpp \
     src/ui/SketchPanel.cpp \
     src/ui/ToolManager.cpp \
     src/ui/TransientCommandHistory.cpp \
@@ -529,6 +580,16 @@ HEADERS += \
     src/cad/Extrude.h \
     src/cad/AlignedProfileArray.h \
     src/cad/ProfileLoftSolid.h \
+    src/cad/TrackSlabPlan.h \
+    src/cad/ComponentInstall.h \
+    src/cad/DefinedPlane.h \
+    src/cad/CantLineUtil.h \
+    src/ui/ComponentDialogs.h \
+    src/ui/ExtrudeEditDialog.h \
+    src/ui/DocumentTabBar.h \
+    src/ui/DefinePlaneDialog.h \
+    src/command/DefinePlaneCommand.h \
+    src/command/ComponentInsertCommand.h \
     src/cad/ChamferSolid.h \
     src/cad/FeatureTree.h \
     src/cad/Plane.h \                # ✅ 添加
@@ -580,6 +641,7 @@ HEADERS += \
     src/ui/ProfileArraySegmentTableDialog.h \
     src/ui/ParameterPanel.h \
     src/ui/PropertyPanel.h \
+    src/ui/KeymapView.h \
     src/ui/SketchPanel.h \
     src/ui/ToolManager.h \
     src/ui/TransientCommandHistory.h \

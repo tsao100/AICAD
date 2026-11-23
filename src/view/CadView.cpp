@@ -8,6 +8,7 @@
 #include "CadView.h"
 #include <QPointer>
 #include <Standard_Failure.hxx>
+#include <BRepBndLib.hxx>
 #include "DimPreviewOverlay.h"
 #include <limits>
 #include <Geom_Circle.hxx>
@@ -54,6 +55,8 @@
 #include <cmath>
 #include <functional>
 #include <QToolTip>
+#include <QGuiApplication>
+#include <cmath>
 #include <QMenu>
 #include <QPainter>
 #include <QPen>
@@ -347,6 +350,11 @@ public:
 
     // ── 隔離顯示（見 CadView::setIsolatedFeature()）──────────────────────────
     bool                 isolationActive = false;
+    QTimer*              hoverTimer = nullptr;        // 游標停留偵測（tooltip）
+    QPoint               hoverPos;
+    QPoint               rightPressPos;               // 右鍵按下位置（判斷是點擊還是拖曳旋轉）
+    int                  viewerBatchDepth   = 0;      // beginViewerBatch() 巢狀深度
+    bool                 viewerBatchPending = false;  // 批次中是否有被延後的重繪
     QString              isolatedFeatureId;          ///< 唯一保留顯示的 Feature id（可為空）
     QPointer<cad::Sketch> viewSketch;                ///< 不屬於 Document 的暫時檢視草圖
 
@@ -843,6 +851,11 @@ void CadView::initializeViewer() {
         });
 
 
+        // 一次眼睛切換會經 EventBus（同步）連鎖觸發多個訂閱者各自重繪；
+        // 發布端用 view.batch-begin / view.batch-end 包住 publish，合併成一次重繪。
+        bus->subscribe("view.batch-begin", this, [this](const QVariant&) { beginViewerBatch(); });
+        bus->subscribe("view.batch-end",   this, [this](const QVariant&) { endViewerBatch();   });
+
         bus->subscribe("feature.visibility-changed", this,
                        [this](const QVariant& v) {
                            QVariantMap data = v.toMap();
@@ -926,12 +939,17 @@ void CadView::initializeViewer() {
                                    Handle(AIS_Shape) aisShape = new AIS_Shape(feature->shape());
                                    applyFineTessellation(aisShape);
                                    aisShape->SetColor(Quantity_NOC_YELLOW);
+                                   if (feature->typeString() == QLatin1String("DefinedPlane")) {
+                                       aisShape->SetColor(Quantity_NOC_KHAKI);
+                                       aisShape->SetTransparency(0.7f);
+                                   }
                                    d->context->Display(aisShape, Standard_False);
                                    d->aisToFeatureId[aisShape.get()] = itemId;
                                }
                            }
 
-                           d->context->UpdateCurrentViewer();
+                           if (d->viewerBatchDepth > 0) d->viewerBatchPending = true;
+                           else                         d->context->UpdateCurrentViewer();
                        });    }
 
     qDebug() << "[CadView] OCCT viewer initialized";
@@ -1878,6 +1896,10 @@ void CadView::displayAllFeatures() {
             aisShape->SetDisplayMode(AIS_Shaded);
             aisShape->SetMaterial(Graphic3d_NameOfMaterial_Silver);
             aisShape->SetColor(Quantity_NOC_CADETBLUE);   // 不與選取黃色衝突
+            if (feature->typeString() == QLatin1String("DefinedPlane")) {   // 定義平面：半透明，像參考平面
+                aisShape->SetColor(Quantity_NOC_KHAKI);
+                aisShape->SetTransparency(0.7f);
+            }
             // ✅ 中間結果（被其他 Feature 依賴）一律不顯示，見上方 consumedFeatureIds
             //    的說明——即使自己的 isVisible() 是 true 也一樣。
             const bool showIt = isolated
@@ -1945,8 +1967,111 @@ void CadView::unregisterSketchGeomAIS(const Handle(AIS_InteractiveObject)& obj)
     d->aisToGeomIndex.remove(obj.get());
 }
 
+void CadView::panToPoint(double x, double y)
+{
+    if (d->view.IsNull()) return;
+    try {
+        const Handle(Graphic3d_Camera)& cam = d->view->Camera();
+        const gp_Pnt c = cam->Center();
+        const gp_Pnt e = cam->Eye();
+        const gp_Vec off(c, e);                      // 中心 → 眼睛的位移，保持視角與距離
+        const gp_Pnt nc(x, y, c.Z());
+        cam->SetEyeAndCenter(nc.Translated(off), nc);
+        d->view->ZFitAll();
+        if (d->grid && d->gridEnabled) d->grid->update();
+        d->view->Redraw();
+        update();
+    } catch (const Standard_Failure& ex) {
+        qWarning() << "[CadView] panToPoint failed:" << ex.GetMessageString();
+    }
+}
+
+QString CadView::featureIdForObject(const Handle(AIS_InteractiveObject)& obj) const
+{
+    if (obj.IsNull()) return QString();
+    return d->aisToFeatureId.value(obj.get());
+}
+
+static void addAisObjectBox(const Handle(AIS_InteractiveObject)& obj, Bnd_Box& out);   // 定義在下方
+
+bool CadView::featureBoundsXY(const QString& featureId, QRectF& out) const
+{
+    if (d->context.IsNull() || featureId.isEmpty()) return false;
+    Bnd_Box box;
+    for (auto it = d->aisToFeatureId.constBegin(); it != d->aisToFeatureId.constEnd(); ++it) {
+        if (it.value() != featureId) continue;
+        Handle(AIS_InteractiveObject) obj(it.key());
+        if (obj.IsNull() || !d->context->IsDisplayed(obj)) continue;
+        addAisObjectBox(obj, box);
+    }
+    if (box.IsVoid()) return false;
+    Standard_Real x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    out = QRectF(QPointF(x0, y0), QPointF(x1, y1));
+    return true;
+}
+
+QVector<QPointF> CadView::viewportOnPlane() const
+{
+    QVector<QPointF> out;
+    if (d->view.IsNull() || width() <= 0 || height() <= 0) return out;
+    try {
+        const double zc = d->view->Camera()->Center().Z();
+        const QPoint corners[4] = { QPoint(0, 0), QPoint(width() - 1, 0),
+                                    QPoint(width() - 1, height() - 1), QPoint(0, height() - 1) };
+        for (const QPoint& c : corners) {
+            Standard_Integer xp, yp;
+            qtToOCCT(c, xp, yp);
+            Standard_Real X, Y, Z, vx, vy, vz;
+            d->view->ConvertWithProj(xp, yp, X, Y, Z, vx, vy, vz);
+            if (std::abs(vz) < 1e-9) return {};      // 視線與水平面平行（側視）→ 無法投影
+            const double t = (zc - Z) / vz;
+            out.append(QPointF(X + vx * t, Y + vy * t));
+        }
+    } catch (const Standard_Failure&) {
+        return {};
+    }
+    return out;
+}
+
+Handle(AIS_InteractiveObject) CadView::detectedObjectAt(const QPoint& widgetPos)
+{
+    if (d->context.IsNull() || d->view.IsNull())
+        return Handle(AIS_InteractiveObject)();
+
+    Standard_Integer xp, yp;
+    qtToOCCT(widgetPos, xp, yp);
+    d->context->MoveTo(xp, yp, d->view, Standard_False);
+    if (!d->context->HasDetected())
+        return Handle(AIS_InteractiveObject)();
+    return d->context->DetectedInteractive();
+}
+
+void CadView::beginViewerBatch()
+{
+    ++d->viewerBatchDepth;
+}
+
+void CadView::endViewerBatch()
+{
+    if (d->viewerBatchDepth <= 0) return;
+    if (--d->viewerBatchDepth > 0) return;
+
+    if (d->viewerBatchPending) {
+        d->viewerBatchPending = false;
+        if (!d->context.IsNull())
+            d->context->UpdateCurrentViewer();   // 內含一次 Redraw
+        update();
+    }
+}
+
 void CadView::refreshView() {
     if (d->view.IsNull()) {
+        return;
+    }
+
+    if (d->viewerBatchDepth > 0) {          // 批次中：延後到 endViewerBatch() 才重繪一次
+        d->viewerBatchPending = true;
         return;
     }
 
@@ -1968,6 +2093,100 @@ void CadView::fitAll() {
     }
 
     update();
+}
+
+// OCCT 8.0：void BoundingBox(Bnd_Box&)；OCCT 7.x：const Bnd_Box& BoundingBox()。
+// 以 SFINAE 兩種簽名都支援（int 的多載優先於 long）。
+template <class T>
+static auto aisBoundingBox(T& o, Bnd_Box& b, int) -> decltype(o.BoundingBox(b), void())
+{ o.BoundingBox(b); }
+template <class T>
+static void aisBoundingBox(T& o, Bnd_Box& b, long)
+{ b = o.BoundingBox(); }
+
+// 取得單一 AIS 物件的包圍盒並併入 out（無效／無限大的一律略過）
+static void addAisObjectBox(const Handle(AIS_InteractiveObject)& obj, Bnd_Box& out)
+{
+    if (obj.IsNull()) return;
+    try {
+        Bnd_Box b;
+        aisBoundingBox(*obj, b, 0);          // 已含物件自身的 local transformation
+        if (b.IsVoid()) {
+            Handle(AIS_Shape) sh = Handle(AIS_Shape)::DownCast(obj);
+            if (!sh.IsNull() && !sh->Shape().IsNull())
+                BRepBndLib::Add(sh->Shape(), b);
+        }
+        if (b.IsVoid() || b.IsOpen() || b.IsWhole()) return;
+        out.Add(b);
+    } catch (const Standard_Failure&) {
+        // 包圍盒計算失敗 → 略過這個物件
+    }
+}
+
+bool CadView::fitToObjects(const QList<Handle(AIS_InteractiveObject)>& objects)
+{
+    if (d->view.IsNull()) return false;
+
+    Bnd_Box box;
+    for (const auto& obj : objects)
+        addAisObjectBox(obj, box);
+    if (box.IsVoid()) return false;
+
+    try {
+        // 退化範圍（單點、單一直線、平面草圖正對側面）投影後尺寸可能為 0，
+        // V3d_View::FitAll(box) 會因此不縮放 → 先把各方向至少撐開最大邊的 1%。
+        Standard_Real x0, y0, z0, x1, y1, z1;
+        box.Get(x0, y0, z0, x1, y1, z1);
+        const double maxDim = std::max({x1 - x0, y1 - y0, z1 - z0});
+        box.Enlarge(maxDim > 1e-6 ? maxDim * 0.01 : 1.0);
+
+        d->view->FitAll(box, 0.05);
+        d->view->ZFitAll();
+    } catch (const Standard_Failure& e) {
+        qWarning() << "[CadView] fitToObjects failed (OCCT):" << e.GetMessageString();
+        return false;
+    }
+
+    if (d->grid && d->gridEnabled)
+        d->grid->update();
+    d->view->Redraw();
+    update();
+    return true;
+}
+
+bool CadView::fitToFeature(const QString& featureId)
+{
+    if (d->view.IsNull() || d->context.IsNull() || featureId.isEmpty())
+        return false;
+
+    // 這個 Feature 登記過的所有 AIS 物件（草圖的幾何／建構幾何、實體的 AIS_Shape…）。
+    // 優先只用「目前顯示中」的；若全部都沒顯示（例如 eye-close），仍以登記的物件為準，
+    // 讓使用者至少能看到它在哪。
+    QList<Handle(AIS_InteractiveObject)> shown, all;
+    for (auto it = d->aisToFeatureId.constBegin(); it != d->aisToFeatureId.constEnd(); ++it) {
+        if (it.value() != featureId) continue;
+        Handle(AIS_InteractiveObject) obj(it.key());
+        if (obj.IsNull()) continue;
+        all.append(obj);
+        if (d->context->IsDisplayed(obj))
+            shown.append(obj);
+    }
+
+    if (fitToObjects(shown.isEmpty() ? all : shown))
+        return true;
+
+    // 沒有登記的 AIS 物件：退回用 Feature 本身的 shape（例如被其他 Feature 消耗而不顯示的）
+    if (d->document) {
+        if (Feature* f = d->document->findFeature(featureId)) {
+            if (!f->shape().IsNull()) {
+                Handle(AIS_Shape) tmp = new AIS_Shape(f->shape());
+                QList<Handle(AIS_InteractiveObject)> one;
+                one.append(tmp);
+                return fitToObjects(one);
+            }
+        }
+    }
+    return false;
 }
 
 void CadView::setIsolatedFeature(const QString& featureId, bool redisplay)
@@ -2016,7 +2235,8 @@ void CadView::addOverlayAIS(const Handle(AIS_InteractiveObject)& obj,
         d->context->Display(obj, Standard_False);
         for (int m : activationModes)
             d->context->Activate(obj, m);
-        d->context->UpdateCurrentViewer();
+        if (d->viewerBatchDepth > 0) d->viewerBatchPending = true;
+        else                         d->context->UpdateCurrentViewer();
     }
 }
 
@@ -2032,7 +2252,12 @@ void CadView::removeOverlayAIS(const Handle(AIS_InteractiveObject)& obj)
 
     if (!d->context.IsNull() && !obj.IsNull()
         && d->context->IsDisplayed(obj)) {
-        d->context->Remove(obj, Standard_True);
+        if (d->viewerBatchDepth > 0) {
+            d->context->Remove(obj, Standard_False);
+            d->viewerBatchPending = true;
+        } else {
+            d->context->Remove(obj, Standard_True);
+        }
     }
 }
 
@@ -2055,12 +2280,14 @@ void CadView::setOverlayAISVisible(const Handle(AIS_InteractiveObject)& obj, boo
         // 重新顯示
         if (!d->context->IsDisplayed(obj))
             d->context->Display(obj, Standard_False);
-        d->context->UpdateCurrentViewer();
+        if (d->viewerBatchDepth > 0) d->viewerBatchPending = true;
+        else                         d->context->UpdateCurrentViewer();
     } else {
         // 從 OCCT context 移除（但保留 overlayObjects 登錄，供下次 setVisible(true) 恢復）
         if (d->context->IsDisplayed(obj)) {
             d->context->Remove(obj, Standard_False);
-            d->context->UpdateCurrentViewer();
+            if (d->viewerBatchDepth > 0) d->viewerBatchPending = true;
+            else                         d->context->UpdateCurrentViewer();
         }
     }
 }
@@ -3659,6 +3886,7 @@ void CadView::mousePressEvent(QMouseEvent* event) {
     // 「這次」點擊的狀態，不會殘留上一次點擊的結果。
     if (event->button() == Qt::RightButton) {
         d->rightClickHandledOnPress = false;
+        d->rightPressPos = event->pos();
     }
 
     // ── 籬選 / 多邊形窗選 / 多邊形框選：每次左鍵點擊新增一個頂點 ──────────────
@@ -4186,6 +4414,23 @@ void CadView::enterEvent(QEvent* event) {
 void CadView::mouseMoveEvent(QMouseEvent* event) {
     //int x = event->x();
     //int y = event->y();
+
+    // ── 游標停留偵測：移動就先收掉舊 tooltip，停住 350ms 後發 hoverIdle ──────
+    QToolTip::hideText();
+    if (!d->hoverTimer) {
+        d->hoverTimer = new QTimer(this);
+        d->hoverTimer->setSingleShot(true);
+        d->hoverTimer->setInterval(350);
+        connect(d->hoverTimer, &QTimer::timeout, this, [this]() {
+            if (!underMouse() || QGuiApplication::mouseButtons() != Qt::NoButton) return;
+            if (d->mode != InteractionMode::Idle && d->mode != InteractionMode::Navigation
+                && d->mode != InteractionMode::Selecting) return;
+            Q_EMIT hoverIdle(d->hoverPos, mapToGlobal(d->hoverPos));
+        });
+    }
+    d->hoverPos = event->pos();
+    if (event->buttons() == Qt::NoButton) d->hoverTimer->start();
+    else                                  d->hoverTimer->stop();
 
     Standard_Integer xp, yp;
     qtToOCCT(event->pos(), xp, yp);
@@ -4765,6 +5010,12 @@ void CadView::mouseReleaseEvent(QMouseEvent* event) {
             event->accept();
         } else if (tryConfirmYesNoViaRightClick(event)) {
             event->accept();
+        } else if ((event->pos() - d->rightPressPos).manhattanLength() < 4
+                   && (d->mode == InteractionMode::Idle
+                       || d->mode == InteractionMode::Navigation
+                       || d->mode == InteractionMode::Selecting)) {
+            // 單純右鍵點擊（不是拖曳旋轉）→ 通知外部決定要不要彈出選單
+            Q_EMIT rightClicked(event->pos(), mapToGlobal(event->pos()));
         }
         d->mousePressed = false;
     }

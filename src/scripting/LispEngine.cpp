@@ -412,23 +412,24 @@ cl_object LispEngine::qVariantToClObject(const QVariant& var) {
         return Cnil;
     }
     
-    switch (var.type()) {
-    case QVariant::Bool:
+    // userType()：Qt5／Qt6 皆可用；QVariant::type()／QVariant::Type 在 Qt6 已棄用
+    switch (var.userType()) {
+    case QMetaType::Bool:
         return var.toBool() ? Ct : Cnil;
         
-    case QVariant::Int:
+    case QMetaType::Int:
         return ecl_make_integer(var.toInt());
         
-    case QVariant::LongLong:
+    case QMetaType::LongLong:
         return ecl_make_int64_t(var.toLongLong());
         
-    case QVariant::Double:
+    case QMetaType::Double:
         return ecl_make_double_float(var.toDouble());
         
-    case QVariant::String:
+    case QMetaType::QString:
         return ecl_cstring_to_base_string_or_nil(var.toString().toUtf8().constData());
         
-    case QVariant::List: {
+    case QMetaType::QVariantList: {
         QVariantList list = var.toList();
         cl_object result = Cnil;
         

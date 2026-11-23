@@ -593,6 +593,34 @@ bool SketchInstance::rebuildWith(const QString& signature,
 // createViewSketch — 本站「實際套用值」的唯讀 2D 檢視草圖
 // ─────────────────────────────────────────────────────────────────────────────
 
+bool SketchInstance::solvedLineEnds(const QString& masterLineUuid, QVector2D& a, QVector2D& b) const
+{
+    if (m_geomClones.isEmpty()) return false;
+
+    auto findClone = [&](const QString& uuid) -> SketchGeometry* {
+        for (SketchGeometry* g : m_geomClones)
+            if (g && g->uuid == uuid) return g;
+        return nullptr;
+    };
+
+    const QString cloneUuid = m_uuidRemap.value(masterLineUuid, masterLineUuid);
+    SketchGeometry* g = findClone(cloneUuid);
+    if (!g || g->type != SketchGeometryType::Line) return false;
+    const auto* l = static_cast<const SketchLine*>(g);
+
+    // 端點的 SketchPoint 是權威座標（Phase 0B）；沒有就用線自己存的 start/end
+    QVector2D p0 = l->start, p1 = l->end;
+    if (SketchGeometry* sp = findClone(l->startUuid))
+        if (sp->type == SketchGeometryType::Point) p0 = static_cast<SketchPoint*>(sp)->pos;
+    if (SketchGeometry* ep = findClone(l->endUuid))
+        if (ep->type == SketchGeometryType::Point) p1 = static_cast<SketchPoint*>(ep)->pos;
+
+    const float sc = static_cast<float>(m_scale);
+    a = p0 * sc;
+    b = p1 * sc;
+    return true;
+}
+
 Sketch* SketchInstance::createViewSketch() const
 {
     if (!m_master || m_geomClones.isEmpty()) return nullptr;
@@ -692,7 +720,7 @@ QList<DirSegment> collectSegments(const QList<SketchGeometry*>& geoms) {
         if (!geom || geom->isConstruction()) continue;
 
         if (geom->type == SketchGeometryType::Line && geom->points.size() >= 2) {
-            segments.append({ geom->points[0], geom->points[1] });
+            segments.append(DirSegment{ geom->points[0], geom->points[1], false, QVector2D() });
 
         } else if (geom->type == SketchGeometryType::Polyline && geom->points.size() >= 2) {
             const auto* pl = dynamic_cast<const SketchPolyline*>(geom);
@@ -701,7 +729,7 @@ QList<DirSegment> collectSegments(const QList<SketchGeometry*>& geoms) {
             int n = geom->points.size();
             int nSeg = closed ? n : n - 1;
             for (int i = 0; i < nSeg; ++i)
-                segments.append({ geom->points[i], geom->points[(i + 1) % n] });
+                segments.append(DirSegment{ geom->points[i], geom->points[(i + 1) % n], false, QVector2D() });
 
         } else if (geom->type == SketchGeometryType::Arc && geom->points.size() >= 3) {
             // 圓弧：與直線一樣是輪廓上的一段有向邊。舊版完全略過圓弧，含圓弧的斷面

@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QList>
 #include <QMetaObject>
+#include <QSet>
 
 #include <AIS_InteractiveObject.hxx>
 #include <AIS_Shape.hxx>
@@ -75,6 +76,31 @@ public:
      */
     QList<railway::TrackCenterLine*> selectedTcls() const;
 
+    /** 指定線路目前的 3D 折線 overlay（供「聚焦 Focus」計算範圍；沒有則回傳空清單）。 */
+    QList<Handle(AIS_InteractiveObject)> overlayObjectsFor(const railway::TrackCenterLine* tcl) const
+    {
+        QList<Handle(AIS_InteractiveObject)> out;
+        const int n = qMin(m_overlays.size(), m_overlayTcl.size());
+        for (int i = 0; i < n; ++i)
+            if (m_overlayTcl[i] == tcl && !m_overlays[i].IsNull())
+                out.append(m_overlays[i]);
+        return out;
+    }
+
+    /** 這條線路目前是否有 3D 折線顯示中（整體顯示且未被個別隱藏）。 */
+    bool isTclShown(const railway::TrackCenterLine* tcl) const
+    {
+        return m_visible
+            && m_tcls.contains(const_cast<railway::TrackCenterLine*>(tcl))
+            && !m_hiddenTcls.contains(tcl);
+    }
+
+    /** 個別顯示／隱藏某條線路的 3D 折線（右鍵 eyeClose / Focus 自動 eyeOpen 用）。 */
+    void setTclShown(const railway::TrackCenterLine* tcl, bool shown);
+
+    /** 全部線路一次顯示／隱藏（只重建一次）。 */
+    void setAllTclShown(bool shown);
+
 private:
     /** 為單一 TrackCenterLine 建立 3D 折線（局部座標，Z 為實際高程）。 */
     Handle(AIS_Shape) build3DPolyline(const railway::TrackCenterLine* tcl) const;
@@ -93,6 +119,7 @@ private:
                                                           ///< 故不可假設與 m_tcls 索引相同）
     QList<railway::TrackCenterLine*>     m_tcls;         ///< 目前訂閱同步中的線路清單
     QList<QMetaObject::Connection>       m_connections;  ///< dataChanged 訂閱控制代碼
+    QSet<const railway::TrackCenterLine*> m_hiddenTcls;   ///< 被個別 eyeClose 的線路
     bool m_visible = false;
 };
 

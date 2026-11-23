@@ -79,6 +79,7 @@ menu|File|exit|Exit||Ctrl+Q
 # Menu : Sketch
 # ======================
 
+menu|Sketch|defplane|Define Plane…||
 menu|Sketch|sketch|Create Sketch||
 menu|Sketch|line|Draw Line||
 menu|Sketch|polyline|Draw Polyline||
@@ -191,6 +192,7 @@ menu|Railway|setorigin|Set TM2 Origin…||
 menu|Railway|separator|||
 menu|Railway|profilearray|Profile Array Along Alignment…||
 menu|Railway|profileloft|Loft Profile Array to Solid…||
+menu|Railway|insertcomp|Insert 3D Component (*.aicad)…||
 menu|Railway|separator|||
 menu|Railway|profileview|Vertical Profile View||
 menu|Railway|valigncheckgrade|Check Grade||
@@ -203,6 +205,8 @@ menu|Railway|valigncheckgrade|Check Grade||
 command|track|tcl|0
 command|importalignment|iald|0
 command|importald|ald|0
+command|insertcomp|icomp|0
+command|defplane|dplane|0
 command|trackextract|tx|0
 command|exportalignment|eald|0
 

@@ -48,8 +48,15 @@ struct ProfileArraySegment {
     QString name;                  ///< 段名稱（陣列內唯一）
     double  start    = 0.0;        ///< 起點里程 [m]
     double  end      = 0.0;        ///< 終點里程 [m]
-    double  interval = 20.0;       ///< 測站間距 [m]
+    double  interval = 20.0;       ///< 測站間距 [m]（autoInterval = false 的舊資料／EDITPROFILEARRAY 才使用）
+    /// true = 間距依線形自動取值（曲線段約 1.5 m、直線段約 3 m，多出的長度均分到各小段），
+    ///        忽略 interval。分段表格只輸入「起始里程、長度」，終點 = 起點 + 長度。
+    /// false = 固定間距 interval（舊檔沒有此欄位 → 讀入為 false，測站數維持不變）。
+    bool    autoInterval = false;
     QString profileId;             ///< 使用的 profile = master Sketch 的 feature id
+    /// 道版（本段 Loft）兩端的端面邊緣倒角：預設要倒角、尺寸 0.025 × 0.025 m；底邊（朝下的邊）不倒角。
+    bool    endChamfer     = true;
+    double  endChamferSize = 0.025;   ///< 倒角距離 [m]（兩個距離相同）
     bool    hasThick = false;      ///< false = 不覆寫（沿用 profile 內 Thick 參數的預設值）
     double  thick    = 0.0;        ///< Thick 參數（hasThick 時才有效）
     bool    hasW     = false;      ///< false = 不覆寫（沿用 profile 內 w 參數的預設值）
@@ -129,7 +136,7 @@ public:
     QString uniqueSegmentName(const QString& base = QStringLiteral("Seg")) const;
 
     // ── 舊版單段介面（相容：只作用於第一段；沒有任何段時會先建立一段）──────
-    void   setRange(double startChainage, double endChainage, double interval);
+    void   setRange(double startChainage, double endChainage, double interval, bool autoInterval = false);
     double startChainage() const;   ///< 所有段的最小起點
     double endChainage()   const;   ///< 所有段的最大終點
     double interval()      const;   ///< 第一段的間距
@@ -170,6 +177,26 @@ public:
      *        唯讀站位資料表使用。
      */
     QVector<double> stationChainages() const;
+
+    /// 任意陣列里程 p 的放置座標系（與 rebuild() 為各測站計算的座標系完全相同的公式：
+    /// 原點 = 中心線上的點（含高程）、X = 右手邊水平法線、Z = -（含縱坡的 3D 切線）、Y = Z × X）。
+    /// 不套用 cant 旋轉（cant 只體現在斷面草圖內的軌道面直線）。里程超出線形範圍時 ok = false。
+    struct StationFrame {
+        bool   ok = false;
+        double ox = 0, oy = 0, oz = 0;
+        double xx = 1, xy = 0, xz = 0;
+        double yx = 0, yy = 1, yz = 0;
+        double zx = 0, zy = 0, zz = 1;
+    };
+    StationFrame        frameAt(double p) const;
+
+    /**
+     * @brief 在任意陣列里程 p 建立一個「探針測站」：以該里程精確的 cant／H（與各測站相同的
+     *        stationParameters）解算主草圖，供取得該里程的斷面幾何（例如軌道面直線、組件座標線）。
+     *        不加入文件（不進 Feature 清單／樹狀圖）；呼叫端用完要 delete。
+     *        里程不在任何分段內、超出線形範圍或求解失敗 → 回傳 nullptr 並寫入 error。
+     */
+    SketchInstance* createProbeAt(double p, QString* error = nullptr) const;
     // ── 里程超出線形範圍時，改接「端點相連」的線形 ──────────────────────────────
     //
     // 陣列的里程範圍可能超過 trackCenterLine() 本身的範圍。超出時不可外推（那不是真實
@@ -214,6 +241,12 @@ private:
     struct StationRef { double p; int seg; };
     QVector<StationRef> computeStationRefs() const;
     QVector<double>     computeStations() const;
+
+    /// 自動間距：[start, end] 內依線形曲率分成直線／曲線區間，直線約 3 m、曲線約 1.5 m，
+    /// 每個區間取 floor(長度/目標間距) 等分（至少 1），所以多出的長度均分到各小段；
+    /// 區間交界一定有測站，首站 = start、末站 = end。
+    QVector<double>     autoStationChainages(double start, double end) const;
+    bool                isCurveAt(double p) const;   ///< 陣列里程 p 處是否在曲線（曲率 > 門檻）
     void ensureSegmentIds();                                   ///< 補齊／去重各段 id
     QHash<QString, ProfileLoftSolid*> collectSegmentLofts() const;   ///< 段 id → 該段的 Loft
     void reparentInstances();                                  ///< 測站掛到各自段的 Loft（沒有則掛陣列）
@@ -245,6 +278,7 @@ private:
     };
     mutable QVector<RouteLeg> m_route;          ///< [0] = 主線形；其後依序為接續的線形
     mutable bool              m_routeValid = false;
+    mutable QMap<QPair<double, double>, QVector<double>> m_autoCache;   ///< (start,end) → 自動測站里程
     QList<QMetaObject::Connection> m_routeConns; ///< 相連線形的 dataChanged 連線
     void ensureRoute() const;
     void syncRouteConnections();

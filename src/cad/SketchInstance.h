@@ -56,6 +56,13 @@ public:
     void   setScale(double scale) { m_scale = scale; }
     double scale() const { return m_scale; }
 
+    /**
+     * @brief 主草圖（master）中某條線，在「本站求解後」的兩端點位置（草圖單位 × scale → m）。
+     *        不需要建立檢視草圖（比 createViewSketch() 便宜得多）；供組件座標線等
+     *        「主草圖中的參考線」取本站實際值用。找不到或尚未求解 → false。
+     */
+    bool solvedLineEnds(const QString& masterLineUuid, QVector2D& a, QVector2D& b) const;
+
     // ── 雙精度放置座標系 ────────────────────────────────────────────────
     /**
      * @brief 放置座標系（double）。

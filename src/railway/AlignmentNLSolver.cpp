@@ -141,7 +141,8 @@ bool AlignmentNLSolver::lmStep(QVector<double>& xScaled,
         b(m + j) = 0.0;
     }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+// 依 Eigen 版本判斷（見 ConstraintSolver.cpp 同處說明）：Options 作為模板參數需要 Eigen >= 3.4.90 / 5.0
+#if EIGEN_VERSION_AT_LEAST(3, 4, 90)
     Eigen::VectorXd dx =
         Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV>(A).solve(b);
 #else

@@ -126,6 +126,7 @@ void AlignedProfileArray::setTrackCenterLine(railway::TrackCenterLine* tcl) {
     if (m_tcl) disconnect(m_tclDataChangedConn);
     m_tcl = tcl;
     m_routeValid = false;
+    m_autoCache.clear();
 
     if (m_tcl) {
         // Alignment 編輯（含 cant/H 的來源資料）改變 → 全部測站重建（走
@@ -318,7 +319,7 @@ QString AlignedProfileArray::uniqueSegmentName(const QString& base) const {
     }
 }
 
-void AlignedProfileArray::setRange(double startChainage, double endChainage, double interval) {
+void AlignedProfileArray::setRange(double startChainage, double endChainage, double interval, bool autoInterval) {
     if (m_segments.isEmpty()) {
         ProfileArraySegment seg;
         seg.name = QStringLiteral("Seg1");
@@ -328,6 +329,7 @@ void AlignedProfileArray::setRange(double startChainage, double endChainage, dou
     m_segments[0].start    = startChainage;
     m_segments[0].end      = endChainage;
     m_segments[0].interval = interval;
+    m_segments[0].autoInterval = autoInterval;
 }
 
 double AlignedProfileArray::startChainage() const {
@@ -485,7 +487,7 @@ AlignedProfileArray::alignmentsForRange(double start, double end) const
     if (!m_tcl) return out;
     if (end < start) std::swap(start, end);
 
-    m_routeValid = false;      // 對話框編輯中可能剛新增／移動過線形：每次都重新判定
+    m_routeValid = false;      m_autoCache.clear();   // 對話框編輯中可能剛新增／移動過線形：每次都重新判定
     ensureRoute();
     if (m_route.isEmpty()) {
         // 主線形沒有元素（無法取得範圍）：只能回報主線形名稱
@@ -520,16 +522,188 @@ void AlignedProfileArray::syncRouteConnections()
         m_routeConns.append(connect(
             leg.tcl.data(), &railway::TrackCenterLine::dataChanged, this, [this]() {
                 m_routeValid = false;
+    m_autoCache.clear();
                 if (Document* doc = document()) doc->rebuildFeature(this);
                 else rebuild();
             }));
     }
 }
 
+SketchInstance* AlignedProfileArray::createProbeAt(double p, QString* error) const
+{
+    auto fail = [&](const QString& m) -> SketchInstance* { if (error) *error = m; return nullptr; };
+
+    Document* doc = document();
+    if (!doc) return fail(QStringLiteral("沒有文件"));
+
+    int si = -1;
+    for (int i = 0; i < m_segments.size(); ++i)
+        if (p >= m_segments[i].start - kEps && p <= m_segments[i].end + kEps) { si = i; break; }
+    if (si < 0) return fail(QStringLiteral("里程 %1 不在任何分段內").arg(p, 0, 'f', 3));
+    const ProfileArraySegment& seg = m_segments[si];
+
+    Sketch* master = resolveProfile(seg);
+    if (!master) return fail(QStringLiteral("分段 %1 沒有斷面草圖").arg(si));
+
+    const StationFrame sf = frameAt(p);
+    if (!sf.ok) return fail(QStringLiteral("里程 %1 超出線形範圍").arg(p, 0, 'f', 3));
+
+    Plane* plane = nullptr;
+    for (Plane* pl : m_planes) if (pl) { plane = pl; break; }
+    if (!plane) return fail(QStringLiteral("陣列尚未建立測站"));
+
+    auto* probe = new SketchInstance(doc);
+    probe->setName(QStringLiteral("probe"));
+    probe->setMasterSketch(master);
+    probe->setPlane(plane);
+    probe->setScale(m_masterUnitScale);
+    probe->setExternallyDriven(true);
+
+    SketchInstance::PlacementFrame fr;
+    fr.ox = sf.ox; fr.oy = sf.oy; fr.oz = sf.oz;
+    fr.xx = sf.xx; fr.xy = sf.xy; fr.xz = sf.xz;
+    fr.yx = sf.yx; fr.yy = sf.yy; fr.yz = sf.yz;
+    fr.valid = true;
+    probe->setFrame(fr);
+
+    // 與測站相同的參數（cant、H、Thick、w、自訂欄位）與簽章
+    const auto params = stationParameters(p, seg);
+    QString sig = seg.profileId + QLatin1Char('|');
+    for (const auto& kv : params)
+        sig += kv.first + QLatin1Char('=') + QString::number(kv.second, 'g', 12) + QLatin1Char(';');
+    {
+        const QSignalBlocker blocker(probe->parameterStore());
+        for (const auto& kv : params)
+            probe->parameterStore()->setLocal(kv.first, kv.second);
+    }
+
+    if (!probe->rebuildWith(sig, nullptr, /*force=*/true)) {
+        delete probe;
+        return fail(QStringLiteral("里程 %1 的斷面求解失敗").arg(p, 0, 'f', 3));
+    }
+    return probe;
+}
+
+AlignedProfileArray::StationFrame AlignedProfileArray::frameAt(double p) const
+{
+    // ⚠️ 公式必須與 rebuild() 的「放置座標系」段落保持一致（改一處請同步改另一處）
+    StationFrame out;
+    const AlignmentSample as = resolveAlignment(p);
+    if (!as.tcl || as.outOfRange) return out;
+
+    const railway::TrackCenterLine* T = as.tcl;
+    const double  pc  = as.p;
+    const QPointF xy  = T->getXYForCalc(pc, 0.0);
+    const double  z0  = T->getElevationForCalc(pc);
+    const double  az  = T->getAzimuthForCalc(pc);              // [rad], CW from N
+    const double  g   = T->getSlopeForCalc(pc) / 100.0;        // dz/dp
+
+    const double sA = std::sin(az), cA = std::cos(az);
+    const double tn = std::sqrt(1.0 + g * g);
+    const double tx = sA / tn, ty = cA / tn, tz = g / tn;      // 3D 切線（朝里程增加）
+
+    out.xx =  cA; out.xy = -sA; out.xz = 0.0;                  // 右手邊水平法線
+    out.zx = -tx; out.zy = -ty; out.zz = -tz;                  // Z = -T
+    out.yx = out.zy * out.xz - out.zz * out.xy;                // Y = Z × X
+    out.yy = out.zz * out.xx - out.zx * out.xz;
+    out.yz = out.zx * out.xy - out.zy * out.xx;
+    out.ox = xy.x(); out.oy = xy.y(); out.oz = z0;
+    out.ok = true;
+    return out;
+}
+
+bool AlignedProfileArray::isCurveAt(double p) const
+{
+    // 曲率 = 方位角在 p 附近 ±0.5 m 的變化量 / 弧長；直線方位角恆定 → 0。
+    // 門檻 1/50000 m⁻¹（R < 50 km 視為曲線）：遠高於數值雜訊、遠低於實際曲線。
+    constexpr double kHalf = 0.5, kMinCurvature = 2e-5;
+    const AlignmentSample s = resolveAlignment(p);
+    if (!s.tcl || s.outOfRange) return false;
+    double c0 = 0.0, c1 = 0.0;
+    double lo = s.p - kHalf, hi = s.p + kHalf;
+    if (s.tcl->chainageRangeForCalc(c0, c1)) { lo = std::max(lo, c0); hi = std::min(hi, c1); }
+    if (hi - lo < 0.05) return false;
+    const double a0 = s.tcl->getAzimuthForCalc(lo);
+    const double a1 = s.tcl->getAzimuthForCalc(hi);
+    const double d  = std::atan2(std::sin(a1 - a0), std::cos(a1 - a0));   // 折回 [-π, π]
+    return std::abs(d) / (hi - lo) > kMinCurvature;
+}
+
+QVector<double> AlignedProfileArray::autoStationChainages(double start, double end) const
+{
+    constexpr double kStraightStep = 3.0;    // 直線段目標間距 [m]
+    constexpr double kCurveStep    = 1.5;    // 曲線段（圓弧＋緩和曲線）目標間距 [m]
+    constexpr double kMinZone      = 0.5;    // 短於此的區間併入相鄰區間（避免曲率判定在交界附近抖動）
+
+    QVector<double> out;
+    if (end < start - kEps) return out;
+    if (end - start <= kEps) { out << start; return out; }
+
+    const QPair<double, double> key(start, end);
+    auto cit = m_autoCache.constFind(key);
+    if (cit != m_autoCache.constEnd()) return cit.value();
+
+    // 1) 以固定步長判定每個取樣點是直線還是曲線（極長範圍放大步長，取樣數上限約 2 萬）
+    const double len  = end - start;
+    const double step = std::max(0.25, len / 20000.0);
+    const int    N    = std::max(1, static_cast<int>(std::ceil(len / step)));
+    auto pAt = [&](int i) { return std::min(start + i * step, end); };
+
+    QVector<char> cls(N + 1);
+    for (int i = 0; i <= N; ++i) cls[i] = isCurveAt(pAt(i)) ? 1 : 0;
+
+    // 2) 類別改變處以二分法精確找出交界 → 區間
+    struct Zone { double a, b; bool curve; };
+    QVector<Zone> zones;
+    double zoneStart = start;
+    for (int i = 1; i <= N; ++i) {
+        if (cls[i] == cls[i - 1]) continue;
+        double lo = pAt(i - 1), hi = pAt(i);
+        const char c0 = cls[i - 1];
+        for (int it = 0; it < 24; ++it) {
+            const double mid = 0.5 * (lo + hi);
+            if ((isCurveAt(mid) ? 1 : 0) == c0) lo = mid; else hi = mid;
+        }
+        const double t = 0.5 * (lo + hi);
+        zones.append({ zoneStart, t, c0 == 1 });
+        zoneStart = t;
+    }
+    zones.append({ zoneStart, end, cls[N] == 1 });
+
+    // 3) 過短的區間併入前一個（沒有前一個就併入後一個）
+    for (int i = 0; i < zones.size() && zones.size() > 1; ) {
+        if (zones[i].b - zones[i].a >= kMinZone) { ++i; continue; }
+        if (i > 0) { zones[i - 1].b = zones[i].b; zones.removeAt(i); }
+        else       { zones[1].a = zones[0].a;     zones.removeAt(0); }
+    }
+
+    // 4) 各區間等分：n = floor(長度 / 目標間距)（至少 1）→ 實際間距 = 長度 / n（≥ 目標間距），
+    //    即「多出來的長度均分到各段」。區間起點必有測站；末站補 end。
+    for (const Zone& z : zones) {
+        const double zl   = z.b - z.a;
+        const double tgt  = z.curve ? kCurveStep : kStraightStep;
+        const int    n    = std::max(1, static_cast<int>(std::floor(zl / tgt + 1e-9)));
+        const double each = zl / n;
+        for (int k = 0; k < n; ++k) out.append(z.a + k * each);
+    }
+    out.append(end);
+
+    m_autoCache.insert(key, out);
+    return out;
+}
+
 QVector<AlignedProfileArray::StationRef> AlignedProfileArray::computeStationRefs() const {
     QVector<StationRef> refs;
     for (int si = 0; si < m_segments.size(); ++si) {
         const ProfileArraySegment& seg = m_segments[si];
+
+        if (seg.autoInterval) {                       // 依線形自動取間距
+            if (seg.end < seg.start - kEps) continue;
+            for (double p : autoStationChainages(seg.start, seg.end))
+                refs.append({ p, si });
+            continue;
+        }
+
         if (seg.interval <= kEps || seg.end < seg.start - kEps) continue;
 
         // 最後一站 = 不大於 end 的最大 interval 倍數（與單段版本相同的規則）。
@@ -615,7 +789,7 @@ bool AlignedProfileArray::rebuild() {
     QVector<Sketch*> masters(m_segments.size(), nullptr);
     for (int si = 0; si < m_segments.size(); ++si) {
         const ProfileArraySegment& seg = m_segments[si];
-        if (seg.interval <= kEps) {
+        if (!seg.autoInterval && seg.interval <= kEps) {
             setError(QString("Segment '%1': interval must be positive.").arg(seg.name));
             return false;
         }
@@ -634,6 +808,7 @@ bool AlignedProfileArray::rebuild() {
 
     // 線形路徑每次重建都重新判定（主線形／相連線形資料可能已變），並連接相連線形的變動訊號
     m_routeValid = false;
+    m_autoCache.clear();
     syncRouteConnections();
     QStringList outOfRangeStations;
 
@@ -906,6 +1081,9 @@ QJsonObject AlignedProfileArray::toJson() const {
         o["start"]     = s.start;
         o["end"]       = s.end;
         o["interval"]  = s.interval;
+        o["autoInterval"] = s.autoInterval;     // 缺 = false（舊檔：固定間距）
+        o["endChamfer"]     = s.endChamfer;
+        o["endChamferSize"] = s.endChamferSize;
         o["profileId"] = s.profileId;
         if (s.hasThick) o["thick"] = s.thick;     // 缺 = 空白 = 不覆寫
         if (s.hasW) o["wValue"] = s.w;            // 缺 = 空白 = 不覆寫
@@ -948,6 +1126,9 @@ bool AlignedProfileArray::fromJson(const QJsonObject& json) {
             s.start     = o["start"].toDouble(0.0);
             s.end       = o["end"].toDouble(0.0);
             s.interval  = o["interval"].toDouble(20.0);
+            s.autoInterval = o["autoInterval"].toBool(false);
+            s.endChamfer     = o["endChamfer"].toBool(true);          // 缺 = 預設要倒角
+            s.endChamferSize = o["endChamferSize"].toDouble(0.025);
             s.profileId = o["profileId"].toString();
             s.hasThick  = o.contains("thick");
             s.thick     = s.hasThick ? o["thick"].toDouble(0.0) : 0.0;

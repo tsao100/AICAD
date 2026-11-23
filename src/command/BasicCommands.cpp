@@ -10,6 +10,7 @@
 #include "command/CommandTypes.h"
 #include "cad/Document.h"
 #include "cad/PlaneManager.h"
+#include "cad/DefinedPlane.h"
 #include "cad/Sketch.h"
 #include "core/Application.h"
 #include "core/CommandLineManager.h"
@@ -80,6 +81,21 @@ public:
         }
 
         cad::PlaneManager* manager = cad::PlaneManager::instance();
+
+        // 以「定義平面」（DefinedPlane）作為草圖平面（Feature Browser 右鍵「在此平面建立草圖」）
+        {
+            const QString dpId = context.data.value("definedPlaneId").toString();
+            if (!dpId.isEmpty()) {
+                auto* dp = qobject_cast<cad::DefinedPlane*>(doc->findFeature(dpId));
+                m_selectedPlane = dp ? dp->createSketchPlane() : nullptr;
+                if (!m_selectedPlane) {
+                    bus->publish("command.error", "Defined plane is not available");
+                    return CommandResult::Failure("Defined plane is not available");
+                }
+                manager->setActivePlane(m_selectedPlane);
+                return createSketchOnPlane(doc, bus);
+            }
+        }
 
         // 如果有參數，直接使用
         if (!context.args.isEmpty()) {
@@ -156,6 +172,14 @@ private:
             m_selectedPlane = manager->xzPlane();
         } else if (planeStr == "YZ") {
             m_selectedPlane = manager->yzPlane();
+        } else if (planeStr == "DEFINED") {
+            // 互動選平面時點選了「定義平面」項目（UIManager 發布 plane.selected，planeId = DefinedPlane 的 id）
+            auto* dp = qobject_cast<cad::DefinedPlane*>(doc->findFeature(planeData["planeId"].toString()));
+            m_selectedPlane = dp ? dp->createSketchPlane() : nullptr;
+            if (!m_selectedPlane) {
+                if (bus) bus->publish("command.error", "Defined plane is not available");
+                return;
+            }
         } else {
             if (bus) bus->publish("command.error", "Invalid plane selected");
             return;

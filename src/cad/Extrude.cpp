@@ -8,6 +8,7 @@
 #include "core/Application.h"
 #include "geometry/GeometryBuilder.h"
 #include "Extrude.h"
+#include <algorithm>
 #include "Sketch.h"
 #include "Document.h"
 #include "geometry/GeometryBuilder.h"
@@ -140,6 +141,9 @@ bool Extrude::rebuild() {
     double actualHeight = m_heightExpr.cachedValue;
     if (m_reversed) actualHeight = -actualHeight;
 
+    // 反向附加長度（非對稱兩側）：總長 = 正向高度 + 反向附加長度，起點沿反方向後移
+    const double backLen = m_symmetric ? 0.0 : std::max(0.0, m_backExpr.cachedValue);
+
     // ✅ 新增：防止零高度
     if (qAbs(actualHeight) < 1e-6) {
         setError("Extrude height is zero or too small");
@@ -170,6 +174,20 @@ bool Extrude::rebuild() {
         auto result = geometry::GeometryBuilder::extrude(movedProfile, direction);
         if (!result.success) { setError(result.errorMessage); return false; }
         resultShape = result.shape;
+    } else if (backLen > 1e-9) {
+        // 非對稱兩側：profile 沿「反向」後移 backLen，再擠出 (height + backLen)
+        const double sign = (actualHeight >= 0.0) ? 1.0 : -1.0;
+        const double total = qAbs(actualHeight) + backLen;
+        gp_Trsf shift;
+        shift.SetTranslation(gp_Vec(-n.x() * sign * backLen, -n.y() * sign * backLen, -n.z() * sign * backLen));
+        BRepBuilderAPI_Transform mover(profile, shift, Standard_True);
+        if (!mover.IsDone()) { setError("Back-extension offset failed"); return false; }
+        TopoDS_Face movedProfile = TopoDS::Face(mover.Shape());
+        const gp_Vec dirTotal(n.x() * sign * total, n.y() * sign * total, n.z() * sign * total);
+
+        auto result = geometry::GeometryBuilder::extrude(movedProfile, dirTotal);
+        if (!result.success) { setError(result.errorMessage); return false; }
+        resultShape = result.shape;
     } else {
         auto result = geometry::GeometryBuilder::extrude(profile, direction);
         if (!result.success) { setError(result.errorMessage); return false; }
@@ -185,6 +203,40 @@ void Extrude::setHeight(double h) {
     markDirty();
     Q_EMIT heightChanged(h);
     Q_EMIT rebuildRequested();
+}
+
+bool Extrude::setParameters(const QString& heightExpr, const QString& backExpr,
+                            bool reversed, bool symmetric, QString* error)
+{
+    auto eval = [&](const QString& expr, double& out) -> bool {
+        const QString e = expr.trimmed();
+        if (e.isEmpty()) { out = 0.0; return true; }
+        bool lit = false;
+        const double v = e.toDouble(&lit);
+        if (lit) { out = v; return true; }
+        if (!document()) return false;
+        const auto r = document()->parameterStore()->evaluate(e);
+        if (!r.first) return false;
+        out = r.second;
+        return true;
+    };
+
+    double h = 0.0, b = 0.0;
+    if (!eval(heightExpr, h)) { if (error) *error = QStringLiteral("高度運算式無法求值：%1").arg(heightExpr); return false; }
+    if (!eval(backExpr, b))   { if (error) *error = QStringLiteral("反向附加長度運算式無法求值：%1").arg(backExpr); return false; }
+    if (qAbs(h) < 1e-6)       { if (error) *error = QStringLiteral("擠出高度不可為 0"); return false; }
+    if (b < 0.0)              { if (error) *error = QStringLiteral("反向附加長度不可為負"); return false; }
+
+    m_heightExpr = aicad::core::ParameterExpr(heightExpr.trimmed(), h);
+    m_backExpr   = aicad::core::ParameterExpr(backExpr.trimmed().isEmpty() ? QStringLiteral("0") : backExpr.trimmed(), b);
+    m_reversed   = reversed;
+    m_symmetric  = symmetric;
+
+    markDirty();
+    Q_EMIT heightChanged(h);
+    Q_EMIT reversedChanged(reversed);
+    Q_EMIT rebuildRequested();          // 只重建一次
+    return true;
 }
 
 void Extrude::setHeightExpression(const QString& expr) {
@@ -228,6 +280,7 @@ QJsonObject Extrude::toJson() const {
     obj["heightExpression"] = m_heightExpr.expression;   // ← 設計意圖
     obj["reversed"]        = m_reversed;
     obj["symmetric"]       = m_symmetric;
+    obj["backExpression"]  = m_backExpr.expression;
     obj["draftAngle"]      = m_draftAngle;
     return obj;
 }
@@ -241,6 +294,18 @@ bool Extrude::fromJson(const QJsonObject& json) {
         setHeight(json["height"].toDouble(10.0));
     m_reversed   = json["reversed"].toBool(false);
     m_symmetric  = json["symmetric"].toBool(false);
+    if (json.contains("backExpression")) {
+        const QString be = json["backExpression"].toString();
+        bool lit = false; double bv = be.toDouble(&lit);
+        if (!lit) {
+            bv = 0.0;
+            if (document() && !be.trimmed().isEmpty()) {
+                const auto r = document()->parameterStore()->evaluate(be);
+                if (r.first) bv = r.second;
+            }
+        }
+        m_backExpr = aicad::core::ParameterExpr(be, bv);
+    }
     m_draftAngle = json["draftAngle"].toDouble(0.0);
     m_pendingSketchId = json["sketchId"].toString();
 

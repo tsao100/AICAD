@@ -1,4 +1,5 @@
 #include "ConstraintSolver.h"
+#include <utility>
 #include "../Sketch.h"
 #include <QtMath>
 #include <QDebug>
@@ -1836,7 +1837,9 @@ bool ConstraintSolver::solveLinearLS(const QVector<QVector<double>>& J,
     static constexpr double kRegRelativeSigma = 1e-6;   // 阻尼生效的相對奇異值尺度
     static constexpr double kRegAbsoluteSigma = 1e-6;   // 阻尼生效的絕對奇異值下限
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0) //EIGEN_VERSION_AT_LEAST(3,4,0)
+// ⚠️ 依「Eigen 版本」判斷，不是依 Qt 版本：BDCSVD 的 Options 改成第二個模板參數是 Eigen 3.4.90 / 5.0 才有；
+// Ubuntu 套件的 Eigen 3.4.0 仍是「選項放在建構函式」。（Qt6 + Eigen 3.4.0 也很常見）
+#if EIGEN_VERSION_AT_LEAST(3, 4, 90)
     Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(A);
 #else
     Eigen::BDCSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
@@ -1888,7 +1891,7 @@ bool ConstraintSolver::newtonStep(QVector<double>& vars,
 
     // 殘差
     residualNorm = 0;
-    for (double f : F) residualNorm += f*f;
+    for (double f : std::as_const(F)) residualNorm += f*f;   // as_const：避免非 const Qt 容器的 range-for 觸發 detach
     residualNorm = qSqrt(residualNorm);
 
     if (residualNorm < m_config.tolerance) return true;   // 已收斂
@@ -1930,7 +1933,7 @@ SolveResult ConstraintSolver::solve(QList<SketchGeometry*>& geoms,
     // 標在同一次疊代中彼此牽制，修正弧起終點座標/角度不一致、圓角弧未連
     // 接被圓角線段的問題；t0/t1 完全不參與求解，避免角度／座標混合單位
     // 造成的數值不穩定。
-    for (const SketchGeometry* g : geoms) {
+    for (const SketchGeometry* g : std::as_const(geoms)) {
         if (g->type != SketchGeometryType::Arc) continue;
         eqs.append(new PointOnCircleEquation(g->uuid, true,  &layout));
         eqs.append(new PointOnCircleEquation(g->uuid, false, &layout));

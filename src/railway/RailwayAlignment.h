@@ -382,10 +382,22 @@ public:
 
     // ── Visibility state (persisted) ──────────────────────────────────────────
     bool hAlignVisible() const { return m_hAlignVisible; }
-    void setHAlignVisible(bool v) { m_hAlignVisible = v; Q_EMIT dataChanged(); }
+    // 顯示旗標不是幾何資料：不發 dataChanged()。dataChanged() 的訂閱者包含圖紙管理
+    // （DrawingSheetManager）、沿線斷面陣列（AlignedProfileArray）的重算與 3D 渲染器重建，
+    // 眼睛圖示切換（尤其「所有線形 eyeOpen」）會因此對每條線路各觸發一輪不必要的重算／重繪。
+    // 狀態沒變時也不發任何訊號。
+    void setHAlignVisible(bool v) {
+        if (m_hAlignVisible == v) return;
+        m_hAlignVisible = v;
+        Q_EMIT visibilityChanged();
+    }
 
     bool vAlignVisible() const { return m_vAlignVisible; }
-    void setVAlignVisible(bool v) { m_vAlignVisible = v; Q_EMIT dataChanged(); }
+    void setVAlignVisible(bool v) {
+        if (m_vAlignVisible == v) return;
+        m_vAlignVisible = v;
+        Q_EMIT visibilityChanged();
+    }
 
     // ── 元素鏈同步（需求 1／7）───────────────────────────────────────────
     //
@@ -523,6 +535,8 @@ public:
 Q_SIGNALS:
     void nameChanged(const QString&);
     void dataChanged();
+    /// 只有 hAlign/vAlign 顯示旗標改變（幾何資料沒變）
+    void visibilityChanged();
 
 private:
     QString              m_id;

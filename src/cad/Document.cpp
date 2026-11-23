@@ -17,6 +17,9 @@
 #include "SketchInstance.h"
 #include "AlignedProfileArray.h"
 #include "ProfileLoftSolid.h"
+#include "TrackSlabPlan.h"
+#include "ComponentInstall.h"
+#include "DefinedPlane.h"
 #include "ChamferSolid.h"
 #include "ui/FeatureTreeItem.h"
 #include <QUuid>
@@ -92,6 +95,10 @@ Document::Document(QObject* parent)
     // 當任一參數改變 → 標記所有參數化特徵 dirty 並重建
     connect(m_parameterStore, &aicad::core::ParameterStore::parameterChanged,
             this, [this](const QString&) { rebuildAll(); });
+
+    // 道版 E,N 平面圖：整份文件一個、自動建立／移除（Loft 增減時重新檢查）
+    connect(this, &Document::featureAdded,   this, [this](Feature*) { scheduleSlabSync(); });
+    connect(this, &Document::featureRemoved, this, [this]()         { scheduleSlabSync(); });
 
     qDebug() << "[Document] Created";
 }
@@ -306,6 +313,9 @@ bool Document::load(const QString& fileName) {
                 else if (typeStr == "Pattern") feature = new AlignedProfileArray(this);
                 else if (typeStr == "Loft") feature = new ProfileLoftSolid(this);
                 else if (typeStr == "Chamfer") feature = new ChamferSolid(this);
+                else if (typeStr == "SlabPlan") feature = new TrackSlabPlan(this);
+                else if (typeStr == "ComponentInstall") feature = new ComponentInstall(this);
+                else if (typeStr == "DefinedPlane") feature = new DefinedPlane(this);
 
                 if (feature) {
                     if (feature->fromJson(featureJson)) {
@@ -484,6 +494,38 @@ bool Document::load(const QString& fileName) {
             }
         }
 
+        // ✅ DefinedPlane（定義平面）：依檔案順序 rebuild（基準平面一定在前面）
+        {
+            const QList<Feature*> planeSnapshot = m_features;
+            for (Feature* feature : planeSnapshot)
+                if (auto* dp = qobject_cast<DefinedPlane*>(feature))
+                    rebuildFeature(dp);
+        }
+
+        // ✅ TrackSlabPlan（道版 E,N 平面圖）依賴所有 Loft 的來源陣列與測站，必須在 Loft 之後 rebuild。
+        //    之後由 syncSlabPlan() 補建／清理（舊檔沒有道版圖、或舊版每個 Loft 一張的情況）。
+        {
+            const QList<Feature*> slabSnapshot = m_features;
+            for (Feature* feature : slabSnapshot)
+                if (auto* sp = qobject_cast<TrackSlabPlan*>(feature))
+                    rebuildFeature(sp);       // 走 rebuildFeature() 才會通知 CadView 重繪
+        }
+        // ✅ ComponentInstall（3D 組件安裝）：放置依賴斷面陣列的測站與 cant，必須在陣列之後 rebuild。
+        //    Loft 在它之前已建好（未開孔）；syncSlabPlan() 偵測到組件清單變了會重建所有 Loft 開孔。
+        {
+            const QList<Feature*> compSnapshot = m_features;
+            for (Feature* feature : compSnapshot)
+                if (auto* ci = qobject_cast<ComponentInstall*>(feature))
+                    ci->resolveReferences(this);                 // 座標線所在的主草圖
+            for (Feature* feature : compSnapshot)
+                if (auto* ci = qobject_cast<ComponentInstall*>(feature)) {
+                    // 與來源 *.aicad 連動：建立監看；來源檔比內嵌副本新 → 自動同步一次
+                    if (ci->attachSourceWatcher()) m_modified = true;
+                    rebuildFeature(ci);
+                }
+        }
+        scheduleSlabSync();
+
         // ✅ Legacy: read global alignmentData for old files
         if (docJson.contains("alignment"))
             m_alignmentData = docJson["alignment"].toObject();
@@ -583,6 +625,12 @@ void Document::rebuildFeatureTreeItems() {
                                 .arg(arr->name()).arg(arr->segmentCount()).arg(arr->stationCount());
         } else if (qobject_cast<ProfileLoftSolid*>(feature)) {
             treeItem.type = ui::ItemType::Loft;
+        } else if (qobject_cast<TrackSlabPlan*>(feature)) {
+            treeItem.type = ui::ItemType::SlabPlan;
+        } else if (qobject_cast<ComponentInstall*>(feature)) {
+            treeItem.type = ui::ItemType::Component;
+        } else if (qobject_cast<DefinedPlane*>(feature)) {
+            treeItem.type = ui::ItemType::DefinedPlane;
         } else if (qobject_cast<SketchInstance*>(feature)) {
             treeItem.type = ui::ItemType::Sketch;  // 副本沿用草圖圖示
         } else {
@@ -969,7 +1017,8 @@ AlignedProfileArray* Document::createAlignedProfileArray(
     double startChainage,
     double endChainage,
     double interval,
-    const QString& name)
+    const QString& name,
+    bool autoInterval)
 {
     if (!master) {
         qWarning() << "[Document] createAlignedProfileArray: master is null";
@@ -987,7 +1036,7 @@ AlignedProfileArray* Document::createAlignedProfileArray(
 
     arr->setMasterSketch(master);
     arr->setTrackCenterLine(tcl);
-    arr->setRange(startChainage, endChainage, interval);
+    arr->setRange(startChainage, endChainage, interval, autoInterval);
 
     addFeature(arr);
 
@@ -1048,6 +1097,187 @@ ProfileLoftSolid* Document::createProfileLoftSolid(
 
     qDebug() << "[Document] ProfileLoftSolid created:" << loft->name();
     return loft;
+}
+
+TrackSlabPlan* Document::createTrackSlabPlan()
+{
+    auto* plan = new TrackSlabPlan(this);
+    plan->setName(QStringLiteral("道版 E,N 平面圖"));
+    // 不設 Feature 層的 parent → 樹狀圖列在 root 底下
+
+    addFeature(plan);
+
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::SlabPlan;
+    item.id         = plan->id();
+    item.name       = plan->name();
+    item.parentId   = QString();                 // root
+    item.visible    = plan->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(plan));
+    m_treeItems.append(item);
+
+    emitTreeStructureChanged();
+    qDebug() << "[Document] TrackSlabPlan created:" << plan->name();
+    return plan;
+}
+
+void Document::scheduleSlabSync()
+{
+    if (m_slabSyncPending) return;
+    m_slabSyncPending = true;
+    QTimer::singleShot(0, this, [this]() { syncSlabPlan(); });
+}
+
+void Document::syncSlabPlan()
+{
+    m_slabSyncPending = false;
+
+    QList<TrackSlabPlan*> plans;
+    for (Feature* f : m_features)
+        if (auto* sp = qobject_cast<TrackSlabPlan*>(f)) plans.append(sp);
+
+    const bool wanted = TrackSlabPlan::isApplicable(this);
+
+    // 衍生資料的自動增減不算使用者修改：保留原本的 modified 旗標
+    const bool wasModified = m_modified;
+
+    // 只留一個（舊版「每個 Loft 一張」的存檔會有多個）
+    while (plans.size() > 1) removeFeature(plans.takeLast());
+
+    if (!wanted) {
+        if (!plans.isEmpty()) removeFeature(plans.first());
+    } else {
+        TrackSlabPlan* plan = plans.isEmpty() ? createTrackSlabPlan() : plans.first();
+        plan->refreshSources();           // 重新接上各 Loft；Loft 清單變了會排程重建
+    }
+
+    // ── 3D 組件安裝：重新接上陣列；組件清單（增／減）改變 → 重建所有 Loft 以便開孔／補回 ──
+    QStringList compIds;
+    for (Feature* f : m_features)
+        if (auto* ci = qobject_cast<ComponentInstall*>(f)) {
+            compIds << ci->id();
+            ci->refreshSources();
+        }
+    compIds.sort();
+    const QString compSig = compIds.join(QLatin1Char('|'));
+    const bool compChanged = (compSig != m_componentSig);
+    m_componentSig = compSig;
+
+    setModified(wasModified);
+
+    if (compChanged) rebuildLoftsForComponents();
+}
+
+void Document::rebuildLoftsForComponents()
+{
+    // Loft 重建時會呼叫 ComponentInstall::cutSpaces()；Chamfer 連著 Loft 的 shapeChanged 會跟著重建。
+    const QList<Feature*> snapshot = m_features;
+    for (Feature* f : snapshot)
+        if (auto* loft = qobject_cast<ProfileLoftSolid*>(f))
+            rebuildFeature(loft);
+}
+
+bool Document::updateDefinedPlane(DefinedPlane* dp, const QString& baseRef, const QString& offsetExpr,
+                                  const QString& name, QString* error)
+{
+    PlaneDef d;
+    d.method = PlaneMethod::Offset;
+    d.baseRef = baseRef;
+    d.offsetExpr = offsetExpr.trimmed().isEmpty() ? QStringLiteral("0") : offsetExpr.trimmed();
+    return updateDefinedPlane(dp, d, name, error);
+}
+
+bool Document::updateDefinedPlane(DefinedPlane* dp, const PlaneDef& def, const QString& name, QString* error)
+{
+    if (!dp) return false;
+    if (!dp->setDefinition(def, error)) return false;
+    if (!name.trimmed().isEmpty() && name.trimmed() != dp->name()) {
+        dp->setName(name.trimmed());
+        for (ui::FeatureTreeItem& it : m_treeItems)
+            if (it.id == dp->id()) it.name = dp->name();
+    }
+    rebuildFeature(dp);
+    emitTreeStructureChanged();
+    setModified(true);
+    return true;
+}
+
+DefinedPlane* Document::createDefinedPlane(const QString& baseRef, const QString& offsetExpr,
+                                           const QString& name, QString* error)
+{
+    PlaneDef d;
+    d.method = PlaneMethod::Offset;
+    d.baseRef = baseRef;
+    d.offsetExpr = offsetExpr.trimmed().isEmpty() ? QStringLiteral("0") : offsetExpr.trimmed();
+    return createDefinedPlane(d, name, error);
+}
+
+DefinedPlane* Document::createDefinedPlane(const PlaneDef& def, const QString& name, QString* error)
+{
+    auto* dp = new DefinedPlane(this);
+    if (!dp->setDefinition(def, error)) {
+        delete dp;
+        return nullptr;
+    }
+
+    QString nm = name.trimmed();
+    if (nm.isEmpty()) {                       // 未指定名稱：Plane 1、Plane 2…（避開重名）
+        int n = 1;
+        do { nm = QStringLiteral("Plane %1").arg(n++); } while (findFeatureByName(nm));
+    }
+    dp->setName(nm);
+
+    addFeature(dp);
+
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::DefinedPlane;
+    item.id         = dp->id();
+    item.name       = dp->name();
+    item.parentId   = QString();                 // root
+    item.visible    = dp->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(dp));
+    m_treeItems.append(item);
+
+    rebuildFeature(dp);
+    emitTreeStructureChanged();
+    setModified(true);
+    return dp;
+}
+
+ComponentInstall* Document::createComponentInstall(const QString& name)
+{
+    auto* ci = new ComponentInstall(this);
+    if (!name.isEmpty()) ci->setName(name);
+    return ci;     // 呼叫端先 setSource()／setPlacements()，再呼叫 addComponentInstall()
+}
+
+void Document::addComponentInstall(ComponentInstall* ci)
+{
+    if (!ci) return;
+    addFeature(ci);
+
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::Component;
+    item.id         = ci->id();
+    item.name       = ci->name();
+    item.parentId   = QString();                 // root
+    item.visible    = ci->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(ci));
+    m_treeItems.append(item);
+
+    rebuildFeature(ci);
+    emitTreeStructureChanged();
+    scheduleSlabSync();          // → refreshSources() ＋ 組件清單變了 → 重建 Loft 開孔
+}
+
+void Document::applyComponentChange(ComponentInstall* ci)
+{
+    if (ci) rebuildFeature(ci);
+    rebuildLoftsForComponents();
+    setModified(true);
 }
 
 ChamferSolid* Document::createChamferSolid(
@@ -1680,6 +1910,22 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
     // ── 3. Feature (Sketch, Extrude …) ───────────────────────────────────
     Feature* feature = findFeature(itemId);
     if (!feature || m_aisContext.IsNull()) {
+        // ── 3a0. 「組件安裝位置」資料夾：一次切換所有組件的顯示 ──────────────────────
+        if (itemId == QLatin1String("__component_layout__")) {
+            core::EventBus* bus = core::Application::instance()->eventBus();
+            const QList<Feature*> snapshot = m_features;
+            for (Feature* f : snapshot) {
+                auto* ci = qobject_cast<ComponentInstall*>(f);
+                if (!ci || ci->isVisible() == visible) continue;
+                QVariantMap vm;
+                vm["itemId"]  = ci->id();
+                vm["visible"] = visible;
+                bus->publish("feature.visibility-changed", vm);
+            }
+            emitTreeStructureChanged();
+            return;
+        }
+
         // ── 3a. Railway 資料夾節點：彙總 3D Alignment 顯示 ─────────────────
         // eyeOpen  → 顯示所有 TrackCenterLine 的 3D Alignment（E,N,Z 折線），
         //            並暫時把每個 child（TrackCenterLine 及其 VAlignment）
@@ -1917,6 +2163,27 @@ void Document::setTreeItemName(const QString& itemId, const QString& newName) {
 
 QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
     QVector<ui::FeatureTreeItem> items = m_treeItems;
+
+    // ── 「組件安裝位置」虛擬資料夾：有任何 ComponentInstall 時出現，各組件列在它底下 ──────
+    {
+        bool anyComponent = false, anyVisible = false;
+        for (ui::FeatureTreeItem& it : items) {
+            if (it.type != ui::ItemType::Component) continue;
+            anyComponent = true;
+            anyVisible = anyVisible || it.visible;
+            it.parentId = QStringLiteral("__component_layout__");
+        }
+        if (anyComponent) {
+            ui::FeatureTreeItem folder;
+            folder.type       = ui::ItemType::ComponentLayout;
+            folder.id         = QStringLiteral("__component_layout__");
+            folder.name       = tr("組件安裝位置");
+            folder.parentId   = QString();
+            folder.visible    = anyVisible;           // eye：任一組件可見 → 開
+            folder.selectable = false;
+            items.append(folder);
+        }
+    }
 
     // ── 永遠附加 Railway folder（即使空的也要顯示，讓使用者可右鍵新增）
     ui::FeatureTreeItem railwayFolder;

@@ -43,9 +43,11 @@ QString CreateProfileArrayCommand::getUsage() const
         "\n"
         "Step 1 — Track name (skipped automatically if only one TCL exists)\n"
         "Step 2 — Start chainage [m]\n"
-        "Step 3 — End chainage [m] (upper bound; last station is the\n"
-        "         nearest interval multiple <= this value)\n"
-        "Step 4 — Interval [m]\n"
+        "Step 3 — Length [m] (end chainage = start + length)\n"
+        "\n"
+        "The station interval is automatic: about 1.5 m on curves (arcs and\n"
+        "spirals) and about 3 m on straights; leftover length is distributed\n"
+        "evenly over the sub-intervals of each straight/curve zone.\n"
         "\n"
         "Note: dimensions that must vary per station should reference\n"
         "'cant'/'H' directly in their own constraint expression (e.g.\n"
@@ -242,7 +244,7 @@ void CreateProfileArrayCommand::promptEnd()
 {
     m_step = Step::WaitingForEnd;
     Application::instance()->eventBus()->publish(
-        Events::COMMAND_PROMPT, tr("Enter end chainage [m]:"));
+        Events::COMMAND_PROMPT, tr("Enter length [m]:"));
     CommandLineManager::instance()->waitForInput(core::InputType::Number);
 }
 
@@ -275,14 +277,14 @@ void CreateProfileArrayCommand::handleNumberInput(const QString& text)
     }
 
     if (m_step == Step::WaitingForEnd) {
-        if (!ok || v < m_start) {
-            outputMessage("Invalid value — end chainage must be a number >= start chainage:");
-            bus->publish(Events::COMMAND_PROMPT, tr("Enter end chainage [m]:"));
+        if (!ok || v <= 0.0) {
+            outputMessage("Invalid value — length must be a positive number:");
+            bus->publish(Events::COMMAND_PROMPT, tr("Enter length [m]:"));
             CommandLineManager::instance()->waitForInput(core::InputType::Number);
             return;
         }
-        m_end = v;
-        promptInterval();
+        m_end = m_start + v;          // 終點 = 起始 + 長度；間距由線形自動決定
+        createArray();
         return;
     }
 
@@ -328,6 +330,7 @@ void CreateProfileArrayCommand::createArray()
         seg.start     = m_start;
         seg.end       = m_end;
         seg.interval  = m_interval;
+        seg.autoInterval = true;      // 間距依線形自動取值
         seg.profileId = master->id();
         segName       = seg.name;
 
@@ -335,7 +338,8 @@ void CreateProfileArrayCommand::createArray()
         segs.append(seg);
         arr->commitSegments(segs, arr->extraColumns());
     } else {
-        arr = doc->createAlignedProfileArray(master, m_tcl, m_start, m_end, m_interval);
+        arr = doc->createAlignedProfileArray(master, m_tcl, m_start, m_end, m_interval,
+                                             QString(), /*autoInterval=*/true);
         segName = (arr && !arr->segments().isEmpty()) ? arr->segments().first().name : QString();
     }
 
@@ -381,12 +385,11 @@ void CreateProfileArrayCommand::createArray()
     }
 
     complete(CommandResult::Success(
-        QString("Segment '%1' (%2 -> %3 m, interval %4 m) added to %5: "
-                "%6 segment(s), %7 station(s) in total -> %8")
+        QString("Segment '%1' (%2 -> %3 m, auto interval) added to %4: "
+                "%5 segment(s), %6 station(s) in total -> %7")
             .arg(segName)
             .arg(m_start, 0, 'f', 3)
             .arg(m_end,   0, 'f', 3)
-            .arg(m_interval, 0, 'f', 3)
             .arg(arr->name())
             .arg(arr->segmentCount())
             .arg(arr->stationCount())

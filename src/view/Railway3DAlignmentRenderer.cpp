@@ -73,6 +73,7 @@ void Railway3DAlignmentRenderer::showAll(const QList<railway::TrackCenterLine*>&
     clearOverlaysOnly();
 
     m_tcls = tcls;
+    m_hiddenTcls.clear();        // 重新整批顯示 → 清掉個別隱藏的記錄
     if (!m_cadView) return;
 
     // 訂閱每條線路的 dataChanged()——水平／垂直線形改變時會轉發此訊號
@@ -108,12 +109,44 @@ void Railway3DAlignmentRenderer::clear()
 //  rebuildOverlays() / clearOverlaysOnly()
 // ============================================================================
 
+void Railway3DAlignmentRenderer::setTclShown(const railway::TrackCenterLine* tcl, bool shown)
+{
+    if (!tcl) return;
+    const bool hidden = m_hiddenTcls.contains(tcl);
+    if (shown == !hidden) return;
+    if (shown) m_hiddenTcls.remove(tcl);
+    else       m_hiddenTcls.insert(tcl);
+    if (m_visible) rebuildOverlays();
+}
+
+void Railway3DAlignmentRenderer::setAllTclShown(bool shown)
+{
+    if (shown) {
+        if (m_hiddenTcls.isEmpty()) return;
+        m_hiddenTcls.clear();
+    } else {
+        bool changed = false;
+        for (railway::TrackCenterLine* t : m_tcls)
+            if (!m_hiddenTcls.contains(t)) { m_hiddenTcls.insert(t); changed = true; }
+        if (!changed) return;
+    }
+    if (m_visible) rebuildOverlays();
+}
+
 void Railway3DAlignmentRenderer::rebuildOverlays()
 {
+    // 移除舊折線＋逐條加入新折線＋最後 refreshView：合併成一次重繪
+    struct Batch {
+        CadView* v;
+        explicit Batch(CadView* view) : v(view) { if (v) v->beginViewerBatch(); }
+        ~Batch() { if (v) v->endViewerBatch(); }
+    } batch(m_cadView);
+
     clearOverlaysOnly();
     if (!m_cadView) return;
 
     for (railway::TrackCenterLine* tcl : m_tcls) {
+        if (m_hiddenTcls.contains(tcl)) continue;     // 個別 eyeClose 的線路不畫
         Handle(AIS_Shape) shape = build3DPolyline(tcl);
         if (shape.IsNull()) continue;
 

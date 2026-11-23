@@ -16,6 +16,20 @@
 #include "ToolManager.h"
 #include "FeatureBrowser.h"
 #include "PropertyPanel.h"
+#include "KeymapView.h"
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <AIS_Shape.hxx>
+#include <TopoDS_Shape.hxx>
+#include <QHash>
+#include <Quantity_NameOfColor.hxx>
+#include <GeomAbs_CurveType.hxx>
+#include <Standard_Failure.hxx>
+#include <gp_Trsf.hxx>
 #include "core/CommandLineManager.h"     // ✅ 新增
 #include "AutoCompleteModel.h"           // ✅ 新增
 #include "command/CommandAlias.h"        // ✅ 新增
@@ -43,6 +57,18 @@
 #include "cad/Extrude.h"
 #include "cad/AlignedProfileArray.h"
 #include "cad/ProfileLoftSolid.h"
+#include "cad/TrackSlabPlan.h"
+#include "cad/ComponentInstall.h"
+#include "cad/DefinedPlane.h"
+#include "DefinePlaneDialog.h"
+#include "ComponentDialogs.h"
+#include "ExtrudeEditDialog.h"
+#include "DocumentTabBar.h"
+#include <QVBoxLayout>
+#include <QMessageBox>
+#include "cad/Extrude.h"
+#include "cad/Sketch.h"
+#include <QInputDialog>
 #include "cad/grips/GripManager.h"
 #include "cad/grips/SketchGripProvider.h"
 #include "cad/grips/AlignmentGripProvider.h"
@@ -68,6 +94,10 @@
 #include <QRegularExpression>
 #include <QToolBar>
 #include <QTimer>
+#include <QToolTip>
+#include <QSettings>
+#include <QFileInfo>
+#include <QFileDialog>
 #include <QtMath>
 #include <QDebug>
 #include <QUndoStack>
@@ -131,6 +161,15 @@ public:
     MainWindow* mainWindow;
     FeatureBrowser* featureBrowser;
     PropertyPanel* propertyPanel;
+    KeymapView*    keymapView = nullptr;     // Properties 下方的 Keymap View
+    DocumentTabBar* docTabs = nullptr;       // CADView 頁籤（每個開啟的文件一個頁籤）
+    QTimer*        keymapTimer = nullptr;    // 定時同步縮圖內容／可視範圍
+    QTimer*        compPreviewTimer = nullptr;                          // 定時同步「組件對位預覽」
+    QHash<QString, QList<Handle(AIS_InteractiveObject)>> compPreview;   // 組件 id → 預覽 overlay
+    QHash<QString, QString> compPreviewSig;                              // 組件 id → 預覽簽章
+    quint64        keymapSig = 0;            // 縮圖內容簽章（變了才重建）
+    int            alignDocBatch = 0;        // >0：setActiveAlignmentDoc 的 OSnap 來源刷新延後合併
+    bool           alignDocSnapPending = false;
     // GDIM v2 Phase 4：PropertyPanel 目前正在顯示哪個標註（Mini Toolbar），
     // 供 propertyChanged 寫回時判斷目標；為空字串代表目前顯示的是
     // Feature 屬性（showFeatureProperties），而非標註屬性。
@@ -204,6 +243,56 @@ public:
     /// 操作前的 JSON 快照
     QJsonObject             sketchEditBeforeSnapshot;
 };
+
+// ── Keymap View：把草圖的幾何（含建構幾何；不含約束符號／尺寸）取樣成世界 XY 折線 ──────────
+// 直接取 Sketch 持有的 AIS_Shape（一般幾何 aisShapes() + 建構幾何 constructionShapes()），
+// 逐條 edge 取樣，所以直線／圓弧／圓／橢圓／樣條…都涵蓋，且已是世界座標（任意草圖平面皆可）。
+static void appendShapePolylines(const TopoDS_Shape& shape, QVector<QPolygonF>& out)
+{
+    if (shape.IsNull()) return;
+    {
+        try {
+            for (TopExp_Explorer ex(shape, TopAbs_EDGE); ex.More(); ex.Next()) {
+                const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+                BRepAdaptor_Curve c(edge);
+                const double u0 = c.FirstParameter(), u1 = c.LastParameter();
+                if (!(u1 > u0)) continue;
+
+                const int n = (c.GetType() == GeomAbs_Line) ? 1
+                            : (c.GetType() == GeomAbs_Circle || c.GetType() == GeomAbs_Ellipse) ? 32
+                            : 48;
+                QPolygonF pl;
+                pl.reserve(n + 1);
+                for (int i = 0; i <= n; ++i) {
+                    const gp_Pnt p = c.Value(u0 + (u1 - u0) * i / n);
+                    pl << QPointF(p.X(), p.Y());
+                }
+                if (pl.size() >= 2) out.append(pl);
+            }
+        } catch (const Standard_Failure&) {
+            // 取樣失敗的 shape 略過
+        }
+    }
+}
+
+static void appendSketchPolylines(cad::Sketch* sk, QVector<QPolygonF>& out)
+{
+    if (!sk) return;
+    for (const auto& obj : sk->aisShapes()) {
+        Handle(AIS_Shape) sh = Handle(AIS_Shape)::DownCast(obj);   // SketchPointAIS 等非 AIS_Shape 會被略過
+        if (!sh.IsNull()) appendShapePolylines(sh->Shape(), out);
+    }
+    for (const auto& sh : sk->constructionShapes())
+        if (!sh.IsNull()) appendShapePolylines(sh->Shape(), out);
+}
+
+// 測站草圖（ProfileArray 的 SketchInstance）：取其放置後的世界 wires
+static void appendInstancePolylines(cad::SketchInstance* inst, QVector<QPolygonF>& out)
+{
+    if (!inst) return;
+    for (const TopoDS_Wire& w : inst->wires())
+        appendShapePolylines(w, out);
+}
 
 UIManager::UIManager(QObject* parent)
     : QObject(parent)
@@ -526,6 +615,11 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         qDebug() << "[UIManager] Creating PropertyPanel...";
         d->propertyPanel = new PropertyPanel(d->mainWindow);
         d->mainWindow->addDockWidget(Qt::RightDockWidgetArea, d->propertyPanel);
+
+        // 3b. Keymap View：放在 Properties 正下方（垂直分割）
+        d->keymapView = new KeymapView(d->mainWindow);
+        d->mainWindow->addDockWidget(Qt::RightDockWidgetArea, d->keymapView);
+        d->mainWindow->splitDockWidget(d->propertyPanel, d->keymapView, Qt::Vertical);
 
         // GDIM v2 Phase 4：Mini Toolbar 寫回。propertyChanged 目前僅在
         // showAnnotationProperties() 顯示標註屬性時有意義（d->propAnnotationUuid
@@ -1123,6 +1217,100 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         
         connect(docMgr, &core::DocumentManager::currentDocumentChanged,
                 d->featureBrowser, &FeatureBrowser::setCurrentDocument);
+
+        // ── CADView 頁籤：每個開啟的文件一個頁籤，可隨時切換回原先的 CADView ────────────
+        //    例如雙擊組件在另一個 CADView 開啟來源 *.aicad 編輯後，點回原文件的頁籤即可。
+        //    只有一個文件時頁籤自動隱藏（畫面與以往相同）。
+        {
+            // 中央區域：頁籤列 + CadView（takeCentralWidget 取出 cadView 但不刪除）
+            auto* container = new QWidget(d->mainWindow);
+            auto* vl = new QVBoxLayout(container);
+            vl->setContentsMargins(0, 0, 0, 0);
+            vl->setSpacing(0);
+            d->docTabs = new DocumentTabBar(container);
+            vl->addWidget(d->docTabs);
+            d->mainWindow->takeCentralWidget();
+            vl->addWidget(d->cadView, 1);
+            d->mainWindow->setCentralWidget(container);
+
+            auto syncTabs = [this, docMgr]() {
+                if (d->docTabs) d->docTabs->sync(docMgr->documents(), docMgr->currentDocument());
+            };
+            connect(docMgr, &core::DocumentManager::documentCreated, this, [syncTabs](cad::Document*) { syncTabs(); });
+            connect(docMgr, &core::DocumentManager::documentOpened,  this, [syncTabs](cad::Document*) { syncTabs(); });
+            connect(docMgr, &core::DocumentManager::documentClosed,  this, [syncTabs](const QString&)  { syncTabs(); });
+            connect(docMgr, &core::DocumentManager::currentDocumentChanged, this,
+                    [syncTabs](cad::Document*) { syncTabs(); });
+
+            // 切換頁籤 → 切換目前文件，並把共用的 CadView 重新綁定到該文件
+            connect(d->docTabs, &DocumentTabBar::documentActivated, this,
+                    [this, docMgr, syncTabs](cad::Document* doc) {
+                        cad::Document* cur = docMgr->currentDocument();
+                        if (!doc || doc == cur) return;
+
+                        // 編輯草圖／指令進行中不切換（草圖編輯狀態綁在目前文件與視圖）
+                        auto* app = core::Application::instance();
+                        const bool busy = (app->commandManager() && app->commandManager()->hasActiveCommand())
+                                          || app->activeSketch();
+                        if (busy) {
+                            setStatusMessage(tr("請先結束目前的指令／草圖編輯，再切換文件頁籤"), 4000);
+                            syncTabs();                          // 還原頁籤選取
+                            return;
+                        }
+
+                        // 離開前把目前的視角存回文件，切回來時還原；Railway 彙總 3D 顯示綁在目前文件的線路上，先清掉
+                        if (cur && d->cadView) cur->setViewState(d->cadView->saveViewState());
+                        if (d->railway3DRenderer) d->railway3DRenderer->clear();
+
+                        docMgr->setCurrentDocument(doc);
+                        // 與「開啟檔案」相同的流程：綁定 CadView、還原視角、重建線形 overlay…
+                        app->eventBus()->publish(core::Events::DOCUMENT_OPENED, QVariant::fromValue(doc));
+                        // 線形 renderers 是在「檔案載入完成（allFeaturesLoaded）」時依文件重建；
+                        // 切回已載入的文件不會再有這個事件，手動發一次讓 renderers 重建（currentDocumentChanged 已掛好一次性接收）。
+                        Q_EMIT doc->allFeaturesLoaded();
+                        if (doc->railway3DVisible() && d->railway3DRenderer)
+                            d->railway3DRenderer->showAll(doc->trackCenterLines());
+                        syncTabs();
+                    });
+
+            // 關閉頁籤（文件）：有未儲存變更時詢問；關閉後若目前文件變了，重新綁定 CadView
+            connect(d->docTabs, &DocumentTabBar::documentCloseRequested, this,
+                    [this, docMgr, syncTabs](cad::Document* doc) {
+                        if (!doc || docMgr->documents().size() <= 1) return;
+
+                        if (doc->isModified()) {
+                            const auto ans = QMessageBox::question(
+                                d->mainWindow, tr("關閉文件"),
+                                tr("「%1」有尚未儲存的變更，要先儲存嗎？")
+                                    .arg(doc->fileName().isEmpty() ? tr("未命名") : QFileInfo(doc->fileName()).fileName()),
+                                QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+                            if (ans == QMessageBox::Cancel) return;
+                            if (ans == QMessageBox::Save) {
+                                if (doc->fileName().isEmpty() || !doc->save(doc->fileName())) {
+                                    QMessageBox::warning(d->mainWindow, tr("關閉文件"),
+                                                         tr("儲存失敗（未命名文件請先用「另存新檔」），文件未關閉"));
+                                    return;
+                                }
+                            }
+                        }
+
+                        const bool wasCurrent = (docMgr->currentDocument() == doc);
+                        if (wasCurrent && d->railway3DRenderer) d->railway3DRenderer->clear();
+                        docMgr->closeDocument(doc, /*force=*/true);
+                        if (wasCurrent) {
+                            if (cad::Document* now = docMgr->currentDocument()) {
+                                core::Application::instance()->eventBus()->publish(
+                                    core::Events::DOCUMENT_OPENED, QVariant::fromValue(now));
+                                Q_EMIT now->allFeaturesLoaded();
+                                if (now->railway3DVisible() && d->railway3DRenderer)
+                                    d->railway3DRenderer->showAll(now->trackCenterLines());
+                            }
+                        }
+                        syncTabs();
+                    });
+
+            syncTabs();
+        }
 
         // ── F.1 載入檔案後重建 tclRenderers ─────────────────────────────────
         // allFeaturesLoaded 是在 Document::load() 完成所有反序列化後 emit 的，
@@ -2070,6 +2258,8 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
         // 修改後：
         connect(d->featureBrowser, &FeatureBrowser::featureSelectedById,
                 this, [this, docMgr](const QString& featureId) {
+                    // 供 INSERTCOMP 等指令取得「目前在 Feature Browser 選取的項目」
+                    core::Application::instance()->setProperty("selectedFeatureId", featureId);
 
                     // ── issue #10 修正 ──────────────────────────────────
                     // Create Sketch 互動選平面時，先前只有在 3D 視圖裡直接
@@ -2087,10 +2277,21 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                         else if (featureId == "plane_xz") planeName = "XZ";
                         else if (featureId == "plane_yz") planeName = "YZ";
 
+                        // 使用者定義的平面（Feature Browser 項目）也能當草圖平面
+                        QString definedId;
+                        if (planeName.isEmpty()) {
+                            auto* curDoc = docMgr->currentDocument();
+                            if (curDoc && qobject_cast<cad::DefinedPlane*>(curDoc->findFeature(featureId))) {
+                                planeName = QStringLiteral("DEFINED");
+                                definedId = featureId;
+                            }
+                        }
+
                         if (!planeName.isEmpty()) {
                             if (auto* bus = core::Application::instance()->eventBus()) {
                                 QVariantMap planeData;
                                 planeData["plane"]     = planeName;
+                                if (!definedId.isEmpty()) planeData["planeId"] = definedId;
                                 planeData["cancelled"] = false;
                                 bus->publish("plane.selected", planeData);
                             }
@@ -2247,6 +2448,654 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     doc->removeFeature(feature);
                     // featureRemoved → FeatureBrowser::onTreeStructureChanged → refresh() 自動執行
                 });
+
+        // ── 聚焦 Focus：自動 eyeOpen（若原本隱藏），再把內容 Fit 聚焦到 View ──────
+        connect(d->featureBrowser, &FeatureBrowser::focusRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    if (!d->cadView) return;
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+
+                    // 與眼睛圖示相同的路徑（feature.visibility-changed），包在 batch 內只重繪一次；
+                    // 樹狀圖的眼睛圖示由 Document 重建樹時同步。
+                    // 必須先 eyeOpen、後 Fit：草圖 eyeOpen 會還原當初 eyeClose 的視圖，Fit 才能蓋過它。
+                    auto eyeOpen = [&](const QString& id) {
+                        core::EventBus* bus = core::Application::instance()->eventBus();
+                        QVariantMap vm;
+                        vm["itemId"]  = id;
+                        vm["visible"] = true;
+                        bus->publish("view.batch-begin", QVariant());
+                        bus->publish("feature.visibility-changed", vm);
+                        bus->publish("view.batch-end", QVariant());
+                    };
+
+                    bool ok = false;
+                    QString label;
+                    if (auto* tcl = doc->findTrackCenterLine(itemId)) {
+                        label = tcl->name();
+                        // Railway 資料夾 3D 顯示中：該線路的 3D 折線本來就在 View 裡，不另開平面線形
+                        if (doc->railway3DVisible()) {
+                            if (d->railway3DRenderer && !d->railway3DRenderer->isTclShown(tcl)) {
+                                core::EventBus* bus = core::Application::instance()->eventBus();
+                                bus->publish("view.batch-begin", QVariant());
+                                d->railway3DRenderer->setTclShown(tcl, true);
+                                bus->publish("view.batch-end", QVariant());
+                            }
+                        } else if (!tcl->hAlignVisible()) {
+                            eyeOpen(itemId);
+                        }
+
+                        // 平面線形 overlay + 3D 折線 overlay 一起算範圍
+                        QList<Handle(AIS_InteractiveObject)> objs;
+                        if (auto* r = d->tclRenderers.value(itemId, nullptr))
+                            objs += r->overlayObjects();
+                        if (d->railway3DRenderer)
+                            objs += d->railway3DRenderer->overlayObjectsFor(tcl);
+                        ok = d->cadView->fitToObjects(objs);
+                    } else if (auto* f = doc->findFeature(itemId)) {
+                        label = f->name();
+                        if (!f->isVisible())
+                            eyeOpen(itemId);
+                        ok = d->cadView->fitToFeature(itemId);
+                    }
+
+                    setStatusMessage(ok ? tr("已聚焦：%1").arg(label)
+                                        : tr("此項目目前在 View 中沒有可聚焦的內容"),
+                                     2500);
+                });
+
+        // ── 由 View 中游標位置反查 TrackCenterLine id（平面線形 overlay 或 3D 折線 overlay）──
+        auto tclIdAt = [this, docMgr](const QPoint& widgetPos) -> QString {
+            auto* doc = docMgr->currentDocument();
+            if (!doc || !d->cadView) return QString();
+
+            const Handle(AIS_InteractiveObject) hit = d->cadView->detectedObjectAt(widgetPos);
+            if (hit.IsNull()) return QString();
+
+            for (auto it = d->tclRenderers.constBegin(); it != d->tclRenderers.constEnd(); ++it) {
+                if (it.value() && it.value()->overlayObjects().contains(hit))
+                    return it.key();
+            }
+            if (d->railway3DRenderer) {
+                for (railway::TrackCenterLine* tcl : doc->trackCenterLines()) {
+                    if (d->railway3DRenderer->overlayObjectsFor(tcl).contains(hit))
+                        return tcl->id();
+                }
+            }
+            return QString();
+        };
+
+        // ── View 中右鍵點選 Railway 線形 → 彈出與 Feature Browser 該項目相同的右鍵選單 ──
+        connect(d->cadView, &view::CadView::rightClicked,
+                this, [this, tclIdAt](const QPoint& widgetPos, const QPoint& globalPos) {
+                    auto* app = core::Application::instance();
+                    if (auto* cmdMgr = app->commandManager())
+                        if (cmdMgr->hasActiveCommand()) return;    // 指令進行中，右鍵歸指令
+                    if (!d->featureBrowser) return;
+
+                    const QString tclId = tclIdAt(widgetPos);
+                    if (!tclId.isEmpty()) {
+                        d->featureBrowser->showContextMenuForItem(tclId, globalPos);
+                        return;
+                    }
+
+                    // Loft（ProfileLoftSolid）實體：同樣彈出與樹狀圖該項目相同的選單
+                    // （含「聚焦 Focus」「隱藏 Hide (eyeClose)」）。detectedObjectAt 內 MoveTo 已偵測過。
+                    auto* doc = core::Application::instance()->documentManager()->currentDocument();
+                    if (!doc) return;
+                    const QString fid = d->cadView->featureIdForObject(d->cadView->detectedObjectAt(widgetPos));
+                    if (fid.isEmpty()) return;
+                    if (qobject_cast<cad::ProfileLoftSolid*>(doc->findFeature(fid)))
+                        d->featureBrowser->showContextMenuForItem(fid, globalPos);
+                });
+
+        // ── Hover 到 Railway 線形 → tooltip 顯示線形名稱 ─────────────────────────
+        connect(d->cadView, &view::CadView::hoverIdle,
+                this, [this, docMgr, tclIdAt](const QPoint& widgetPos, const QPoint& globalPos) {
+                    auto* app = core::Application::instance();
+                    if (auto* cmdMgr = app->commandManager())
+                        if (cmdMgr->hasActiveCommand()) return;
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+
+                    const QString tclId = tclIdAt(widgetPos);
+                    if (tclId.isEmpty()) return;
+                    auto* tcl = doc->findTrackCenterLine(tclId);
+                    if (!tcl) return;
+                    const QString name = tcl->name().isEmpty() ? tcl->id() : tcl->name();
+                    QToolTip::showText(globalPos, name, d->cadView);
+                });
+
+        // ── 右鍵「隱藏 Hide / 顯示 Show」（等同眼睛圖示 eyeClose / eyeOpen）──────────
+        // Railway 3D 彙總顯示中，單一線路的顯示與否由 3D 渲染器個別控制；其他一律走眼睛圖示同一路徑。
+        d->featureBrowser->setVisibilityResolver([this, docMgr](const QString& id) -> int {
+            auto* doc = docMgr->currentDocument();
+            if (!doc) return -1;
+            if (auto* tcl = doc->findTrackCenterLine(id)) {
+                if (doc->railway3DVisible())
+                    return (d->railway3DRenderer && d->railway3DRenderer->isTclShown(tcl)) ? 1 : 0;
+                return tcl->hAlignVisible() ? 1 : 0;
+            }
+            if (auto* f = doc->findFeature(id))
+                return f->isVisible() ? 1 : 0;
+            return -1;
+        });
+        connect(d->featureBrowser, &FeatureBrowser::visibilityRequested,
+                this, [this, docMgr](const QString& itemId, bool visible) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc || !d->cadView) return;
+
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    bus->publish("view.batch-begin", QVariant());
+                    auto* tcl = doc->findTrackCenterLine(itemId);
+                    if (tcl && doc->railway3DVisible() && d->railway3DRenderer) {
+                        d->railway3DRenderer->setTclShown(tcl, visible);
+                    } else {
+                        QVariantMap vm;
+                        vm["itemId"]  = itemId;
+                        vm["visible"] = visible;
+                        bus->publish("feature.visibility-changed", vm);
+                    }
+                    bus->publish("view.batch-end", QVariant());
+                });
+
+        // ── Railway 資料夾右鍵：所有線形 eyeOpen / eyeClose ─────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::allAlignmentsVisibilityRequested,
+                this, [this, docMgr](bool visible) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc || !d->cadView) return;
+
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    bus->publish("view.batch-begin", QVariant());
+                    doc->beginTreeBatch();                 // 樹狀圖只重建一次
+                    ++d->alignDocBatch;                    // OSnap 來源只刷新一次
+                    if (doc->railway3DVisible() && d->railway3DRenderer) {
+                        d->railway3DRenderer->setAllTclShown(visible);   // 3D 彙總顯示中：個別控制 3D 折線
+                    } else {
+                        const auto tcls = doc->trackCenterLines();       // 複製一份，避免迴圈中被更動
+                        for (railway::TrackCenterLine* tcl : tcls) {
+                            if (tcl->hAlignVisible() == visible) continue;
+                            QVariantMap vm;
+                            vm["itemId"]  = tcl->id();
+                            vm["visible"] = visible;
+                            bus->publish("feature.visibility-changed", vm);
+                        }
+                    }
+                    --d->alignDocBatch;
+                    if (d->alignDocBatch == 0 && d->alignDocSnapPending) {
+                        d->alignDocSnapPending = false;
+                        setActiveAlignmentDoc(d->alignmentDoc);
+                    }
+                    doc->endTreeBatch();
+                    bus->publish("view.batch-end", QVariant());
+                });
+
+        // ── 3D 組件安裝：編輯安裝位置 → 重算組件並重建所有 Loft 重新開孔 ─────────────
+        connect(d->featureBrowser, &FeatureBrowser::editComponentPlacementsRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* ci = doc ? qobject_cast<cad::ComponentInstall*>(doc->findFeature(itemId)) : nullptr;
+                    if (!ci) return;
+
+                    ComponentPlacementDialog dlg(doc, ci->placements(), d->mainWindow);
+                    if (dlg.exec() != QDialog::Accepted) return;
+
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    bus->publish("view.batch-begin", QVariant());
+                    ci->setPlacements(dlg.placements());
+                    doc->applyComponentChange(ci);
+                    bus->publish("view.batch-end", QVariant());
+
+                    setStatusMessage(ci->hasError()
+                                         ? tr("組件安裝位置已更新，但有問題：%1").arg(ci->errorMessage())
+                                         : tr("組件安裝位置已更新（%1 處），道版已重新開孔").arg(ci->placements().size()),
+                                     6000);
+                });
+
+        // ── 3D 組件：建立／重設座標線（與斷面草圖的約束關係）───────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::createComponentFrameRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* ci = doc ? qobject_cast<cad::ComponentInstall*>(doc->findFeature(itemId)) : nullptr;
+                    if (!ci) return;
+
+                    // 候選主草圖 = 文件中各斷面陣列的主草圖（去重）
+                    QList<cad::Sketch*> masters;
+                    for (cad::Feature* f : doc->features())
+                        if (auto* arr = qobject_cast<cad::AlignedProfileArray*>(f))
+                            if (arr->masterSketch() && !masters.contains(arr->masterSketch()))
+                                masters.append(arr->masterSketch());
+                    if (masters.isEmpty()) {
+                        setStatusMessage(tr("文件中沒有斷面陣列，無法建立組件座標線"), 5000);
+                        return;
+                    }
+                    cad::Sketch* master = masters.first();
+                    if (masters.size() > 1) {
+                        QStringList names;
+                        for (cad::Sketch* s : masters) names << s->name();
+                        bool ok = false;
+                        const QString pick = QInputDialog::getItem(d->mainWindow, tr("組件座標線"),
+                                                                   tr("要建立在哪一個斷面草圖？"), names, 0, false, &ok);
+                        if (!ok) return;
+                        master = masters.value(names.indexOf(pick), masters.first());
+                    }
+
+                    QString err;
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    bus->publish("view.batch-begin", QVariant());
+                    QString note;
+                    const bool ok = ci->createFrameInSketch(master, &err, &note);
+                    if (ok) doc->applyComponentChange(ci);
+                    bus->publish("view.batch-end", QVariant());
+
+                    setStatusMessage(ok ? tr("已在草圖「%1」建立組件座標線：可用一般約束（尺寸可用 cant）調整位置與轉角。%2")
+                                              .arg(master->name(), note)
+                                        : tr("建立組件座標線失敗：%1").arg(err), 8000);
+                });
+
+        // ── 3D 組件：與來源 *.aicad 同步 ────────────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::syncComponentRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* ci = doc ? qobject_cast<cad::ComponentInstall*>(doc->findFeature(itemId)) : nullptr;
+                    if (!ci) return;
+                    QString err;
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    bus->publish("view.batch-begin", QVariant());
+                    const bool ok = ci->syncFromSource(&err);
+                    if (ok) doc->applyComponentChange(ci);
+                    bus->publish("view.batch-end", QVariant());
+                    setStatusMessage(ok ? tr("已與來源檔同步：%1").arg(ci->sourcePath())
+                                        : tr("同步失敗：%1").arg(err), 8000);
+                });
+        connect(d->featureBrowser, &FeatureBrowser::toggleComponentAutoSyncRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* ci = doc ? qobject_cast<cad::ComponentInstall*>(doc->findFeature(itemId)) : nullptr;
+                    if (!ci) return;
+                    ci->setAutoSync(!ci->autoSync());
+                    doc->setModified(true);
+                    setStatusMessage(ci->autoSync() ? tr("已開啟自動同步：來源檔存檔時會自動更新組件並重新開孔")
+                                                    : tr("已關閉自動同步（仍可用右鍵「同步來源檔」手動同步）"), 6000);
+                });
+
+        // ── 組件安裝位置（資料夾）：新增／編輯各式組件沿線形的安裝位置 ───────────────
+        connect(d->featureBrowser, &FeatureBrowser::editComponentLayoutRequested,
+                this, [this, docMgr]() {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+
+                    bool any = false;
+                    for (cad::Feature* f : doc->features())
+                        if (qobject_cast<cad::ComponentInstall*>(f)) { any = true; break; }
+                    if (!any) {
+                        setStatusMessage(tr("尚未載入任何 3D 組件：請先用「Insert 3D Component (*.aicad)」插入組件"), 6000);
+                        return;
+                    }
+
+                    ComponentLayoutDialog dlg(doc, d->mainWindow);
+                    if (dlg.exec() != QDialog::Accepted) return;
+
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    bus->publish("view.batch-begin", QVariant());
+                    const auto result = dlg.result();
+                    cad::ComponentInstall* firstChanged = nullptr;
+                    for (auto it = result.constBegin(); it != result.constEnd(); ++it) {
+                        auto* ci = qobject_cast<cad::ComponentInstall*>(doc->findFeature(it.key()));
+                        if (!ci) continue;
+                        ci->setPlacements(it.value());
+                        if (!firstChanged) firstChanged = ci;
+                    }
+                    // 先逐一重算各組件，再只重建一次所有 Loft（開孔）
+                    for (auto it = result.constBegin(); it != result.constEnd(); ++it)
+                        if (auto* ci = qobject_cast<cad::ComponentInstall*>(doc->findFeature(it.key())))
+                            doc->rebuildFeature(ci);
+                    doc->applyComponentChange(firstChanged);
+                    bus->publish("view.batch-end", QVariant());
+                    setStatusMessage(tr("組件安裝位置已更新，道版已重新開孔"), 6000);
+                });
+        connect(d->featureBrowser, &FeatureBrowser::insertComponentRequested,
+                this, [this]() {
+                    auto* cmdMgr = core::Application::instance()->commandManager();
+                    if (!cmdMgr || cmdMgr->hasActiveCommand()) return;
+                    command::CommandContext ctx;
+                    ctx.uiManager = this;
+                    ctx.cadView   = d->cadView;
+                    cmdMgr->executeCommand("insertcomp", ctx);
+                });
+
+        // ── 雙擊組件：在另一個 CADView 開啟來源 *.aicad 編輯（存檔後自動與本文件同步）─────────
+        connect(d->featureBrowser, &FeatureBrowser::openComponentSourceRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* ci = doc ? qobject_cast<cad::ComponentInstall*>(doc->findFeature(itemId)) : nullptr;
+                    if (!ci) return;
+                    if (ci->sourcePath().isEmpty() || !QFileInfo::exists(ci->sourcePath())) {
+                        setStatusMessage(tr("找不到來源檔：%1").arg(ci->sourcePath()), 6000);
+                        return;
+                    }
+                    // DocumentManager 會重用已開啟的同一檔案（不會重複開）；開啟後成為目前文件（有自己的 CadView）
+                    if (docMgr->openDocument(ci->sourcePath()))
+                        setStatusMessage(tr("已開啟組件來源檔：%1（存檔後，本文件的組件會自動同步並重新開孔）")
+                                             .arg(ci->sourcePath()), 8000);
+                    else
+                        setStatusMessage(tr("無法開啟來源檔：%1").arg(ci->sourcePath()), 6000);
+                });
+
+        // ── 定義平面：新增／編輯／在此平面建立草圖 ─────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::defineNewPlaneRequested,
+                this, [this, docMgr](const QString& baseRef) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc) return;
+                    DefinePlaneDialog dlg(doc, nullptr, baseRef, d->mainWindow);
+                    if (dlg.exec() != QDialog::Accepted) return;
+                    QString err;
+                    auto* dp = doc->createDefinedPlane(dlg.definition(), dlg.planeName(), &err);
+                    setStatusMessage(dp ? tr("已定義平面「%1」（%2）：可在其右鍵選單「在此平面建立草圖」")
+                                              .arg(dp->name(), dp->description())
+                                        : tr("定義平面失敗：%1").arg(err), 8000);
+                });
+        connect(d->featureBrowser, &FeatureBrowser::editDefinedPlaneRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* dp = doc ? qobject_cast<cad::DefinedPlane*>(doc->findFeature(itemId)) : nullptr;
+                    if (!dp) return;
+                    DefinePlaneDialog dlg(doc, dp, QString(), d->mainWindow);
+                    if (dlg.exec() != QDialog::Accepted) return;
+
+                    QString err;
+                    if (!doc->updateDefinedPlane(dp, dlg.definition(), dlg.planeName(), &err)) {
+                        setStatusMessage(tr("編輯平面失敗：%1").arg(err), 6000);
+                        return;
+                    }
+                    setStatusMessage(tr("平面「%1」已更新（已建立的草圖不會跟著移動）").arg(dp->name()), 6000);
+                });
+        connect(d->featureBrowser, &FeatureBrowser::createSketchOnDefinedPlaneRequested,
+                this, [this](const QString& itemId) {
+                    auto* cmdMgr = core::Application::instance()->commandManager();
+                    if (!cmdMgr || cmdMgr->hasActiveCommand()) return;
+                    command::CommandContext ctx;
+                    ctx.uiManager = this;
+                    ctx.cadView   = d->cadView;
+                    ctx.data["definedPlaneId"] = itemId;
+                    cmdMgr->executeCommand("sketch", ctx);
+                });
+
+        // ── Extrude：編輯方向與尺寸 ──────────────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::editExtrudeRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* ex = doc ? qobject_cast<cad::Extrude*>(doc->findFeature(itemId)) : nullptr;
+                    if (!ex) return;
+                    ExtrudeEditDialog dlg(ex, d->mainWindow);
+                    if (dlg.exec() == QDialog::Accepted)
+                        setStatusMessage(tr("擠出「%1」已更新").arg(ex->name()), 4000);
+                });
+
+        // ── 道版 E,N 平面圖：匯出 DXF ──────────────────────────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::exportSlabPlanDxfRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    auto* plan = doc ? qobject_cast<cad::TrackSlabPlan*>(doc->findFeature(itemId)) : nullptr;
+                    if (!plan) return;
+                    if (plan->polylines().isEmpty()) {
+                        setStatusMessage(tr("道版圖目前沒有圖形可匯出（%1）")
+                                             .arg(plan->hasError() ? plan->errorMessage() : tr("尚未產生")), 6000);
+                        return;
+                    }
+
+                    QSettings st("AICAD", "AICAD");
+                    const QString lastDir = st.value("SlabPlan/lastDxfDir").toString();
+                    const QString base = QFileInfo(doc->fileName()).completeBaseName();
+                    const QString suggest = (lastDir.isEmpty() ? QString() : lastDir + "/")
+                                          + (base.isEmpty() ? QStringLiteral("SlabPlan") : base) + "_SlabPlan_EN.dxf";
+
+                    const QString path = QFileDialog::getSaveFileName(
+                        d->mainWindow, tr("匯出道版 E,N 平面圖 (DXF)"), suggest,
+                        tr("DXF Files (*.dxf);;All Files (*)"));
+                    if (path.isEmpty()) return;
+                    st.setValue("SlabPlan/lastDxfDir", QFileInfo(path).absolutePath());
+
+                    int exportedCount = 0;                       // kind 2（已併入輪廓）不輸出
+                    for (const auto& pl : plan->polylines())
+                        if (pl.kind != 2 && pl.pts.size() >= 2) ++exportedCount;
+
+                    QString err;
+                    if (plan->exportDxf(path, &err))
+                        setStatusMessage(tr("已匯出 DXF：%1（%2 條折線，TM2 E,N，單位 m）")
+                                             .arg(path).arg(exportedCount), 8000);
+                    else
+                        setStatusMessage(tr("匯出 DXF 失敗：%1").arg(err), 8000);
+                });
+
+        // ── 組件對位預覽：eyeOpen「組件所約束的斷面草圖」時，一併 3D 顯示組件與草圖「對上的情形」──
+        //    草圖可見 → 顯示組件（半透明橘）與 void（半透明紅），位置由草圖中組件座標線目前的解決定
+        //    （草圖單位 mm，不縮放）；草圖隱藏 → 移除。以簽章偵測變化，定時同步。
+        d->compPreviewTimer = new QTimer(this);
+        d->compPreviewTimer->setInterval(300);
+        connect(d->compPreviewTimer, &QTimer::timeout, this, [this, docMgr]() {
+            auto* doc = docMgr->currentDocument();
+            if (!doc || !d->cadView) {
+                // 沒有文件：清掉所有預覽
+                for (auto it = d->compPreview.begin(); it != d->compPreview.end(); ++it)
+                    for (const auto& o : std::as_const(it.value())) d->cadView->removeOverlayAIS(o);
+                d->compPreview.clear(); d->compPreviewSig.clear();
+                return;
+            }
+
+            QSet<QString> alive;
+            for (cad::Feature* f : doc->features()) {
+                auto* ci = qobject_cast<cad::ComponentInstall*>(f);
+                if (!ci) continue;
+                alive.insert(ci->id());
+
+                cad::Sketch* sk = ci->frameSketch();
+                const bool show = ci->hasFrame() && sk && sk->isVisible();
+
+                // 簽章：是否顯示 + 座標線在草圖中的目前位置（改約束會變）+ 組件資料
+                QString sig;
+                if (show) {
+                    sig = QStringLiteral("1");
+                    if (auto* xl = dynamic_cast<cad::SketchLine*>(sk->findGeometry(ci->frameXLineUuid()))) {
+                        auto* a = sk->point(xl->startUuid);
+                        auto* b = sk->point(xl->endUuid);
+                        if (a && b)
+                            sig += QString::number(a->pos.x(), 'f', 4) + QLatin1Char(',') + QString::number(a->pos.y(), 'f', 4)
+                                 + QLatin1Char(',') + QString::number(b->pos.x(), 'f', 4) + QLatin1Char(',') + QString::number(b->pos.y(), 'f', 4);
+                    }
+                    sig += QLatin1Char('|') + QString::number(quintptr(ci->componentShape().TShape().get()));
+                } else {
+                    sig = QStringLiteral("0");
+                }
+                if (d->compPreviewSig.value(ci->id()) == sig && d->compPreview.contains(ci->id()) == show) continue;
+                d->compPreviewSig[ci->id()] = sig;
+
+                // 先移除舊的
+                for (const auto& o : std::as_const(d->compPreview[ci->id()])) d->cadView->removeOverlayAIS(o);
+                d->compPreview[ci->id()].clear();
+                if (!show) { d->compPreview.remove(ci->id()); continue; }
+
+                TopoDS_Shape comp, vd;
+                QString err;
+                if (!ci->sketchPreview(comp, vd, &err)) continue;
+
+                QList<Handle(AIS_InteractiveObject)> made;
+                if (!comp.IsNull()) {
+                    Handle(AIS_Shape) a = new AIS_Shape(comp);
+                    a->SetColor(Quantity_NOC_ORANGE);
+                    a->SetTransparency(0.45f);
+                    d->cadView->addOverlayAIS(a, {});
+                    made << a;
+                }
+                if (!vd.IsNull()) {
+                    Handle(AIS_Shape) a = new AIS_Shape(vd);
+                    a->SetColor(Quantity_NOC_RED);
+                    a->SetTransparency(0.75f);
+                    d->cadView->addOverlayAIS(a, {});
+                    made << a;
+                }
+                d->compPreview[ci->id()] = made;
+            }
+
+            // 已刪除的組件：清掉預覽
+            for (auto it = d->compPreview.begin(); it != d->compPreview.end(); ) {
+                if (alive.contains(it.key())) { ++it; continue; }
+                for (const auto& o : std::as_const(it.value())) d->cadView->removeOverlayAIS(o);
+                d->compPreviewSig.remove(it.key());
+                it = d->compPreview.erase(it);
+            }
+        });
+        d->compPreviewTimer->start();
+
+        // ── 沿線斷面陣列右鍵：所有測站草圖 eyeOpen / eyeClose ───────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::stationSketchesVisibilityRequested,
+                this, [this, docMgr](const QString& arrayId, bool visible) {
+                    auto* doc = docMgr->currentDocument();
+                    if (!doc || !d->cadView) return;
+                    auto* arr = qobject_cast<cad::AlignedProfileArray*>(doc->findFeature(arrayId));
+                    if (!arr) return;
+
+                    core::EventBus* bus = core::Application::instance()->eventBus();
+                    bus->publish("view.batch-begin", QVariant());
+                    doc->beginTreeBatch();                 // 樹狀圖只重建一次
+                    const auto insts = arr->instances();   // 複製一份，避免迴圈中被更動
+                    for (cad::SketchInstance* inst : insts) {
+                        if (!inst || inst->isVisible() == visible) continue;
+                        QVariantMap vm;
+                        vm["itemId"]  = inst->id();
+                        vm["visible"] = visible;
+                        bus->publish("feature.visibility-changed", vm);   // 與眼睛圖示同一路徑
+                    }
+                    doc->endTreeBatch();
+                    bus->publish("view.batch-end", QVariant());
+                });
+
+        // ── Keymap View：點選／拖曳 → CadView Pan 到該點 ──────────────────────────
+        if (d->keymapView) {
+            connect(d->keymapView, &KeymapView::panRequested,
+                    this, [this](const QPointF& xy) {
+                        if (d->cadView) d->cadView->panToPoint(xy.x(), xy.y());
+                    });
+
+            connect(d->keymapView, &KeymapView::filterChanged, this, [this] { d->keymapSig = 0; });
+
+            auto syncKeymap = [this, docMgr]() {
+                if (!d->keymapView || !d->cadView || !d->keymapView->isVisible()) return;
+                auto* doc = docMgr->currentDocument();
+
+                // 1) 可視範圍（便宜，每次都更新）
+                QPolygonF vp;
+                for (const QPointF& pt : d->cadView->viewportOnPlane()) vp << pt;
+                d->keymapView->setViewport(vp);
+
+                // 2) 內容：先算便宜的簽章，變了才重建
+                const auto flt = d->keymapView->filter();
+                const bool wantRailway = (flt == KeymapView::All || flt == KeymapView::RailwayAndLoft);
+                const bool wantLoft    = (flt == KeymapView::All || flt == KeymapView::RailwayAndLoft);
+                const bool wantSketch  = (flt == KeymapView::All || flt == KeymapView::SketchOnly);
+                const bool wantOther   = (flt == KeymapView::All);
+
+                quint64 sig = quint64(quintptr(doc));
+                auto mix = [&sig](quint64 v) { sig = sig * 1099511628211ULL + v + 0x9e3779b97f4a7c15ULL; };
+                mix(quint64(flt));
+                if (doc) {
+                    mix(quint64(doc->features().size()));
+                    for (cad::Feature* f : doc->features())          // 顯示／隱藏切換也要更新縮圖
+                        if (f) mix(f->isVisible() ? 1u : 0u);
+                    if (wantSketch) {
+                        // 測站草圖：重建後 wire 的 TShape 會換新
+                        for (cad::Feature* f : doc->features()) {
+                            auto* inst = qobject_cast<cad::SketchInstance*>(f);
+                            if (!inst || !inst->isVisible()) continue;
+                            const auto ws = inst->wires();
+                            mix(quint64(ws.size()));
+                            if (!ws.isEmpty()) mix(quint64(quintptr(ws.first().TShape().get())));
+                        }
+                        // 草圖幾何被編輯後 AIS 物件會被重建（指標改變）→ 以此偵測，不必逐筆比對幾何
+                        for (cad::Feature* f : doc->features()) {
+                            auto* sk = qobject_cast<cad::Sketch*>(f);
+                            if (!sk || !sk->isVisible()) continue;
+                            for (const auto& o : sk->aisShapes())          mix(quint64(quintptr(o.get())));
+                            for (const auto& o : sk->constructionShapes()) mix(quint64(quintptr(o.get())));
+                        }
+                    }
+                    for (railway::TrackCenterLine* tcl : doc->trackCenterLines()) {
+                        if (!wantRailway) break;
+                        const auto* ha = tcl->horizontal();
+                        if (!ha || ha->isEmpty()) continue;
+                        const auto& rp = ha->rawPoints();
+                        if (rp.size() < 2) continue;
+                        mix(quint64(rp.size()));
+                        const double p0 = rp.first().chainage, p1 = rp.last().chainage;
+                        const QPointF a = tcl->getXY(p0, 0.0), m = tcl->getXY((p0 + p1) / 2, 0.0), b = tcl->getXY(p1, 0.0);
+                        for (const QPointF& q : {a, m, b}) {
+                            mix(quint64(qint64(q.x() * 100)));
+                            mix(quint64(qint64(q.y() * 100)));
+                        }
+                    }
+                }
+                if (sig == d->keymapSig) return;
+                d->keymapSig = sig;
+
+                QVector<QPolygonF> lines;
+                QVector<QPolygonF> sketchLines;
+                QVector<QRectF>    boxes;
+                if (doc) {
+                    for (railway::TrackCenterLine* tcl : doc->trackCenterLines()) {
+                        if (!wantRailway) break;
+                        const auto* ha = tcl->horizontal();
+                        if (!ha || ha->isEmpty()) continue;
+                        const auto& rp = ha->rawPoints();
+                        if (rp.size() < 2) continue;
+                        const double p0 = rp.first().chainage, p1 = rp.last().chainage;
+                        if (p1 - p0 < 1e-6) continue;
+                        constexpr int kSamples = 400;
+                        QPolygonF pl;
+                        pl.reserve(kSamples + 1);
+                        for (int i = 0; i <= kSamples; ++i)
+                            pl << tcl->getXY(p0 + (p1 - p0) * i / kSamples, 0.0);
+                        lines.append(pl);
+                    }
+                    for (cad::Feature* f : doc->features()) {
+                        if (!f) continue;
+
+                        // 道版 XY 平面圖：沿線形的細長線框，與 Loft／線路重疊，不另畫進縮圖
+                        if (qobject_cast<cad::TrackSlabPlan*>(f)) continue;
+
+                        // 測站草圖（ProfileArray）：視同 Sketch，eyeOpen 才畫
+                        if (auto* inst = qobject_cast<cad::SketchInstance*>(f)) {
+                            if (wantSketch && f->isVisible())
+                                appendInstancePolylines(inst, sketchLines);
+                            continue;
+                        }
+
+                        // 篩選：Sketch／Loft／其他
+                        const bool isSketch = qobject_cast<cad::Sketch*>(f) != nullptr;
+                        const bool isLoft   = qobject_cast<cad::ProfileLoftSolid*>(f) != nullptr;
+                        if (isSketch) {
+                            if (!wantSketch || !f->isVisible()) continue;   // 只顯示 eyeOpen 的 Sketch
+                            appendSketchPolylines(qobject_cast<cad::Sketch*>(f), sketchLines);
+                            continue;
+                        }
+                        if (isLoft ? !wantLoft : !wantOther) continue;
+
+                        if (f->shape().IsNull()) continue;
+                        Bnd_Box bb;
+                        BRepBndLib::Add(f->shape(), bb);
+                        if (bb.IsVoid() || bb.IsOpen() || bb.IsWhole()) continue;
+                        Standard_Real x0, y0, z0, x1, y1, z1;
+                        bb.Get(x0, y0, z0, x1, y1, z1);
+                        boxes.append(QRectF(QPointF(x0, y0), QPointF(x1, y1)));
+                    }
+                }
+                d->keymapView->setScene(lines, sketchLines, boxes);
+            };
+
+            d->keymapTimer = new QTimer(this);
+            d->keymapTimer->setInterval(250);
+            connect(d->keymapTimer, &QTimer::timeout, this, syncKeymap);
+            d->keymapTimer->start();
+        }
 
         // ── 剖面視圖（toggle）──────────────────────────────────────────────────────
         connect(d->featureBrowser, &FeatureBrowser::sectionViewRequested,
@@ -3994,6 +4843,20 @@ void UIManager::showFeatureProperties(cad::Feature* feature) {
                                ? QString::number(extrude->height())
                                : heightExpr,
                            /*editable*/true);
+
+        // 方向／兩向資訊（唯讀；要改請在項目上按右鍵「編輯擠出（方向／尺寸）…」）
+        QString modeText;
+        if (extrude->isSymmetric()) {
+            modeText = tr("兩向平分（總長兩側各半）");
+        } else if (extrude->backLength() > 1e-9) {
+            modeText = tr("兩向各自給值：正向 %1、反向 %2")
+                           .arg(extrude->isReversed() ? extrude->backLength() : extrude->height())
+                           .arg(extrude->isReversed() ? extrude->height() : extrude->backLength());
+        } else {
+            modeText = extrude->isReversed() ? tr("單向 — 反向") : tr("單向 — 正向");
+        }
+        panel->addProperty(tr("方向／兩向"), modeText, false);
+        panel->addProperty(tr("編輯"), tr("右鍵「編輯擠出（方向／尺寸）…」可改方向、兩向平分或各自給值"), false);
         return;
     }
 
@@ -4738,6 +5601,12 @@ void UIManager::onViewReady() {
 // ✅ 新增：統一設定「目前作用中」的 AlignmentDocument，並同步接到 OSnap
 void UIManager::setActiveAlignmentDoc(railway::AlignmentDocument* doc) {
     d->alignmentDoc = doc;
+    // 「所有線形 eyeOpen」會連續對每條線路呼叫本函式；OSnap 來源每次都整批重建很浪費，
+    // 批次中先記下，結束時用最後一個 active doc 只刷新一次。
+    if (d->alignDocBatch > 0) {
+        d->alignDocSnapPending = true;
+        return;
+    }
     if (d->cadView && d->cadView->snapManager()) {
         // ✅ 修正：OSnap 的鎖點來源不應只有「目前正在編輯」的這一條
         // alignment（doc），而是場景中所有已知的 per-TCL AlignmentDocument

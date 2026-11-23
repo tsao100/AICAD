@@ -87,6 +87,23 @@ public:
      */
     bool fromJson(const QJsonObject& json) override;
 
+    /// 「反向附加長度」：沿反方向再延伸的長度（非對稱兩側擠出；對稱模式忽略）。
+    /// 實際擠出 = 往正向 height、往反向 backLength，總長 = height + backLength。
+    QString backExpression() const { return m_backExpr.expression.isEmpty() ? QStringLiteral("0") : m_backExpr.expression; }
+    double  backLength()     const { return m_backExpr.cachedValue; }
+
+    /**
+     * @brief 一次設定尺寸與方向（只觸發一次重建；供「編輯擠出」對話框使用）。
+     * @param heightExpr  擠出高度（可用參數運算式）
+     * @param backExpr    反向附加長度（可用參數運算式；空 = 0）
+     * @param reversed    反向（沿草圖法線的反方向）
+     * @param symmetric   對稱（以草圖平面為中心，兩側各半）
+     * @param error       運算式無法求值時的原因
+     * @return false = 運算式無法求值（完全不修改）
+     */
+    bool setParameters(const QString& heightExpr, const QString& backExpr,
+                       bool reversed, bool symmetric, QString* error = nullptr);
+
     // ← 新增：表達式介面
     QString heightExpression() const { return m_heightExpr.expression; }
     void    setHeightExpression(const QString& expr);
@@ -115,6 +132,7 @@ Q_SIGNALS:
 private:
     Sketch* m_sketch;           ///< 參考草圖
     core::ParameterExpr m_heightExpr;   /// ← 設計意圖（表達式）
+    core::ParameterExpr m_backExpr;     ///< 反向附加長度
     bool m_reversed;            ///< 是否反向
     bool m_symmetric;           ///< 是否對稱
     double m_draftAngle;        ///< 拔模角度（未來實作）

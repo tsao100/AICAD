@@ -54,6 +54,9 @@ QString Feature::typeString() const {
     case FeatureType::Boolean:  return "Boolean";
     case FeatureType::Pattern:  return "Pattern";
     case FeatureType::Loft:     return "Loft";
+    case FeatureType::SlabPlan: return "SlabPlan";
+    case FeatureType::ComponentInstall: return "ComponentInstall";
+    case FeatureType::DefinedPlane: return "DefinedPlane";
     default:                    return "Unknown";
     }
 }

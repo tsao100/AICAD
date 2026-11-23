@@ -35,15 +35,19 @@ namespace ui {
 namespace {
 
 enum Col { ColName = 0, ColStart, ColEnd, ColProfile, ColThick, ColW, ColInterval,
+           ColChamfer,       ///< 端部倒角（是／否）：道版兩端的端面邊緣，底邊不倒
+           ColChamferSize,   ///< 倒角尺寸 [m]（兩個距離相同）
            ColAlignment,   ///< 唯讀：該段所依賴的線形（不參與 readSegments／貼上）
            ColFixedCount };
 
 const QStringList& fixedHeaders() {
     static const QStringList h = {
-        QObject::tr("段名稱 Name"),  QObject::tr("起點里程 Start [m]"),
-        QObject::tr("終點里程 End [m]"), QObject::tr("Profile"),
+        QObject::tr("段名稱 Name"),  QObject::tr("起始里程 Start [m]"),
+        QObject::tr("長度 Length [m]"), QObject::tr("Profile"),
         QObject::tr("Thick"),        QObject::tr("w"),
-        QObject::tr("間距 Interval [m]"), QObject::tr("線形 Alignment") };
+        QObject::tr("間距 Interval [m]"),
+        QObject::tr("端部倒角 Chamfer"), QObject::tr("倒角尺寸 [m]"),
+        QObject::tr("線形 Alignment") };
     return h;
 }
 
@@ -59,17 +63,39 @@ QString normHeader(const QString& s) {
 int fixedColumnOf(const QString& header) {
     static const QList<QStringList> aliases = {
         { "name", "段名稱", "段名", "段名稱name" },
-        { "start", "起", "起點", "起點里程", "起點里程start" },
-        { "end", "終", "終點", "終點里程", "終點里程end" },
+        { "start", "起", "起點", "起點里程", "起點里程start", "起始", "起始里程", "起始里程start" },
+        { "length", "長度", "長度length", "len" },     // 終點 = 起始 + 長度（不再直接輸入終點）
         { "profile", "使用的profile" },
         { "thick" },
         { "w" },
         { "interval", "間距", "間距interval" },
+        { "chamfer", "端部倒角", "端部倒角chamfer", "倒角" },
+        { "chamfersize", "倒角尺寸", "倒角尺寸size" },
         { "alignment", "線形", "線形alignment" } };
     const QString n = normHeader(header);
     for (int i = 0; i < aliases.size(); ++i)
         if (aliases[i].contains(n)) return i;
     return -1;
+}
+
+/// 間距欄的「自動」文字（曲線段約 1.5 m、直線段約 3 m，由線形決定，不是輸入）
+QString autoText() { return QObject::tr("自動"); }
+bool isAutoText(const QString& t) {
+    const QString s = t.trimmed().toLower();
+    return s.isEmpty() || s == QObject::tr("自動") || s == QLatin1String("auto");
+}
+
+/// 是／否 欄位：是 / yes / y / true / 1 / ✓ → true；否 / no / n / false / 0 → false；空白 → 預設
+bool parseYesNo(const QString& t, bool def, bool& ok) {
+    ok = true;
+    const QString s = t.trimmed().toLower();
+    if (s.isEmpty()) return def;
+    if (s == QObject::tr("是") || s == QLatin1String("yes") || s == QLatin1String("y") || s == QLatin1String("true")
+        || s == QLatin1String("1") || s == QStringLiteral("✓")) return true;
+    if (s == QObject::tr("否") || s == QLatin1String("no") || s == QLatin1String("n") || s == QLatin1String("false")
+        || s == QLatin1String("0")) return false;
+    ok = false;
+    return def;
 }
 
 bool isValidParamName(const QString& s) {
@@ -194,7 +220,16 @@ ProfileArraySegmentTableDialog::ProfileArraySegmentTableDialog(
     m_table = table;
     // 起／終點里程改變 → 重算該列「線形」欄（該段依賴哪條線形）
     connect(table, &QTableWidget::cellChanged, this, [this](int r, int c) {
-        if (c == ColStart || c == ColEnd) refreshAlignmentCell(r);
+        if (c == ColStart || c == ColEnd) {
+            refreshAlignmentCell(r);
+            // 起始里程／長度被改 → 該段間距改由線形自動決定（舊檔的固定間距到此轉換）
+            if (QTableWidgetItem* iv = m_table->item(r, ColInterval)) {
+                if (!isAutoText(iv->text())) {
+                    QSignalBlocker b(m_table);
+                    iv->setText(autoText());
+                }
+            }
+        }
     });
     table->onCopy  = [this] { copySelection(); };
     table->onPaste = [this] { paste(); };
@@ -297,12 +332,15 @@ void ProfileArraySegmentTableDialog::loadFromArray() {
         if (auto* nameItem = m_table->item(r, ColName))
             nameItem->setData(Qt::UserRole + 10, s.id);
         put(ColStart,    fmt(s.start));
-        put(ColEnd,      fmt(s.end));
+        put(ColEnd,      fmt(s.end - s.start));          // 顯示「長度」；終點 = 起始 + 長度
         const QString pn = nameOf(s.profileId);
         put(ColProfile,  pn.isEmpty() ? tr("(找不到 not found)") : pn);
         put(ColThick,    s.hasThick ? fmt(s.thick) : QString());
         put(ColW,        s.hasW ? fmt(s.w) : QString());
-        put(ColInterval, fmt(s.interval));
+        put(ColInterval, s.autoInterval ? autoText() : fmt(s.interval));
+        setIntervalReadOnly(r);
+        put(ColChamfer,     s.endChamfer ? tr("是") : tr("否"));
+        put(ColChamferSize, fmt(s.endChamferSize));
         for (int k = 0; k < cols.size(); ++k)
             put(ColFixedCount + k, s.extra.contains(cols[k]) ? fmt(s.extra.value(cols[k])) : QString());
         refreshAlignmentCell(r);
@@ -343,14 +381,36 @@ bool ProfileArraySegmentTableDialog::readSegments(QList<cad::ProfileArraySegment
         usedNames.insert(s.name);
 
         if (!parseNum(text(r, ColStart), s.start))       { error = tr("%1：不是數字").arg(where(ColStart));    return false; }
-        if (!parseNum(text(r, ColEnd), s.end))           { error = tr("%1：不是數字").arg(where(ColEnd));      return false; }
-        if (!parseNum(text(r, ColInterval), s.interval)) { error = tr("%1：不是數字").arg(where(ColInterval)); return false; }
-        if (s.end < s.start)     { error = tr("%1：終點里程不可小於起點里程").arg(where(ColEnd)); return false; }
-        if (s.interval <= 0.0)   { error = tr("%1：間距必須大於 0").arg(where(ColInterval)); return false; }
+        double length = 0.0;
+        if (!parseNum(text(r, ColEnd), length))          { error = tr("%1：不是數字").arg(where(ColEnd));      return false; }
+        if (length < 0.0)        { error = tr("%1：長度不可小於 0").arg(where(ColEnd)); return false; }
+        s.end = s.start + length;                         // 終點里程 = 起始里程 + 長度
+
+        // 間距：「自動」（或空白）= 依線形自動取值；舊檔的固定間距（數字）原樣保留
+        const QString ivText = text(r, ColInterval);
+        if (isAutoText(ivText)) {
+            s.autoInterval = true;
+        } else {
+            if (!parseNum(ivText, s.interval))           { error = tr("%1：不是數字").arg(where(ColInterval)); return false; }
+            if (s.interval <= 0.0)                       { error = tr("%1：間距必須大於 0").arg(where(ColInterval)); return false; }
+            s.autoInterval = false;
+        }
 
         const QString pn = text(r, ColProfile);
         for (const auto& p : prof) if (p.first == pn) { s.profileId = p.second; break; }
         if (s.profileId.isEmpty()) { error = tr("%1：找不到名為「%2」的草圖").arg(where(ColProfile), pn); return false; }
+
+        // 端部倒角：預設要倒角、0.025 m；底邊不倒
+        {
+            bool okYN = true;
+            s.endChamfer = parseYesNo(text(r, ColChamfer), true, okYN);
+            if (!okYN) { error = tr("%1：請填「是」或「否」").arg(where(ColChamfer)); return false; }
+            const QString cs = text(r, ColChamferSize);
+            s.endChamferSize = 0.025;
+            if (!cs.isEmpty() && !parseNum(cs, s.endChamferSize)) { error = tr("%1：不是數字").arg(where(ColChamferSize)); return false; }
+            if (s.endChamferSize < 0.0) { error = tr("%1：倒角尺寸不可為負").arg(where(ColChamferSize)); return false; }
+            if (s.endChamfer && s.endChamferSize <= 1e-9) { error = tr("%1：要倒角時尺寸必須大於 0").arg(where(ColChamferSize)); return false; }
+        }
 
         const QString th = text(r, ColThick);
         if (!th.isEmpty()) {
@@ -459,17 +519,15 @@ int ProfileArraySegmentTableDialog::appendDefaultRow(int baseRow) {
     const int r = m_table->rowCount();
     m_table->insertRow(r);
 
-    double start = 0.0, end = 100.0, interval = 20.0;
+    double start = 0.0, length = 100.0;
     QString profile;
     const int base = (baseRow >= 0 && baseRow < r) ? baseRow : r - 1;
-    if (base >= 0) {  // 沿用基準列：接在其終點之後、同長度、同 profile、同間距
-        double ps = 0, pe = 0, pi = 20;
+    if (base >= 0) {  // 沿用基準列：接在其終點之後、同長度、同 profile；間距一律自動
+        double ps = 0, pl = 0;
         parseNum(m_table->item(base, ColStart)->text(), ps);
-        parseNum(m_table->item(base, ColEnd)->text(), pe);
-        parseNum(m_table->item(base, ColInterval)->text(), pi);
-        start = pe;
-        end   = pe + ((pe > ps) ? (pe - ps) : 100.0);
-        interval = pi > 0 ? pi : 20.0;
+        parseNum(m_table->item(base, ColEnd)->text(), pl);   // 長度
+        start  = ps + pl;
+        length = (pl > 0) ? pl : 100.0;
         profile = m_table->item(base, ColProfile)->text();
     } else {
         const auto prof = profiles();
@@ -479,14 +537,36 @@ int ProfileArraySegmentTableDialog::appendDefaultRow(int baseRow) {
     auto put = [&](int c, const QString& t) { m_table->setItem(r, c, new QTableWidgetItem(t)); };
     put(ColName,     uniqueName(QStringLiteral("Seg%1").arg(r + 1), r));
     put(ColStart,    fmt(start));
-    put(ColEnd,      fmt(end));
+    put(ColEnd,      fmt(length));
     put(ColProfile,  profile);
     put(ColThick,    QString());
     put(ColW,        QString());
-    put(ColInterval, fmt(interval));
+    put(ColInterval, autoText());
+    setIntervalReadOnly(r);
+    {
+        QString chamfer = tr("是"), csize = QStringLiteral("0.025");          // 預設：要倒角、0.025 m
+        if (base >= 0) {
+            if (const auto* it = m_table->item(base, ColChamfer))     chamfer = it->text();
+            if (const auto* it = m_table->item(base, ColChamferSize)) csize   = it->text();
+        }
+        put(ColChamfer, chamfer);
+        put(ColChamferSize, csize);
+    }
     for (int c = ColFixedCount; c < m_table->columnCount(); ++c) put(c, QString());
     refreshAlignmentCell(r);
     return r;
+}
+
+void ProfileArraySegmentTableDialog::setIntervalReadOnly(int r)
+{
+    if (!m_table || r < 0 || r >= m_table->rowCount()) return;
+    QTableWidgetItem* it = m_table->item(r, ColInterval);
+    if (!it) return;
+    it->setFlags(it->flags() & ~Qt::ItemIsEditable);
+    it->setToolTip(tr("間距依線形自動取值：曲線段（圓弧＋緩和曲線）約 1.5 m、直線段約 3 m，\n"
+                      "每個區間的多出長度均分到各小段。\n"
+                      "只需輸入「起始里程」與「長度」；終點里程 = 起始里程 + 長度。\n"
+                      "舊檔的固定間距會原樣保留，直到你修改該列的起始里程或長度。"));
 }
 
 void ProfileArraySegmentTableDialog::refreshAlignmentCell(int r)
@@ -501,6 +581,7 @@ void ProfileArraySegmentTableDialog::refreshAlignmentCell(int r)
     QString tip;
     if (m_array && m_array->trackCenterLine() && is && ie
         && parseNum(is->text(), s) && parseNum(ie->text(), e)) {
+        e = s + e;                                   // 表格欄是「長度」，終點 = 起始 + 長度
         const auto sa = m_array->alignmentsForRange(s, e);
         text = sa.names.join(QStringLiteral(" → "));
         tip  = tr("本段（%1 ~ %2 m）依賴的線形。\n超出主線形里程範圍時，會接續端點相連（E,N,Z 很接近）的線形。")

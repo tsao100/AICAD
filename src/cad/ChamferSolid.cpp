@@ -1,4 +1,5 @@
 #include "ChamferSolid.h"
+#include "ComponentInstall.h"
 #include "Document.h"
 #include "ProfileLoftSolid.h"
 
@@ -127,7 +128,11 @@ TopoDS_Edge ChamferSolid::findMatchingEdge(const TopoDS_Shape& candidateShape,
 bool ChamferSolid::rebuild() {
     if (!m_source) { setError("No source solid feature specified"); return false; }
 
-    const TopoDS_Shape base = m_source->shape();
+    // 來源若是 ProfileLoftSolid：以「未開孔」的放樣實體為基底（角點邊屬於它），
+    // 倒角完成後再把 3D 組件的所需空間扣除（見 ComponentInstall::cutSpaces）。
+    ProfileLoftSolid* srcLoft = qobject_cast<ProfileLoftSolid*>(m_source.data());
+    TopoDS_Shape base = (srcLoft && !srcLoft->baseShape().IsNull()) ? srcLoft->baseShape()
+                                                                    : m_source->shape();
     if (base.IsNull()) { setError("Source feature has no shape"); return false; }
 
     if (m_edgeSignatures.isEmpty()) { setError("No edges selected for chamfer"); return false; }
@@ -170,7 +175,22 @@ bool ChamferSolid::rebuild() {
             return false;
         }
 
-        setShape(mkChamfer.Shape());
+        TopoDS_Shape result = mkChamfer.Shape();
+        if (srcLoft) {
+            // 縱向倒角完成後，再做道版兩端的端部倒角（底邊不倒），最後 void 開孔
+            QString warnEnd;
+            result = srcLoft->applyEndChamfer(result, &warnEnd);
+            if (!warnEnd.isEmpty()) qWarning() << "[ChamferSolid]" << name() << warnEnd;
+        }
+        if (srcLoft && document()) {
+            double pMin = 0.0, pMax = 0.0;
+            if (srcLoft->chainageRange(pMin, pMax)) {
+                QString warn;
+                result = ComponentInstall::cutSpaces(document(), result, srcLoft->sourceArray(), pMin, pMax, &warn);
+                if (!warn.isEmpty()) qWarning() << "[ChamferSolid]" << name() << warn;
+            }
+        }
+        setShape(result);
 
         if (missed > 0) {
             qWarning() << "[ChamferSolid]" << name() << "-" << missed

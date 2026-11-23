@@ -34,7 +34,10 @@ enum class FeatureType {
     Boolean,        ///< 布林運算
     Pattern,        ///< 陣列特徵
     SketchInstance, ///< 草圖副本（Phase 3）
-    Loft            ///< 斷面放樣特徵（Profile Loft Solid）
+    Loft,           ///< 斷面放樣特徵（Profile Loft Solid）
+    SlabPlan,       ///< 道版 XY 平面圖（TrackSlabPlan）
+    ComponentInstall,///< 3D 組件安裝（ComponentInstall）
+    DefinedPlane     ///< 定義平面（DefinedPlane：基準平面 + 偏移）
 };
 
 /**

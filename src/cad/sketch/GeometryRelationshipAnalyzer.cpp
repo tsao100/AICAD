@@ -63,7 +63,7 @@ bool circleOrArcCenterRadius(const GeomRef& ref, const Sketch* sketch,
         radius = static_cast<float>(circ->radius);
         return true;
     }
-    if (auto* arc = asArc(geom)) {
+    if (asArc(geom)) {
         center = GeomRef(ref.geomUuid, GeomHandle::Center).resolvePosition(sketch);
         QVector2D startPt = GeomRef(ref.geomUuid, GeomHandle::Start).resolvePosition(sketch);
         radius = (startPt - center).length();

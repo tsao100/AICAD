@@ -357,7 +357,7 @@ CommandResult DepotViewCommand::execute(const CommandContext& context)
         for (int i = 0; i < views.size(); ++i) ord.append(i);
         std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return views[a].order < views[b].order; });
         ord.removeOne(idx);
-        ord.insert(std::max(0, std::min(np - 1, ord.size())), idx);
+        ord.insert(std::max(0, std::min(np - 1, int(ord.size()))), idx);
         for (int pos = 0; pos < ord.size(); ++pos) views[ord[pos]].order = pos + 1;
         QString err;
         if (!depotApply(mgr, doc, bookId, g, views, &err)) return CommandResult::Failure(err);

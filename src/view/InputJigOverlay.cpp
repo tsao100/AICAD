@@ -17,10 +17,6 @@
 namespace aicad {
 namespace view {
 
-namespace {
-double clampD(double v, double lo, double hi) { return std::max(lo, std::min(hi, v)); }
-} // namespace
-
 InputJigOverlay::InputJigOverlay(QObject* parent)
     : QObject(parent)
 {}

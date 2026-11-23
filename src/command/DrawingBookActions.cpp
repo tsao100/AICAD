@@ -141,7 +141,7 @@ void reorderDepotViews(QVector<DepotView>& views, int idx, int newPos)
     for (int i = 0; i < views.size(); ++i) ord.append(i);
     std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return views[a].order < views[b].order; });
     ord.removeOne(idx);
-    ord.insert(std::max(0, std::min(newPos - 1, ord.size())), idx);
+    ord.insert(std::max(0, std::min(newPos - 1, int(ord.size()))), idx);
     for (int pos = 0; pos < ord.size(); ++pos) views[ord[pos]].order = pos + 1;
 }
 
@@ -231,7 +231,11 @@ public:
                 const bool click = m_rDown && !m_rMoved;
                 m_rDown = false;
                 if (click) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                    const QPoint gp = me->globalPosition().toPoint();
+#else
                     const QPoint gp = me->globalPos();
+#endif
                     QTimer::singleShot(0, this, [this, gp]() { showMenu(gp); });
                 }
             }
