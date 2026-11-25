@@ -20,7 +20,20 @@
 #include "TrackSlabPlan.h"
 #include "ComponentInstall.h"
 #include "DefinedPlane.h"
+#include "AssemblyPart.h"
+#include "AssemblyMate.h"
+#include "AssemblySolver.h"
+#include "AssemblyGeom.h"
+#include "AssemblyUtil.h"
 #include "ChamferSolid.h"
+#include "Revolve.h"
+#include "Sweep.h"
+#include "SketchLoft.h"
+#include "SolidModifier.h"
+#include "SolidBoolean.h"
+#include "SolidPatterns.h"
+#include "HoleFeature.h"
+#include "SolidOps.h"
 #include "ui/FeatureTreeItem.h"
 #include <QUuid>
 #include <QSignalBlocker>
@@ -71,6 +84,8 @@
 
 namespace aicad {
 namespace cad {
+
+static ui::ItemType solidItemTypeFor(Feature* f);   // 定義在檔案後段
 
 Document::Document(QObject* parent)
     : QObject(parent)
@@ -169,8 +184,16 @@ bool Document::save(const QString& fileName) {
     Q_EMIT aboutToSave();
 
     try {
+        // 文件種類：依儲存的副檔名決定（.aipart／.aiasm／.aicad）；其他副檔名維持原種類
+        {
+            const QString suf = QFileInfo(saveFileName).suffix().toLower();
+            if (suf == QLatin1String("aipart") || suf == QLatin1String("aiasm") || suf == QLatin1String("aicad"))
+                m_kind = kindForFile(saveFileName);
+        }
+
         QJsonObject docJson;
         docJson["version"] = "1.0";
+        docJson["docKind"] = kindToString(m_kind);
         docJson["fileName"] = QFileInfo(saveFileName).fileName();
 
         // ✅ 修正：依拓撲順序（被依賴者先）序列化，確保 load 時順序正確
@@ -291,6 +314,10 @@ bool Document::load(const QString& fileName) {
 
         QJsonObject docJson = jsonDoc.object();
 
+        // 文件種類：檔內有記錄就用；舊檔沒有 → 依副檔名（.aipart／.aiasm），其餘視為專案
+        m_kind = kindFromString(docJson["docKind"].toString(), kindForFile(fileName));
+        m_activeGroup = (m_kind == Kind::Assembly) ? FeatureGroup::Assembly : FeatureGroup::Part;
+
         if (docJson.contains("parameters")){
             // ✅ 阻斷 parameterChanged 在載入期間觸發 rebuildAll
             m_parameterStore->blockSignals(true);
@@ -316,6 +343,17 @@ bool Document::load(const QString& fileName) {
                 else if (typeStr == "SlabPlan") feature = new TrackSlabPlan(this);
                 else if (typeStr == "ComponentInstall") feature = new ComponentInstall(this);
                 else if (typeStr == "DefinedPlane") feature = new DefinedPlane(this);
+                else if (typeStr == "AssemblyPart") feature = new AssemblyPart(this);
+                else if (typeStr == "AssemblyMate") feature = new AssemblyMate(this);
+                else if (typeStr == "Revolve") feature = new Revolve(this);
+                else if (typeStr == "Sweep") feature = new Sweep(this);
+                else if (typeStr == "SketchLoft") feature = new SketchLoft(this);
+                else if (typeStr == "Fillet") feature = new FilletSolid(this);
+                else if (typeStr == "Shell") feature = new ShellSolid(this);
+                else if (typeStr == "Boolean") feature = new SolidBoolean(this);
+                else if (typeStr == "SolidPattern") feature = new SolidPattern(this);
+                else if (typeStr == "SolidMirror") feature = new SolidMirror(this);
+                else if (typeStr == "Hole") feature = new HoleFeature(this);
 
                 if (feature) {
                     if (feature->fromJson(featureJson)) {
@@ -340,6 +378,17 @@ bool Document::load(const QString& fileName) {
             for (Feature* feature : m_features) {
                 if (auto* ext = qobject_cast<Extrude*>(feature))
                     ext->resolveReferences(this);
+            }
+            // 3D 塑形／挖除特徵（旋轉、掃掠、放樣、圓角、抽殼、布林）的參照
+            // 這些特徵只需要「對方 Feature 物件已存在」即可連線；對方的 shape 之後
+            // 一旦重建完成，會透過 shapeChanged 自動連動重建本特徵。
+            for (Feature* feature : m_features) {
+                if (auto* rv = qobject_cast<Revolve*>(feature))          rv->resolveReferences(this);
+                else if (auto* sw = qobject_cast<Sweep*>(feature))       sw->resolveReferences(this);
+                else if (auto* sl = qobject_cast<SketchLoft*>(feature))  sl->resolveReferences(this);
+                else if (auto* sm = qobject_cast<SolidModifier*>(feature)) sm->resolveReferences(this);
+                else if (auto* sb = qobject_cast<SolidBoolean*>(feature)) sb->resolveReferences(this);
+                else if (auto* hf = qobject_cast<HoleFeature*>(feature)) hf->resolveReferences(this);
             }
 
             // ── 第三階段：依拓撲順序 rebuild（Sketch 必須先於 Extrude）
@@ -526,6 +575,23 @@ bool Document::load(const QString& fileName) {
         }
         scheduleSlabSync();
 
+        // ✅ 零件組合：零件依位姿放置（與來源 *.aicad 連動）、配合求值；最後排程求解一次（已滿足者不會動）
+        {
+            const QList<Feature*> asmSnapshot = m_features;
+            for (Feature* feature : asmSnapshot) {
+                if (auto* ap = qobject_cast<AssemblyPart*>(feature)) {
+                    wireAssemblyPart(ap);
+                    if (ap->attachSourceWatcher()) m_modified = true;
+                    rebuildFeature(ap);
+                }
+            }
+            bool anyMate = false;
+            for (Feature* feature : asmSnapshot) {
+                if (auto* am = qobject_cast<AssemblyMate*>(feature)) { am->refreshReferences(); am->rebuild(); anyMate = true; }
+            }
+            if (anyMate) scheduleAssemblySolve();
+        }
+
         // ✅ Legacy: read global alignmentData for old files
         if (docJson.contains("alignment"))
             m_alignmentData = docJson["alignment"].toObject();
@@ -631,6 +697,12 @@ void Document::rebuildFeatureTreeItems() {
             treeItem.type = ui::ItemType::Component;
         } else if (qobject_cast<DefinedPlane*>(feature)) {
             treeItem.type = ui::ItemType::DefinedPlane;
+        } else if (qobject_cast<AssemblyPart*>(feature)) {
+            treeItem.type = ui::ItemType::AssemblyPart;
+        } else if (qobject_cast<AssemblyMate*>(feature)) {
+            treeItem.type = ui::ItemType::AssemblyMate;
+        } else if (solidItemTypeFor(feature) != ui::ItemType::Base) {
+            treeItem.type = solidItemTypeFor(feature);   // 旋轉／掃掠／放樣／圓角／抽殼／布林／倒角
         } else if (qobject_cast<SketchInstance*>(feature)) {
             treeItem.type = ui::ItemType::Sketch;  // 副本沿用草圖圖示
         } else {
@@ -718,6 +790,16 @@ void Document::removeFeature(Feature* feature) {
         return;
     }
 
+    // 零件被刪除：參照它的配合一併刪除；配合被刪除：重新求解（更新自由度／錯誤狀態）
+    if (auto* ap = qobject_cast<AssemblyPart*>(feature)) {
+        const QVector<AssemblyMate*> ms = assemblyMates();
+        for (AssemblyMate* m : ms)
+            if (m->referencesPart(ap->id())) removeFeature(m);
+        scheduleAssemblySolve();
+    } else if (qobject_cast<AssemblyMate*>(feature)) {
+        scheduleAssemblySolve();
+    }
+
     qDebug() << "[Document] Removing feature:" << feature->name();
 
     m_depGraph.removeNode(feature->id());
@@ -763,6 +845,8 @@ void Document::clearFeatures() {
                        [](const ui::FeatureTreeItem& item) {
                            return item.type == ui::ItemType::Sketch  ||
                                   item.type == ui::ItemType::Extrude ||
+                                  item.type == ui::ItemType::AssemblyPart ||
+                                  item.type == ui::ItemType::AssemblyMate ||
                                   item.type == ui::ItemType::Base;
                        }),
         m_treeItems.end()
@@ -1280,6 +1364,375 @@ void Document::applyComponentChange(ComponentInstall* ci)
     setModified(true);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 零件組合（Assembly）
+// ─────────────────────────────────────────────────────────────────────────────
+QVector<AssemblyPart*> Document::assemblyParts() const
+{
+    QVector<AssemblyPart*> v;
+    for (Feature* f : m_features)
+        if (auto* p = qobject_cast<AssemblyPart*>(f)) v.append(p);
+    return v;
+}
+
+QVector<AssemblyMate*> Document::assemblyMates() const
+{
+    QVector<AssemblyMate*> v;
+    for (Feature* f : m_features)
+        if (auto* m = qobject_cast<AssemblyMate*>(f)) v.append(m);
+    return v;
+}
+
+AssemblyPart* Document::createAssemblyPart(const QString& name)
+{
+    auto* ap = new AssemblyPart(this);
+    QString nm = name.trimmed().isEmpty() ? QStringLiteral("Part") : name.trimmed();
+    if (findFeatureByName(nm)) {                              // 重名：Part <2>、Part <3>…
+        int n = 2;
+        while (findFeatureByName(QStringLiteral("%1 <%2>").arg(nm).arg(n))) ++n;
+        nm = QStringLiteral("%1 <%2>").arg(nm).arg(n);
+    }
+    ap->setName(nm);
+    return ap;
+}
+
+void Document::wireAssemblyPart(AssemblyPart* part)
+{
+    if (!part) return;
+    connect(part, &AssemblyPart::sourceSynced, this, [this, part]() { onAssemblyPartSynced(part); },
+            Qt::UniqueConnection);
+}
+
+void Document::onAssemblyPartSynced(AssemblyPart* part)
+{
+    if (!part) return;
+    for (AssemblyMate* m : assemblyMates())
+        if (m->referencesPart(part->id())) m->refreshReferences();
+    rebuildFeature(part);
+    scheduleAssemblySolve();
+    setModified(true);
+}
+
+void Document::addAssemblyPart(AssemblyPart* part)
+{
+    if (!part) return;
+    addFeature(part);
+
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::AssemblyPart;
+    item.id         = part->id();
+    item.name       = part->name();
+    item.parentId   = QString();
+    item.visible    = part->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(part));
+    m_treeItems.append(item);
+
+    wireAssemblyPart(part);
+    rebuildFeature(part);
+    emitTreeStructureChanged();
+    setModified(true);
+}
+
+AssemblyMate* Document::createAssemblyMate(const QString& name)
+{
+    auto* am = new AssemblyMate(this);
+    QString nm = name.trimmed();
+    if (nm.isEmpty()) {
+        int n = 1;
+        do { nm = QStringLiteral("Mate %1").arg(n++); } while (findFeatureByName(nm));
+    }
+    am->setName(nm);
+    return am;
+}
+
+void Document::addAssemblyMate(AssemblyMate* mate)
+{
+    if (!mate) return;
+    addFeature(mate);
+
+    ui::FeatureTreeItem item;
+    item.type       = ui::ItemType::AssemblyMate;
+    item.id         = mate->id();
+    item.name       = mate->name();
+    item.parentId   = QString();
+    item.visible    = true;
+    item.selectable = true;
+    item.data       = QVariant::fromValue(static_cast<QObject*>(mate));
+    m_treeItems.append(item);
+
+    mate->clearDirty();
+    emitTreeStructureChanged();
+    Q_EMIT assemblyVisualChanged();
+    setModified(true);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 文件種類／副檔名
+// ─────────────────────────────────────────────────────────────────────────────
+Document::Kind Document::kindForFile(const QString& path)
+{
+    const QString suf = QFileInfo(path).suffix().toLower();
+    if (suf == QLatin1String("aipart")) return Kind::Part;
+    if (suf == QLatin1String("aiasm"))  return Kind::Assembly;
+    return Kind::Project;
+}
+
+QString Document::suffixForKind(Kind k)
+{
+    return k == Kind::Part ? QStringLiteral("aipart") : k == Kind::Assembly ? QStringLiteral("aiasm") : QStringLiteral("aicad");
+}
+
+QString Document::kindLabel(Kind k)
+{
+    return k == Kind::Part ? QObject::tr("零件") : k == Kind::Assembly ? QObject::tr("組合") : QObject::tr("專案");
+}
+
+QString Document::kindToString(Kind k)
+{
+    return k == Kind::Part ? QStringLiteral("part") : k == Kind::Assembly ? QStringLiteral("assembly") : QStringLiteral("project");
+}
+
+Document::Kind Document::kindFromString(const QString& s, Kind fallback)
+{
+    if (s == QLatin1String("part"))     return Kind::Part;
+    if (s == QLatin1String("assembly")) return Kind::Assembly;
+    if (s == QLatin1String("project"))  return Kind::Project;
+    return fallback;
+}
+
+QString Document::openFilter()
+{
+    return QObject::tr("AICAD 檔案 (*.aicad *.aipart *.aiasm);;AICAD 專案 (*.aicad);;AICAD 零件 (*.aipart);;AICAD 組合 (*.aiasm);;All Files (*)");
+}
+
+QString Document::saveFilter(Kind k)
+{
+    const QString project = QObject::tr("AICAD 專案 (*.aicad)");
+    const QString part    = QObject::tr("AICAD 零件 (*.aipart)");
+    const QString assem   = QObject::tr("AICAD 組合 (*.aiasm)");
+    QStringList order;
+    if (k == Kind::Part)          order << part << assem << project;
+    else if (k == Kind::Assembly) order << assem << part << project;
+    else                          order << project << part << assem;
+    return order.join(QStringLiteral(";;")) + QStringLiteral(";;All Files (*)");
+}
+
+QString Document::insertPartFilter()
+{
+    return QObject::tr("AICAD 零件／組合 (*.aipart *.aiasm);;AICAD 專案（舊版）(*.aicad);;All Files (*)");
+}
+
+QString Document::insertComponentFilter()
+{
+    return QObject::tr("AICAD 組合／零件 (*.aiasm *.aipart);;AICAD 專案（舊版）(*.aicad);;All Files (*)");
+}
+
+QString Document::withSuffix(const QString& path, Kind k)
+{
+    if (path.isEmpty() || !QFileInfo(path).suffix().isEmpty()) return path;
+    return path + QLatin1Char('.') + suffixForKind(k);
+}
+
+void Document::setKind(Kind k)
+{
+    if (m_kind == k) return;
+    m_kind = k;
+    m_activeGroup = (k == Kind::Assembly) ? FeatureGroup::Assembly : FeatureGroup::Part;
+    emitTreeStructureChanged();
+    setModified(true);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Part／Assembly／Void 根節點
+// ─────────────────────────────────────────────────────────────────────────────
+bool Document::isGroupable(const Feature* feature)
+{
+    return qobject_cast<const Extrude*>(feature) || qobject_cast<const ChamferSolid*>(feature)
+        || qobject_cast<const AssemblyPart*>(feature)
+        // 3D 塑形／挖除特徵（旋轉、掃掠、放樣、圓角、抽殼、布林、陣列、鏡射、孔）同屬造型鏈
+        || qobject_cast<const Revolve*>(feature)    || qobject_cast<const Sweep*>(feature)
+        || qobject_cast<const SketchLoft*>(feature) || qobject_cast<const FilletSolid*>(feature)
+        || qobject_cast<const ShellSolid*>(feature) || qobject_cast<const SolidBoolean*>(feature)
+        || qobject_cast<const SolidPattern*>(feature) || qobject_cast<const SolidMirror*>(feature)
+        || qobject_cast<const HoleFeature*>(feature);
+}
+
+QString Document::groupRootId(FeatureGroup g)
+{
+    return g == FeatureGroup::Void ? QStringLiteral("__void_folder__")
+         : g == FeatureGroup::Assembly ? QStringLiteral("__assembly_folder__") : QStringLiteral("__part_folder__");
+}
+
+QString Document::groupLabel(FeatureGroup g)
+{
+    return g == FeatureGroup::Void ? QStringLiteral("Void") : g == FeatureGroup::Assembly ? QStringLiteral("Assembly") : QStringLiteral("Part");
+}
+
+void Document::setActiveGroup(FeatureGroup g)
+{
+    if (m_activeGroup == g) return;
+    m_activeGroup = g;
+    emitTreeStructureChanged();                    // 根節點名稱上的「◀」標記
+}
+
+void Document::setFeatureGroup(Feature* feature, FeatureGroup group)
+{
+    if (!feature || !isGroupable(feature)) return;
+
+    // 與它「消耗／被消耗」連動的造型特徵屬於同一條形體鏈（例如倒角消耗擠出）：一併移動，
+    // 否則被消耗的中間實體與最終實體會分屬兩個根。只沿著可歸屬的特徵走。
+    QSet<QString> seen;
+    QList<Feature*> queue;
+    queue.append(feature);
+    QList<Feature*> changed;
+    while (!queue.isEmpty()) {
+        Feature* f = queue.takeFirst();
+        if (!f || !isGroupable(f) || seen.contains(f->id())) continue;
+        seen.insert(f->id());
+        if (f->group() != group) { f->setGroupRaw(group); changed.append(f); }
+        for (const QString& depId : f->featureDependencies()) queue.append(findFeature(depId));
+        for (Feature* g : m_features)
+            if (g && g->featureDependencies().contains(f->id())) queue.append(g);
+    }
+    if (changed.isEmpty()) return;
+
+    for (Feature* f : changed) Q_EMIT featureShapeUpdated(f);      // 重新顯示（Void 以半透明紅色）
+    emitTreeStructureChanged();
+    setModified(true);
+}
+
+void Document::setMateMarkersVisible(bool v)
+{
+    if (m_mateMarkersVisible == v) return;
+    m_mateMarkersVisible = v;
+    emitTreeStructureChanged();
+    Q_EMIT assemblyVisualChanged();
+}
+
+void Document::setHighlightedMate(const QString& mateId)
+{
+    if (m_highlightMateId == mateId) return;
+    m_highlightMateId = mateId;
+    Q_EMIT assemblyVisualChanged();
+}
+
+void Document::applyAssemblyPartChange(AssemblyPart* part)
+{
+    if (part) rebuildFeature(part);
+    setModified(true);
+    scheduleAssemblySolve();
+}
+
+void Document::scheduleAssemblySolve()
+{
+    if (m_asmSolvePending) return;
+    m_asmSolvePending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_asmSolvePending = false;
+        solveAssembly(nullptr);
+    });
+}
+
+bool Document::solveAssembly(QString* report)
+{
+    if (m_asmSolving) return true;
+    const QVector<AssemblyPart*> parts = assemblyParts();
+    const QVector<AssemblyMate*> mates = assemblyMates();
+    if (parts.isEmpty() && mates.isEmpty()) { m_asmReport.clear(); Q_EMIT assemblyVisualChanged(); return true; }
+
+    m_asmSolving = true;
+    using namespace asmsolve;
+
+    // ── 組成求解問題 ─────────────────────────────────────────────────────────
+    Problem pr;
+    QHash<QString, int> idx;
+    assemblyutil::buildBodies(this, pr, idx);
+
+    QVector<AssemblyMate*> active;                 // pr.mates[k] ↔ active[k]
+    int missing = 0;
+    for (AssemblyMate* m : mates) {
+        const MateRefData& ra = m->refA();
+        const MateRefData& rb = m->refB();
+        const bool aOk = ra.isWorld() || idx.contains(ra.ownerId);
+        const bool bOk = rb.isWorld() || idx.contains(rb.ownerId);
+        if (!aOk || !bOk) { m->setError(tr("參照的零件已不存在")); ++missing; continue; }
+
+        Mate sm;
+        sm.type    = m->mateType();
+        sm.orient  = m->orient();
+        sm.enabled = !m->isSuppressed();
+        sm.a = assemblyutil::toSolverRef(ra, idx);
+        sm.b = assemblyutil::toSolverRef(rb, idx);
+        if (m->usesValue())
+            sm.value = (m->mateType() == MateType::Angle) ? m->value() * 3.14159265358979323846 / 180.0 : m->value();
+        pr.mates.push_back(sm);
+        active.append(m);
+    }
+
+    // ── 求解 ─────────────────────────────────────────────────────────────────
+    const Result res = asmsolve::solve(pr);
+
+    QString rep;
+    if (res.converged) {
+        int moved = 0;
+        for (int i = 0; i < parts.size(); ++i) {
+            AssemblyPart* p = parts[i];
+            if (p->isFixed()) { p->setDof(0); continue; }
+            double R[9], T[3];
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) R[r * 3 + c] = pr.bodies[static_cast<size_t>(i)].R(r, c);
+                T[r] = pr.bodies[static_cast<size_t>(i)].t[r];
+            }
+            double R0[9], T0[3];
+            AssemblyPart::poseToRT(p->pose(), R0, T0);
+            double diff = 0.0;
+            for (int k = 0; k < 9; ++k) diff = std::max(diff, std::abs(R[k] - R0[k]));
+            for (int k = 0; k < 3; ++k) diff = std::max(diff, std::abs(T[k] - T0[k]) / pr.lengthScale);
+            p->setDof(res.bodyDof[static_cast<size_t>(i)]);
+            if (diff > 1e-12) {
+                p->setPose(AssemblyPart::poseFromRT(R, T));
+                rebuildFeature(p);
+                ++moved;
+            }
+        }
+        if (moved > 0) setModified(true);
+
+        int freeParts = 0;
+        for (int i = 0; i < parts.size(); ++i)
+            if (!parts[i]->isFixed() && res.bodyDof[static_cast<size_t>(i)] > 0) ++freeParts;
+        if (pr.mates.empty())       rep = tr("尚無配合：%1 個零件").arg(parts.size());
+        else if (res.dof == 0)      rep = tr("組合已完全約束（%1 個零件、%2 個配合）").arg(parts.size()).arg(active.size());
+        else                        rep = tr("已求解：%1 個配合全部滿足；尚有 %2 個自由度（%3 個零件未完全約束）")
+                                              .arg(active.size()).arg(res.dof).arg(freeParts);
+        if (res.usedRestart) rep += tr("（已改用其他初始姿態求解）");
+    } else {
+        int bad = 0;
+        for (size_t k = 0; k < res.mateOk.size(); ++k) if (!res.mateOk[k]) ++bad;
+        rep = tr("無法滿足全部配合（%1 個配合與其他配合衝突或過度約束），零件維持原位。").arg(bad);
+    }
+    if (missing > 0) rep += tr(" %1 個配合參照的零件已不存在。").arg(missing);
+
+    // ── 各配合的狀態 ─────────────────────────────────────────────────────────
+    for (int k = 0; k < active.size(); ++k) {
+        AssemblyMate* m = active[k];
+        const bool bad = pr.mates[static_cast<size_t>(k)].enabled && !res.mateOk[static_cast<size_t>(k)];
+        if (bad) m->setError(tr("無法滿足（與其他配合衝突或過度約束；殘差 %1）")
+                                 .arg(res.mateResidual[static_cast<size_t>(k)] * pr.lengthScale, 0, 'g', 4));
+        else     m->clearError();
+    }
+    if (!res.converged)
+        for (AssemblyPart* p : parts) p->setDof(-1);
+
+    m_asmReport = rep;
+    m_asmSolving = false;
+    emitTreeStructureChanged();                    // 樹狀圖的自由度／錯誤標記
+    Q_EMIT assemblySolved(res.converged, rep);
+    Q_EMIT assemblyVisualChanged();
+    if (report) *report = rep;
+    return res.converged;
+}
+
 ChamferSolid* Document::createChamferSolid(
     Feature* source,
     double distance,
@@ -1300,6 +1753,7 @@ ChamferSolid* Document::createChamferSolid(
         ? QString("Chamfer %1").arg(m_nextFeatureNumber++)
         : name);
     cf->setSourceFeature(source);
+    cf->setGroupRaw(source->group());               // 倒角與它所消耗的來源實體同一個根
     cf->setDistance(distance);
     cf->setEdgeSignatures(edges);
 
@@ -1335,7 +1789,115 @@ ChamferSolid* Document::createChamferSolid(
 }
 
 
-Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& name) {
+// ─────────────────────────────────────────────────────────────────────────
+//  通用實體特徵登記（旋轉／掃掠／放樣／圓角／抽殼／布林）
+// ─────────────────────────────────────────────────────────────────────────
+
+static ui::ItemType solidItemTypeFor(Feature* f)
+{
+    if (qobject_cast<Revolve*>(f))      return ui::ItemType::Revolve;
+    if (qobject_cast<Sweep*>(f))        return ui::ItemType::Sweep;
+    if (qobject_cast<SketchLoft*>(f))   return ui::ItemType::SketchLoft;
+    if (qobject_cast<FilletSolid*>(f))  return ui::ItemType::Fillet;
+    if (qobject_cast<ShellSolid*>(f))   return ui::ItemType::Shell;
+    if (qobject_cast<SolidBoolean*>(f)) return ui::ItemType::Boolean;
+    if (qobject_cast<SolidPattern*>(f)) return ui::ItemType::SolidPattern;
+    if (qobject_cast<SolidMirror*>(f))  return ui::ItemType::Mirror;
+    if (qobject_cast<HoleFeature*>(f))  return ui::ItemType::Hole;
+    if (qobject_cast<ChamferSolid*>(f)) return ui::ItemType::Chamfer;
+    return ui::ItemType::Base;
+}
+
+void Document::registerSolidFeature(Feature* feature, const QString& baseName,
+                                    const QList<Sketch*>& consumedSketches,
+                                    const QList<Feature*>& consumedFeatures)
+{
+    if (!feature) return;
+
+    feature->setName(QString("%1 %2").arg(baseName).arg(m_nextFeatureNumber++));
+
+    for (Sketch* sk : consumedSketches)   if (sk) sk->setVisible(false);
+    for (Feature* f : consumedFeatures)   if (f)  f->setVisible(false);
+
+    // 歸屬的根節點：沿用它所消耗的第一個造型特徵的群組（比照 createChamferSolid），
+    // 沒有可沿用者（例如只消耗草圖）就放進「目前放置根」（比照 createExtrude）
+    FeatureGroup grp = m_activeGroup;
+    for (Feature* f : consumedFeatures)
+        if (f && isGroupable(f)) { grp = f->group(); break; }
+    feature->setGroupRaw(grp);
+
+    addFeature(feature);
+
+    // 尚未掛在其他特徵底下的草圖，改掛到此特徵下（比照 createExtrude）
+    for (Sketch* sk : consumedSketches)
+        if (sk && !sk->parent()) sk->setFeatureParent(feature);
+
+    ui::FeatureTreeItem item;
+    item.type       = solidItemTypeFor(feature);
+    item.id         = feature->id();
+    item.name       = feature->name();
+    item.parentId   = feature->parent() ? feature->parent()->id() : QString();
+    item.visible    = feature->isVisible();
+    item.selectable = true;
+    item.data       = QVariant::fromValue(feature);
+    m_treeItems.append(item);
+
+    for (Sketch* sk : consumedSketches) {
+        if (!sk || sk->parent() != feature) continue;
+        for (ui::FeatureTreeItem& it : m_treeItems) {
+            if (it.id == sk->id()) { it.parentId = feature->id(); break; }
+        }
+    }
+
+    rebuildFeature(feature);
+    emitTreeStructureChanged();
+
+    if (feature->hasError()) {
+        qWarning() << "[Document] Solid feature created with error:" << feature->name()
+                   << "-" << feature->errorMessage();
+    } else {
+        qDebug() << "[Document] Solid feature created:" << feature->name();
+    }
+}
+
+QList<Feature*> Document::solidFeatureCandidates(const Feature* exclude, const Feature* keep) const
+{
+    // 已被其他特徵用掉（列為依賴）的特徵，不再當候選
+    QSet<QString> consumed;
+    for (Feature* f : m_features) {
+        if (!f || f == exclude) continue;
+        const QSet<QString> deps = f->featureDependencies();
+        for (const QString& id : deps) consumed.insert(id);
+    }
+
+    // 依賴 exclude 的特徵不能當它的目標（會循環）
+    QSet<QString> banned;
+    if (exclude) {
+        banned.insert(exclude->id());
+        for (const QString& id : m_depGraph.affectedBy(exclude->id())) banned.insert(id);
+    }
+
+    QList<Feature*> out;
+    for (Feature* f : m_features) {
+        if (!f || banned.contains(f->id())) continue;
+        if (qobject_cast<Sketch*>(f) || qobject_cast<SketchInstance*>(f)) continue;
+        if (!solidops::containsSolid(f->shape())) continue;
+        if (f != keep && consumed.contains(f->id())) continue;
+        out.append(f);
+    }
+    return out;
+}
+
+QList<Sketch*> Document::allSketches() const
+{
+    QList<Sketch*> out;
+    for (Feature* f : m_features)
+        if (auto* sk = qobject_cast<Sketch*>(f)) out.append(sk);
+    return out;
+}
+
+Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& name,
+                                 int operation, Feature* target) {
     if (!sketch) {
         qWarning() << "[Document] Cannot create extrude: sketch is null";
         return nullptr;
@@ -1344,6 +1906,12 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     Extrude* extrude = new Extrude(this);
     extrude->setSketch(sketch);
     extrude->setHeight(height);
+    extrude->setGroupRaw(m_activeGroup);            // 新建的擠出放進「目前放置根」（Part／Assembly／Void）
+    // 挖除／聯集／交集：先把運算方式與目標設好，之後第一次 rebuild 就會直接做布林運算
+    if (operation != 0 && target) {
+        extrude->setOperationAndTarget(static_cast<SolidOp>(operation), target);
+        target->setVisible(false);          // 目標變成中間結果，只顯示運算後的實體
+    }
     // ✅ 修正：先 addFeature 再建立 Feature 層父子關係，避免 Extrude 被刪時帶走 Sketch
     QString extrudeName = name.isEmpty()
                               ? QString("Extrude %1").arg(m_nextFeatureNumber++)
@@ -1364,7 +1932,7 @@ Extrude* Document::createExtrude(Sketch* sketch, double height, const QString& n
     extrudeItem.type      = ui::ItemType::Extrude;
     extrudeItem.id        = extrude->id();
     extrudeItem.name      = extrude->name();
-    extrudeItem.parentId  = "";
+    extrudeItem.parentId  = extrude->parent() ? extrude->parent()->id() : QString();
     extrudeItem.visible   = extrude->isVisible();
     extrudeItem.selectable = true;
     extrudeItem.data      = QVariant::fromValue(extrude);
@@ -1926,6 +2494,28 @@ void Document::onVisibilityChanged(const QVariantMap& data) {
             return;
         }
 
+        // ── 3a0. 「配合 Mates」資料夾：切換 3D 視圖的配合標示 ──────────────────────────
+        if (itemId == QLatin1String("__assembly_mates__")) {
+            setMateMarkersVisible(visible);
+            return;
+        }
+
+        // ── 3a0'. Part／Assembly／Void 根：一次切換底下全部特徵（造型特徵與零件）的顯示 ──────
+        for (FeatureGroup g : { FeatureGroup::Part, FeatureGroup::Assembly, FeatureGroup::Void }) {
+            if (itemId != groupRootId(g)) continue;
+            core::EventBus* bus = core::Application::instance()->eventBus();
+            const QList<Feature*> snapshot = m_features;
+            for (Feature* f : snapshot) {
+                if (!f || !isGroupable(f) || f->group() != g || f->isVisible() == visible) continue;
+                QVariantMap vm;
+                vm["itemId"]  = f->id();
+                vm["visible"] = visible;
+                bus->publish("feature.visibility-changed", vm);
+            }
+            emitTreeStructureChanged();
+            return;
+        }
+
         // ── 3a. Railway 資料夾節點：彙總 3D Alignment 顯示 ─────────────────
         // eyeOpen  → 顯示所有 TrackCenterLine 的 3D Alignment（E,N,Z 折線），
         //            並暫時把每個 child（TrackCenterLine 及其 VAlignment）
@@ -2183,6 +2773,76 @@ QVector<ui::FeatureTreeItem> Document::getFeatureTreeItems() const {
             folder.selectable = false;
             items.append(folder);
         }
+    }
+
+    // ── 固定根節點「Part」「Assembly」「Void」（永遠存在）───────────────────────────
+    //   Part     ：造型 —— 單一零件的本體（擠出等造型特徵）
+    //   Assembly ：組合 —— 插入的零件檔（*.aipart／*.aiasm）與「配合 Mates」資料夾
+    //   Void     ：開孔 —— 底下的特徵組成開孔形體
+    //   特徵屬於哪個根由 Feature::group() 決定；有 Feature 層父節點的（例如擠出底下的草圖）仍掛在原父節點。
+    //   「目前放置根」（新建特徵放進哪個根）以 ◀ 標示。
+    {
+        const QString matesId = QStringLiteral("__assembly_mates__");
+        bool anyVisible[3] = { false, false, false };
+        bool anyMate = false;
+        for (ui::FeatureTreeItem& it : items) {
+            Feature* f = findFeature(it.id);
+            if (!f) continue;
+            if (auto* am = qobject_cast<AssemblyMate*>(f)) {
+                anyMate = true;
+                it.parentId = matesId;
+                it.visible = true;
+                QString nm = QStringLiteral("%1 · %2（%3 ↔ %4）")
+                                 .arg(f->name(), AssemblyMate::typeLabel(am->mateType()),
+                                      am->ownerName(am->refA()), am->ownerName(am->refB()));
+                if (f->isSuppressed()) nm += tr(" [抑制]");
+                if (f->hasError())     nm += QStringLiteral(" ⚠");
+                it.name = nm;
+                continue;
+            }
+            if (!isGroupable(f) || !it.parentId.isEmpty()) continue;
+            it.parentId = groupRootId(f->group());
+            anyVisible[static_cast<int>(f->group())] = anyVisible[static_cast<int>(f->group())] || it.visible;
+            if (auto* ap = qobject_cast<AssemblyPart*>(f)) {
+                QString nm = ap->name();
+                if (ap->isFixed())          nm += tr(" [固定]");
+                else if (ap->dof() >= 0)    nm += tr(" [自由度 %1]").arg(ap->dof());
+                if (ap->hasError())         nm += QStringLiteral(" ⚠");
+                it.name = nm;
+            }
+        }
+
+        QVector<ui::FeatureTreeItem> roots;
+        auto addRoot = [&](FeatureGroup g, ui::ItemType type) {
+            ui::FeatureTreeItem r;
+            r.type = type;
+            r.id = groupRootId(g);
+            r.name = groupLabel(g) + (m_activeGroup == g ? QStringLiteral("  ◀") : QString());
+            r.visible = anyVisible[static_cast<int>(g)];
+            r.selectable = false;
+            roots.append(r);
+        };
+        addRoot(FeatureGroup::Part,     ui::ItemType::PartFolder);
+        addRoot(FeatureGroup::Assembly, ui::ItemType::AssemblyFolder);
+        if (anyMate) {
+            ui::FeatureTreeItem mates;
+            mates.type = ui::ItemType::AssemblyMatesFolder;
+            mates.id = matesId;
+            mates.name = tr("配合 Mates");
+            mates.parentId = groupRootId(FeatureGroup::Assembly);
+            mates.visible = m_mateMarkersVisible;
+            mates.selectable = false;
+            roots.append(mates);
+        }
+        addRoot(FeatureGroup::Void,     ui::ItemType::VoidFolder);
+
+        // 根節點放在原點資料夾之後、第一個特徵之前
+        int pos = 0;
+        while (pos < items.size() &&
+               (items[pos].type == ui::ItemType::Folder || items[pos].type == ui::ItemType::Plane ||
+                items[pos].type == ui::ItemType::Axis   || items[pos].type == ui::ItemType::Point))
+            ++pos;
+        for (int k = 0; k < roots.size(); ++k) items.insert(pos + k, roots[k]);
     }
 
     // ── 永遠附加 Railway folder（即使空的也要顯示，讓使用者可右鍵新增）

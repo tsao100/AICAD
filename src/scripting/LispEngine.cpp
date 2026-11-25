@@ -39,6 +39,132 @@ struct FunctionInfo {
 static QHash<QString, FunctionInfo> g_functionRegistry;
 static QMutex g_registryMutex;
 
+// ---------------------------------------------------------------------------
+// QString <-> Lisp string（以 Unicode 碼位轉換，與 Windows 的 locale / 外部編碼無關）
+//
+// 原本用 ecl_cstring_to_base_string_or_nil(toUtf8()) 與 si_coerce_to_base_string：
+// base-string 只能存 Latin-1 以內的字元，含中文的字串（草圖名稱、註解、
+// (print-message "...")）在 Lisp 端會被當成一串位元組，輸出時不是亂碼就是
+// "<unconvertible>"。改成直接建立 UCS-4（extended）字串。
+// ---------------------------------------------------------------------------
+static cl_object qStringToClString(const QString& s)
+{
+    const auto ucs4 = s.toUcs4();           // Qt5: QVector<uint>, Qt6: QList<uint>
+    const cl_index n = static_cast<cl_index>(ucs4.size());
+    cl_object str = ecl_alloc_simple_vector(n, ecl_aet_ch);
+    for (cl_index i = 0; i < n; ++i) {
+        ecl_char_set(str, i, static_cast<ecl_character>(ucs4[static_cast<int>(i)]));
+    }
+    return str;
+}
+
+static QString clStringToQString(cl_object str)
+{
+    const cl_index n = static_cast<cl_index>(ecl_length(str));
+    QVector<uint> ucs4;
+    ucs4.reserve(static_cast<int>(n));
+    for (cl_index i = 0; i < n; ++i) {
+        ucs4.append(static_cast<uint>(ecl_char(str, i)));
+    }
+    return QString::fromUcs4(ucs4.constData(), ucs4.size());
+}
+
+/// Lisp 碼位索引 → QString UTF-16 索引（只有 BMP 外的字元，如 emoji，兩者才會不同）
+static int codePointIndexToUtf16(const QString& s, qint64 cpIndex)
+{
+    if (cpIndex <= 0) return 0;
+    int i = 0;
+    qint64 cp = 0;
+    while (i < s.size() && cp < cpIndex) {
+        if (s.at(i).isHighSurrogate() && i + 1 < s.size() && s.at(i + 1).isLowSurrogate())
+            i += 2;
+        else
+            ++i;
+        ++cp;
+    }
+    return i;
+}
+
+// ---------------------------------------------------------------------------
+// 啟動時載入的 Lisp 輔助程式（純 ASCII；每個元素是一個頂層表達式）
+// ---------------------------------------------------------------------------
+static const char* const kBootstrapForms[] = {
+    // 以 double-float 讀寫浮點數。預設的 single-float 只有約 7 位有效數字：
+    // (line 0 0 2700123.456 1) 這類 TM2 大座標會被默默截斷。
+    "(setf *read-default-float-format* 'double-float)",
+
+    // 嵌入式環境中 (quit)/(exit) 會直接結束整個 AICAD 行程；(break) 會進入讀 stdin
+    // 的 ECL break loop（GUI 程式沒有 stdin → 卡死）。CLHS 規定 break 會把
+    // *debugger-hook* 綁成 NIL，所以無法用 hook 攔截，只能在 CL-USER 中遮蔽（shadow）
+    // 這幾個符號，改成丟出一般錯誤，由編輯器顯示。
+    //
+    // ⚠️ shadow 與 defun 必須是「兩個分開求值的表達式」：reader 會在求值前就把整個
+    //    表單讀完；寫在同一個 progn 裡，cl-user::quit 會在 shadow 生效之前被解析成
+    //    繼承來的 EXT:QUIT，結果等於把 ECL 自己的 quit 改掉（連它的 debugger 都壞）。
+    "(shadow '(\"QUIT\" \"EXIT\" \"BREAK\") \"CL-USER\")",
+    "(defun cl-user::quit (&rest args) (declare (ignore args))"
+    "  (error \"quit/exit is disabled inside AICAD\"))",
+    "(defun cl-user::exit (&rest args) (declare (ignore args))"
+    "  (error \"quit/exit is disabled inside AICAD\"))",
+    "(defun cl-user::break (&rest args) (declare (ignore args))"
+    "  (error \"break is disabled inside AICAD (no interactive debugger)\"))",
+
+    // 跳過空白、; 行註解、#| |# 區塊註解。還有資料可讀回傳 T，EOF 回傳 NIL。
+    "(defun cl-user::%aicad-skip-blanks (in)"
+    "  (loop"
+    "    (let ((c (peek-char nil in nil nil)))"
+    "      (cond ((null c) (return nil))"
+    "            ((or (char= c #\\Space) (not (graphic-char-p c))) (read-char in))"
+    "            ((char= c #\\;) (read-line in nil nil))"
+    "            ((char= c #\\#)"
+    "             (read-char in)"
+    "             (let ((c2 (peek-char nil in nil nil)))"
+    "               (if (and c2 (char= c2 #\\|))"
+    "                   (let ((depth 1) (prev nil))"
+    "                     (read-char in)"
+    "                     (loop while (> depth 0)"
+    "                           do (let ((x (read-char in nil nil)))"
+    "                                (cond ((null x) (return))"
+    "                                      ((and prev (char= prev #\\|) (char= x #\\#))"
+    "                                       (decf depth) (setf prev nil))"
+    "                                      ((and prev (char= prev #\\#) (char= x #\\|))"
+    "                                       (incf depth) (setf prev nil))"
+    "                                      (t (setf prev x))))))"
+    "                   (progn (unread-char c in) (return t)))))"
+    "            (t (return t))))))",
+
+    // 依序讀取並求值 code 內所有頂層表達式。
+    // 用 read-preserving-whitespace：一般的 read 會多吃掉表達式後面的一個字元，
+    // file-position 就會比表達式真正的結尾多 1，錯誤標示範圍會偏掉。
+    // 回傳 (ok output value error start end nforms)；start/end 為 Lisp 碼位索引。
+    "(defun cl-user::%aicad-eval-string (code)"
+    "  (let ((out (make-string-output-stream))"
+    "        (in (make-string-input-stream code))"
+    "        (nforms 0) (start 0) (end 0) (value \"\") (err nil) (phase :read))"
+    "    (let ((*standard-output* out) (*error-output* out) (*trace-output* out)"
+    "          (*standard-input* (make-string-input-stream \"\"))"
+    "          (*package* (find-package \"CL-USER\"))"
+    "          (*read-default-float-format* 'double-float)"
+    "          (*print-pretty* nil) (*print-circle* t)"
+    "          (*print-length* 200) (*print-level* 12)"
+    "          (*debugger-hook* (lambda (c h) (declare (ignore h)) (error \"~A\" c))))"
+    "      (handler-case"
+    "          (loop"
+    "            (unless (cl-user::%aicad-skip-blanks in) (return))"
+    "            (setf start (file-position in) phase :read)"
+    "            (let ((form (read-preserving-whitespace in nil in)))"
+    "              (setf end (file-position in) phase :eval)"
+    "              (let ((vals (multiple-value-list (eval form))))"
+    "                (incf nforms)"
+    "                (setf value (format nil \"~{~S~^ ; ~}\" vals)))))"
+    "        (serious-condition (e)"
+    "          (when (eq phase :read) (setf end (file-position in)))"
+    "          (setf err (format nil \"~A: ~A\" (type-of e)"
+    "                            (or (ignore-errors (princ-to-string e)) \"(no message)\"))))))"
+    "    (list (null err) (get-output-stream-string out) value (or err \"\")"
+    "          start end nforms)))",
+};
+
 #endif
 
 class LispEngine::Private {
@@ -119,6 +245,11 @@ bool LispEngine::initialize() {
         // 浮點例外全部遮蔽。原本只有 __unix__ 區塊會還原 FPU 狀態，
         // Windows 完全沒有，導致 trap 維持開啟。
         aicad::core::maskFpuExceptions();
+
+        // 載入輔助 Lisp 程式（多表達式求值 / 輸出擷取 / 錯誤攔截）
+        for (const char* src : kBootstrapForms) {
+            cl_eval(c_string_to_object(src));
+        }
         
 #ifdef __unix__
         // 恢復 FPU 狀態
@@ -237,6 +368,53 @@ QVariant LispEngine::eval(const QString& code) {
 #endif
 }
 
+LispEvalResult LispEngine::evalDetailed(const QString& code) {
+    LispEvalResult r;
+
+    if (!d->initialized) {
+        r.error = QStringLiteral("Lisp engine not initialized");
+        d->lastError = r.error;
+        return r;
+    }
+
+#ifdef HAVE_ECL
+    aicad::core::FpuMaskGuard fpuGuard;
+
+    // 所有 Lisp 錯誤都在 %AICAD-EVAL-STRING 內以 handler-case 攔下；
+    // 這裡不會有 non-local exit 穿過 C++ 堆疊。
+    cl_object fn  = c_string_to_object("CL-USER::%AICAD-EVAL-STRING");
+    cl_object res = cl_funcall(2, fn, qStringToClString(code));
+
+    if (res == Cnil || !ECL_LISTP(res)) {
+        r.error = QStringLiteral("Internal error: evaluator returned no result");
+        d->lastError = r.error;
+        return r;
+    }
+
+    // (ok output value error start end nforms)
+    r.ok     = (ecl_nth(0, res) != Cnil);
+    r.output = clStringToQString(ecl_nth(1, res));
+    r.value  = clStringToQString(ecl_nth(2, res));
+    r.error  = clStringToQString(ecl_nth(3, res));
+    r.formsEvaluated = static_cast<int>(ecl_fixnum(ecl_nth(6, res)));
+
+    if (!r.ok) {
+        r.errorStart = codePointIndexToUtf16(code, ecl_fixnum(ecl_nth(4, res)));
+        r.errorEnd   = codePointIndexToUtf16(code, ecl_fixnum(ecl_nth(5, res)));
+        if (r.errorEnd < r.errorStart) r.errorEnd = r.errorStart;
+        d->lastError = r.error;
+    } else {
+        d->lastError.clear();
+    }
+    return r;
+#else
+    Q_UNUSED(code);
+    r.error = QStringLiteral("ECL support not compiled in");
+    d->lastError = r.error;
+    return r;
+#endif
+}
+
 bool LispEngine::loadFile(const QString& filePath) {
     if (!d->initialized) {
         d->lastError = "Lisp engine not initialized";
@@ -245,7 +423,7 @@ bool LispEngine::loadFile(const QString& filePath) {
     }
     
     QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         d->lastError = QString("Cannot open file: %1").arg(filePath);
         qWarning() << "[LispEngine]" << d->lastError;
         Q_EMIT errorOccurred(d->lastError);
@@ -254,17 +432,28 @@ bool LispEngine::loadFile(const QString& filePath) {
     
     qDebug() << "[LispEngine] Loading file:" << filePath;
     
-    QTextStream in(&file);
-    QString code = in.readAll();
+    // 一律以 UTF-8 解讀（腳本內常有中文註解 / 字串），並去掉 BOM。
+    QString code = QString::fromUtf8(file.readAll());
     file.close();
+    if (code.startsWith(QChar(0xFEFF))) {
+        code.remove(0, 1);
+    }
     
-    QVariant result = eval(code);
+    // 舊版用 eval()，只會執行檔案中的第一個表達式；改為依序執行全部。
+    const LispEvalResult r = evalDetailed(code);
     
-    if (!d->lastError.isEmpty()) {
+    if (!r.output.isEmpty()) {
+        Q_EMIT output(r.output);
+    }
+    
+    if (!r.ok) {
+        qWarning() << "[LispEngine] Load failed:" << filePath << r.error;
+        Q_EMIT errorOccurred(r.error);
         return false;
     }
     
-    qDebug() << "[LispEngine] File loaded successfully:" << filePath;
+    qDebug() << "[LispEngine] File loaded successfully:" << filePath
+             << "forms:" << r.formsEvaluated;
     return true;
 }
 
@@ -427,7 +616,7 @@ cl_object LispEngine::qVariantToClObject(const QVariant& var) {
         return ecl_make_double_float(var.toDouble());
         
     case QMetaType::QString:
-        return ecl_cstring_to_base_string_or_nil(var.toString().toUtf8().constData());
+        return qStringToClString(var.toString());
         
     case QMetaType::QVariantList: {
         QVariantList list = var.toList();
@@ -457,25 +646,16 @@ QString LispEngine::clObjectToQString(cl_object obj) {
         return "T";
     }
     
-    // 使用 princ-to-string
+    // 字串物件直接以碼位轉換；其他物件先 princ-to-string 再轉換
+    // （不再經過 base-string，含中文的字串才不會變成 "<unconvertible>"）
+    if (ECL_STRINGP(obj)) {
+        return clStringToQString(obj);
+    }
+    
     cl_object strObj = cl_princ_to_string(obj);
     
     if (strObj != Cnil && ECL_STRINGP(strObj)) {
-        if (ECL_BASE_STRING_P(strObj)) {
-            const char* cstr = (const char*)ecl_base_string_pointer_safe(strObj);
-            if (cstr) {
-                return QString::fromUtf8(cstr);
-            }
-        } else {
-            // 轉換為 base-string
-            cl_object baseStr = si_coerce_to_base_string(strObj);
-            if (baseStr != Cnil && ECL_BASE_STRING_P(baseStr)) {
-                const char* cstr = (const char*)ecl_base_string_pointer_safe(baseStr);
-                if (cstr) {
-                    return QString::fromUtf8(cstr);
-                }
-            }
-        }
+        return clStringToQString(strObj);
     }
     
     return "<unconvertible>";

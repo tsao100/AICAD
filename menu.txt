@@ -25,6 +25,19 @@ toolbar|main|separator|||
 toolbar|main|sketch|Create Sketch|:/icons/sketch.png|
 toolbar|main|extrude|Create Extrusion|:/icons/extrude.png|
 toolbar|main|chamfer|Chamfer Solid Edges|:/icons/extrude.png|
+toolbar|main|extrudecut|Extrude Cut (subtract from solid)|:/icons/extrude.png|
+toolbar|main|revolve|Revolve Profile|:/icons/extrude.png|
+toolbar|main|revolvecut|Revolve Cut|:/icons/extrude.png|
+toolbar|main|sweep|Sweep Profile Along Path|:/icons/extrude.png|
+toolbar|main|sweepcut|Sweep Cut|:/icons/extrude.png|
+toolbar|main|loft|Loft Between Sketches|:/icons/extrude.png|
+toolbar|main|loftcut|Loft Cut|:/icons/extrude.png|
+toolbar|main|fillet3d|Fillet Solid Edges|:/icons/extrude.png|
+toolbar|main|shell|Shell Solid|:/icons/extrude.png|
+toolbar|main|boolean|Boolean (Union/Subtract/Intersect)|:/icons/extrude.png|
+toolbar|main|pattern3d|Pattern (linear / circular)|:/icons/extrude.png|
+toolbar|main|mirror3d|Mirror Solid or Feature|:/icons/extrude.png|
+toolbar|main|hole|Hole Wizard|:/icons/extrude.png|
 
 toolbar|main|separator|||
 
@@ -62,7 +75,9 @@ toolbar|main|view_iso|Isometric|:/icons/isometric.png|
 # Menu : File
 # ======================
 
-menu|File|new|New||Ctrl+N
+menu|File|new|New Project||Ctrl+N
+menu|File|newpart|New Part (.aipart)||
+menu|File|newasm|New Assembly (.aiasm)||
 menu|File|separator|||
 menu|File|save|Save||Ctrl+S
 menu|File|saveas|Save As||Ctrl+Shift+A
@@ -98,7 +113,27 @@ menu|Sketch|point|Draw Point||
 
 menu|Features|extrude|Create Extrusion||
 menu|Features|chamfer|Chamfer Solid Edges||
+menu|Features|extrudecut|Extrude Cut (subtract from solid)||
+menu|Features|revolve|Revolve Profile||
+menu|Features|revolvecut|Revolve Cut||
+menu|Features|sweep|Sweep Profile Along Path||
+menu|Features|sweepcut|Sweep Cut||
+menu|Features|loft|Loft Between Sketches||
+menu|Features|loftcut|Loft Cut||
+menu|Features|fillet3d|Fillet Solid Edges||
+menu|Features|shell|Shell Solid||
+menu|Features|boolean|Boolean (Union/Subtract/Intersect)||
+menu|Features|pattern3d|Pattern (linear / circular)||
+menu|Features|mirror3d|Mirror Solid or Feature||
+menu|Features|hole|Hole Wizard||
 
+
+# ======================
+# Menu : Assembly
+# ======================
+menu|Assembly|insertpart|Insert Part (*.aipart / *.aiasm)…||
+menu|Assembly|mate|Add Mate…||
+menu|Assembly|solveasm|Solve Assembly||
 
 # ======================
 # Menu : Drawing
@@ -141,7 +176,7 @@ command|extrude||1
 command|save||0
 command|saveas||0
 command|load||0
-command|load_lisp||1
+command|load_lisp||-1
 command|print||0
 command|exportpdf||1
 command|exit||0
@@ -164,6 +199,19 @@ command|alignment3daddvprofile||0
 command|profilearray||0
 command|profileloft||0
 command|chamfer|cha|0
+command|extrudecut|extc|0
+command|revolve|rev|0
+command|revolvecut|revc|0
+command|sweep|swp|0
+command|sweepcut|swpc|0
+command|loft|lft|0
+command|loftcut|lftc|0
+command|fillet3d|fil3|0
+command|shell|shl|0
+command|boolean|bool|0
+command|pattern3d|pat3|0
+command|mirror3d|mir3|0
+command|hole|hol|0
 command|setorigin||0
 command|drawingsheet|dsh|0
 command|planprofile|pps|0
@@ -192,10 +240,13 @@ menu|Railway|setorigin|Set TM2 Origin…||
 menu|Railway|separator|||
 menu|Railway|profilearray|Profile Array Along Alignment…||
 menu|Railway|profileloft|Loft Profile Array to Solid…||
-menu|Railway|insertcomp|Insert 3D Component (*.aicad)…||
+menu|Railway|insertcomp|Insert 3D Component (*.aiasm / *.aipart)…||
 menu|Railway|separator|||
 menu|Railway|profileview|Vertical Profile View||
 menu|Railway|valigncheckgrade|Check Grade||
+
+# Script
+menu|Script|lisped|Lisp Editor||Ctrl+Shift+E
 
 
 # ======================
@@ -207,6 +258,12 @@ command|importalignment|iald|0
 command|importald|ald|0
 command|insertcomp|icomp|0
 command|defplane|dplane|0
+command|insertpart|ipart|0
+command|newpart|npart|0
+command|newasm|nasm|0
+command|mate|am|0
+command|solveasm|asolve|0
+command|asmaction||0
 command|trackextract|tx|0
 command|exportalignment|eald|0
 
@@ -215,3 +272,4 @@ command|valignmovepvi||0
 command|valignsetk||0
 command|profileview||0
 command|valigncheckgrade||0
+command|lisped|le|-1

@@ -251,6 +251,13 @@ class NewCommand : public Command {
 public:
     NewCommand() : Command("new", "New Document") {}
 
+protected:
+    /// NEWPART／NEWASM 用：只是名稱與預設文件種類不同
+    NewCommand(const QString& name, const QString& desc, cad::Document::Kind defaultKind)
+        : Command(name, desc), m_defaultKind(defaultKind) {}
+
+public:
+
     // ⚠️ 必須回傳 true：CommandManager::executeCommand() 在 execute() 回傳後，
     //    只要 cmd->state() != Running 就會立刻 Q_EMIT finished() 並
     //    deleteLater() 這個命令物件（見 CommandManager.cpp 對應註解）。
@@ -260,10 +267,13 @@ public:
     //    導致按 Yes/No 完全沒有反應（見下方 execute() 內的對應處理）。
     bool isInteractive() const override { return true; }
 
-    CommandResult execute(const CommandContext& /*context*/) override {
+    CommandResult execute(const CommandContext& context) override {
         Application*     app    = Application::instance();
         DocumentManager* docMgr = app->documentManager();
         EventBus*        bus    = app->eventBus();
+
+        // 新文件的種類：ctx.data["kind"] = project（預設）／part／assembly（NEWPART、NEWASM 指令帶入）
+        m_newKind = cad::Document::kindFromString(context.data.value("kind").toString(), m_defaultKind);
 
         // ── 1. Confirm if there are unsaved changes ───────────────────
         if (docMgr->hasUnsavedChanges()) {
@@ -313,6 +323,9 @@ public:
     }
 
 private:
+    cad::Document::Kind m_defaultKind = cad::Document::Kind::Project;
+    cad::Document::Kind m_newKind     = cad::Document::Kind::Project;
+
     /// Close the current document (if any), create a fresh one, and
     /// reset the railway alignment data so the canvas is completely clean.
     void createNew(Application*     app,
@@ -366,6 +379,8 @@ private:
             Q_EMIT finished(CommandResult::Failure("Failed to create document"));
             return;
         }
+        newDoc->setKind(m_newKind);          // 零件／組合：決定副檔名與「新增特徵」預設放進哪個根
+        newDoc->setModified(false);
 
         // 5. Reset railway alignment — load an empty JSON object so all
         //    PI/VIP lists and solved results are cleared.
@@ -404,6 +419,21 @@ private:
 
 REGISTER_COMMAND("new", NewCommand);
 
+// NEWPART／NEWASM：新增「零件」(.aipart)／「組合」(.aiasm) 文件（與 NEW 同一套流程，只是預設文件種類不同）
+class NewPartCommand : public NewCommand {
+public:
+    NewPartCommand() : NewCommand("newpart", "New Part Document", cad::Document::Kind::Part) {}
+    QString getUsage() const override { return "Usage: newpart — 新增零件文件（.aipart，新增特徵放進 Part）"; }
+};
+REGISTER_COMMAND("newpart", NewPartCommand);
+
+class NewAssemblyCommand : public NewCommand {
+public:
+    NewAssemblyCommand() : NewCommand("newasm", "New Assembly Document", cad::Document::Kind::Assembly) {}
+    QString getUsage() const override { return "Usage: newasm — 新增組合文件（.aiasm，零件插入 Assembly、可含 Void）"; }
+};
+REGISTER_COMMAND("newasm", NewAssemblyCommand);
+
 // ===========================================
 // Save 命令
 // ===========================================
@@ -429,12 +459,13 @@ public:
                 nullptr,
                 "Save Document",
                 lastDir,
-                "AICAD Files (*.aicad);;All Files (*)"
+                cad::Document::saveFilter(doc->kind())
             );
             
             if (fileName.isEmpty()) {
                 return CommandResult::Failure("Save cancelled");
             }
+            fileName = cad::Document::withSuffix(fileName, doc->kind());       // 沒打副檔名 → 依文件種類補上
         }
 
         // Inject viewState and alignment data immediately before save —
@@ -509,12 +540,13 @@ public:
             nullptr,
             "Save Document As",
             initialPath,
-            "AICAD Files (*.aicad);;All Files (*)"
+            cad::Document::saveFilter(doc->kind())
             );
 
         if (fileName.isEmpty()) {
             return CommandResult::Failure("Save As cancelled");
         }
+        fileName = cad::Document::withSuffix(fileName, doc->kind());
 
         if (context.cadView)
             doc->setViewState(context.cadView->saveViewState());
@@ -576,7 +608,7 @@ public:
             nullptr,
             "Open Document",
             lastDir,
-            "AICAD Files (*.aicad);;All Files (*)"
+            cad::Document::openFilter()
         );
         
         if (fileName.isEmpty()) {

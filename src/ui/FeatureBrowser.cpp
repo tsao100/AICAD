@@ -30,6 +30,9 @@
 #include <QKeySequence>
 #include <QSettings>
 #include <QTimer>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <functional>
 #include <QHash>
 #include <QSet>
 #include <QStringList>
@@ -45,6 +48,58 @@ public:
 
     QTreeWidgetItem* itemFromIdx(const QModelIndex& index) const {
         return itemFromIndex(index);   // calls the protected method
+    }
+
+    /// 拖放：把特徵拖到 Part／Assembly／Void 根（或它們底下的項目）→ 呼叫此回呼（itemId, 目標根 id）。
+    /// 樹狀圖本身不移動項目（一律 ignore）；實際移動由 Document::setFeatureGroup() 之後重建樹狀圖完成。
+    std::function<void(const QString& itemId, const QString& rootId)> onFeatureDrop;
+
+    static bool isGroupRootId(const QString& id) {
+        return id == QLatin1String("__part_folder__") || id == QLatin1String("__assembly_folder__") ||
+               id == QLatin1String("__void_folder__");
+    }
+
+    /// 放下位置對應的根 id；不是有效目標 → 空字串
+    QString dropRootAt(const QPoint& pos) const {
+        QTreeWidgetItem* target = itemAt(pos);
+        if (!target) return QString();
+        const QString id = target->data(0, Qt::UserRole).toString();
+        if (isGroupRootId(id)) return id;
+        if (QTreeWidgetItem* par = target->parent()) {
+            const QString pid = par->data(0, Qt::UserRole).toString();
+            if (isGroupRootId(pid)) return pid;
+        }
+        return QString();
+    }
+
+protected:
+    void dragMoveEvent(QDragMoveEvent* e) override {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        const QPoint pos = e->position().toPoint();
+#else
+        const QPoint pos = e->pos();
+#endif
+        QTreeWidgetItem* src = currentItem();
+        const QString root = dropRootAt(pos);
+        // 拖到自己原本所在的根 = 沒有意義，不顯示可放下
+        const bool same = src && src->parent() && src->parent()->data(0, Qt::UserRole).toString() == root;
+        if (!root.isEmpty() && !same) { e->setDropAction(Qt::MoveAction); e->accept(); }
+        else                          e->ignore();
+    }
+
+    void dropEvent(QDropEvent* e) override {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        const QPoint pos = e->position().toPoint();
+#else
+        const QPoint pos = e->pos();
+#endif
+        QTreeWidgetItem* src = currentItem();
+        const QString root = dropRootAt(pos);
+        e->setDropAction(Qt::IgnoreAction);
+        e->ignore();                                   // 不讓 QTreeWidget 自己搬項目
+        if (!src || root.isEmpty() || !onFeatureDrop) return;
+        const QString itemId = src->data(0, Qt::UserRole).toString();
+        QTimer::singleShot(0, this, [this, itemId, root]() { onFeatureDrop(itemId, root); });
     }
 };
 
@@ -98,7 +153,15 @@ public:
                          index.data(Qt::UserRole + 1).toInt()
                          == static_cast<int>(ItemType::Railway) ||
                          index.data(Qt::UserRole + 1).toInt()
-                         == static_cast<int>(ItemType::ComponentLayout));
+                         == static_cast<int>(ItemType::ComponentLayout) ||
+                         index.data(Qt::UserRole + 1).toInt()
+                         == static_cast<int>(ItemType::VoidFolder) ||
+                         index.data(Qt::UserRole + 1).toInt()
+                         == static_cast<int>(ItemType::PartFolder) ||
+                         index.data(Qt::UserRole + 1).toInt()
+                         == static_cast<int>(ItemType::AssemblyFolder) ||
+                         index.data(Qt::UserRole + 1).toInt()
+                         == static_cast<int>(ItemType::AssemblyMatesFolder));
         if (isFolder) {
             QFont f = p->font(); f.setBold(true); p->setFont(f);
         }
@@ -261,6 +324,20 @@ void FeatureBrowser::setupUI() {
     d->treeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     d->treeWidget->setSelectionMode(QAbstractItemView::SingleSelection);
     d->treeWidget->setItemDelegate(new FeatureItemDelegate(d->treeWidget));
+
+    // 拖放：把特徵（擠出、倒角實體、零件）拖到 Part／Assembly／Void 根。只有掛在這三個根底下的項目可以拖，
+    // 只有三個根（及其子項）可以放下，旗標在 refresh() 重建樹之後設定（見 applyDragDropFlags）。
+    d->treeWidget->setDragEnabled(true);
+    d->treeWidget->setAcceptDrops(true);
+    d->treeWidget->setDropIndicatorShown(true);
+    d->treeWidget->setDragDropMode(QAbstractItemView::DragDrop);
+    d->treeWidget->setDefaultDropAction(Qt::MoveAction);
+    d->treeWidget->onFeatureDrop = [this](const QString& itemId, const QString& rootId) {
+        const QString key = rootId == QLatin1String("__part_folder__")     ? QStringLiteral("moveToPart")
+                          : rootId == QLatin1String("__assembly_folder__") ? QStringLiteral("moveToAssembly")
+                                                                           : QStringLiteral("moveToVoid");
+        Q_EMIT assemblyActionRequested(key, itemId);
+    };
 
     // d->treeWidget->setStyleSheet(R"(
     //     QTreeWidget {
@@ -461,6 +538,7 @@ void FeatureBrowser::refresh() {
     qDebug() << "[FeatureBrowser] Building tree with" << items.size() << "items";
 
     buildTreeFromData(items);
+    applyDragDropFlags();
 
     {
         // 還原先前的展開／摺疊狀態（只有被摺疊過的才收起，其餘預設展開）
@@ -481,6 +559,23 @@ void FeatureBrowser::refresh() {
 
     d->treeWidget->setUpdatesEnabled(true);
     d->treeWidget->blockSignals(false);
+}
+
+void FeatureBrowser::applyDragDropFlags() {
+    for (auto it = m_itemMap.begin(); it != m_itemMap.end(); ++it) {
+        QTreeWidgetItem* item = it.value();
+        if (!item) continue;
+        const QString id = item->data(0, Qt::UserRole).toString();
+        Qt::ItemFlags f = item->flags() & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
+        if (AccessibleTreeWidget::isGroupRootId(id)) {
+            f |= Qt::ItemIsDropEnabled;                                    // 三個根：可放下
+        } else if (QTreeWidgetItem* par = item->parent()) {
+            const QString pid = par->data(0, Qt::UserRole).toString();
+            if (AccessibleTreeWidget::isGroupRootId(pid))
+                f |= Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled;        // 根底下的特徵：可拖、也可放（等同放在該根）
+        }
+        item->setFlags(f);
+    }
 }
 
 void FeatureBrowser::buildTreeFromData(const QVector<FeatureTreeItem>& items) {
@@ -543,9 +638,16 @@ QTreeWidgetItem* FeatureBrowser::createTreeWidgetItem(const FeatureTreeItem& ite
     item->setData(0, Qt::UserRole + 1, static_cast<int>(itemData.type));
     item->setData(0, Qt::UserRole + 2, itemData.visible);
 
+    // 預設不可拖放；掛在 Part／Assembly／Void 根底下的特徵與三個根，由 applyDragDropFlags() 開放
+    item->setFlags(item->flags() & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
+
     if (itemData.type == ItemType::Folder ||
         itemData.type == ItemType::Railway ||
         itemData.type == ItemType::ComponentLayout ||
+        itemData.type == ItemType::VoidFolder ||
+        itemData.type == ItemType::PartFolder ||
+        itemData.type == ItemType::AssemblyFolder ||
+        itemData.type == ItemType::AssemblyMatesFolder ||
         itemData.type == ItemType::Drawings) {
         item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
     }
@@ -569,6 +671,12 @@ QIcon FeatureBrowser::getIconForType(ItemType type) {
     case ItemType::Component:       return QIcon(":/icons/extrude.png");     // 3D 組件安裝（暫沿用 extrude 圖示）
     case ItemType::DefinedPlane:    return QIcon(":/icons/plane.png");       // 定義平面
     case ItemType::ComponentLayout: return QIcon(":/icons/folder.png");      // 組件安裝位置（資料夾）
+    case ItemType::PartFolder:      return QIcon(":/icons/folder.png");      // Part（造型，固定根節點）
+    case ItemType::VoidFolder:      return QIcon(":/icons/folder.png");      // Void（開孔，固定根節點）
+    case ItemType::AssemblyFolder:  return QIcon(":/icons/folder.png");      // Assembly（組件，固定根節點）
+    case ItemType::AssemblyMatesFolder: return QIcon(":/icons/folder.png");  // 配合（資料夾）
+    case ItemType::AssemblyPart:    return QIcon(":/icons/extrude.png");     // 組合零件（暫沿用 extrude 圖示）
+    case ItemType::AssemblyMate:    return QIcon(":/icons/plane.png");       // 配合（暫沿用 plane 圖示）
     case ItemType::Loft:            return QIcon(":/icons/extrude.png");     // 放樣實體（暫沿用 extrude 圖示）
     case ItemType::Drawings:        return QIcon(":/icons/folder.png");
     case ItemType::DrawingBook:     return QIcon(":/icons/folder.png");
@@ -576,6 +684,15 @@ QIcon FeatureBrowser::getIconForType(ItemType type) {
     case ItemType::DepotViewFolder: return QIcon(":/icons/folder.png");
     case ItemType::DepotViewItem:   return QIcon(":/icons/sketch.png");
     case ItemType::Chamfer:         return QIcon(":/icons/extrude.png");     // 倒角特徵（暫沿用 extrude 圖示，待補專用圖示）
+    case ItemType::Revolve:
+    case ItemType::Sweep:
+    case ItemType::SketchLoft:
+    case ItemType::Fillet:
+    case ItemType::Shell:
+    case ItemType::Boolean:
+    case ItemType::SolidPattern:
+    case ItemType::Mirror:
+    case ItemType::Hole:            return QIcon(":/icons/extrude.png");     // 3D 塑形特徵（暫沿用 extrude 圖示）
     default:                        return QIcon();
     }
 }
@@ -630,6 +747,10 @@ void FeatureBrowser::onItemClicked(QTreeWidgetItem* item, int column) {
     if (static_cast<ItemType>(itemType) == ItemType::Folder ||
         static_cast<ItemType>(itemType) == ItemType::Railway ||
         static_cast<ItemType>(itemType) == ItemType::ComponentLayout ||
+        static_cast<ItemType>(itemType) == ItemType::VoidFolder ||
+        static_cast<ItemType>(itemType) == ItemType::PartFolder ||
+        static_cast<ItemType>(itemType) == ItemType::AssemblyFolder ||
+        static_cast<ItemType>(itemType) == ItemType::AssemblyMatesFolder ||
         static_cast<ItemType>(itemType) == ItemType::Drawings ||
         static_cast<ItemType>(itemType) == ItemType::DrawingBook ||
         static_cast<ItemType>(itemType) == ItemType::DepotViewFolder ||
@@ -664,6 +785,16 @@ void FeatureBrowser::onItemDoubleClicked(QTreeWidgetItem* item, int column) {
             Q_EMIT editComponentLayoutRequested();
             return;
         }
+        if (ty == ItemType::AssemblyPart) {              // 雙擊零件 → 編輯位置／縮放／固定
+            Q_EMIT assemblyActionRequested(QStringLiteral("editPart"), itemId);
+            return;
+        }
+        if (ty == ItemType::AssemblyMate) {              // 雙擊配合 → 編輯配合
+            Q_EMIT assemblyActionRequested(QStringLiteral("editMate"), itemId);
+            return;
+        }
+        if (ty == ItemType::VoidFolder || ty == ItemType::PartFolder || ty == ItemType::AssemblyFolder ||
+            ty == ItemType::AssemblyMatesFolder) return;
         if (ty == ItemType::Drawings || ty == ItemType::DepotViewFolder) return;
         if (ty == ItemType::DepotViewItem) {
             Q_EMIT drawingActionRequested(QStringLiteral("depotEdit"), itemId);
@@ -685,9 +816,19 @@ static bool itemSupportsFocus(ItemType t)
     case ItemType::Feature:
     case ItemType::Loft:
     case ItemType::Chamfer:
+    case ItemType::Revolve:
+    case ItemType::Sweep:
+    case ItemType::SketchLoft:
+    case ItemType::Fillet:
+    case ItemType::Shell:
+    case ItemType::Boolean:
+    case ItemType::SolidPattern:
+    case ItemType::Mirror:
+    case ItemType::Hole:
     case ItemType::Pattern:
     case ItemType::SlabPlan:
     case ItemType::Component:
+    case ItemType::AssemblyPart:
     case ItemType::DefinedPlane:
     case ItemType::TrackCenterLine:
         return true;
@@ -819,6 +960,39 @@ void FeatureBrowser::showItemContextMenu(QTreeWidgetItem* item, const QPoint& gl
         add(tr("重新計算此圖"), "regenSheet");
         menu.addSeparator();
         add(tr("刪除此圖"), "deleteSheet");
+        menu.exec(globalPos);
+        return;
+    }
+
+    // ── 「零件組合」「配合」資料夾 ──────────────────────────────────────────
+    if (itemType == ItemType::PartFolder || itemType == ItemType::VoidFolder ||
+        itemType == ItemType::AssemblyFolder || itemType == ItemType::AssemblyMatesFolder) {
+        QMenu menu(this);
+        const bool isMates = (itemType == ItemType::AssemblyMatesFolder);
+        const QString rootKey = itemType == ItemType::PartFolder ? QStringLiteral("Part")
+                              : itemType == ItemType::VoidFolder ? QStringLiteral("Void") : QStringLiteral("Assembly");
+        if (!isMates) {
+            QAction* actActive = menu.addAction(tr("設為「新增特徵」的放置位置（%1）").arg(rootKey));
+            connect(actActive, &QAction::triggered, this, [this, rootKey] {
+                Q_EMIT assemblyActionRequested(QStringLiteral("setActive") + rootKey, QString());
+            });
+            menu.addSeparator();
+        }
+        if (itemType == ItemType::VoidFolder) {
+            QAction* actIns = menu.addAction(tr("插入零件 (*.aipart／*.aiasm) 作為開孔形體…"));
+            connect(actIns, &QAction::triggered, this, [this] { Q_EMIT assemblyActionRequested(QStringLiteral("insertPartVoid"), QString()); });
+        } else if (itemType == ItemType::AssemblyFolder || isMates) {
+            QAction* actIns = menu.addAction(tr("插入零件 (*.aipart／*.aiasm)…"));
+            connect(actIns, &QAction::triggered, this, [this] { Q_EMIT assemblyActionRequested(QStringLiteral("insertPart"), QString()); });
+            QAction* actMate = menu.addAction(tr("新增配合…"));
+            connect(actMate, &QAction::triggered, this, [this] { Q_EMIT assemblyActionRequested(QStringLiteral("addMate"), QString()); });
+            menu.addSeparator();
+            QAction* actSolve = menu.addAction(tr("重新求解組合"));
+            connect(actSolve, &QAction::triggered, this, [this] { Q_EMIT assemblyActionRequested(QStringLiteral("solve"), QString()); });
+        } else {
+            QAction* hint = menu.addAction(tr("提示：把擠出或零件拖放到 Part／Assembly／Void，或右鍵「移到…」"));
+            hint->setEnabled(false);
+        }
         menu.exec(globalPos);
         return;
     }
@@ -1041,6 +1215,68 @@ void FeatureBrowser::showItemContextMenu(QTreeWidgetItem* item, const QPoint& gl
         menu.addSeparator();
     }
 
+    // 掛在 Part／Assembly／Void 根底下的特徵：移到另一個根
+    {
+        const QTreeWidgetItem* par = item->parent();
+        const QString parId = par ? par->data(0, Qt::UserRole).toString() : QString();
+        struct RootDef { const char* id; const char* key; const char* label; };
+        static const RootDef roots[] = {
+            { "__part_folder__",     "moveToPart",     "移到 Part（造型）" },
+            { "__assembly_folder__", "moveToAssembly", "移到 Assembly（組合）" },
+            { "__void_folder__",     "moveToVoid",     "移到 Void（開孔）" },
+        };
+        bool underRoot = false;
+        for (const RootDef& r : roots) if (parId == QLatin1String(r.id)) underRoot = true;
+        if (underRoot) {
+            for (const RootDef& r : roots) {
+                if (parId == QLatin1String(r.id)) continue;
+                const QString key = QString::fromLatin1(r.key);
+                QAction* a = menu.addAction(tr(r.label));
+                connect(a, &QAction::triggered, this, [this, itemId, key] {
+                    Q_EMIT assemblyActionRequested(key, itemId);
+                });
+            }
+            menu.addSeparator();
+        }
+    }
+
+    if (itemType == ItemType::AssemblyPart) {
+        QAction* actMate = menu.addAction(tr("新增配合（以此零件為第一個參照）…"));
+        connect(actMate, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT assemblyActionRequested(QStringLiteral("addMateForPart"), itemId);
+        });
+        QAction* actEdit = menu.addAction(tr("編輯零件（位置／轉角／縮放／固定）…"));
+        connect(actEdit, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT assemblyActionRequested(QStringLiteral("editPart"), itemId);
+        });
+        QAction* actFix = menu.addAction(tr("切換 固定／浮動"));
+        connect(actFix, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT assemblyActionRequested(QStringLiteral("toggleFixed"), itemId);
+        });
+        menu.addSeparator();
+        QAction* actSync = menu.addAction(tr("同步來源檔（重新載入零件）"));
+        connect(actSync, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT assemblyActionRequested(QStringLiteral("syncPart"), itemId);
+        });
+        QAction* actOpen = menu.addAction(tr("在另一個 CADView 編輯零件（開啟來源檔）"));
+        connect(actOpen, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT assemblyActionRequested(QStringLiteral("openSource"), itemId);
+        });
+        menu.addSeparator();
+    }
+
+    if (itemType == ItemType::AssemblyMate) {
+        QAction* actEdit = menu.addAction(tr("編輯配合…"));
+        connect(actEdit, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT assemblyActionRequested(QStringLiteral("editMate"), itemId);
+        });
+        QAction* actSup = menu.addAction(tr("抑制／取消抑制"));
+        connect(actSup, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT assemblyActionRequested(QStringLiteral("toggleSuppress"), itemId);
+        });
+        menu.addSeparator();
+    }
+
     if (itemType == ItemType::DefinedPlane) {
         QAction* actSk = menu.addAction(tr("在此平面建立草圖"));
         connect(actSk, &QAction::triggered, this, [this, itemId] {
@@ -1074,6 +1310,18 @@ void FeatureBrowser::showItemContextMenu(QTreeWidgetItem* item, const QPoint& gl
         QAction* actExt = menu.addAction(tr("編輯擠出（方向／尺寸）…"));
         connect(actExt, &QAction::triggered, this, [this, itemId] {
             Q_EMIT editExtrudeRequested(itemId);
+        });
+        menu.addSeparator();
+    }
+
+    if (itemType == ItemType::Revolve || itemType == ItemType::Sweep
+        || itemType == ItemType::SketchLoft || itemType == ItemType::Fillet
+        || itemType == ItemType::Shell || itemType == ItemType::Boolean
+        || itemType == ItemType::SolidPattern || itemType == ItemType::Mirror
+        || itemType == ItemType::Hole) {
+        QAction* actEdit = menu.addAction(tr("編輯特徵參數…"));
+        connect(actEdit, &QAction::triggered, this, [this, itemId] {
+            Q_EMIT editSolidFeatureRequested(itemId);
         });
         menu.addSeparator();
     }

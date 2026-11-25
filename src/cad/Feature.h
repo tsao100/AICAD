@@ -8,6 +8,7 @@
 #ifndef AICAD_CAD_FEATURE_H
 #define AICAD_CAD_FEATURE_H
 
+#include "FeatureGroup.h"
 #include <QObject>
 #include <QString>
 #include <QUuid>
@@ -37,7 +38,15 @@ enum class FeatureType {
     Loft,           ///< 斷面放樣特徵（Profile Loft Solid）
     SlabPlan,       ///< 道版 XY 平面圖（TrackSlabPlan）
     ComponentInstall,///< 3D 組件安裝（ComponentInstall）
-    DefinedPlane     ///< 定義平面（DefinedPlane：基準平面 + 偏移）
+    DefinedPlane,    ///< 定義平面（DefinedPlane：基準平面 + 偏移）
+    AssemblyPart,    ///< 組合中的零件（AssemblyPart：*.aicad 實體 + 剛體位姿）
+    AssemblyMate,     ///< 組合中的配合（AssemblyMate：兩個幾何參照之間的關係）
+    Sweep,           ///< 掃掠特徵（輪廓沿路徑）
+    SketchLoft,      ///< 草圖斷面放樣特徵（多個草圖依序放樣）
+    Shell,           ///< 抽殼特徵
+    SolidPattern,    ///< 3D 陣列（線性／環狀）
+    Mirror,          ///< 3D 鏡射
+    Hole             ///< 孔精靈
 };
 
 /**
@@ -127,6 +136,17 @@ public:
 
     // 抑制狀態（不參與計算）
     bool isSuppressed() const { return m_suppressed; }
+
+    // ── 組件歸屬：Feature Browser 的固定根節點 Void／Assembly ──────────────────────
+    //   Void 根底下的特徵組成「開孔」形體；Assembly 根（預設）底下的特徵／零件組成組件實體。
+    //   只有 Extrude、ChamferSolid、AssemblyPart 與 3D 塑形特徵（Revolve／Sweep／SketchLoft／Fillet／Shell／Boolean／Pattern／Mirror／Hole）會顯示在這些根底下（Document::isGroupable）。
+    //   請用 Document::setFeatureGroup() 變更（它會連動同一條形體鏈並更新顯示）；setGroupRaw 只供載入／建立時使用。
+    using Group = FeatureGroup;
+    Group group() const { return m_group; }
+    void  setGroupRaw(Group g) { m_group = g; }
+    bool  isVoid() const { return m_group == Group::Void; }
+    /// 舊檔相容：名稱為 void／void1／void_2…（不分大小寫）→ 視為 Void
+    static bool isVoidName(const QString& featureName);
     void setSuppressed(bool suppressed);
 
     // 錯誤狀態
@@ -224,6 +244,7 @@ private:
 
     bool m_visible;                ///< 可見性
     bool m_suppressed;             ///< 抑制狀態
+    Group m_group = Group::Part;   ///< 歸屬的根節點：Part（造型）／Assembly（組合）／Void（開孔）
 
     bool m_hasError;               ///< 錯誤狀態
     QString m_errorMessage;        ///< 錯誤訊息

@@ -23,7 +23,7 @@ namespace aicad {
 namespace cad {
 
 Extrude::Extrude(Document* parent)
-    : Feature(parent)
+    : ShapingFeature(parent)
     , m_sketch(nullptr)
     , m_reversed(false)
     , m_symmetric(false)
@@ -161,7 +161,19 @@ bool Extrude::rebuild() {
 
     TopoDS_Shape resultShape;
 
-    if (m_symmetric) {
+    if (qAbs(m_draftAngle) > 1e-9) {
+        // ✅ 拔模擠出（錐度）：目前限單向、無內孔輪廓
+        if (m_symmetric || backLen > 1e-9) {
+            setError("拔模擠出目前不支援「兩向平分」或「反向附加長度」");
+            return false;
+        }
+        QString taperErr;
+        resultShape = solidops::taperedPrism(profile, direction, m_draftAngle, &taperErr);
+        if (resultShape.IsNull()) {
+            setError(taperErr.isEmpty() ? QStringLiteral("拔模擠出失敗") : taperErr);
+            return false;
+        }
+    } else if (m_symmetric) {
         // ✅ 對稱擠出：沿法向偏移 profile 半個高度，再擠出全高
         gp_Vec halfVec = direction * 0.5;
         // 將 profile 沿反方向移動 half
@@ -192,6 +204,24 @@ bool Extrude::rebuild() {
         auto result = geometry::GeometryBuilder::extrude(profile, direction);
         if (!result.success) { setError(result.errorMessage); return false; }
         resultShape = result.shape;
+    }
+
+    // ✅ 運算方式（聯集／挖除／交集）：NewBody 時完全維持原本行為
+    if (operation() != SolidOp::NewBody) {
+        QString ferr;
+        const TopoDS_Shape tool = solidops::finalizeSolid(resultShape, &ferr);
+        if (tool.IsNull()) {
+            setError(ferr.isEmpty() ? QStringLiteral("擠出形狀無效") : ferr);
+            return false;
+        }
+        const TopoDS_Shape combined = combineWithTarget(tool);   // 失敗時已 setError
+        if (combined.IsNull()) return false;
+
+        resultShape = solidops::finalizeSolid(combined, &ferr);
+        if (resultShape.IsNull()) {
+            setError(ferr.isEmpty() ? QStringLiteral("運算結果沒有任何實體") : ferr);
+            return false;
+        }
     }
 
     setShape(resultShape);
@@ -255,22 +285,33 @@ void Extrude::setHeightExpression(const QString& expr) {
 }
 
 QSet<QString> Extrude::featureDependencies() const {
-    if (m_sketch) return { m_sketch->id() };
-    return {};
+    QSet<QString> deps = targetDependencies();      // 挖除／聯集的目標實體
+    if (m_sketch) deps.insert(m_sketch->id());
+    return deps;
 }
 
 void Extrude::resolveReferences(Document* doc) {
-    if (m_pendingSketchId.isEmpty()) return;
-    Feature* f = doc->findFeature(m_pendingSketchId);
-    if (auto* sk = qobject_cast<Sketch*>(f)) {
-        setSketch(sk);
-        // ✅ 恢復 Feature 層的父子關係（setSketch 不再自動呼叫 setParent）
-        sk->setFeatureParent(this);
-        m_pendingSketchId.clear();
-    } else {
-        qWarning() << "[Extrude]" << name()
-                   << "Cannot resolve sketchId:" << m_pendingSketchId;
+    if (!doc) return;
+
+    // 目標實體（挖除／聯集／交集）
+    resolveTargetReference(doc);
+
+    if (!m_pendingSketchId.isEmpty()) {
+        Feature* f = doc->findFeature(m_pendingSketchId);
+        if (auto* sk = qobject_cast<Sketch*>(f)) {
+            setSketch(sk);
+            // ✅ 恢復 Feature 層的父子關係（setSketch 不再自動呼叫 setParent）
+            sk->setFeatureParent(this);
+            m_pendingSketchId.clear();
+        } else {
+            qWarning() << "[Extrude]" << name()
+                       << "Cannot resolve sketchId:" << m_pendingSketchId;
+        }
     }
+
+    // 依賴圖在建立（fromJson 之前）時 sketch／target 都還是空的，這裡補登記，
+    // 讓讀檔後的拓撲重建順序正確（草圖／目標先於本特徵）。
+    doc->refreshFeatureDependencies(this);
 }
 
 // toJson：儲存表達式而非計算值
@@ -282,6 +323,7 @@ QJsonObject Extrude::toJson() const {
     obj["symmetric"]       = m_symmetric;
     obj["backExpression"]  = m_backExpr.expression;
     obj["draftAngle"]      = m_draftAngle;
+    writeOpJson(obj);                                    // operation／targetId
     return obj;
 }
 
@@ -308,6 +350,7 @@ bool Extrude::fromJson(const QJsonObject& json) {
     }
     m_draftAngle = json["draftAngle"].toDouble(0.0);
     m_pendingSketchId = json["sketchId"].toString();
+    readOpJson(json);
 
     return true;
 }

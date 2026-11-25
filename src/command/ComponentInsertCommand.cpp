@@ -56,8 +56,8 @@ CommandResult ComponentInsertCommand::execute(const CommandContext& /*context*/)
     QSettings settings("AICAD", "AICAD");
     const QString lastDir = settings.value("Component/lastDir").toString();
     const QString path = QFileDialog::getOpenFileName(
-        parentWidget, QObject::tr("插入 3D 組件 (*.aicad)"), lastDir,
-        QObject::tr("AICAD Files (*.aicad);;All Files (*)"));
+        parentWidget, QObject::tr("插入 3D 組件 (*.aiasm／*.aipart)"), lastDir,
+        cad::Document::insertComponentFilter());
     if (path.isEmpty()) return CommandResult::Failure("Insert cancelled");
     settings.setValue("Component/lastDir", QFileInfo(path).absolutePath());
 
@@ -68,8 +68,8 @@ CommandResult ComponentInsertCommand::execute(const CommandContext& /*context*/)
     if (!tmp->load(path))
         return CommandResult::Failure(QString("無法讀取檔案：%1").arg(path));
 
-    // 組件檔內「所有 3D 特徵的組合結果」：名稱為 void 的特徵合成「void」（讓道版 Loft 開孔，不一定要有），
-    // 其餘 3D 特徵合成「組件實體」（顯示在安裝位置）。不再需要逐一指定角色。
+    // 組件檔內「所有 3D 特徵的組合結果」：Void 根底下的特徵合成「void」（讓道版 Loft 開孔，不一定要有），
+    // Assembly 根底下的造型特徵與插入零件合成「組件實體」（顯示在安裝位置）。不再需要逐一指定角色。
     TopoDS_Shape comp, space;
     QStringList compNames, spaceNames;
     QString exErr;

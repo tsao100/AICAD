@@ -48,6 +48,7 @@
 #include "core/EventBus.h"
 #include "core/DocumentManager.h"
 #include "core/MenuParser.h"
+#include "cad/AssemblyMate.h"
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "cad/sketch/AnnotationStandardsChecker.h"
@@ -63,6 +64,7 @@
 #include "DefinePlaneDialog.h"
 #include "ComponentDialogs.h"
 #include "ExtrudeEditDialog.h"
+#include "SolidFeatureDialogs.h"
 #include "DocumentTabBar.h"
 #include <QVBoxLayout>
 #include <QMessageBox>
@@ -1578,7 +1580,18 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                                return;
                            }
 
-                           cad::Extrude* extrude = doc->createExtrude(sketch, height);
+                           // 運算方式（0 新實體／1 聯集／2 挖除／3 交集）與目標實體
+                           const int operation = map.value("operation", 0).toInt();
+                           cad::Feature* target = operation != 0
+                               ? doc->findFeature(map["targetId"].toString()) : nullptr;
+                           if (operation != 0 && !target) {
+                               app->eventBus()->publish(core::Events::COMMAND_ERROR,
+                                                        "Target solid not found for extrude");
+                               return;
+                           }
+
+                           cad::Extrude* extrude = doc->createExtrude(sketch, height, QString(),
+                                                                      operation, target);
                            if (!extrude) {
                                app->eventBus()->publish(core::Events::COMMAND_ERROR,
                                                         "Failed to create extrude");
@@ -2261,6 +2274,12 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     // 供 INSERTCOMP 等指令取得「目前在 Feature Browser 選取的項目」
                     core::Application::instance()->setProperty("selectedFeatureId", featureId);
 
+                    // 選到配合 → 3D 視圖以黃色粗線強調它的兩個參照；選到別的項目 → 取消強調
+                    if (cad::Document* adoc = docMgr->currentDocument()) {
+                        const bool isMate = qobject_cast<cad::AssemblyMate*>(adoc->findFeature(featureId)) != nullptr;
+                        adoc->setHighlightedMate(isMate ? featureId : QString());
+                    }
+
                     // ── issue #10 修正 ──────────────────────────────────
                     // Create Sketch 互動選平面時，先前只有在 3D 視圖裡直接
                     // 點擊平面才會生效；改為也接受 Feature Browser 的
@@ -2764,6 +2783,19 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     cmdMgr->executeCommand("insertcomp", ctx);
                 });
 
+        // ── 零件組合（Assembly）：Feature Browser 的右鍵／雙擊動作 → ASMACTION 指令 ──────────────
+        connect(d->featureBrowser, &FeatureBrowser::assemblyActionRequested,
+                this, [this](const QString& action, const QString& itemId) {
+                    auto* cmdMgr = core::Application::instance()->commandManager();
+                    if (!cmdMgr || cmdMgr->hasActiveCommand()) return;
+                    command::CommandContext ctx;
+                    ctx.uiManager = this;
+                    ctx.cadView   = d->cadView;
+                    ctx.data["action"] = action;
+                    ctx.data["itemId"] = itemId;
+                    cmdMgr->executeCommand("asmaction", ctx);
+                });
+
         // ── 雙擊組件：在另一個 CADView 開啟來源 *.aicad 編輯（存檔後自動與本文件同步）─────────
         connect(d->featureBrowser, &FeatureBrowser::openComponentSourceRequested,
                 this, [this, docMgr](const QString& itemId) {
@@ -2830,6 +2862,16 @@ bool UIManager::initialize(core::MenuParser* menuParser) {
                     ExtrudeEditDialog dlg(ex, d->mainWindow);
                     if (dlg.exec() == QDialog::Accepted)
                         setStatusMessage(tr("擠出「%1」已更新").arg(ex->name()), 4000);
+                });
+
+        // ── 旋轉／掃掠／放樣／圓角／抽殼／布林：編輯參數 ─────────────────────────
+        connect(d->featureBrowser, &FeatureBrowser::editSolidFeatureRequested,
+                this, [this, docMgr](const QString& itemId) {
+                    auto* doc = docMgr->currentDocument();
+                    cad::Feature* f = doc ? doc->findFeature(itemId) : nullptr;
+                    if (!f) return;
+                    if (editSolidFeature(f, d->mainWindow))
+                        setStatusMessage(tr("特徵「%1」已更新").arg(f->name()), 4000);
                 });
 
         // ── 道版 E,N 平面圖：匯出 DXF ──────────────────────────────────────────────

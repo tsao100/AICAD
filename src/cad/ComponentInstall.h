@@ -47,6 +47,9 @@ public:
         double  chainage = 0.0;   ///< 安裝里程 [m]（與斷面陣列使用的里程相同）
         double  lateral  = 0.0;   ///< 沿軌道面的橫向偏移 [m]（+ = 右手邊）
         bool    flip180  = false; ///< 繞軌道面法線旋轉 180°
+        // 沿線形安裝時如何使用來源檔的內容（來源檔 = Part＋Assembly 組成「組件」，Void 組成「開孔」）：
+        bool    installAssembly = true;   ///< 在此里程安裝組件（Part／Assembly 的實體）
+        bool    cutVoid         = true;   ///< 在此里程用 Void 對道版 Loft 開孔
     };
 
     explicit ComponentInstall(Document* parent = nullptr);
@@ -73,10 +76,11 @@ public:
     // ── 由 *.aicad 取出「組件」與「void」──────────────────────────────────
     //
     // 組件檔內「所有 3D 特徵的組合結果」：
-    //   • 名稱為 void（不分大小寫；void、void1、void_2…）的 3D 特徵 → 合成「void」：
-    //     道版 Loft 在安裝位置要挖除（差集）的空間。void 不一定要有。
-    //   • 其餘所有 3D 特徵（只取終端結果，被其他特徵消耗的中間實體不重複計入）→ 合成
-    //     「組件實體」：顯示在安裝位置。
+    //   • 歸屬 Feature Browser「Void」根的 3D 特徵（Feature::isVoid）→ 合成「void」：
+    //     道版 Loft 在安裝位置要挖除（差集）的空間。Void 不一定要有。
+    //     （舊檔沒有歸屬欄位時，名稱為 void／void1／void_2… 者視為 Void；見 Feature::isVoidName）
+    //   • 其餘（「Assembly」根底下的擠出等造型特徵與插入的零件；只取終端結果，被其他特徵消耗的
+    //     中間實體不重複計入）→ 合成「組件實體」：顯示在安裝位置。
     static bool isVoidName(const QString& featureName);
     static bool extractFromDocument(const Document* src,
                                     TopoDS_Shape& component, QStringList& componentNames,

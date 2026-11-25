@@ -8,7 +8,11 @@
 #include "cad/Document.h"
 #include "cad/Sketch.h"
 #include "cad/Extrude.h"
+#include "cad/FeatureGroup.h"
 #include <QDebug>
+#include <QApplication>
+#include <QInputDialog>
+#include <QStringList>
 
 using namespace aicad::core;
 
@@ -18,6 +22,50 @@ namespace command {
 ExtrudeCommand::ExtrudeCommand(QObject* parent)
     : Command("extrude", "Extrude a sketch profile", parent)
 {}
+
+ExtrudeCommand::ExtrudeCommand(const QString& name, const QString& description, int operation,
+                               QObject* parent)
+    : Command(name, description, parent), m_operation(operation)
+{}
+
+QVariantMap ExtrudeCommand::makeCreateData(double height) const
+{
+    QVariantMap data;
+    data["sketchId"]  = m_sketchId;
+    data["height"]    = height;
+    data["operation"] = m_operation;
+    data["targetId"]  = m_targetId;
+    return data;
+}
+
+bool ExtrudeCommand::pickTarget(QString* err)
+{
+    m_targetId.clear();
+    if (m_operation == 0) return true;
+
+    cad::Document* doc = Application::instance()->documentManager()->currentDocument();
+    const QList<cad::Feature*> cands = doc ? doc->solidFeatureCandidates() : QList<cad::Feature*>();
+    if (cands.isEmpty()) {
+        if (err) *err = QStringLiteral("文件裡沒有可以挖除／運算的實體");
+        return false;
+    }
+    if (cands.size() == 1) {            // 只有一個就直接用，不多問
+        m_targetId = cands.first()->id();
+        return true;
+    }
+    QStringList names;
+    for (cad::Feature* f : cands) names << f->name();
+    bool ok = false;
+    const QString chosen = QInputDialog::getItem(QApplication::activeWindow(),
+                               QStringLiteral("目標實體"), QStringLiteral("對哪個實體運算？"),
+                               names, 0, false, &ok);
+    if (!ok) {
+        if (err) *err = QStringLiteral("已取消");
+        return false;
+    }
+    m_targetId = cands.at(names.indexOf(chosen))->id();
+    return true;
+}
 
 CommandResult ExtrudeCommand::execute(const CommandContext& context) {
     Application* app = Application::instance();
@@ -34,16 +82,19 @@ CommandResult ExtrudeCommand::execute(const CommandContext& context) {
 
     m_sketchId = sketch->id();
 
+    {
+        QString perr;
+        if (!pickTarget(&perr))
+            return CommandResult::Failure(perr);
+    }
+
     // 非互動模式
     if (!context.args.isEmpty()) {
         bool ok;
         double height = context.args[0].toDouble(&ok);
         if (!ok || height <= 0.0)
             return CommandResult::Failure("Invalid height value");
-        QVariantMap data;
-        data["sketchId"] = m_sketchId;
-        data["height"]   = height;
-        bus->publish("command.create-extrude", data);
+        bus->publish("command.create-extrude", makeCreateData(height));
         complete(CommandResult::Success(
             QString("Extrude created with height %1").arg(height)));
         return CommandResult::Success();
@@ -117,10 +168,7 @@ void ExtrudeCommand::promptForHeight()
     bus->publish("command.clear-sketch-regions", QVariant());
 
     // ── 先用預設高度建立 Extrude（0 height = placeholder）──────────
-    QVariantMap createData;
-    createData["sketchId"] = m_sketchId;
-    createData["height"]   = 10.0;  // 初始預覽高度
-    bus->publish("command.create-extrude", createData);
+    bus->publish("command.create-extrude", makeCreateData(10.0));   // 初始預覽高度
 
     // 等 Document 建立 Extrude 後，取得最新的 feature
     cad::Document* doc = app->documentManager()->currentDocument();
@@ -138,9 +186,43 @@ void ExtrudeCommand::promptForHeight()
     launchManipulator(extrude);
 }
 
+bool ExtrudeCommand::applyTargetKeyword(const QString& text)
+{
+    cad::Document* doc = Application::instance()->documentManager()->currentDocument();
+    if (!doc || !m_extrude) return false;
+
+    const QString t = text.trimmed();
+    cad::FeatureGroup g;
+    if (t.compare(QStringLiteral("P"), Qt::CaseInsensitive) == 0 || t.compare(QStringLiteral("Part"), Qt::CaseInsensitive) == 0)
+        g = cad::FeatureGroup::Part;
+    else if (t.compare(QStringLiteral("A"), Qt::CaseInsensitive) == 0 || t.compare(QStringLiteral("Assembly"), Qt::CaseInsensitive) == 0)
+        g = cad::FeatureGroup::Assembly;
+    else if (t.compare(QStringLiteral("V"), Qt::CaseInsensitive) == 0 || t.compare(QStringLiteral("Void"), Qt::CaseInsensitive) == 0)
+        g = cad::FeatureGroup::Void;
+    else
+        return false;
+
+    doc->setFeatureGroup(m_extrude, g);       // 立即生效（Void 以半透明紅色顯示）
+    doc->setActiveGroup(g);                   // 接下來新建的擠出也放進這個根
+    Application::instance()->eventBus()->publish(
+        Events::COMMAND_LOG,
+        QString("Extrude 放入 %1（之後新建的特徵也會放進 %1）").arg(cad::Document::groupLabel(g)));
+    showTargetPrompt();
+    return true;
+}
+
+void ExtrudeCommand::showTargetPrompt()
+{
+    const QString cur = m_extrude ? cad::Document::groupLabel(m_extrude->group()) : QStringLiteral("Part");
+    if (auto* clm = core::CommandLineManager::instance())
+        clm->showPrompt(QString("拖曳箭頭調整高度，或輸入數值後按 Enter 確認（Shift+點翻轉箭頭=對稱）。"
+                                "放入 [Part(P)/Assembly(A)/Void(V)]（目前：%1）").arg(cur));
+}
+
 void ExtrudeCommand::handleHeightInput(const QString& input)
 {
     Application* app = Application::instance();
+    if (applyTargetKeyword(input)) return;          // 輸入 P／A／V：只切換放入的根，繼續等高度
     bool ok;
     double height = input.toDouble(&ok);
     if (!ok || height <= 0.0) {
@@ -156,10 +238,7 @@ void ExtrudeCommand::handleHeightInput(const QString& input)
         m_manipulator->hide();
     } else {
         // 降級文字輸入路徑（同原本邏輯）
-        QVariantMap data;
-        data["sketchId"] = m_sketchId;
-        data["height"]   = height;
-        app->eventBus()->publish("command.create-extrude", data);
+        app->eventBus()->publish("command.create-extrude", makeCreateData(height));
     }
 
     app->clearSelectedRegion();
@@ -189,11 +268,17 @@ void ExtrudeCommand::launchManipulator(cad::Extrude* extrude)
 
     setState(CommandState::Running);
 
+    m_extrude = extrude;
     m_manipulator = new manipulator::ExtrudeManipulator(extrude, cadView, this);
     m_manipulator->show();
 
-    app->eventBus()->publish(Events::COMMAND_PROMPT,
-                             "拖曳箭頭調整高度，或輸入數值後按 Enter 確認（Shift+點翻轉箭頭=對稱）");
+    // 提示列的 [Part(P)/Assembly(A)/Void(V)] 會變成可點選的選項：新建擠出時直接決定放進哪個根
+    showTargetPrompt();
+    app->eventBus()->subscribe(Events::OPTION_SELECTED, this,
+        [this](const QVariant& v) {
+            QMetaObject::invokeMethod(this, [this, v]() { applyTargetKeyword(v.toString()); },
+                                      Qt::QueuedConnection);
+        });
 
     // height confirmed → complete command
     connect(m_manipulator, &manipulator::ExtrudeManipulator::heightConfirmed,
@@ -239,6 +324,7 @@ void ExtrudeCommand::cleanup() {
 }
 
 REGISTER_COMMAND("extrude", ExtrudeCommand);
+REGISTER_COMMAND("extrudecut", ExtrudeCutCommand);
 
 } // namespace command
 } // namespace aicad

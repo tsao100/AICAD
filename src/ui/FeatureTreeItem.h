@@ -41,7 +41,22 @@ enum class ItemType {
     SlabPlan,         ///< 道版 XY 平面圖（TrackSlabPlan）
     Component,        ///< 3D 組件安裝（ComponentInstall）
     ComponentLayout,  ///< 「組件安裝位置」虛擬資料夾（底下是各組件）
-    DefinedPlane      ///< 定義平面（可選用為草圖平面）
+    DefinedPlane,     ///< 定義平面（可選用為草圖平面）
+    PartFolder,       ///< 固定根節點「Part」：底下的造型特徵組成零件本體
+    VoidFolder,       ///< 固定根節點「Void」：底下的特徵組成開孔形體
+    AssemblyFolder,   ///< 固定根節點「Assembly」：底下是造型特徵、插入的零件與「配合」資料夾
+    AssemblyPart,     ///< 組合中的零件（AssemblyPart）
+    AssemblyMatesFolder, ///< 「配合」虛擬資料夾
+    AssemblyMate,      ///< 配合（AssemblyMate）
+    Revolve,          ///< 旋轉
+    Sweep,            ///< 掃掠
+    SketchLoft,       ///< 草圖斷面放樣
+    Fillet,           ///< 3D 圓角
+    Shell,            ///< 抽殼
+    Boolean,          ///< 布林運算
+    SolidPattern,     ///< 3D 陣列（線性／環狀）
+    Mirror,           ///< 3D 鏡射
+    Hole              ///< 孔精靈
 };
 
 /**
@@ -86,6 +101,8 @@ struct FeatureTreeItem {
             case ItemType::DrawingSheetItem:return "DrawingSheet";
             case ItemType::DepotViewFolder: return "DepotViewFolder";
             case ItemType::DepotViewItem:   return "DepotView";
+            case ItemType::AssemblyPart:    return "AssemblyPart";
+            case ItemType::AssemblyMate:    return "AssemblyMate";
             default:                        return "Feature";
         }
     }

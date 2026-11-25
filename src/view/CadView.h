@@ -21,6 +21,8 @@
 #include <V3d_View.hxx>
 #include <V3d_Viewer.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopAbs_ShapeEnum.hxx>
 
 #include "osnap/OSnapManager.h"
 #include "view/DimPreviewOverlay.h"
@@ -89,6 +91,21 @@ enum class InteractionMode {
 struct PickedEdgeRef {
     QString     featureId;
     TopoDS_Edge edge;
+};
+
+/// 一個被選取面的參照（配合 CadView::beginFacePicking() 使用；抽殼選面）
+struct PickedFaceRef {
+    QString     featureId;
+    TopoDS_Face face;
+};
+
+/**
+ * @brief 一個被選取的子形（面／邊／頂點）的參照（配合 CadView::beginSubShapePicking() 使用）。
+ * shape 是該 Feature 目前顯示中的 shape() 的子形，座標即世界座標。
+ */
+struct PickedSubShapeRef {
+    QString      featureId;
+    TopoDS_Shape shape;
 };
 
 /**
@@ -461,6 +478,26 @@ public:
      */
     QVector<PickedEdgeRef> pickedEdges() const;
 
+    /**
+     * @brief 開啟面／邊／頂點子形選取（可複選種類），並切換到 InteractionMode::PickEdge
+     *        （滑鼠點擊的處理與 beginEdgePicking 相同，每次命中／取消發出 edgePicked()）。
+     *        供「零件組合配合」選取幾何參照使用。onlyFeatureType 非空時只開放該 typeString() 的特徵
+     *        （例如 "AssemblyPart"）。結束時呼叫 endEdgePicking()（還原整體選取並清空選取集合）。
+     */
+    void beginSubShapePicking(bool faces, bool edges, bool vertices,
+                              const QString& onlyFeatureType = QString());
+
+    /// 重畫「配合」的 3D 標示（Document::assemblyVisualChanged 或 displayAllFeatures 之後呼叫）
+    void refreshMateMarkers();
+
+    /// 目前選取集合中的面／邊／頂點（僅在 beginSubShapePicking() 之後、endEdgePicking() 之前有意義）
+    QVector<PickedSubShapeRef> pickedSubShapes() const;
+    /// 與 beginEdgePicking() 相同，但選的是「面」（抽殼等指令使用）。
+    /// 點選時同樣發出 edgePicked()；結束請呼叫 endFacePicking() 並自行還原 InteractionMode。
+    void beginFacePicking();
+    void endFacePicking();
+    QVector<PickedFaceRef> pickedFaces() const;
+
     ViewGrid* grid() const;  // Add this public method declaration
 
     osnap::OSnapManager* snapManager() const;
@@ -771,6 +808,7 @@ public:
     QList<AnnotationCollision> checkAnnotationCollisions() const;
 
 private:
+    void beginSubshapePicking(TopAbs_ShapeEnum kind);   ///< beginEdgePicking/beginFacePicking 共用
     /**
      * @brief 執行「完整取消」：與舊行為「InputJig 作用中按 ESC 兩次」/
      *        鍵盤 ESC 落在 CadView 本身（非 Jig 的行內編輯欄）時完全相同的

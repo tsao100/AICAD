@@ -384,10 +384,29 @@ SOURCES += \
     src/cad/ProfileLoftSolid.cpp \
     src/cad/TrackSlabPlan.cpp \
     src/cad/ComponentInstall.cpp \
+    src/cad/AssemblySolver.cpp \
+    src/cad/AssemblyGeom.cpp \
+    src/cad/AssemblyPart.cpp \
+    src/cad/AssemblyMate.cpp \
+    src/cad/AssemblyUtil.cpp \
+    src/view/MateMarkerPresenter.cpp \
+    src/ui/AssemblyDialogs.cpp \
+    src/command/AssemblyCommands.cpp \
     src/cad/DefinedPlane.cpp \
     src/cad/CantLineUtil.cpp \
     src/ui/ComponentDialogs.cpp \
     src/ui/ExtrudeEditDialog.cpp \
+    src/ui/SolidFeatureDialogs.cpp \
+    src/command/SolidShapingCommands.cpp \
+    src/cad/SolidOps.cpp \
+    src/cad/ShapingFeature.cpp \
+    src/cad/Revolve.cpp \
+    src/cad/Sweep.cpp \
+    src/cad/SketchLoft.cpp \
+    src/cad/SolidModifier.cpp \
+    src/cad/SolidBoolean.cpp \
+    src/cad/SolidPatterns.cpp \
+    src/cad/HoleFeature.cpp \
     src/ui/DocumentTabBar.cpp \
     src/ui/DefinePlaneDialog.cpp \
     src/command/DefinePlaneCommand.cpp \
@@ -469,7 +488,15 @@ SOURCES += \
     # Scripting Module (Daney - 腳本系統)
     src/scripting/LispEngine.cpp \
     src/scripting/LispBindings.cpp \
-    src/scripting/ScriptManager.cpp
+    src/scripting/ScriptManager.cpp \
+    src/scripting/LispLanguage.cpp \
+    \
+    # Lisp Editor (Lisp 編輯器：語法上色 / 括號配對 / 自動縮排 / 補全 / REPL)
+    src/ui/LispSyntaxHighlighter.cpp \
+    src/ui/LispCodeEdit.cpp \
+    src/ui/LispEditorWidget.cpp \
+    src/ui/LispEditorDock.cpp \
+    src/command/LispEditorCommand.cpp
 
 HEADERS += \
     # Core Module
@@ -582,10 +609,30 @@ HEADERS += \
     src/cad/ProfileLoftSolid.h \
     src/cad/TrackSlabPlan.h \
     src/cad/ComponentInstall.h \
+    src/cad/AssemblySolver.h \
+    src/cad/AssemblyGeom.h \
+    src/cad/AssemblyPart.h \
+    src/cad/AssemblyMate.h \
+    src/cad/AssemblyUtil.h \
+    src/cad/FeatureGroup.h \
+    src/view/MateMarkerPresenter.h \
+    src/ui/AssemblyDialogs.h \
+    src/command/AssemblyCommands.h \
     src/cad/DefinedPlane.h \
     src/cad/CantLineUtil.h \
     src/ui/ComponentDialogs.h \
     src/ui/ExtrudeEditDialog.h \
+    src/ui/SolidFeatureDialogs.h \
+    src/command/SolidShapingCommands.h \
+    src/cad/SolidOps.h \
+    src/cad/ShapingFeature.h \
+    src/cad/Revolve.h \
+    src/cad/Sweep.h \
+    src/cad/SketchLoft.h \
+    src/cad/SolidModifier.h \
+    src/cad/SolidBoolean.h \
+    src/cad/SolidPatterns.h \
+    src/cad/HoleFeature.h \
     src/ui/DocumentTabBar.h \
     src/ui/DefinePlaneDialog.h \
     src/command/DefinePlaneCommand.h \
@@ -681,7 +728,15 @@ HEADERS += \
     # Scripting Module (Daney)
     src/scripting/LispEngine.h \
     src/scripting/LispBindings.h \
-    src/scripting/ScriptManager.h
+    src/scripting/ScriptManager.h \
+    src/scripting/LispLanguage.h \
+    \
+    # Lisp Editor
+    src/ui/LispSyntaxHighlighter.h \
+    src/ui/LispCodeEdit.h \
+    src/ui/LispEditorWidget.h \
+    src/ui/LispEditorDock.h \
+    src/command/LispEditorCommand.h
 
 RESOURCES += \
     resources.qrc

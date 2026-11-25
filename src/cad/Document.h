@@ -8,6 +8,7 @@
 #ifndef AICAD_CAD_DOCUMENT_H
 #define AICAD_CAD_DOCUMENT_H
 
+#include "FeatureGroup.h"
 #include "ui/FeatureTreeItem.h"
 #include "DependencyGraph.h"
 #include "core/ParameterStore.h"
@@ -36,6 +37,8 @@ class ProfileLoftSolid;
 class TrackSlabPlan;
 class ComponentInstall;
 class DefinedPlane;
+class AssemblyPart;
+class AssemblyMate;
 struct PlaneDef;
 class ChamferSolid;
 
@@ -239,7 +242,32 @@ public:
     /**
      * @brief 建立擠出
      */
-    Extrude* createExtrude(Sketch* sketch, double height, const QString& name = QString());
+    /// @param operation 0=新實體 1=聯集 2=挖除 3=交集（SolidOp）；非 0 時需指定 target
+    Extrude* createExtrude(Sketch* sketch, double height, const QString& name = QString(),
+                           int operation = 0, Feature* target = nullptr);
+
+    /**
+     * @brief 通用登記：旋轉／掃掠／放樣／圓角／抽殼／布林等「實體特徵」。
+     *        呼叫前請先把來源／目標／草圖都設定到 feature 上。
+     * @param baseName         特徵名稱前綴，會自動加編號（例如 "Revolve" → "Revolve 3"）
+     * @param consumedSketches 被此特徵用掉的草圖：隱藏，且（尚無父特徵者）掛到此特徵底下
+     * @param consumedFeatures 被此特徵用掉的來源／目標實體：隱藏（只顯示最後結果）
+     */
+    void registerSolidFeature(Feature* feature, const QString& baseName,
+                              const QList<Sketch*>& consumedSketches = QList<Sketch*>(),
+                              const QList<Feature*>& consumedFeatures = QList<Feature*>());
+
+    /**
+     * @brief 可當作「目標／來源實體」的候選：shape 內含實體、尚未被其他特徵用掉、
+     *        且不會造成循環相依。
+     * @param exclude 正在編輯的特徵本身（及依賴它的特徵會被排除）
+     * @param keep    即使已被 exclude 以外的特徵用掉也保留的特徵（編輯時目前的目標）
+     */
+    QList<Feature*> solidFeatureCandidates(const Feature* exclude = nullptr,
+                                           const Feature* keep = nullptr) const;
+
+    /// 文件內所有草圖（含被用掉而隱藏的）
+    QList<Sketch*> allSketches() const;
 
     /**
      * @brief 建立沿線斷面草圖陣列（ProfileArrayAlongAlignment 規劃 §2.2）
@@ -281,6 +309,58 @@ public:
     /// 組件的安裝位置被編輯（或組件被刪除）後：重算組件、並重建所有 Loft 重新開孔
     void applyComponentChange(ComponentInstall* ci);
     void rebuildLoftsForComponents();
+
+    // ── 零件組合（Assembly）：零件（*.aicad 實體 + 位姿）與配合（共線、共面、距離、夾角…）──────────────
+    //   createAssemblyPart() 建立空物件 → 呼叫端 setSource()／setPose()… → addAssemblyPart()
+    //   createAssemblyMate() 建立空物件 → 呼叫端 setData() → addAssemblyMate()；之後 solveAssembly() 立即求解
+    QVector<AssemblyPart*> assemblyParts() const;
+    QVector<AssemblyMate*> assemblyMates() const;
+    AssemblyPart* createAssemblyPart(const QString& name = QString());
+    void          addAssemblyPart(AssemblyPart* part);
+    AssemblyMate* createAssemblyMate(const QString& name = QString());
+    void          addAssemblyMate(AssemblyMate* mate);
+    // ── 文件種類與副檔名 ───────────────────────────────────────────────────
+    //   專案 .aicad  ：完整專案（線形、草圖、道版、圖紙…）
+    //   零件 .aipart ：單一零件（造型特徵放在 Part 根）
+    //   組合 .aiasm  ：由零件檔插入＋配合組成（Assembly 根），可含 Void；可安裝到線形（INSERTCOMP）
+    enum class Kind { Project = 0, Part = 1, Assembly = 2 };
+    Kind kind() const { return m_kind; }
+    void setKind(Kind k);                              ///< 同時把「目前放置根」重設成該種類的預設
+    static Kind    kindForFile(const QString& path);   ///< 依副檔名；未知 → Project
+    static QString suffixForKind(Kind k);              ///< "aicad"／"aipart"／"aiasm"
+    static QString kindLabel(Kind k);                  ///< 專案／零件／組合
+    static QString kindToString(Kind k);
+    static Kind    kindFromString(const QString& s, Kind fallback = Kind::Project);
+    /// 檔案對話框篩選字串（Qt 格式）
+    static QString openFilter();                       ///< 開啟：全部 AICAD 檔
+    static QString saveFilter(Kind k);                 ///< 另存：該種類的格式排第一
+    static QString insertPartFilter();                 ///< INSERTPART：零件／組合（*.aipart *.aiasm），舊版 *.aicad
+    static QString insertComponentFilter();            ///< INSERTCOMP：組合／零件（*.aiasm *.aipart），舊版 *.aicad
+    /// 儲存路徑沒有副檔名時補上該種類的副檔名
+    static QString withSuffix(const QString& path, Kind k);
+
+    // ── Part／Assembly／Void 根節點 ─────────────────────────────────────────
+    /// 此特徵能不能放在 Part／Assembly／Void 根底下（Extrude、ChamferSolid、AssemblyPart）
+    static bool isGroupable(const Feature* feature);
+    static QString groupRootId(FeatureGroup g);        ///< "__part_folder__"／"__assembly_folder__"／"__void_folder__"
+    static QString groupLabel(FeatureGroup g);         ///< Part／Assembly／Void
+    /// 把特徵移到指定的根。同一條形體鏈（消耗／被消耗）的特徵一併移動。
+    void          setFeatureGroup(Feature* feature, FeatureGroup group);
+    /// 「目前放置根」：之後新建的擠出（及其倒角）放進哪個根。預設依文件種類（零件→Part、組合→Assembly、專案→Part）
+    FeatureGroup  activeGroup() const { return m_activeGroup; }
+    void          setActiveGroup(FeatureGroup g);
+    /// 零件的位姿／固定／縮放被編輯後：重新放置並重新求解
+    void          applyAssemblyPartChange(AssemblyPart* part);
+    /// 蒐集全部零件與配合 → 求解 → 更新零件位姿與各配合的錯誤狀態。全部配合滿足才套用；否則零件維持原位。
+    bool          solveAssembly(QString* report = nullptr);
+    void          scheduleAssemblySolve();                 ///< 排程（合併多次請求）求解
+    QString       assemblyReport() const { return m_asmReport; }
+
+    /// 配合在 3D 視圖的標示（「配合 Mates」資料夾的眼睛圖示）；選到的配合以較粗、黃色強調
+    bool          mateMarkersVisible() const { return m_mateMarkersVisible; }
+    void          setMateMarkersVisible(bool v);
+    QString       highlightedMateId() const { return m_highlightMateId; }
+    void          setHighlightedMate(const QString& mateId);
 
     /**
      * @brief 將 AlignedProfileArray 各測站輪廓放樣成實體（Step 9）
@@ -515,6 +595,11 @@ Q_SIGNALS:
 
     void featureShapeUpdated(Feature* feature);
 
+    /// 組合求解完成（ok = 全部配合滿足）；report 為說明（自由度／失敗原因）
+    void assemblySolved(bool ok, const QString& report);
+    /// 配合標示需要重畫（求解後、增刪配合、標示顯示／高亮改變）
+    void assemblyVisualChanged();
+
     void trackCenterLinesChanged();
 
 private Q_SLOTS:
@@ -558,6 +643,16 @@ private:
     QString m_componentSig;            ///< 上次同步時的 ComponentInstall id 清單（變了 → 重建 Loft）
     bool m_slabSyncPending  = false;   ///< 道版圖同步已排程（合併多次 featureAdded/Removed）
     void scheduleSlabSync();
+
+    Kind         m_kind = Kind::Project;
+    bool         m_mateMarkersVisible = true;
+    QString      m_highlightMateId;
+    FeatureGroup m_activeGroup = FeatureGroup::Part;
+    bool    m_asmSolvePending = false; ///< 組合求解已排程
+    bool    m_asmSolving      = false; ///< 求解中（擋遞迴）
+    QString m_asmReport;               ///< 最近一次求解的說明
+    void wireAssemblyPart(AssemblyPart* part);
+    void onAssemblyPartSynced(AssemblyPart* part);
 
     // ✅ 新增：參考幾何和 AIS 上下文
     QList<ReferenceGeometry> m_referenceGeometries;

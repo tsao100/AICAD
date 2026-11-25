@@ -8,6 +8,7 @@
  *   3. 兩向平分：給「總長」，以草圖平面為中心兩側各半
  *   4. 兩向各自給值：第一側（正向）、第二側（反向）各自一個值
  * 所有值皆可用數字或參數運算式。
+ * 另可設定拔模角度（錐度）與運算方式（挖除／聯集／交集）及目標實體。
  */
 #pragma once
 
@@ -21,6 +22,8 @@ class QWidget;
 namespace aicad {
 namespace cad { class Extrude; }
 namespace ui {
+
+class OpTargetBox;
 
 class ExtrudeEditDialog : public QDialog {
     Q_OBJECT
@@ -53,6 +56,9 @@ private:
     QLineEdit* m_side2 = nullptr;
 
     QLabel*    m_preview = nullptr;
+
+    QLineEdit*   m_draft = nullptr;     ///< 拔模角度（°），0 = 無錐度
+    OpTargetBox* m_opBox = nullptr;     ///< 運算方式（新實體／聯集／挖除／交集）與目標
 };
 
 } // namespace ui

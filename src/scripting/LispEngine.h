@@ -64,6 +64,25 @@ namespace scripting {
 using LispCallback = std::function<QVariant(const QVariantList&)>;
 
 /**
+ * @brief evalDetailed() 的結果（給 Lisp 編輯器 / 腳本執行用）
+ *
+ * 與 eval() 的差異：
+ *  - 會依序求值「所有」頂層表達式（eval() 只讀第一個）
+ *  - 擷取 *standard-output* / *error-output*（print、format t、警告…）
+ *  - Lisp 端用 handler-case 攔截錯誤，不會掉進 ECL 的 break loop / debugger
+ *  - 回報出錯（或讀取失敗）那個頂層表達式在原始碼中的字元範圍
+ */
+struct LispEvalResult {
+    bool    ok            = false;
+    QString value;                 ///< 最後一個表達式的值（prin1 格式；無表達式時為空字串）
+    QString output;                ///< 求值期間寫到標準輸出 / 錯誤輸出的文字
+    QString error;                 ///< 錯誤訊息（ok == true 時為空）
+    int     errorStart    = -1;    ///< 出錯表達式起點（QString 的 UTF-16 索引，-1 = 未知）
+    int     errorEnd      = -1;    ///< 出錯表達式終點（不含）
+    int     formsEvaluated = 0;    ///< 已成功求值的頂層表達式數量
+};
+
+/**
  * @brief Lisp 引擎
  * 
  * LispEngine 提供：
@@ -123,6 +142,14 @@ public:
      * @return 執行結果
      */
     QVariant eval(const QString& code);
+
+    /**
+     * @brief 求值一段可含多個頂層表達式的 Lisp 原始碼，回傳完整結果
+     *
+     * 供 Lisp 編輯器、loadFile()、load_lisp 命令使用。必須在 GUI 執行緒呼叫
+     * （綁定函式會直接操作 Document / View）。
+     */
+    LispEvalResult evalDetailed(const QString& code);
     
     /**
      * @brief 載入 Lisp 檔案

@@ -5,6 +5,7 @@
  * @date 2025-01-08
  */
 
+#include <QRegularExpression>
 #include "Feature.h"
 #include "Document.h"
 #include <QJsonObject>
@@ -57,6 +58,14 @@ QString Feature::typeString() const {
     case FeatureType::SlabPlan: return "SlabPlan";
     case FeatureType::ComponentInstall: return "ComponentInstall";
     case FeatureType::DefinedPlane: return "DefinedPlane";
+    case FeatureType::AssemblyPart: return "AssemblyPart";
+    case FeatureType::AssemblyMate: return "AssemblyMate";
+    case FeatureType::Sweep:    return "Sweep";
+    case FeatureType::SketchLoft: return "SketchLoft";
+    case FeatureType::Shell:    return "Shell";
+    case FeatureType::SolidPattern: return "SolidPattern";
+    case FeatureType::Mirror:   return "SolidMirror";
+    case FeatureType::Hole:     return "Hole";
     default:                    return "Unknown";
     }
 }
@@ -199,6 +208,14 @@ int Feature::index() const {
     return -1;
 }
 
+bool Feature::isVoidName(const QString& featureName)
+{
+    // void / void1 / void_2 / void 3 / VOID-4（不分大小寫）
+    static const QRegularExpression re(QStringLiteral("^void([\\s_\\-]?\\d+)?$"),
+                                       QRegularExpression::CaseInsensitiveOption);
+    return re.match(featureName.trimmed()).hasMatch();
+}
+
 QJsonObject Feature::toJson() const {
     QJsonObject json;
     json["id"] = m_id.toString();
@@ -206,6 +223,9 @@ QJsonObject Feature::toJson() const {
     json["type"] = typeString();
     json["visible"] = m_visible;
     json["suppressed"] = m_suppressed;
+    json["group"] = m_group == Group::Void ? QStringLiteral("void")
+                  : m_group == Group::Assembly ? QStringLiteral("assembly") : QStringLiteral("part");
+    json["groupVer"] = 2;
 
     if (m_hasError) {
         json["hasError"] = true;
@@ -234,6 +254,27 @@ bool Feature::fromJson(const QJsonObject& json) {
 
     if (json.contains("suppressed")) {
         setSuppressed(json["suppressed"].toBool());
+    }
+
+    // 歸屬的根節點。
+    //   groupVer >= 2：照存檔（part／assembly／void）。
+    //   groupVer 1（只有 Void／Assembly 兩個根的版本）：void → Void；assembly → 零件實體留在 Assembly，
+    //     其餘造型特徵（擠出等）原本只是「預設根」→ 改放 Part。
+    //   沒有欄位的舊檔：名稱為 void／void1／void_2… → Void，其餘維持建構時的預設。
+    if (json.contains("group")) {
+        const QString g = json["group"].toString();
+        if (json["groupVer"].toInt(1) >= 2) {
+            m_group = g == QLatin1String("void") ? Group::Void
+                    : g == QLatin1String("assembly") ? Group::Assembly : Group::Part;
+        } else if (g == QLatin1String("void")) {
+            m_group = Group::Void;
+        } else if (g == QLatin1String("assembly") && typeString() == QLatin1String("AssemblyPart")) {
+            m_group = Group::Assembly;
+        } else {
+            m_group = (typeString() == QLatin1String("AssemblyPart")) ? Group::Assembly : Group::Part;
+        }
+    } else if (isVoidName(m_name)) {
+        m_group = Group::Void;
     }
 
     if (json.contains("hasError") && json["hasError"].toBool()) {

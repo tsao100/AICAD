@@ -154,12 +154,18 @@ Q_SIGNALS:
     void insertComponentRequested();
     /// Extrude 右鍵「編輯擠出（方向／尺寸）…」
     void editExtrudeRequested(const QString& itemId);
+
+    /// 旋轉／掃掠／放樣／圓角／抽殼／布林 右鍵「編輯特徵參數…」
+    void editSolidFeatureRequested(const QString& itemId);
     /// 定義平面：以 baseRef（"XY"/"XZ"/"YZ" 或 DefinedPlane 的 id）為基準新增
     void defineNewPlaneRequested(const QString& baseRef);
     /// 定義平面：編輯基準／偏移
     void editDefinedPlaneRequested(const QString& itemId);
     /// 定義平面：在此平面建立草圖
     void createSketchOnDefinedPlaneRequested(const QString& itemId);
+    /// 零件組合（Assembly）與 Void／Assembly 根：action = insertPart／insertPartVoid／moveToPart／moveToAssembly／moveToVoid／setActivePart／setActiveAssembly／setActiveVoid／addMate／solve／editPart／toggleFixed／syncPart／openSource／
+    ///                              addMateForPart／editMate／toggleSuppress；itemId 為零件或配合的 id（資料夾動作為空或資料夾 id）
+    void assemblyActionRequested(const QString& action, const QString& itemId);
 
     // TrackCenterLine context menu actions
     void editAlignmentRequested(const QString& tclId);
@@ -206,6 +212,7 @@ private:
     /**
      * @brief 根據資料建立 tree items
      */
+    void applyDragDropFlags();
     void buildTreeFromData(const QVector<FeatureTreeItem>& items);
 
     /**

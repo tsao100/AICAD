@@ -323,3 +323,34 @@ Daney 已完成:
 2. 擴充 API 綁定
 3. 撰寫測試腳本
 4. 建立腳本庫
+---
+
+## Lisp 編輯器（lisped）
+
+開啟方式：選單 **Script → Lisp Editor**（`Ctrl+Shift+E`），或命令列輸入 `lisped` / `le`（可帶檔名：`lisped D:\x.lisp`）。
+第一次開啟為浮動視窗，可拖進主視窗停靠。`load_lisp [檔案]` 也已實作（原本只有選單項目，沒有對應命令）。
+
+| 操作 | 快捷鍵 |
+|---|---|
+| 執行整個檔案（所有頂層表達式） | `F5` |
+| 執行選取範圍；無選取 → 游標所在的頂層表達式 | `Ctrl+Enter` |
+| 重新縮排目前行／選取行／整份檔案 | `Tab`（無選取）／ `Ctrl+I` ／ `Ctrl+Shift+I` |
+| 選取多行後 `Tab` 縮排 2 格、`Shift+Tab` 凸排 2 格（無選取時 `Shift+Tab` 凸排目前行） | `Tab` ／ `Shift+Tab` |
+| 縮放編輯區文字（所有分頁同步、會記住大小） | `Ctrl+滾輪`、`Ctrl+±`、`Ctrl+0` 還原 |
+| 雙擊括號：選取成對括號（含）之間的全部程式碼 | 滑鼠雙擊 |
+| 註解切換、尋找、自動補全 | `Ctrl+/`、`Ctrl+F`、`Ctrl+Space`（輸入 2 字元自動彈出） |
+| 新增 / 開啟 / 儲存 / 另存 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S`（游標在程式碼區時優先於主視窗同名快捷鍵） |
+
+功能：語法上色（彩虹括號、AICAD API 獨立顏色）、括號配對與錯誤括號標示、Lisp 風格自動縮排、自動成對括號／引號、
+函式簽名提示（狀態列，含自己 `defun` 的函式）、錯誤位置紅色波浪底線並跳轉、定義大綱下拉選單、底部輸出面板 + REPL（Up/Down 歷史、括號未關閉時自動續行）、
+UTF-8 讀寫（保留 CRLF）、關閉程式時保存工作階段（含未存檔草稿）。
+
+程式結構：
+- `scripting/LispLanguage.*` — 純 Qt、不依賴 ECL：詞法、括號配對、縮排、字典（可單元測試）
+- `scripting/LispEngine::evalDetailed()` — 多表達式求值、擷取 stdout、Lisp 端 `handler-case`、回報出錯表達式範圍
+- `ui/LispCodeEdit` / `LispSyntaxHighlighter` / `LispEditorWidget` / `LispEditorDock`、`command/LispEditorCommand`
+
+行為注意：
+- 腳本在 GUI 執行緒同步執行；無窮迴圈會凍結介面（遞迴過深會回報 STACK-OVERFLOW，不會當掉）。
+- `(quit)` `(exit)` `(break)` 在 CL-USER 被遮蔽成「丟出錯誤」（否則會結束 AICAD 或卡進讀 stdin 的除錯器）。
+- 預設浮點格式改為 `double-float`（原本 single-float 只有約 7 位有效數字，TM2 大座標會被截斷）。

@@ -20,6 +20,9 @@
 #include "cad/Feature.h"
 #include "cad/Sketch.h"
 #include "cad/Document.h"
+#include "cad/AssemblyUtil.h"
+#include "MateMarkerPresenter.h"
+#include <memory>
 #include "cad/PlaneManager.h"
 #include "cad/grips/GripManager.h"
 #include "cad/grips/AlignmentGripProvider.h"
@@ -336,6 +339,8 @@ public:
     GripManager*         gripManager;
     bool commandInProgress = false;
     bool isDisplayingAllFeatures = false;
+    std::unique_ptr<MateMarkerPresenter> mateMarkers;   ///< 配合的 3D 標示
+    bool markersRefreshPending = false;
     bool constraintPickActive = false;  ///< pickSession 等待選取中（GetGeom 但 command 已 finished）
     bool gdimWholeGeomHitTestEnabled = false;  ///< GDIM 專用：圓/弧內部幾何式命中測試開關（見 CadView::setGdimWholeGeomHitTestEnabled()）
     bool refPickModeActive = false;     ///< 尺寸參數選取插入模式（見 CadView::setRefPickModeActive()）
@@ -943,6 +948,10 @@ void CadView::initializeViewer() {
                                        aisShape->SetColor(Quantity_NOC_KHAKI);
                                        aisShape->SetTransparency(0.7f);
                                    }
+                                   if (feature->isVoid()) {
+                                       aisShape->SetColor(Quantity_NOC_RED);
+                                       aisShape->SetTransparency(0.6f);
+                                   }
                                    d->context->Display(aisShape, Standard_False);
                                    d->aisToFeatureId[aisShape.get()] = itemId;
                                }
@@ -1050,6 +1059,35 @@ QString CadView::identifyPlane(const Handle(AIS_Shape)& shape) {
 // ────────────────────────────────────────────────────────────────────────────
 
 void CadView::beginEdgePicking() {
+    beginSubshapePicking(TopAbs_EDGE);
+}
+
+void CadView::beginFacePicking() {
+    beginSubshapePicking(TopAbs_FACE);
+}
+
+void CadView::endFacePicking() {
+    endEdgePicking();       // 還原方式相同：全部實體改回整體選取、清空選取集合
+}
+
+QVector<PickedFaceRef> CadView::pickedFaces() const {
+    QVector<PickedFaceRef> result;
+    if (d->context.IsNull()) return result;
+
+    for (d->context->InitSelected(); d->context->MoreSelected(); d->context->NextSelected()) {
+        const TopoDS_Shape sub = d->context->SelectedShape();
+        if (sub.IsNull() || sub.ShapeType() != TopAbs_FACE) continue;
+
+        Handle(AIS_InteractiveObject) obj = d->context->SelectedInteractive();
+        const QString featureId = obj.IsNull() ? QString() : d->aisToFeatureId.value(obj.get());
+        if (featureId.isEmpty()) continue;
+
+        result.append({featureId, TopoDS::Face(sub)});
+    }
+    return result;
+}
+
+void CadView::beginSubshapePicking(TopAbs_ShapeEnum kind) {
     if (!d->document || d->context.IsNull()) return;
 
     AIS_ListOfInteractive allObjects;
@@ -1068,7 +1106,7 @@ void CadView::beginEdgePicking() {
         if (!feature || qobject_cast<cad::Sketch*>(feature)) continue;
 
         d->context->Deactivate(shape);
-        d->context->Activate(shape, AIS_Shape::SelectionMode(TopAbs_EDGE));
+        d->context->Activate(shape, AIS_Shape::SelectionMode(kind));
     }
 
     setMode(InteractionMode::PickEdge);
@@ -1113,6 +1151,53 @@ QVector<PickedEdgeRef> CadView::pickedEdges() const {
         if (featureId.isEmpty()) continue;
 
         result.append({featureId, TopoDS::Edge(sub)});
+    }
+    return result;
+}
+
+void CadView::beginSubShapePicking(bool faces, bool edges, bool vertices, const QString& onlyFeatureType) {
+    if (!d->document || d->context.IsNull()) return;
+
+    AIS_ListOfInteractive allObjects;
+    d->context->DisplayedObjects(allObjects);
+
+    for (AIS_ListOfInteractive::Iterator it(allObjects); it.More(); it.Next()) {
+        Handle(AIS_Shape) shape = Handle(AIS_Shape)::DownCast(it.Value());
+        if (shape.IsNull() || isReferencePlane(shape)) continue;
+
+        const QString featureId = d->aisToFeatureId.value(shape.get());
+        if (featureId.isEmpty()) continue;
+
+        cad::Feature* feature = d->document->findFeature(featureId);
+        if (!feature || qobject_cast<cad::Sketch*>(feature)) continue;
+        if (!onlyFeatureType.isEmpty() && feature->typeString() != onlyFeatureType) continue;
+
+        d->context->Deactivate(shape);
+        // 頂點 > 邊 > 面 的優先順序由 OCCT 的選取敏感度自動處理（點到頂點附近優先選頂點）
+        if (faces)    d->context->Activate(shape, AIS_Shape::SelectionMode(TopAbs_FACE));
+        if (edges)    d->context->Activate(shape, AIS_Shape::SelectionMode(TopAbs_EDGE));
+        if (vertices) d->context->Activate(shape, AIS_Shape::SelectionMode(TopAbs_VERTEX));
+    }
+
+    setMode(InteractionMode::PickEdge);
+    d->context->UpdateCurrentViewer();
+}
+
+QVector<PickedSubShapeRef> CadView::pickedSubShapes() const {
+    QVector<PickedSubShapeRef> result;
+    if (d->context.IsNull()) return result;
+
+    for (d->context->InitSelected(); d->context->MoreSelected(); d->context->NextSelected()) {
+        const TopoDS_Shape sub = d->context->SelectedShape();
+        if (sub.IsNull()) continue;
+        const TopAbs_ShapeEnum ty = sub.ShapeType();
+        if (ty != TopAbs_FACE && ty != TopAbs_EDGE && ty != TopAbs_VERTEX) continue;
+
+        Handle(AIS_InteractiveObject) obj = d->context->SelectedInteractive();
+        const QString featureId = obj.IsNull() ? QString() : d->aisToFeatureId.value(obj.get());
+        if (featureId.isEmpty()) continue;
+
+        result.append({featureId, sub});
     }
     return result;
 }
@@ -1434,6 +1519,16 @@ void CadView::setDocument(cad::Document* document) {
                     if (d->isDisplayingAllFeatures) return;
                     displayAllFeatures();
                 }, Qt::QueuedConnection);
+
+        // 配合標示：求解後、增刪配合、標示顯示／高亮改變時重畫（合併同一個事件迴圈內的多次通知）
+        connect(document, &cad::Document::assemblyVisualChanged, this, [this]() {
+            if (d->markersRefreshPending) return;
+            d->markersRefreshPending = true;
+            QTimer::singleShot(0, this, [this]() {
+                d->markersRefreshPending = false;
+                refreshMateMarkers();
+            });
+        }, Qt::QueuedConnection);
 
         // ✅ 延遲一幀確保 OCCT context 穩定後再顯示
         QTimer::singleShot(0, this, &CadView::displayAllFeatures);
@@ -1900,6 +1995,10 @@ void CadView::displayAllFeatures() {
                 aisShape->SetColor(Quantity_NOC_KHAKI);
                 aisShape->SetTransparency(0.7f);
             }
+            if (feature->isVoid()) {                                          // Void 根底下的特徵（開孔形體）：半透明紅
+                aisShape->SetColor(Quantity_NOC_RED);
+                aisShape->SetTransparency(0.6f);
+            }
             // ✅ 中間結果（被其他 Feature 依賴）一律不顯示，見上方 consumedFeatureIds
             //    的說明——即使自己的 isVisible() 是 true 也一樣。
             const bool showIt = isolated
@@ -1939,6 +2038,20 @@ void CadView::displayAllFeatures() {
     // 不屬於 Feature::m_aisShapes 的外部管理 AIS 物件（束制符號、尺寸標註、
     // SketchPoint 選取狀態等）整個清掉，這裡統一發訊號讓外部模組自行還原。
     Q_EMIT featuresRedisplayed();
+
+    // 本函式開頭的 RemoveAll() 也清掉了配合標示：重畫
+    refreshMateMarkers();
+}
+
+void CadView::refreshMateMarkers() {
+    if (!d->document || d->context.IsNull()) return;
+    if (!d->mateMarkers) d->mateMarkers = std::make_unique<MateMarkerPresenter>();
+
+    double size = 0.0;
+    const QVector<cad::assemblyutil::MateMarker> markers = cad::assemblyutil::buildMarkers(d->document, &size);
+    d->mateMarkers->update(d->context, markers, size, d->document->mateMarkersVisible(),
+                           d->document->highlightedMateId());
+    d->context->UpdateCurrentViewer();
 }
 
 // ── Reverse lookup ────────────────────────────────────────────────────

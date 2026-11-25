@@ -94,7 +94,27 @@ QVector<ComponentRoleDialog::Role> ComponentRoleDialog::roles() const
 //  ComponentPlacementDialog
 // ============================================================================
 namespace {
-enum PCol { PColTcl = 0, PColChainage, PColLateral, PColFlip, PColCount };
+enum PCol { PColTcl = 0, PColChainage, PColLateral, PColFlip, PColInstall, PColVoid, PColCount };
+
+/// 置中的勾選框儲存格
+QWidget* makeCheckCell(QTableWidget* table, bool checked)
+{
+    auto* chk = new QCheckBox(table);
+    chk->setChecked(checked);
+    auto* holder = new QWidget(table);
+    auto* hl = new QHBoxLayout(holder);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setAlignment(Qt::AlignCenter);
+    hl->addWidget(chk);
+    return holder;
+}
+
+bool checkCellValue(QTableWidget* table, int row, int col, bool fallback)
+{
+    if (auto* h = table->cellWidget(row, col))
+        if (auto* chk = h->findChild<QCheckBox*>()) return chk->isChecked();
+    return fallback;
+}
 }
 
 ComponentPlacementDialog::ComponentPlacementDialog(
@@ -113,7 +133,7 @@ ComponentPlacementDialog::ComponentPlacementDialog(
     lay->addWidget(hint);
 
     m_table = new QTableWidget(0, PColCount, this);
-    m_table->setHorizontalHeaderLabels({ tr("線路"), tr("里程 [m]"), tr("橫向偏移 [m]"), tr("旋轉 180°") });
+    m_table->setHorizontalHeaderLabels({ tr("線路"), tr("里程 [m]"), tr("橫向偏移 [m]"), tr("旋轉 180°"), tr("安裝組件\n(Part+Assembly)"), tr("開孔\n(Void)") });
     m_table->horizontalHeader()->setStretchLastSection(true);
     lay->addWidget(m_table, 1);
 
@@ -179,6 +199,8 @@ void ComponentPlacementDialog::addRow(const cad::ComponentInstall::Placement& p)
     hl->setAlignment(Qt::AlignCenter);
     hl->addWidget(chk);
     m_table->setCellWidget(r, PColFlip, holder);
+    m_table->setCellWidget(r, PColInstall, makeCheckCell(m_table, p.installAssembly));
+    m_table->setCellWidget(r, PColVoid,    makeCheckCell(m_table, p.cutVoid));
 }
 
 void ComponentPlacementDialog::accept()
@@ -198,6 +220,8 @@ void ComponentPlacementDialog::accept()
         }
         if (auto* holder = m_table->cellWidget(r, PColFlip))
             if (auto* chk = holder->findChild<QCheckBox*>()) p.flip180 = chk->isChecked();
+        p.installAssembly = checkCellValue(m_table, r, PColInstall, true);
+        p.cutVoid         = checkCellValue(m_table, r, PColVoid, true);
         out.append(p);
     }
     if (out.isEmpty()) {
@@ -212,7 +236,7 @@ void ComponentPlacementDialog::accept()
 //  ComponentLayoutDialog
 // ============================================================================
 namespace {
-enum LCol { LColComponent = 0, LColTcl, LColChainage, LColLateral, LColFlip, LColCount };
+enum LCol { LColComponent = 0, LColTcl, LColChainage, LColLateral, LColFlip, LColInstall, LColVoid, LColCount };
 }
 
 ComponentLayoutDialog::ComponentLayoutDialog(cad::Document* doc, QWidget* parent)
@@ -224,12 +248,12 @@ ComponentLayoutDialog::ComponentLayoutDialog(cad::Document* doc, QWidget* parent
     auto* lay = new QVBoxLayout(this);
     auto* hint = new QLabel(
         tr("加入或編輯各式組件沿線形的安裝位置。每一列：選擇組件、線路、里程、橫向偏移。\n"
-           "組件會依該里程的超高（依組件與斷面草圖的約束關係）定位，道版 Loft 在「所需空間」處開孔。"), this);
+           "組件會依該里程的超高（依組件與斷面草圖的約束關係）定位。\n「安裝組件」＝在此里程放置來源檔 Part＋Assembly 的實體；「開孔」＝用來源檔 Void 對道版 Loft 開孔。兩者可分開使用。"), this);
     hint->setWordWrap(true);
     lay->addWidget(hint);
 
     m_table = new QTableWidget(0, LColCount, this);
-    m_table->setHorizontalHeaderLabels({ tr("組件"), tr("線路"), tr("里程 [m]"), tr("橫向偏移 [m]"), tr("旋轉 180°") });
+    m_table->setHorizontalHeaderLabels({ tr("組件"), tr("線路"), tr("里程 [m]"), tr("橫向偏移 [m]"), tr("旋轉 180°"), tr("安裝組件\n(Part+Assembly)"), tr("開孔\n(Void)") });
     m_table->horizontalHeader()->setStretchLastSection(true);
     lay->addWidget(m_table, 1);
 
@@ -262,6 +286,8 @@ ComponentLayoutDialog::ComponentLayoutDialog(cad::Document* doc, QWidget* parent
         if (auto* it = m_table->item(r, LColLateral))  p.lateral  = it->text().toDouble();
         if (auto* h = m_table->cellWidget(r, LColFlip))
             if (auto* chk = h->findChild<QCheckBox*>()) p.flip180 = chk->isChecked();
+        p.installAssembly = checkCellValue(m_table, r, LColInstall, true);
+        p.cutVoid         = checkCellValue(m_table, r, LColVoid, true);
         return p;
     };
 
@@ -327,6 +353,8 @@ void ComponentLayoutDialog::addRow(const QString& componentId, const cad::Compon
     hl->setAlignment(Qt::AlignCenter);
     hl->addWidget(chk);
     m_table->setCellWidget(r, LColFlip, holder);
+    m_table->setCellWidget(r, LColInstall, makeCheckCell(m_table, p.installAssembly));
+    m_table->setCellWidget(r, LColVoid,    makeCheckCell(m_table, p.cutVoid));
 }
 
 void ComponentLayoutDialog::accept()
@@ -357,6 +385,8 @@ void ComponentLayoutDialog::accept()
         }
         if (auto* holder = m_table->cellWidget(r, LColFlip))
             if (auto* chk = holder->findChild<QCheckBox*>()) p.flip180 = chk->isChecked();
+        p.installAssembly = checkCellValue(m_table, r, LColInstall, true);
+        p.cutVoid         = checkCellValue(m_table, r, LColVoid, true);
         out[comp].append(p);
     }
     m_result = out;

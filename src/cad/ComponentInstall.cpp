@@ -316,10 +316,7 @@ bool ComponentInstall::sourceIsNewer() const
 
 bool ComponentInstall::isVoidName(const QString& featureName)
 {
-    // void / void1 / void_2 / void 3 / VOID-4（不分大小寫）
-    static const QRegularExpression re(QStringLiteral("^void([\\s_\\-]?\\d+)?$"),
-                                       QRegularExpression::CaseInsensitiveOption);
-    return re.match(featureName.trimmed()).hasMatch();
+    return Feature::isVoidName(featureName);
 }
 
 bool ComponentInstall::extractFromDocument(const Document* src,
@@ -348,11 +345,11 @@ bool ComponentInstall::extractFromDocument(const Document* src,
             || qobject_cast<ComponentInstall*>(f) || qobject_cast<DefinedPlane*>(f)) continue;
         if (consumed.contains(f->id())) continue;
 
-        if (isVoidName(f->name())) { bb.Add(voids, f->shape()); voidNames << f->name(); }
+        if (f->isVoid()) { bb.Add(voids, f->shape()); voidNames << f->name(); }       // 歸屬 Void 根
         else                       { bb.Add(comp,  f->shape()); componentNames << f->name(); }
     }
     if (componentNames.isEmpty())
-        return fail(QStringLiteral("此檔案中沒有 3D 組件實體（除了名稱為 void 的特徵之外，需要至少一個擠出／放樣等 3D 特徵）"));
+        return fail(QStringLiteral("此檔案的 Assembly 根底下沒有 3D 組件實體（需要至少一個擠出等 3D 特徵或插入的零件；Void 根底下的特徵只用來定義開孔）"));
 
     component = comp;
     voidShape = voidNames.isEmpty() ? TopoDS_Shape() : TopoDS_Shape(voids);
@@ -443,6 +440,7 @@ QVector<TopoDS_Shape> ComponentInstall::placedSpaces(const AlignedProfileArray* 
 
     const double margin = spaceHalfLength();
     for (const Placement& pl : m_placements) {
+        if (!pl.cutVoid) continue;                                                  // 此里程不開孔
         if (!pl.tclId.isEmpty() && arr->trackCenterLineId() != pl.tclId) continue;
         if (pl.chainage < pMin - margin || pl.chainage > pMax + margin) continue;   // 與此範圍無關
 
@@ -556,7 +554,10 @@ bool ComponentInstall::rebuild()
         int ok = 0;
         QString firstError;
 
+        int wanted = 0;                                     // 要安裝組件的位置數（installAssembly）
         for (const Placement& pl : m_placements) {
+            if (!pl.installAssembly) continue;              // 此里程只開孔、不安裝組件
+            ++wanted;
             gp_Trsf t;
             QString e;
             if (!computeTrsf(pl, t, &e)) {
@@ -572,6 +573,7 @@ bool ComponentInstall::rebuild()
             ++ok;
         }
 
+        if (wanted == 0) { setShape(TopoDS_Shape()); clearError(); return true; }   // 全部位置都「只開孔」：沒有組件要顯示
         if (ok == 0) { setError(firstError.isEmpty() ? QStringLiteral("沒有可定位的安裝里程") : firstError); return false; }
 
         setShape(compound);
@@ -614,6 +616,8 @@ QJsonObject ComponentInstall::toJson() const
         o["chainage"] = p.chainage;
         o["lateral"]  = p.lateral;
         o["flip180"]  = p.flip180;
+        o["installAssembly"] = p.installAssembly;
+        o["cutVoid"]         = p.cutVoid;
         arr.append(o);
     }
     obj["placements"] = arr;
@@ -653,6 +657,8 @@ bool ComponentInstall::fromJson(const QJsonObject& json)
         p.chainage = o["chainage"].toDouble();
         p.lateral  = o["lateral"].toDouble();
         p.flip180  = o["flip180"].toBool();
+        p.installAssembly = o["installAssembly"].toBool(true);     // 舊檔沒有這兩個欄位 → 都使用
+        p.cutVoid         = o["cutVoid"].toBool(true);
         m_placements.append(p);
     }
     return true;

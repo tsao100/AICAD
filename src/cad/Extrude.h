@@ -8,7 +8,7 @@
 #ifndef AICAD_CAD_EXTRUDE_H
 #define AICAD_CAD_EXTRUDE_H
 
-#include "Feature.h"
+#include "ShapingFeature.h"
 #include "core/ParameterStore.h"
 
 namespace aicad {
@@ -22,7 +22,9 @@ class Sketch;
  * 將 2D 草圖擠出成 3D 實體
  * - 支援正向和反向擠出
  * - 支援對稱擠出
- * - 支援錐度角
+ * - 支援錐度角（拔模擠出；目前限單向、無內孔輪廓）
+ * - 支援運算方式：新實體／聯集／挖除／交集（見 ShapingFeature；
+ *   「挖除擠出」＝ operation() == SolidOp::Cut 並指定目標實體）
  * 
  * 使用範例:
  * @code
@@ -35,7 +37,7 @@ class Sketch;
  * extrude->rebuild();
  * @endcode
  */
-class Extrude : public Feature {
+class Extrude : public ShapingFeature {
     Q_OBJECT
     Q_PROPERTY(double height READ height WRITE setHeight NOTIFY heightChanged)
     Q_PROPERTY(bool reversed READ isReversed WRITE setReversed NOTIFY reversedChanged)
@@ -74,6 +76,7 @@ public:
     bool isSymmetric() const { return m_symmetric; }
     void setSymmetric(bool symmetric);
     
+    /// 拔模角度（度）。正 = 越擠越小；0 = 一般擠出
     double draftAngle() const { return m_draftAngle; }
     void setDraftAngle(double angle);
     
@@ -111,6 +114,7 @@ public:
     // ← 新增：覆寫依賴宣告
     QSet<QString> featureDependencies() const override;
 
+    /// 讀檔後解析暫存的草圖 id／目標實體 id（Document::load 呼叫）
     void resolveReferences(Document* doc);
 
 Q_SIGNALS:
@@ -135,7 +139,7 @@ private:
     core::ParameterExpr m_backExpr;     ///< 反向附加長度
     bool m_reversed;            ///< 是否反向
     bool m_symmetric;           ///< 是否對稱
-    double m_draftAngle;        ///< 拔模角度（未來實作）
+    double m_draftAngle;        ///< 拔模角度（度）
     QString m_pendingSketchId;
 };
 

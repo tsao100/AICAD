@@ -5,6 +5,7 @@
 
 #include "cad/Extrude.h"
 #include "cad/Document.h"
+#include "SolidFeatureDialogs.h"
 
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -23,7 +24,7 @@ ExtrudeEditDialog::ExtrudeEditDialog(cad::Extrude* extrude, QWidget* parent)
     : QDialog(parent), m_extrude(extrude)
 {
     setWindowTitle(tr("編輯擠出 — %1").arg(extrude ? extrude->name() : QString()));
-    resize(460, 360);
+    resize(480, 520);
 
     auto* lay = new QVBoxLayout(this);
 
@@ -68,6 +69,18 @@ ExtrudeEditDialog::ExtrudeEditDialog(cad::Extrude* extrude, QWidget* parent)
     m_preview = new QLabel(this);
     m_preview->setWordWrap(true);
     lay->addWidget(m_preview);
+
+    // ── 拔模角度 ──
+    auto* draftRow = new QFormLayout;
+    m_draft = new QLineEdit(QString::number(extrude->draftAngle(), 'g', 10), this);
+    m_draft->setToolTip(tr("正 = 越擠越小，負 = 越擠越大，0 = 直壁。目前僅支援單向、單一外輪廓（無內孔）。"));
+    draftRow->addRow(tr("拔模角度（°）："), m_draft);
+    lay->addLayout(draftRow);
+
+    // ── 運算方式／目標實體 ──
+    m_opBox = new OpTargetBox(extrude->document(), extrude, extrude->operation(),
+                              extrude->target(), this);
+    lay->addWidget(m_opBox);
 
     auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -191,6 +204,23 @@ void ExtrudeEditDialog::accept()
         QMessageBox::warning(this, tr("編輯擠出"), err);
         return;
     }
+
+    // 拔模角度與運算方式（setParameters 已通過驗證，這裡才動它們，避免半途失敗留下半套設定）
+    bool angOk = false;
+    const double ang = m_draft->text().trimmed().isEmpty() ? 0.0 : m_draft->text().toDouble(&angOk);
+    if (!m_draft->text().trimmed().isEmpty() && !angOk) {
+        QMessageBox::warning(this, tr("編輯擠出"), tr("拔模角度必須是數字。"));
+        return;
+    }
+    if (!m_opBox->validate(&err)) {
+        QMessageBox::warning(this, tr("編輯擠出"), err);
+        return;
+    }
+    m_extrude->setOperationAndTarget(m_opBox->op(), m_opBox->target());
+    if (m_extrude->target()) m_extrude->target()->setVisible(false);
+    m_extrude->setDraftAngle(ang);                 // 角度有變會自己要求重建
+    if (m_extrude->document()) m_extrude->document()->rebuildFeature(m_extrude);   // 運算方式可能變了：保證重建一次
+
     if (m_extrude->document()) m_extrude->document()->setModified(true);
     QDialog::accept();
 }
